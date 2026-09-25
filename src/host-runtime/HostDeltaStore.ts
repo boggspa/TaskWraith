@@ -32,13 +32,19 @@ import {
   ftruncateSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
   writeSync,
   writeFileSync
 } from 'node:fs'
-import { open as openAsync } from 'node:fs/promises'
+import {
+  open as openAsync,
+  rename as renameAsync,
+  unlink as unlinkAsync,
+  writeFile as writeFileAsync
+} from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -254,6 +260,16 @@ export type HostDeltaDurabilityResult =
 
 export const HOST_DELTA_GROUP_FAILURE_RESET_REASON = 'group durability failed'
 
+/** A journal segment sealed by rotation; group 1 is its 20-digit sequence. */
+export const HOST_DELTA_SEALED_SEGMENT_PATTERN = /^host-deltas\.journal\.(\d{20})\.sealed\.jsonl$/
+
+export type HostDeltaCompactionStage = 'rotated' | 'checkpoint-written' | 'checkpoint-renamed'
+
+export type HostDeltaCompactionResult =
+  | { kind: 'compacted'; checkpointCursor: HostCursor; sealedRemoved: number }
+  | { kind: 'skipped'; reason: 'in-flight' | 'not-durable' | 'fail-stopped' }
+  | { kind: 'failed'; detail: string }
+
 /**
  * Post-commit notification emitted only after an append is durable in the
  * journal. Consumers receive clones and cannot mutate the store's retained
@@ -313,6 +329,10 @@ export interface HostDeltaStoreOptions {
    * reset that should have followed failed too. The Host exits here.
    */
   onFailStop?: (detail: string) => void
+  /** Test seam: awaited at each background compaction stage (K11). */
+  onCompactionStage?: (stage: HostDeltaCompactionStage) => void | Promise<void>
+  /** Writes and fsyncs a background checkpoint's temp file. */
+  checkpointWrite?: (tmpPath: string, data: string) => Promise<void>
 }
 
 interface CheckpointDocument {
@@ -322,6 +342,10 @@ interface CheckpointDocument {
   cursor: HostCursor
   lowestRetainedCursor: HostCursor
   records: HostDeltaStoredRecord[]
+  /** Unreleased groups of this generation (M4 slice 7c `openGroups`). */
+  groups?: HostDeltaGroupEntry[]
+  /** Every sealed segment at or below this sequence is covered whole. */
+  sealedThrough?: string
 }
 
 type JournalEvent =
@@ -380,6 +404,15 @@ export class HostDeltaStore {
   private readonly batchTruncate: NonNullable<HostDeltaStoreOptions['batchTruncate']>
   private readonly groupFsync: NonNullable<HostDeltaStoreOptions['groupFsync']>
   private readonly onFailStop: HostDeltaStoreOptions['onFailStop']
+  private readonly onCompactionStage: HostDeltaStoreOptions['onCompactionStage']
+  private readonly checkpointWrite: NonNullable<HostDeltaStoreOptions['checkpointWrite']>
+  private compactionInFlight = false
+  /**
+   * The highest sealed sequence ever used or covered. It never goes back, so
+   * a new segment is never mistaken for one a checkpoint's `sealedThrough`
+   * already covers.
+   */
+  private sealedSequenceFloor = 0n
   /** Sticky for this instance: only a new store (boot recovery) moves on. */
   private failStop: { detail: string } | null = null
 
@@ -431,6 +464,8 @@ export class HostDeltaStore {
     this.batchTruncate = options.batchTruncate ?? ftruncateSync
     this.groupFsync = options.groupFsync ?? fsyncPath
     this.onFailStop = options.onFailStop
+    this.onCompactionStage = options.onCompactionStage
+    this.checkpointWrite = options.checkpointWrite ?? writeAndFsyncFile
     this.reopen()
   }
 
@@ -461,9 +496,26 @@ export class HostDeltaStore {
       for (const record of checkpoint.records) {
         this.indexRecord(record, { recomputeBytes: true })
       }
+      for (const group of checkpoint.groups ?? []) {
+        this.groupsByCommand.set(group.commandId, { ...group })
+      }
     }
 
-    const journal = this.readJournal()
+    // Sealed segments (oldest first) precede the active journal.
+    const journal = { events: [] as JournalEvent[], truncatedTail: false, corruptInterior: false }
+    const sealedThrough = checkpoint?.sealedThrough
+    this.sealedSequenceFloor = sealedThrough !== undefined ? BigInt(sealedThrough) : 0n
+    for (const path of [
+      ...this.listSealedSegments()
+        .filter((segment) => sealedThrough === undefined || segment.sequence > sealedThrough)
+        .map((segment) => segment.path),
+      this.journalPath
+    ]) {
+      const read = this.readJournal(path)
+      journal.events.push(...read.events)
+      journal.truncatedTail ||= read.truncatedTail
+      journal.corruptInterior ||= read.corruptInterior
+    }
     for (const event of journal.events) {
       this.journalRecordCount += 1
       if (checkpoint) {
@@ -921,9 +973,16 @@ export class HostDeltaStore {
   /** Force compaction enforcing maxRecords / maxBytes. */
   compact(): void {
     if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
-    this.writeCheckpointAndResetJournal()
     // The checkpoint holds every appended record and was fsynced.
-    this.settleDurableThrough(this.cursor)
+    if (this.writeCheckpointAndResetJournal()) this.settleDurableThrough(this.cursor)
+  }
+
+  /**
+   * The command's receipt is terminal: drop its group's anchor, so it leaves
+   * `findGroup` and the next checkpoint.
+   */
+  releaseGroup(commandId: string): boolean {
+    return this.groupsByCommand.delete(commandId)
   }
 
   private appendGenerationReset(input: HostDeltaAppendInput): HostDeltaAppendResult {
@@ -1193,6 +1252,8 @@ export class HostDeltaStore {
       if (generation === this.generation) this.settleDurableThrough(target)
       else this.settleDurableThrough(this.durableCursor)
       if (this.flushRequested || this.durabilityWaiters.length > 0) this.requestFlush()
+      // Compaction starts here, after a flush, and never inside an append.
+      else this.maybeCompactInBackground()
     }
     const run = coveredElsewhere() ? Promise.resolve() : flush()
     run.then(
@@ -1464,22 +1525,26 @@ export class HostDeltaStore {
   }
 
   private maybeCompact(): void {
-    if (
+    if (this.compactionDue()) this.writeCheckpointAndResetJournal()
+  }
+
+  private compactionDue(): boolean {
+    return (
       this.journalRecordCount >= this.compactAfterRecords ||
       this.recordsByCursor.size > this.maxRecords ||
       this.retainedBytes > this.maxBytes
-    ) {
-      this.writeCheckpointAndResetJournal()
-    }
+    )
   }
 
-  private writeCheckpointAndResetJournal(): void {
-    // Retain newest records within bounds (by cursor descending).
-    const cursors = [...this.orderedCursors].sort((a, b) => b - a)
+  /** Newest records within bounds, by cursor descending, returned ascending. */
+  private selectRetained(
+    cursors: readonly HostCursor[],
+    records: ReadonlyMap<HostCursor, HostDeltaStoredRecord>
+  ): { cursors: HostCursor[]; map: Map<HostCursor, HostDeltaStoredRecord>; bytes: number } {
     let bytes = 0
     const retained: HostCursor[] = []
-    for (const cursor of cursors) {
-      const record = this.recordsByCursor.get(cursor)
+    for (const cursor of [...cursors].sort((a, b) => b - a)) {
+      const record = records.get(cursor)
       if (!record) continue
       if (retained.length >= this.maxRecords) break
       if (bytes + record.retainedBytes > this.maxBytes && retained.length > 0) break
@@ -1487,31 +1552,63 @@ export class HostDeltaStore {
       bytes += record.retainedBytes
     }
     retained.sort((a, b) => a - b)
-
-    const nextMap = new Map<HostCursor, HostDeltaStoredRecord>()
-    let nextBytes = 0
+    const map = new Map<HostCursor, HostDeltaStoredRecord>()
+    let mapBytes = 0
     for (const cursor of retained) {
-      const record = this.recordsByCursor.get(cursor)
+      const record = records.get(cursor)
       if (!record) continue
-      nextMap.set(cursor, record)
-      nextBytes += record.retainedBytes
+      map.set(cursor, record)
+      mapBytes += record.retainedBytes
     }
     // After compaction, if lowest retained is above 1 and clients may be behind,
     // since() will correctly return retention_gap.
+    return { cursors: retained, map, bytes: mapBytes }
+  }
 
-    const nextLowestRetainedCursor = retained[0] ?? 0
-
-    const doc: CheckpointDocument = {
+  private checkpointDocument(
+    generation: HostGeneration,
+    cursor: HostCursor,
+    retained: { cursors: HostCursor[]; map: Map<HostCursor, HostDeltaStoredRecord> },
+    groups: readonly HostDeltaGroupEntry[],
+    sealedThrough?: string
+  ): CheckpointDocument {
+    return {
       schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
       updatedAt: this.now(),
-      generation: this.generation,
-      cursor: this.cursor,
-      lowestRetainedCursor: nextLowestRetainedCursor,
-      records: retained
-        .map((c) => nextMap.get(c))
+      generation,
+      cursor,
+      lowestRetainedCursor: retained.cursors[0] ?? 0,
+      records: retained.cursors
+        .map((c) => retained.map.get(c))
         .filter((r): r is HostDeltaStoredRecord => Boolean(r))
-        .map(cloneRecord)
+        .map(cloneRecord),
+      // Legacy stores never hold a group, so their checkpoint bytes are unchanged.
+      ...(groups.length > 0 ? { groups: groups.map((group) => ({ ...group })) } : {}),
+      ...(sealedThrough !== undefined ? { sealedThrough } : {})
     }
+  }
+
+  /** False when it deferred to a background compaction in flight. */
+  private writeCheckpointAndResetJournal(): boolean {
+    if (this.compactionInFlight) {
+      this.log('[HostDeltaStore] inline compaction deferred: a background compaction is in flight')
+      return false
+    }
+    const retained = this.selectRetained(this.orderedCursors, this.recordsByCursor)
+    const sealed = this.listSealedSegments()
+    const lastSealed = sealed[sealed.length - 1]?.sequence
+    if (lastSealed !== undefined && BigInt(lastSealed) > this.sealedSequenceFloor) {
+      this.sealedSequenceFloor = BigInt(lastSealed)
+    }
+    const doc = this.checkpointDocument(
+      this.generation,
+      this.cursor,
+      retained,
+      [...this.groupsByCommand.values()],
+      this.sealedSequenceFloor > 0n
+        ? this.sealedSequenceFloor.toString().padStart(20, '0')
+        : undefined
+    )
 
     mkdirSync(this.dataDir, { recursive: true })
     const tmpPath = `${this.checkpointPath}.${process.pid}.${randomUUID()}.tmp`
@@ -1545,17 +1642,137 @@ export class HostDeltaStore {
       if (existsSync(this.journalPath)) {
         unlinkSync(this.journalPath)
       }
+      // A failed background compaction can leave sealed segments; this
+      // checkpoint covers everything they hold.
+      for (const segment of sealed) unlinkSync(segment.path)
     } catch (err) {
       this.log(
         `[HostDeltaStore] journal reset failed: ${err instanceof Error ? err.message : String(err)}`
       )
-      return
+      return true
     }
-    this.recordsByCursor = nextMap
-    this.orderedCursors = retained
-    this.retainedBytes = nextBytes
-    this.lowestRetainedCursor = nextLowestRetainedCursor
+    this.recordsByCursor = retained.map
+    this.orderedCursors = retained.cursors
+    this.retainedBytes = retained.bytes
+    this.lowestRetainedCursor = retained.cursors[0] ?? 0
     this.journalRecordCount = 0
+    return true
+  }
+
+  /**
+   * Compaction off the append path (M4 §1: rotation under the lock,
+   * checkpoint outside it). Only durable bytes rotate, so a sealed segment
+   * never holds anything a later reset retracts. A skipped compaction costs
+   * only a later one; there is no retry loop.
+   */
+  async compactInBackground(): Promise<HostDeltaCompactionResult> {
+    if (this.failStop) return { kind: 'skipped', reason: 'fail-stopped' }
+    if (this.compactionInFlight) return { kind: 'skipped', reason: 'in-flight' }
+    this.compactionInFlight = true
+    let tmpPath: string | null = null
+    try {
+      if (this.cursor > this.durableCursor) {
+        const durable = await this.awaitDurable()
+        if (durable.kind === 'fail-stopped' || this.failStop) {
+          return { kind: 'skipped', reason: 'fail-stopped' }
+        }
+        if (durable.kind !== 'durable' || this.cursor > this.durableCursor) {
+          return { kind: 'skipped', reason: 'not-durable' }
+        }
+      }
+
+      // Rotation: synchronous and cheap, so no append interleaves with it.
+      const sequence = this.nextSealedSequence()
+      if (existsSync(this.journalPath)) {
+        renameSync(this.journalPath, join(this.dataDir, sealedSegmentName(sequence)))
+      }
+      this.journalRecordCount = 0
+      const generation = this.generation
+      const cursor = this.cursor
+      const cursors = [...this.orderedCursors]
+      const records = new Map(this.recordsByCursor)
+      const groups = [...this.groupsByCommand.values()].map((group) => ({ ...group }))
+      await this.onCompactionStage?.('rotated')
+
+      const retained = this.selectRetained(cursors, records)
+      const doc = this.checkpointDocument(generation, cursor, retained, groups, sequence)
+      mkdirSync(this.dataDir, { recursive: true })
+      tmpPath = `${this.checkpointPath}.${process.pid}.${randomUUID()}.tmp`
+      await this.checkpointWrite(tmpPath, `${JSON.stringify(doc)}\n`)
+      await this.onCompactionStage?.('checkpoint-written')
+      await renameAsync(tmpPath, this.checkpointPath)
+      tmpPath = null
+      // Also makes the rotation's rename durable.
+      if (process.platform !== 'win32') await this.groupFsync(this.dataDir)
+      await this.onCompactionStage?.('checkpoint-renamed')
+
+      let sealedRemoved = 0
+      for (const segment of this.listSealedSegments()) {
+        if (segment.sequence > sequence) continue
+        await unlinkAsync(segment.path)
+        sealedRemoved += 1
+      }
+
+      if (generation === this.generation) {
+        const kept = new Set(retained.cursors)
+        const cut = cursors.filter((c) => !kept.has(c))
+        for (const c of cut) {
+          const record = this.recordsByCursor.get(c)
+          if (!record) continue
+          this.retainedBytes -= record.retainedBytes
+          this.recordsByCursor.delete(c)
+        }
+        const cutSet = new Set(cut)
+        this.orderedCursors = this.orderedCursors.filter((c) => !cutSet.has(c))
+        this.recomputeLowest()
+      }
+      return { kind: 'compacted', checkpointCursor: cursor, sealedRemoved }
+    } catch (error) {
+      if (tmpPath !== null) {
+        await unlinkAsync(tmpPath).catch(() => {})
+      }
+      return { kind: 'failed', detail: error instanceof Error ? error.message : String(error) }
+    } finally {
+      this.compactionInFlight = false
+    }
+  }
+
+  private maybeCompactInBackground(): void {
+    if (this.compactionInFlight || this.failStop || !this.compactionDue()) return
+    void this.compactInBackground().then((result) => {
+      if (result.kind === 'failed') {
+        try {
+          this.log(`[HostDeltaStore] background compaction failed: ${result.detail}`)
+        } catch {
+          // Diagnostics cannot fail a compaction that kept every sealed byte.
+        }
+      }
+    })
+  }
+
+  /** Sealed segments, oldest first. */
+  private listSealedSegments(): Array<{ sequence: string; path: string }> {
+    let names: string[]
+    try {
+      names = readdirSync(this.dataDir)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return []
+      throw err
+    }
+    return names
+      .map((name) => ({ name, match: HOST_DELTA_SEALED_SEGMENT_PATTERN.exec(name) }))
+      .filter((entry): entry is { name: string; match: RegExpExecArray } => entry.match !== null)
+      .map(({ name, match }) => ({ sequence: match[1]!, path: join(this.dataDir, name) }))
+      .sort((left, right) => (left.sequence < right.sequence ? -1 : 1))
+  }
+
+  private nextSealedSequence(): string {
+    const segments = this.listSealedSegments()
+    const last = segments[segments.length - 1]?.sequence
+    const highest =
+      last && BigInt(last) > this.sealedSequenceFloor ? BigInt(last) : this.sealedSequenceFloor
+    this.sealedSequenceFloor = highest + 1n
+    return this.sealedSequenceFloor.toString().padStart(20, '0')
   }
 
   private appendJournalEvents(events: readonly JournalEvent[]): void {
@@ -1742,24 +1959,37 @@ export class HostDeltaStore {
         'checkpoint retention degraded; acknowledged head preserved, missing deltas require resnapshot'
       )
     }
+    // Group anchors outlive their records: D3 completes at `end` even after
+    // retention trimmed the group's rows.
+    const rawGroups: unknown[] = Array.isArray(doc.groups) ? doc.groups : []
+    const groups = rawGroups
+      .map((group) => normalizeGroupAnchor(group, doc.cursor!))
+      .filter((group): group is HostDeltaGroupEntry => group !== null)
+    if (groups.length !== rawGroups.length) {
+      this.noteRecovery('degraded-checkpoint', 'checkpoint dropped invalid group anchor(s)')
+    }
     return {
       schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
       updatedAt: typeof doc.updatedAt === 'string' ? doc.updatedAt : this.now(),
       generation: doc.generation,
       cursor: doc.cursor,
       lowestRetainedCursor,
-      records
+      records,
+      ...(groups.length > 0 ? { groups } : {}),
+      ...(typeof doc.sealedThrough === 'string' && /^\d{20}$/.test(doc.sealedThrough)
+        ? { sealedThrough: doc.sealedThrough }
+        : {})
     }
   }
 
-  private readJournal(): {
+  private readJournal(path: string): {
     events: JournalEvent[]
     truncatedTail: boolean
     corruptInterior: boolean
   } {
     let source: string
     try {
-      source = readFileSync(this.journalPath, 'utf8')
+      source = readFileSync(path, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
         return { events: [], truncatedTail: false, corruptInterior: false }
@@ -1844,7 +2074,7 @@ export class HostDeltaStore {
       // Leaving a discarded suffix on disk would concatenate it with the next
       // append and acknowledge a record that cannot be recovered. Reopen keeps
       // authority blocked if this repair cannot be made durable.
-      const descriptor = openSync(this.journalPath, 'r+')
+      const descriptor = openSync(path, 'r+')
       try {
         this.batchTruncate(descriptor, repairLength)
         this.batchFsync(descriptor)
@@ -2162,6 +2392,35 @@ function serializeJournalEvent(event: JournalEvent): string {
 /** SHA-256 hex over a group's record fingerprints, in cursor order. */
 export function hostDeltaGroupSetDigest(fingerprints: readonly string[]): string {
   return createHash('sha256').update(JSON.stringify(fingerprints), 'utf8').digest('hex')
+}
+
+function normalizeGroupAnchor(value: unknown, cursor: HostCursor): HostDeltaGroupEntry | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { commandId, count, setDigest, start, end } = value as Record<string, unknown>
+  if (
+    typeof commandId !== 'string' ||
+    commandId.length === 0 ||
+    commandId.length > MAX_ENTITY_ID ||
+    !isNonNegativeInt(count) ||
+    typeof setDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(setDigest) ||
+    !isNonNegativeInt(start) ||
+    !isNonNegativeInt(end) ||
+    start > end ||
+    end > cursor
+  ) {
+    return null
+  }
+  return { commandId, count, setDigest, start, end }
+}
+
+function sealedSegmentName(sequence: string): string {
+  return `host-deltas.journal.${sequence}.sealed.jsonl`
+}
+
+async function writeAndFsyncFile(path: string, data: string): Promise<void> {
+  await writeFileAsync(path, data, { encoding: 'utf8', mode: 0o600 })
+  await fsyncPath(path)
 }
 
 async function fsyncPath(path: string): Promise<void> {
