@@ -55,6 +55,7 @@ import {
   type HostResultRef
 } from '../shared/hostProtocol'
 import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
+import type { HostCommandExecutionClass } from './HostCommandExecutionClass'
 
 export const HOST_COMMAND_RECEIPT_SCHEMA_VERSION = 1 as const
 export const HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME = 'command-receipts.checkpoint.json'
@@ -175,6 +176,11 @@ export interface HostCommandReceiptRecord {
   conflictCommandId?: string
   /** Set when a pending receipt was reopened after Host crash/restart. */
   recoveryState?: 'recoverable-indeterminate'
+  /**
+   * The execution class `begin` recorded (M4 §1 decision 1). Host-internal:
+   * the wire projection never carries it. Absent on unclassified receipts.
+   */
+  commandClass?: HostCommandExecutionClass
 }
 
 export type HostCommandReceiptBeginInput = {
@@ -189,6 +195,8 @@ export type HostCommandReceiptBeginInput = {
   target: HostCommandReceiptTarget
   authority: HostCommandReceiptAuthority
   createdAt?: string
+  /** Recorded durably with the receipt; `txn-record-persist` stays pending on reopen. */
+  commandClass?: HostCommandExecutionClass
 }
 
 export type HostCommandReceiptTerminalStatus = 'succeeded' | 'failed' | 'denied' | 'cancelled'
@@ -233,6 +241,8 @@ export type HostCommandReceiptIndeterminateCode =
   | 'observation_diff_generation_mismatch'
   | 'observation_diff_cursor_mismatch'
   | 'observation_diff_incoherent'
+  /** The M4 manifest recovery's `indeterminate` action on a pending receipt. */
+  | 'transaction_recovery_indeterminate'
 
 /** Runtime membership set for HostCommandReceiptIndeterminateCode. */
 export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandReceiptIndeterminateCode> =
@@ -253,7 +263,8 @@ export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandRe
     'observation_diff_privacy_failed',
     'observation_diff_generation_mismatch',
     'observation_diff_cursor_mismatch',
-    'observation_diff_incoherent'
+    'observation_diff_incoherent',
+    'transaction_recovery_indeterminate'
   ])
 
 /**
@@ -386,6 +397,11 @@ export interface HostCommandReceiptStoreOptions {
    * pending card still exists. Absence skips those kinds. Must not throw.
    */
   resolveSpanChatId?: (record: HostCommandReceiptRecord) => string | undefined
+  /**
+   * Runs a compaction `complete()` found due, on a later turn, off the
+   * command's commit path (M4 slice 9). Defaults to `setImmediate`.
+   */
+  scheduleCompaction?: (run: () => void) => void
 }
 
 interface CheckpointDocument {
@@ -417,6 +433,8 @@ export class HostCommandReceiptStore {
   private readonly spans?: WorkSpanRecorder
   private readonly nowMs: () => number
   private readonly resolveSpanChatId?: (record: HostCommandReceiptRecord) => string | undefined
+  private readonly scheduleCompaction: (run: () => void) => void
+  private compactionScheduled = false
   /** chatId resolved at begin (approval/question lookup is only valid then). */
   private readonly spanChatIds = new Map<string, string>()
 
@@ -456,6 +474,11 @@ export class HostCommandReceiptStore {
     this.spans = options.spans
     this.nowMs = options.nowMs ?? (() => Date.now())
     this.resolveSpanChatId = options.resolveSpanChatId
+    this.scheduleCompaction =
+      options.scheduleCompaction ??
+      ((run) => {
+        setImmediate(run)
+      })
     this.reopen()
   }
 
@@ -631,7 +654,10 @@ export class HostCommandReceiptStore {
     // durable before it is indexed.
     const promotions: HostCommandReceiptRecord[] = []
     for (const [, record] of records) {
-      if (record.status === 'pending') {
+      // A transactional receipt is the manifest recovery's to decide (M4
+      // R1-M1): promoting it here would hide D1, D3 and D4 behind a
+      // recoverable indeterminate before that recovery runs.
+      if (record.status === 'pending' && record.commandClass !== 'txn-record-persist') {
         promotions.push({
           ...record,
           status: 'indeterminate',
@@ -793,6 +819,8 @@ export class HostCommandReceiptStore {
     const commandFingerprint = normalizeFingerprint(input.commandFingerprint)
     const commandName = normalizeCommandName(input.commandName)
     const actor = normalizeExactActor(input.actor)
+    const commandClass =
+      input.commandClass === undefined ? undefined : normalizeCommandClass(input.commandClass)
     const position = normalizePosition(this.getPosition())
 
     const byId = this.recordsByCommandId.get(commandId)
@@ -901,7 +929,8 @@ export class HostCommandReceiptStore {
       generation: position.generation,
       cursor: position.cursor,
       createdAt,
-      updatedAt: createdAt
+      updatedAt: createdAt,
+      ...(commandClass !== undefined ? { commandClass } : {})
     }
 
     this.appendJournalEvent({ op: 'upsert', record })
@@ -980,7 +1009,8 @@ export class HostCommandReceiptStore {
     try {
       this.appendJournalEvent({ op: 'upsert', record: next })
       this.indexRecord(next)
-      this.maybeCompact()
+      // Compaction is housekeeping: never on the command's commit path.
+      this.scheduleCompactionIfDue()
       if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
       return cloneRecord(next)
     } finally {
@@ -1098,8 +1128,46 @@ export class HostCommandReceiptStore {
     )
   }
 
+  /**
+   * Exactly-once anchors (NH-2). One leaves only when `complete()` makes its
+   * receipt terminal: for a transactional command, the live persist or the
+   * M4 recovery driver acting on the manifest. An indeterminate receipt the
+   * manifest records as final stays an anchor. The ceiling is `maxRecords`,
+   * past which `begin` answers `capacity_refused`.
+   */
+  getAnchorCounts(): { pending: number; indeterminate: number; transactionalPending: number } {
+    let pending = 0
+    let indeterminate = 0
+    let transactionalPending = 0
+    for (const [, record] of this.recordsByCommandId) {
+      if (record.status === 'pending') {
+        pending += 1
+        if (record.commandClass === 'txn-record-persist') transactionalPending += 1
+      } else if (record.status === 'indeterminate') {
+        indeterminate += 1
+      }
+    }
+    return { pending, indeterminate, transactionalPending }
+  }
+
   private countProtectedAnchors(): number {
     return countProtectedAnchorsIn(this.recordsByCommandId)
+  }
+
+  private scheduleCompactionIfDue(): void {
+    if (this.compactionScheduled) return
+    if (
+      this.journalRecordCount < this.compactAfterRecords &&
+      this.recordsByCommandId.size <= this.maxRecords
+    ) {
+      return
+    }
+    this.compactionScheduled = true
+    this.scheduleCompaction(() => {
+      this.compactionScheduled = false
+      // Due again by now? maybeCompact re-checks, and logs a failure.
+      if (this.durability.kind === 'ok') this.maybeCompact()
+    })
   }
 
   private canRetainDurableConflict(ownerCommandId: string): boolean {
@@ -1586,6 +1654,26 @@ function cloneRecord(record: HostCommandReceiptRecord): HostCommandReceiptRecord
   return JSON.parse(JSON.stringify(record)) as HostCommandReceiptRecord
 }
 
+/** Exhaustive by type: a new execution class fails to compile until listed. */
+const COMMAND_CLASSES: Record<HostCommandExecutionClass, true> = {
+  'txn-record-persist': true,
+  'legacy-observed': true,
+  control: true,
+  'queued-start': true,
+  setup: true
+}
+
+function isCommandClass(value: unknown): value is HostCommandExecutionClass {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(COMMAND_CLASSES, value)
+}
+
+function normalizeCommandClass(value: unknown): HostCommandExecutionClass {
+  if (!isCommandClass(value)) {
+    throw new Error('HostCommandReceiptStore: commandClass is not a known execution class')
+  }
+  return value
+}
+
 function countProtectedAnchorsIn(records: ReadonlyMap<string, HostCommandReceiptRecord>): number {
   let count = 0
   for (const [, record] of records) {
@@ -1919,6 +2007,8 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
         // receipt without it so recovery remains conservative.
       }
     }
+    // An unknown class string reads back unclassified: it proves nothing.
+    if (isCommandClass(raw.commandClass)) record.commandClass = raw.commandClass
     if (typeof raw.completedAt === 'string') record.completedAt = raw.completedAt
     if (typeof raw.errorCode === 'string')
       record.errorCode = truncateText(raw.errorCode, MAX_KIND_CHARS)

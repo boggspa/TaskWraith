@@ -156,8 +156,16 @@ describe('HostCommandReceiptStore', () => {
     fsFaults.unlinkSync = null
     fsFaults.readFileSync = null
     fsFaults.trace = null
+    scheduledCompactions.length = 0
     rmSync(dataDir, { recursive: true, force: true })
   })
+
+  // complete() schedules its compaction for a later turn (M4 slice 9); the
+  // tests that pin that compaction run it here, inside their fault window.
+  const scheduledCompactions: Array<() => void> = []
+  function runScheduledCompactions() {
+    for (const run of scheduledCompactions.splice(0)) run()
+  }
 
   function openStore(options?: { maxRecords?: number; compactAfterRecords?: number }) {
     return new HostCommandReceiptStore({
@@ -165,7 +173,8 @@ describe('HostCommandReceiptStore', () => {
       getPosition: () => ({ ...position }),
       now: () => clock,
       maxRecords: options?.maxRecords,
-      compactAfterRecords: options?.compactAfterRecords
+      compactAfterRecords: options?.compactAfterRecords,
+      scheduleCompaction: (run) => scheduledCompactions.push(run)
     })
   }
 
@@ -1558,7 +1567,7 @@ describe('HostCommandReceiptStore', () => {
   })
 
   it('markIndeterminate accepts every closed indeterminate code exactly once', () => {
-    expect(HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.size).toBe(17)
+    expect(HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.size).toBe(18)
     const store = openStore({ compactAfterRecords: 1000 })
     let index = 0
     for (const errorCode of HOST_COMMAND_RECEIPT_INDETERMINATE_CODES) {
@@ -2743,6 +2752,7 @@ describe('HostCommandReceiptStore', () => {
 
       // The store stays usable: the next durable event compacts successfully.
       expect(store.complete({ commandId: 'cmd-3', status: 'succeeded' })?.status).toBe('succeeded')
+      runScheduledCompactions()
       expect(store.size).toBe(2)
       expect(existsSync(checkpointFile())).toBe(true)
 
@@ -2864,6 +2874,7 @@ describe('HostCommandReceiptStore', () => {
       clock = '2026-08-03T17:00:03.000Z'
       upgraded.begin(ping(3))
       upgraded.complete({ commandId: 'cmd-3', status: 'succeeded' })
+      runScheduledCompactions()
       fsFaults.unlinkSync = null
       expect(JSON.parse(readFileSync(checkpointFile(), 'utf8')).journalSeq).toBe(4)
 
@@ -3059,7 +3070,8 @@ describe('HostCommandReceiptStore', () => {
           dataDir,
           getPosition: () => position,
           compactAfterRecords: 1,
-          log
+          log,
+          scheduleCompaction: (run) => scheduledCompactions.push(run)
         })
         if (boundary === 'rename') {
           fsFaults.renameSync = () => {
@@ -3074,6 +3086,7 @@ describe('HostCommandReceiptStore', () => {
         expect(store.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe(
           'succeeded'
         )
+        runScheduledCompactions()
         expect(log).toHaveBeenCalledTimes(2)
         fsFaults.renameSync = null
         fsFaults.unlinkSync = null
