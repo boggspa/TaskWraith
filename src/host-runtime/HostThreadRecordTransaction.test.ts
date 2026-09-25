@@ -433,15 +433,24 @@ function artifactIdentityOf(path: string, byteLength: number): HostFileIdentity 
   return { dev: stat.dev.toString(), ino: stat.ino.toString(), size: byteLength }
 }
 
-/** The records port with `rename` wrapped: the wrapper sees the artifact before it moves. */
+type CommitRenameResult = ReturnType<HostThreadRecordCommitPort['commitRename']>
+
+/**
+ * The records port with the synchronous `commitRename` wrapped: the wrapper
+ * sees the artifact before it moves. `real` is the check-and-rename itself.
+ */
 function renameSeam(
   records: HostThreadRecordCommitPort,
-  hook: (artifactPath: string, threadId: string, real: () => Promise<void>) => Promise<void>
+  hook: (
+    artifactPath: string,
+    threadId: string,
+    real: () => CommitRenameResult
+  ) => CommitRenameResult
 ): HostThreadRecordCommitPort {
   return {
     ...records,
-    rename: (artifactPath: string, threadId: string) =>
-      hook(artifactPath, threadId, () => records.rename(artifactPath, threadId))
+    commitRename: (artifactPath: string, threadId: string, expectedKey: string | null) =>
+      hook(artifactPath, threadId, () => records.commitRename(artifactPath, threadId, expectedKey))
   }
 }
 
@@ -535,14 +544,14 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         h.begin()
 
         let artifact: { path: string; bytes: Buffer; identity: HostFileIdentity } | null = null
-        const records = renameSeam(h.records, async (artifactPath, _threadId, real) => {
+        const records = renameSeam(h.records, (artifactPath, _threadId, real) => {
           const bytes = readFileSync(artifactPath)
           artifact = {
             path: artifactPath,
             bytes,
             identity: artifactIdentityOf(artifactPath, bytes.length)
           }
-          await real()
+          return real()
         })
         const captured = captureIndexEffects(h.index)
         const outcome = await h.execute(
@@ -1042,7 +1051,8 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       }
       const records: HostThreadRecordCommitPort = {
         ...h.records,
-        identityKey: async () => 'another-writer-was-here'
+        // Another writer landed first: the synchronous check refuses.
+        commitRename: () => 'changed'
       }
       const outcome = await h.execute({}, h.withPorts({ log, records }))
       expect(outcome).toEqual({ kind: 'failed', errorCode: 'thread_record_revision_conflict' })
@@ -1057,7 +1067,7 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       h.seed()
       const before = snapshotBefore(h)
       h.begin()
-      const records = renameSeam(h.records, async () => {
+      const records = renameSeam(h.records, () => {
         throw new Error('injected rename failure before the rename')
       })
       const outcome = await h.execute({}, h.withPorts({ records }))
@@ -1078,9 +1088,9 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       h.seed()
       h.begin()
       let resulting: HostFileIdentity | null = null
-      const records = renameSeam(h.records, async (artifactPath, _threadId, real) => {
+      const records = renameSeam(h.records, (artifactPath, _threadId, real) => {
         resulting = artifactIdentityOf(artifactPath, lstatSync(artifactPath).size)
-        await real()
+        real()
         throw new Error('injected rename failure after the rename')
       })
       const outcome = await h.execute({}, h.withPorts({ records }))
@@ -1450,7 +1460,7 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       expectLaneFree(h)
 
       h.begin('cmd-abort')
-      const aborting: HostThreadRecordCommitPort = { ...records, identityKey: async () => 'moved' }
+      const aborting: HostThreadRecordCommitPort = { ...records, commitRename: () => 'changed' }
       const failed = await h.execute(
         {
           commandId: 'cmd-abort',
@@ -1580,9 +1590,9 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       h.seed()
       h.begin()
       const renames: string[] = []
-      const records = renameSeam(h.records, async (_artifactPath, threadId, real) => {
+      const records = renameSeam(h.records, (_artifactPath, threadId, real) => {
         renames.push(threadId)
-        await real()
+        return real()
       })
       const observer = await h.gate.enter('observer', { label: 'legacy-window' })
       expect(observer.ok).toBe(true)
@@ -1662,7 +1672,17 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         name: 'after the durable prepare, before the rename (K3)',
         kill: 'K3',
         stop: 'hang',
-        ports: (_h, records, reached) => ({ records: { ...records, identityKey: hang(reached) } }),
+        // Nothing awaits between the check and the rename, so the last await
+        // before it is the gate: hang there.
+        ports: (h, _records, reached) => ({
+          gate: {
+            ...h.gate,
+            closed: h.gate.closed,
+            snapshot: () => h.gate.snapshot(),
+            close: () => h.gate.close(),
+            enter: hang(reached)
+          }
+        }),
         expected: () => ({
           action: 'fail_interrupted',
           row: 'D4',
@@ -1678,10 +1698,14 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         kill: 'K5',
         stop: 'hang',
         ports: (_h, records, reached) => ({
-          records: renameSeam(records, async (_artifactPath, _threadId, real) => {
-            await real()
-            await hang(reached)()
-          })
+          // The rename has landed; hang in its directory fsync, before the group.
+          records: {
+            ...records,
+            syncChatsDirectory: async (threadId: string) => {
+              await records.syncChatsDirectory(threadId)
+              await hang(reached)()
+            }
+          }
         }),
         expected: () => ({ action: 'reset_and_complete', row: 'D1' }),
         chat: 'resulting',
@@ -1807,9 +1831,9 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         expect(prior).not.toBeNull()
         h.begin()
         let resulting: HostFileIdentity | null = null
-        const capturing = renameSeam(h.records, async (artifactPath, _threadId, real) => {
+        const capturing = renameSeam(h.records, (artifactPath, _threadId, real) => {
           resulting = artifactIdentityOf(artifactPath, lstatSync(artifactPath).size)
-          await real()
+          return real()
         })
         const reached = deferred()
         const ports = h.withPorts({ records: capturing, ...boundary.ports(h, capturing, reached) })
@@ -1899,6 +1923,129 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
     )
   })
 
+  describe('13b. no concurrent synchronous write is ever lost', () => {
+    type Point =
+      | 'beginTicket'
+      | 'log.append'
+      | 'gate.enter'
+      | 'syncChatsDirectory'
+      | 'publicationLock'
+      | 'awaitDurable'
+    const points: Point[] = [
+      'beginTicket',
+      'log.append',
+      'gate.enter',
+      'syncChatsDirectory',
+      'publicationLock',
+      'awaitDurable'
+    ]
+    const timings = ['microtask', 'macrotask'] as const
+
+    for (const point of points) {
+      for (const timing of timings) {
+        it(`a transcript append landing at ${point} (${timing}) survives`, async () => {
+          const h = harness()
+          h.seed()
+          h.begin()
+          const content = `written at ${point} (${timing})`
+          let fired = 0
+          const fire = (): void => {
+            if (fired > 0) return
+            fired += 1
+            const write = (): void => {
+              h.store.appendTranscript({ threadId: THREAD_ID, role: 'assistant', content })
+            }
+            if (timing === 'microtask') queueMicrotask(write)
+            else setImmediate(write)
+          }
+          const settle = async (): Promise<void> => {
+            if (timing === 'macrotask') await new Promise((resolve) => setImmediate(resolve))
+          }
+          const records: HostThreadRecordCommitPort = {
+            ...h.records,
+            beginTicket: async (threadId, projection) => {
+              if (point === 'beginTicket') fire()
+              const ticket = await h.records.beginTicket(threadId, projection)
+              await settle()
+              return ticket
+            },
+            syncChatsDirectory: async (threadId) => {
+              if (point === 'syncChatsDirectory') fire()
+              await h.records.syncChatsDirectory(threadId)
+              await settle()
+            }
+          }
+          const log: HostThreadRecordTransactionPorts['log'] = {
+            append: async (record) => {
+              const result = await h.log.append(record)
+              if (point === 'log.append' && (record as { kind: string }).kind === 'prepare') {
+                fire()
+                await settle()
+              }
+              return result
+            }
+          }
+          const gate: HostThreadRecordTransactionPorts['gate'] = {
+            get closed() {
+              return h.gate.closed
+            },
+            snapshot: () => h.gate.snapshot(),
+            close: () => h.gate.close(),
+            enter: async (mode, request) => {
+              if (point === 'gate.enter') fire()
+              const entered = await h.gate.enter(mode, request)
+              await settle()
+              return entered
+            }
+          }
+          const lock = serialQueue()
+          const publicationLock = <T>(work: () => Promise<T> | T): Promise<T> => {
+            if (point === 'publicationLock') fire()
+            return lock(async () => {
+              await settle()
+              return work()
+            })
+          }
+          const deltas: HostThreadRecordTransactionPorts['deltas'] = {
+            appendGroup: (input) => h.deltas.appendGroup(input),
+            getPosition: () => h.deltas.getPosition(),
+            awaitDurable: async () => {
+              if (point === 'awaitDurable') fire()
+              const durable = await h.deltas.awaitDurable()
+              await settle()
+              return durable
+            }
+          }
+          const outcome = await h.execute(
+            { descriptor: h.publish(stampedRecord(THREAD_ID, 1)).descriptor },
+            h.withPorts({ records, log, gate, publicationLock, deltas })
+          )
+          await new Promise((resolve) => setImmediate(resolve))
+          expect(fired).toBe(1)
+
+          // The append is never lost, whichever side of the commit it landed on.
+          const thread = h.store.getThread(THREAD_ID)
+          expect(thread).not.toBeNull()
+          const contents = thread!.messages.map((message) => message.content)
+          expect(contents.length).toBeGreaterThan(0)
+          expect(contents).toContain(content)
+          if (outcome.kind === 'succeeded') {
+            // Landed after the rename: its read-modify-write saw the commit.
+            expect(thread!.title).toBe('Stamped 1')
+          } else {
+            // Landed before the check: the persist failed as a conflict.
+            expect(outcome).toEqual({
+              kind: 'failed',
+              errorCode: 'thread_record_revision_conflict'
+            })
+            expect(h.log.get(COMMAND_ID)?.terminal?.kind).toBe('abort')
+          }
+          expectLaneFree(h)
+        })
+      }
+    }
+  })
+
   describe('createHostThreadRecordCommitPort', () => {
     it('reads the store state, identity, renames with an fsync, records the commit and discards by inode', async () => {
       const h = harness()
@@ -1926,7 +2073,13 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         prepared.artifact.path,
         prepared.artifact.byteLength
       )
-      await h.records.rename(prepared.artifact.path, THREAD_ID)
+      // A stale expected key renames nothing; the current one commits.
+      expect(h.records.commitRename(prepared.artifact.path, THREAD_ID, 'stale-key')).toBe('changed')
+      expect(h.records.commitRename(prepared.artifact.path, THREAD_ID, null)).toBe('changed')
+      const currentKey = h.records.current(THREAD_ID)?.key ?? null
+      expect(currentKey).not.toBeNull()
+      expect(h.records.commitRename(prepared.artifact.path, THREAD_ID, currentKey)).toBe('renamed')
+      await h.records.syncChatsDirectory(THREAD_ID)
       expect(readIdentity(h.chatPath)).toEqual(artifactIdentity)
       expect(h.transferListing()).toEqual([])
       const summary: HostProfileThreadSummary | null = prepared.summary

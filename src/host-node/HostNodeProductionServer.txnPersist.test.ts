@@ -179,7 +179,8 @@ const COMMIT_PORT_MEMBERS: readonly (keyof HostThreadRecordCommitPort)[] = [
   'current',
   'identity',
   'beginTicket',
-  'rename',
+  'commitRename',
+  'syncChatsDirectory',
   'committed',
   'discard',
   'abandon'

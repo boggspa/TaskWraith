@@ -27,7 +27,7 @@
  * `TASKWRAITH_HOST_TXN_PERSIST`.
  */
 import { createHash } from 'node:crypto'
-import { constants, promises as fsPromises } from 'node:fs'
+import { constants, lstatSync, promises as fsPromises, renameSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import type { HostCursorPosition } from '../shared/hostProtocol'
@@ -90,8 +90,21 @@ export interface HostThreadRecordCommitPort {
     threadId: string,
     projection: ThreadCatalogueProjection
   ): Promise<HostThreadRecordCatalogueTicket | null>
-  /** Rename the artifact into the chat file, then fsync the chats directory. */
-  rename(artifactPath: string, threadId: string): Promise<void>
+  /**
+   * The commit, in one synchronous step (M4 slice 13b): compare the chat
+   * file's identity key with `expectedKey` (null: absent) and, only when it
+   * matches, rename the artifact over it. Nothing awaits between the check
+   * and the rename, so no synchronous writer can land between them.
+   * `'changed'` renames nothing. Throws only when the check's `lstat` or the
+   * rename itself throws.
+   */
+  commitRename(
+    artifactPath: string,
+    threadId: string,
+    expectedKey: string | null
+  ): 'renamed' | 'changed'
+  /** Fsync the chats directory after a rename; retried once. */
+  syncChatsDirectory(threadId: string): Promise<void>
   /** The revision cache and, when one was carried, the summary cache. */
   committed(threadId: string, revision: number, summary: HostProfileThreadSummary | null): void
   /** Remove a prepared artifact by its exact inode. Best effort. */
@@ -373,20 +386,18 @@ export class HostThreadRecordTransaction {
     priorKey: string | null
   ): Promise<CommitStep> {
     const { records } = this.ports
-    // CAS by the store's full identity: nothing rewrote the file, by rename
-    // or in place, since its revision was read.
-    let observedKey: string | null
+    // CAS by the store's full identity and the rename, as one synchronous
+    // step: nothing rewrote the file, by rename or in place, since its
+    // revision was read, and no writer can land between the check and the
+    // rename (§23.3). A writer that landed first fails this persist as a
+    // revision conflict, as today's persist does.
+    let renamed = false
     try {
-      observedKey = await records.identityKey(input.threadId)
-    } catch {
-      return { kind: 'abort', reason: 'identity_unreadable', errorCode: PERSIST_FAILED }
-    }
-    if (observedKey !== priorKey) {
-      return { kind: 'abort', reason: 'identity_changed', errorCode: REVISION_CONFLICT }
-    }
-
-    try {
-      await records.rename(prepared.artifact.path, input.threadId)
+      const committed = records.commitRename(prepared.artifact.path, input.threadId, priorKey)
+      if (committed === 'changed') {
+        return { kind: 'abort', reason: 'identity_changed', errorCode: REVISION_CONFLICT }
+      }
+      renamed = true
     } catch {
       let after: HostFileIdentity | null
       try {
@@ -400,7 +411,16 @@ export class HostThreadRecordTransaction {
       }
       if (witness === 'indeterminate')
         return { kind: 'indeterminate', reason: 'rename_indeterminate' }
-      // Committed: the rename landed and only its directory fsync failed.
+      // Committed: the rename landed although the call threw.
+      renamed = true
+    }
+    if (renamed) {
+      try {
+        await records.syncChatsDirectory(input.threadId)
+      } catch {
+        // The rename landed; a directory fsync that failed twice is carried
+        // as today's persist carries it: the witness finds it committed.
+      }
     }
 
     // From here the record is committed: publish or indeterminate, never abort.
@@ -629,18 +649,28 @@ export function createHostThreadRecordCommitPort(options: {
       }
     },
     beginTicket: options.beginTicket,
-    rename: async (artifactPath, threadId) => {
+    commitRename: (artifactPath, threadId, expectedKey) => {
       const target = chatPath(threadId)
-      await fsPromises.rename(artifactPath, target)
+      let key: string | null
+      try {
+        key = hostProfileRecordIdentityKey(lstatSync(target, { bigint: true }))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        key = null
+      }
+      if (key !== expectedKey) return 'changed'
+      renameSync(artifactPath, target)
+      return 'renamed'
+    },
+    syncChatsDirectory: async (threadId) => {
       // One fsync under the committer hold (§13 MF-2): the target directory.
       // The transfer directory's entry may reappear after a crash; it names
       // the committed inode, and cleanup removes artifacts by exact inode.
+      const directory = dirname(chatPath(threadId))
       try {
-        await fsyncDirectory(dirname(target))
+        await fsyncDirectory(directory)
       } catch {
-        // One retry: a failure that persists is reported, and the witness
-        // then finds the rename landed.
-        await fsyncDirectory(dirname(target))
+        await fsyncDirectory(directory)
       }
     },
     committed: (threadId, revision, summary) =>
