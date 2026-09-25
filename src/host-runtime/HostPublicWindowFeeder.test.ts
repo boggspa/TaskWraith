@@ -1,6 +1,7 @@
 /**
- * Independent Threads M4 slice 13c1 (design §23.6, tests 2–7): the public
- * window feeder over a real `HostPublicWindowIndex`, a real `HostDeltaStore`
+ * Independent Threads M4 slice 13c1 (design §23.6, tests 2–6, and slice 13c2's
+ * test 6 in place of 13c1's test 7): the public window feeder over a real
+ * `HostPublicWindowIndex`, a real `HostDeltaStore`
  * in a temp data directory (with its journal write and group fsync seams), a
  * real serial publication lock, and `model` = the in-process file model over
  * a real `HostProfileDomainStore` profile. Seams wrap the real ports and
@@ -703,30 +704,66 @@ describe('HostPublicWindowFeeder (M4 slice 13c1)', () => {
     })
   })
 
-  describe("7. 'run' marks are ignored until 13c2", () => {
-    it('a run mark asks no model, publishes nothing and counts nothing', async () => {
+  describe("7. 'run' marks feed (13c2 test 6, replacing 13c1's 'ignored' placeholder)", () => {
+    it('a run mark carrying the written record is modelled at mark and lands without a worker model', async () => {
       const h = harness()
       const threadId = h.seed('Streaming')
-      h.store.appendTranscript({ threadId, role: 'user', content: 'hello' })
-      h.feeder.mark(threadId, 'run')
+      const written = h.store.appendTranscript({ threadId, role: 'user', content: 'hello' })
+      h.feeder.mark(threadId, 'run', written)
+      expect(h.feeder.counters()).toMatchObject({ eager: 1, drained: 0 })
       await h.feeder.idle()
       expect(h.modelled).toEqual([])
-      expect(h.wireIds('thread')).toEqual([])
-      expect(h.journalFeedGroups()).toEqual([])
+      expect(h.wireIds('thread')).toEqual([threadId])
+      expect(h.wireIds('run')).toEqual([`run-${threadId}`])
+      expect(h.journalFeedGroups()).toEqual(['feed:1'])
+      expect(h.releasedDurable).toEqual([true])
       expect(h.feeder.counters()).toEqual({
-        drained: 0,
+        drained: 1,
         absent: 0,
         invalid: 0,
         refused: 0,
         ignored: 0,
         rejected: 0,
         resets: 0,
-        failures: 0
+        failures: 0,
+        eager: 1,
+        eagerMs: expect.any(Number)
       })
-      // A record mark for the same thread still lands.
-      h.feeder.mark(threadId, 'record')
+      expect(h.feeder.counters().eagerMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('a run mark without the record models the file at drain, as a record mark does', async () => {
+      const h = harness()
+      const threadId = h.seed('Streaming from file')
+      h.store.appendTranscript({ threadId, role: 'user', content: 'hello' })
+      h.feeder.mark(threadId, 'run')
       await h.feeder.idle()
+      expect(h.modelled).toEqual([threadId])
       expect(h.wireIds('thread')).toEqual([threadId])
+      expect(h.journalFeedGroups()).toEqual(['feed:1'])
+      expect(h.feeder.counters()).toMatchObject({ drained: 1, eager: 0, failures: 0 })
+    })
+
+    it('a record mark carrying the record is modelled at mark too; the latest mark wins and deleted stays sticky', async () => {
+      const h = harness()
+      const threadId = h.seed('Marked twice')
+      const configured = h.store.configureThread({ threadId, title: 'Configured with record' })
+      h.feeder.mark(threadId, 'record')
+      h.feeder.mark(threadId, 'record', configured)
+      await h.feeder.idle()
+      // The later, eager mark replaced the file mark: no worker model was asked.
+      expect(h.modelled).toEqual([])
+      expect(h.wireThreadTitle(threadId)).toBe('Configured with record')
+      expect(h.feeder.counters()).toMatchObject({ eager: 1, drained: 1 })
+
+      const revision = h.store.threadRecordState(threadId)!.revision
+      expect(h.store.deleteThreadRecord({ threadId, expectedRevision: revision })).toBe(true)
+      h.feeder.mark(threadId, 'deleted')
+      h.feeder.mark(threadId, 'run', configured)
+      await h.feeder.idle()
+      expect(h.wireIds('thread')).toEqual([])
+      // The eager mark after the delete was refused: nothing was modelled for it.
+      expect(h.feeder.counters()).toMatchObject({ eager: 1, drained: 2 })
     })
   })
 

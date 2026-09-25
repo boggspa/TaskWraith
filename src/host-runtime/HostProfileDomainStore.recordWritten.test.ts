@@ -7,6 +7,8 @@
  * writes; `deleted` for the unlink. A failed write fires nothing, a throwing
  * hook never fails the write, and the transaction's own commit path (the
  * commit port over the store) fires nothing: it feeds the index itself.
+ * Since slice 13c2 (§23.8) every write passes the canonical thread it
+ * published, which decodes equal to the file; the delete passes none.
  *
  * The behavioural half runs the real store in a temp profile. The closure
  * half is an AST probe over the store's source: every chat-path
@@ -24,9 +26,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { MainSourceProbe } from '../main/mainSourceProbe.testutil'
 import {
+  decodeHostProfileThread,
   HOST_PROFILE_CHATS_DIRECTORY,
   HostProfileDomainStore,
   type HostProfileDomainStoreOptions,
+  type HostProfileThread,
   type HostThreadRecordWrittenKind
 } from './HostProfileDomainStore'
 import { createHostThreadRecordCommitPort } from './HostThreadRecordTransaction'
@@ -53,7 +57,11 @@ interface Harness {
   fired: Fired[]
   /** What the hook saw on disk for its thread at the moment it fired. */
   seen: Array<{ exists: boolean; title: string | null }>
+  /** The thread each call passed (13c2), or undefined. */
+  passed: Array<HostProfileThread | undefined>
   chatPath(threadId: string): string
+  /** The file's record as the store's decoder reads it. */
+  decoded(threadId: string): HostProfileThread
 }
 
 function harness(
@@ -64,6 +72,7 @@ function harness(
   roots.push(profilePath)
   const fired: Fired[] = []
   const seen: Harness['seen'] = []
+  const passed: Harness['passed'] = []
   const chatPath = (threadId: string): string =>
     join(profilePath, HOST_PROFILE_CHATS_DIRECTORY, `${threadId}.json`)
   let sequence = 0
@@ -72,8 +81,9 @@ function harness(
     authority: { assertProfileAuthority: () => undefined },
     now: () => NOW,
     idFactory: () => `thread-${++sequence}`,
-    onThreadRecordWritten: (threadId, kind) => {
+    onThreadRecordWritten: (threadId, kind, thread) => {
       fired.push({ threadId, kind })
+      passed.push(thread)
       const path = chatPath(threadId)
       const exists = existsSync(path)
       seen.push({
@@ -86,7 +96,16 @@ function harness(
     },
     ...overrides
   })
-  return { profilePath, store, fired, seen, chatPath }
+  return {
+    profilePath,
+    store,
+    fired,
+    seen,
+    passed,
+    chatPath,
+    decoded: (threadId) =>
+      decodeHostProfileThread(JSON.parse(readFileSync(chatPath(threadId), 'utf8')) as unknown)
+  }
 }
 
 function publishTransfer(profilePath: string, transferId: string, record: unknown) {
@@ -244,6 +263,116 @@ describe('HostProfileDomainStore.onThreadRecordWritten (M4 slice 13c1)', () => {
       )
       expect(h.fired).toEqual([{ threadId: created.appChatId, kind: 'deleted' }])
       expect(h.seen).toEqual([{ exists: false, title: null }])
+    })
+  })
+
+  describe('the hook receives the written thread (13c2), and none for the delete', () => {
+    it('writeThread passes the record it returned, which decodes equal to the file, for every writer', () => {
+      const h = harness()
+      const created = h.store.createThread({ scope: 'global', title: 'Passed' })
+      const threadId = created.appChatId
+      const returned: HostProfileThread[] = [created]
+      returned.push(h.store.configureThread({ threadId, providerId: 'codex', title: 'Configured' }))
+      returned.push(h.store.setThreadKind({ threadId, targetKind: 'ensemble' }))
+      returned.push(
+        h.store.setThreadKind({ threadId, targetKind: 'single', canonicalProviderId: 'codex' })
+      )
+      returned.push(h.store.archiveThread(threadId, true))
+      returned.push(h.store.archiveThread(threadId, false))
+      returned.push(h.store.appendTranscript({ threadId, role: 'user', content: 'hello' }))
+      returned.push(
+        h.store.updateRun({
+          threadId,
+          runId: 'run-1',
+          status: 'running',
+          provider: 'codex',
+          phase: 'starting',
+          startedAt: STARTED_AT
+        })
+      )
+      returned.push(
+        h.store.recordRunTool({
+          threadId,
+          runId: 'run-1',
+          toolId: 'tool-1',
+          toolName: 'Edit',
+          phase: 'started'
+        })
+      )
+      returned.push(
+        h.store.updateRun({ threadId, runId: 'run-1', status: 'completed', endedAt: STARTED_AT })
+      )
+      const current = h.store.getThread(threadId)!
+      returned.push(
+        h.store.persistThreadRecord({
+          threadId,
+          record: { ...current, title: 'Persisted' },
+          expectedRevision: current.persistenceRevision ?? 0
+        })
+      )
+      expect(returned).toHaveLength(11)
+      expect(h.fired.map((entry) => entry.kind)).toEqual([
+        'record',
+        'record',
+        'record',
+        'record',
+        'record',
+        'record',
+        'run',
+        'run',
+        'run',
+        'run',
+        'record'
+      ])
+      expect(h.passed).toHaveLength(returned.length)
+      for (const [index, thread] of returned.entries()) {
+        // The very object the writer published and returned, by identity.
+        expect(h.passed[index]).toBe(thread)
+        expect(thread.persistenceRevision).toBe(index)
+      }
+      // The last one is the file: the decoder reads back what was passed.
+      expect(h.passed.at(-1)).toEqual(h.decoded(threadId))
+      expect(h.decoded(threadId).title).toBe('Persisted')
+    })
+
+    it('the adopt-by-rename path passes the published record, which decodes equal to the adopted file', () => {
+      const h = harness()
+      const created = h.store.createThread({ scope: 'global', title: 'Adopt base' })
+      h.passed.length = 0
+      const transfer = publishTransfer(h.profilePath, 'adopt-2', {
+        ...created,
+        persistenceRevision: 1,
+        title: 'Adopted with record'
+      })
+      const adopted = h.store.persistThreadRecord({
+        threadId: created.appChatId,
+        record: transfer.record,
+        expectedRevision: 0,
+        verifiedTransfer: {
+          path: transfer.verified.path,
+          identity: transfer.verified.identity,
+          byteLength: transfer.descriptor.byteLength
+        }
+      })
+      expect(existsSync(hostThreadRecordTransferPath(h.profilePath, 'adopt-2'))).toBe(false)
+      expect(h.passed).toHaveLength(1)
+      expect(h.passed[0]).toBe(adopted)
+      expect(h.passed[0]).toEqual(h.decoded(created.appChatId))
+      expect(h.passed[0]!.title).toBe('Adopted with record')
+      expect(h.passed[0]!.persistenceRevision).toBe(1)
+    })
+
+    it('the delete passes no thread', () => {
+      const h = harness()
+      const created = h.store.createThread({ scope: 'global', title: 'Doomed' })
+      expect(h.passed).toHaveLength(1)
+      expect(h.passed[0]).toBeDefined()
+      h.passed.length = 0
+      expect(h.store.deleteThreadRecord({ threadId: created.appChatId, expectedRevision: 0 })).toBe(
+        true
+      )
+      expect(h.fired.at(-1)).toEqual({ threadId: created.appChatId, kind: 'deleted' })
+      expect(h.passed).toEqual([undefined])
     })
   })
 
@@ -452,6 +581,9 @@ describe('HostProfileDomainStore.onThreadRecordWritten (M4 slice 13c1)', () => {
       expect(notifies).toHaveLength(1)
       expect(probe.argText(notifies[0]!, 0)).toBe('thread.appChatId')
       expect(probe.argText(notifies[0]!, 1)).toBe('kind')
+      // 13c2: the record it published rides along.
+      expect(notifies[0]!.arguments).toHaveLength(3)
+      expect(probe.argText(notifies[0]!, 2)).toBe('thread')
       const write = probe.callsTo(body, 'atomicJson')[0]!
       expect(notifies[0]!.getStart()).toBeGreaterThan(write.getEnd())
       // And the notifier reaches the option, guarded so a throw never fails the write.
@@ -507,6 +639,9 @@ describe('HostProfileDomainStore.onThreadRecordWritten (M4 slice 13c1)', () => {
       expect(notifies).toHaveLength(1)
       expect(probe.argText(notifies[0]!, 0)).toBe('input.threadId')
       expect(probe.argText(notifies[0]!, 1)).toBe("'record'")
+      // 13c2: the canonical record the adoption published rides along.
+      expect(notifies[0]!.arguments).toHaveLength(3)
+      expect(probe.argText(notifies[0]!, 2)).toBe('published')
       expect(notifies[0]!.getStart()).toBeGreaterThan(adopt.getEnd())
     })
 
@@ -521,6 +656,8 @@ describe('HostProfileDomainStore.onThreadRecordWritten (M4 slice 13c1)', () => {
       expect(notifies).toHaveLength(1)
       expect(probe.argText(notifies[0]!, 0)).toBe('input.threadId')
       expect(probe.argText(notifies[0]!, 1)).toBe("'deleted'")
+      // 13c2: the delete passes no record.
+      expect(notifies[0]!.arguments).toHaveLength(2)
       expect(notifies[0]!.getStart()).toBeGreaterThan(unlink[0]!.getEnd())
       // No other class method removes a chat file by another name.
       for (const remover of ['rmSync', 'unlink', 'rm']) {

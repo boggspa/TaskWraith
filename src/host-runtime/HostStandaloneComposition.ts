@@ -76,7 +76,7 @@ import {
   modelHostThreadRecordOffLoop,
   prepareHostThreadRecordOffLoop
 } from './HostThreadRecordTransferWorker'
-import type { HostThreadRecordWrittenKind } from './HostProfileDomainStore'
+import type { HostProfileThread, HostThreadRecordWrittenKind } from './HostProfileDomainStore'
 import { HostPublicWindowFeeder } from './HostPublicWindowFeeder'
 import type { HostThreadRecordFileModel, HostThreadRecordModelInput } from './HostThreadRecordModel'
 import { HostTransactionLog } from './HostTransactionLog'
@@ -224,7 +224,11 @@ export interface HostStandaloneComposition {
    * M4 slice 13c1: a chat-file write for the public window feeder. Present
    * only while the transactional persist is wired.
    */
-  markThreadRecord?(threadId: string, kind: HostThreadRecordWrittenKind): void
+  markThreadRecord?(
+    threadId: string,
+    kind: HostThreadRecordWrittenKind,
+    thread?: HostProfileThread
+  ): void
 }
 
 function requireFunction(value: unknown, label: string): void {
@@ -532,8 +536,11 @@ export function createHostStandaloneComposition(
     shutdown,
     ...(threadRecordTransaction
       ? {
-          markThreadRecord: (threadId: string, kind: HostThreadRecordWrittenKind) =>
-            threadRecordTransaction.feeder.mark(threadId, kind)
+          markThreadRecord: (
+            threadId: string,
+            kind: HostThreadRecordWrittenKind,
+            thread?: HostProfileThread
+          ) => threadRecordTransaction.feeder.mark(threadId, kind, thread)
         }
       : {})
   }

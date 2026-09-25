@@ -250,9 +250,15 @@ export interface HostProfileDomainStoreOptions {
    * M4 slice 13c: called after a chat file was replaced or removed, so the
    * public window index can follow every writer. `run` marks the three
    * run-port writes, `deleted` the unlink, `record` everything else. A
-   * throwing hook is swallowed: it never fails the write.
+   * write passes the canonical thread it published (slice 13c2), so the
+   * index can model it without reading the file again; the delete passes
+   * none. A throwing hook is swallowed: it never fails the write.
    */
-  readonly onThreadRecordWritten?: (threadId: string, kind: HostThreadRecordWrittenKind) => void
+  readonly onThreadRecordWritten?: (
+    threadId: string,
+    kind: HostThreadRecordWrittenKind,
+    thread?: HostProfileThread
+  ) => void
   /** Summary bytes `listThreadSummaries()` may hold resident. Measured on the
    *  summaries themselves rather than on the records they came from, since the
    *  transcript is 95% of a record and none of it is held. 0 disables the cache
@@ -1930,7 +1936,7 @@ export class HostProfileDomainStore {
       throw error
     }
     publication?.commit()
-    this.notifyThreadRecordWritten(input.threadId, 'record')
+    this.notifyThreadRecordWritten(input.threadId, 'record', published)
     return published
   }
 
@@ -2407,9 +2413,13 @@ export class HostProfileDomainStore {
     return thread
   }
 
-  private notifyThreadRecordWritten(threadId: string, kind: HostThreadRecordWrittenKind): void {
+  private notifyThreadRecordWritten(
+    threadId: string,
+    kind: HostThreadRecordWrittenKind,
+    thread?: HostProfileThread
+  ): void {
     try {
-      this.onThreadRecordWritten?.(threadId, kind)
+      this.onThreadRecordWritten?.(threadId, kind, thread)
     } catch {
       // The index follows on the next write; the write itself stands.
     }
@@ -2432,7 +2442,7 @@ export class HostProfileDomainStore {
     }
     publication?.commit()
     this.cacheThreadRevision(thread.appChatId, thread.persistenceRevision ?? 0)
-    this.notifyThreadRecordWritten(thread.appChatId, kind)
+    this.notifyThreadRecordWritten(thread.appChatId, kind, thread)
   }
 
   private chatPath(threadId: string): string {

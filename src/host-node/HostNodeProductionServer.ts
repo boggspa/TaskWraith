@@ -580,8 +580,8 @@ export class HostNodeProductionServer {
         profilePath: this.lease.path,
         // M4 slice 13c1: every chat-file write reaches the public window
         // feeder, which exists only while the transactional persist is on.
-        onThreadRecordWritten: (threadId, kind) =>
-          this.composition?.markThreadRecord?.(threadId, kind),
+        onThreadRecordWritten: (threadId, kind, thread) =>
+          this.composition?.markThreadRecord?.(threadId, kind, thread),
         authority: { assertProfileAuthority: () => this.lease!.assertHeld() },
         ...(this.threadCatalogueMirror
           ? {

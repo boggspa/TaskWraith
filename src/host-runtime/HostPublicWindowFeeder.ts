@@ -10,8 +10,12 @@
  *   the transfer worker, outside every lock;
  * - `deleted`: a `delete` change, whose group must land; a group that fails
  *   is replaced by a generation reset, which lands it too;
- * - `run` (the run port): ignored until slice 13c2, which feeds it
- *   incrementally.
+ * - a write that carries the record it published (every store write since
+ *   slice 13c2, the run port's included) is modelled at once from that
+ *   in-memory record: the same function over the same object as the file
+ *   model, with no re-read. Measured at 2–10 ms for the largest real
+ *   records, under 5% of the write's own read and parse (§23.8). Only the
+ *   model is retained, never the record.
  *
  * Marks coalesce per thread and one drain runs at a time. Each drain is one
  * index transaction and one group, under the publication lock that the
@@ -22,7 +26,13 @@
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { HostDeltaStore } from './HostDeltaStore'
 import { validateHostDomainEffectBatch } from './HostDomainDeltaPublisher'
-import type { HostThreadRecordWrittenKind } from './HostProfileDomainStore'
+import { performance } from 'node:perf_hooks'
+
+import type { HostProfileThread, HostThreadRecordWrittenKind } from './HostProfileDomainStore'
+import {
+  modelHostThreadRecordEffects,
+  type HostThreadRecordEffectModel
+} from './HostThreadRecordEffectModel'
 import type { HostPublicWindowChange, HostPublicWindowIndex } from './HostPublicWindowIndex'
 import type { HostThreadRecordFileModel } from './HostThreadRecordModel'
 
@@ -53,14 +63,25 @@ export interface HostPublicWindowFeederCounters {
   readonly rejected: number
   /** Drains whose group failed and was replaced by a generation reset. */
   readonly resets: number
-  /** Model requests that threw (a dead worker); the mark is dropped, and the next write marks it again. */
+  /**
+   * Models that threw, at mark time or in the worker (a dead worker); the
+   * thread's pending entry is dropped, and the next write marks it again.
+   */
   readonly failures: number
+  /** Models computed at mark time from the written record (slice 13c2). */
+  readonly eager: number
+  /** Their total time, in milliseconds. */
+  readonly eagerMs: number
 }
 
-type Mark = Exclude<HostThreadRecordWrittenKind, 'run'>
+/** A thread's pending change: modelled at mark time, from its file at drain, or deleted. */
+type Pending =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'file' }
+  | { readonly kind: 'model'; readonly effects: HostThreadRecordEffectModel }
 
 export class HostPublicWindowFeeder {
-  private readonly marked = new Map<string, Mark>()
+  private readonly marked = new Map<string, Pending>()
   private draining: Promise<void> | null = null
   private closed = false
   private stopReason: string | null = null
@@ -74,7 +95,9 @@ export class HostPublicWindowFeeder {
     ignored: 0,
     rejected: 0,
     resets: 0,
-    failures: 0
+    failures: 0,
+    eager: 0,
+    eagerMs: 0
   }
 
   constructor(private readonly options: HostPublicWindowFeederOptions) {}
@@ -88,14 +111,33 @@ export class HostPublicWindowFeeder {
     return { ...this.counts }
   }
 
-  /** Synchronous and cheap: called from the store's write path. */
-  mark(threadId: string, kind: HostThreadRecordWrittenKind): void {
+  /**
+   * Synchronous: called from the store's write path. With the record the
+   * write published, the model is computed here and only it is kept.
+   */
+  mark(threadId: string, kind: HostThreadRecordWrittenKind, thread?: HostProfileThread): void {
     if (this.closed || this.stopReason !== null) return
-    // The run port is slice 13c2's: it feeds one run incrementally.
-    if (kind === 'run') return
     // A delete is final for the incarnation: a later mark cannot undo it.
-    if (this.marked.get(threadId) === 'deleted') return
-    this.marked.set(threadId, kind)
+    if (this.marked.get(threadId)?.kind === 'deleted') return
+    if (kind === 'deleted') {
+      this.marked.set(threadId, { kind: 'deleted' })
+    } else if (thread) {
+      const startedAt = performance.now()
+      let effects: HostThreadRecordEffectModel
+      try {
+        effects = modelHostThreadRecordEffects(thread)
+      } catch {
+        this.counts.failures += 1
+        this.marked.delete(threadId)
+        return
+      } finally {
+        this.counts.eagerMs += performance.now() - startedAt
+      }
+      this.counts.eager += 1
+      this.marked.set(threadId, { kind: 'model', effects })
+    } else {
+      this.marked.set(threadId, { kind: 'file' })
+    }
     this.schedule()
   }
 
@@ -135,12 +177,20 @@ export class HostPublicWindowFeeder {
     if (this.stopReason !== null) this.marked.clear()
   }
 
-  private async drain(batch: ReadonlyArray<readonly [string, Mark]>): Promise<void> {
+  private async drain(batch: ReadonlyArray<readonly [string, Pending]>): Promise<void> {
     // Model outside every lock: the worker reads and decodes the file.
     const changes: HostPublicWindowChange[] = []
-    for (const [threadId, kind] of batch) {
-      if (kind === 'deleted') {
+    for (const [threadId, pending] of batch) {
+      if (pending.kind === 'deleted') {
         changes.push({ kind: 'delete', threadId })
+        continue
+      }
+      if (pending.kind === 'model') {
+        if (pending.effects.kind === 'refused') {
+          this.counts.refused += 1
+          continue
+        }
+        changes.push({ kind: 'model', model: pending.effects })
         continue
       }
       let modelled: HostThreadRecordFileModel
