@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HOST_PROJECTION_VERSION } from '../shared/hostProtocol'
 
 import {
+  HOST_DELTA_MAX_PAYLOAD_BYTES,
   HostDeltaStore,
   HOST_DELTA_CHECKPOINT_FILENAME,
   HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
@@ -1540,7 +1541,8 @@ describe('HostDeltaStore', () => {
 
   it('persists oversized safe payloads as length+digest only and reopens without raw prefix', () => {
     const store = openStore()
-    const bigNote = 'n'.repeat(9000)
+    // Past the row cap: carried rows stop there, and the privacy stub takes over.
+    const bigNote = 'n'.repeat(HOST_DELTA_MAX_PAYLOAD_BYTES + 1)
     const result = store.append({
       kind: 'upsert',
       family: 'thread',

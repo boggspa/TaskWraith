@@ -73,7 +73,20 @@ export const DEFAULT_HOST_DELTA_COMPACT_AFTER_RECORDS = 256
 
 const MAX_ENTITY_ID = 512
 const MAX_REASON = 500
-const MAX_PAYLOAD_JSON = 8_000
+/**
+ * A delta row's payload JSON may be up to this many UTF-8 bytes. It sits above
+ * the protocol's largest row (a round's run ids: 2,000 list items of about 40
+ * bytes, plus fixed fields, about 80 KB), so real rows are carried whole: every
+ * client rejects the stub (M4 R2-S5). Anything larger keeps the privacy stub.
+ */
+export const HOST_DELTA_MAX_PAYLOAD_BYTES = 128_000
+/**
+ * `since()` answers a resnapshot rather than a reply whose envelopes exceed
+ * this many bytes, leaving the frame's own fields room under the transport's
+ * 256,000-byte line budget, past which the reply becomes an error frame and
+ * the client's socket is destroyed.
+ */
+export const HOST_DELTA_SINCE_MAX_BYTES = 192_000
 
 /** Stable typed error code when a delta payload is rejected for privacy. */
 export const HOST_DELTA_FORBIDDEN_PAYLOAD_CODE = 'host_delta_forbidden_payload' as const
@@ -333,6 +346,8 @@ export interface HostDeltaStoreOptions {
   onCompactionStage?: (stage: HostDeltaCompactionStage) => void | Promise<void>
   /** Writes and fsyncs a background checkpoint's temp file. */
   checkpointWrite?: (tmpPath: string, data: string) => Promise<void>
+  /** Byte bound on one `since()` reply; defaults to HOST_DELTA_SINCE_MAX_BYTES. */
+  sinceMaxBytes?: number
 }
 
 interface CheckpointDocument {
@@ -406,6 +421,7 @@ export class HostDeltaStore {
   private readonly onFailStop: HostDeltaStoreOptions['onFailStop']
   private readonly onCompactionStage: HostDeltaStoreOptions['onCompactionStage']
   private readonly checkpointWrite: NonNullable<HostDeltaStoreOptions['checkpointWrite']>
+  private readonly sinceMaxBytes: number
   private compactionInFlight = false
   /**
    * The highest sealed sequence ever used or covered. It never goes back, so
@@ -466,6 +482,7 @@ export class HostDeltaStore {
     this.onFailStop = options.onFailStop
     this.onCompactionStage = options.onCompactionStage
     this.checkpointWrite = options.checkpointWrite ?? writeAndFsyncFile
+    this.sinceMaxBytes = Math.max(1, options.sinceMaxBytes ?? HOST_DELTA_SINCE_MAX_BYTES)
     this.reopen()
   }
 
@@ -925,6 +942,7 @@ export class HostDeltaStore {
     }
 
     const deltas: HostDeltaEnvelope[] = []
+    let replyBytes = 0
     for (let c = clientCursor + 1; c <= head; c += 1) {
       const record = this.recordsByCursor.get(c)
       if (!record) {
@@ -952,6 +970,19 @@ export class HostDeltaStore {
         return {
           kind: 'full_resnapshot_required',
           reason: 'previous_cursor_mismatch',
+          generation: this.generation,
+          cursor: head,
+          clientGeneration,
+          clientCursor
+        }
+      }
+      replyBytes += record.retainedBytes
+      if (replyBytes > this.sinceMaxBytes) {
+        // Too large for one reply: the client resnapshots instead of losing
+        // its socket to an oversized frame.
+        return {
+          kind: 'full_resnapshot_required',
+          reason: 'retention_gap',
           generation: this.generation,
           cursor: head,
           clientGeneration,
@@ -2165,7 +2196,7 @@ function estimateBytes(envelope: HostDeltaEnvelope): number {
   try {
     return Buffer.byteLength(JSON.stringify(envelope), 'utf8')
   } catch {
-    return MAX_PAYLOAD_JSON
+    return HOST_DELTA_MAX_PAYLOAD_BYTES
   }
 }
 
@@ -2199,7 +2230,7 @@ export function prepareHostDeltaPayload(payload: unknown): HostDeltaPayloadPrepa
     }
   }
 
-  if (json.length <= MAX_PAYLOAD_JSON) {
+  if (Buffer.byteLength(json, 'utf8') <= HOST_DELTA_MAX_PAYLOAD_BYTES) {
     return { ok: true, payload }
   }
 

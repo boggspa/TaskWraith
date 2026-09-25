@@ -11,6 +11,7 @@ import {
   type HostDomainEffectDto
 } from './HostDomainDeltaPublisher'
 import {
+  HOST_DELTA_MAX_PAYLOAD_BYTES,
   HostDeltaStore,
   HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
   HOST_DELTA_JOURNAL_FILENAME,
@@ -396,7 +397,8 @@ describe('HostDomainDeltaPublisher', () => {
 
   it('oversized safe payload persists digest/length only with no raw prefix', () => {
     const { store, publisher } = openPublisher()
-    const bigNote = 'n'.repeat(9000)
+    // Past the row cap: carried rows stop there, and the privacy stub takes over.
+    const bigNote = 'n'.repeat(HOST_DELTA_MAX_PAYLOAD_BYTES + 1)
     const result = publisher.publish([upsert('big', { title: 'safe-oversize', note: bigNote })])
     expect(result.kind).toBe('published')
     if (result.kind !== 'published') return
