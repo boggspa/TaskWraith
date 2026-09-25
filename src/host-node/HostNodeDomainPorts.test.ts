@@ -3237,13 +3237,15 @@ describe('HostNodeDomainPorts', () => {
 
     function expectOneControlResponseSpan(
       snapshot: ReturnType<ReturnType<typeof createControlledRecorder>['snapshot']>,
-      expectedChatId: string
+      expectedChatId: string,
+      expectedReason: string
     ) {
       const control = snapshot.spans.filter((span) => span.kind === 'control_response')
       expect(control).toHaveLength(1)
       expect(control[0]).toMatchObject({
         chatId: expectedChatId,
         kind: 'control_response',
+        reason: expectedReason,
         process: 'host',
         resource: 'none'
       })
@@ -3319,7 +3321,7 @@ describe('HostNodeDomainPorts', () => {
           { id: 'target' }
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
-      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId, 'cancel')
       releaseRun()
     })
 
@@ -3434,7 +3436,7 @@ describe('HostNodeDomainPorts', () => {
           { id: 'target' }
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'approval_decided' })
-      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId, 'approval_decision')
     })
 
     it('emits a control_response span for question.answer', async () => {
@@ -3489,7 +3491,7 @@ describe('HostNodeDomainPorts', () => {
           { id: 'target' }
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'question_answered' })
-      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId, 'question_answer')
     })
 
     it('emits a control_response span for ensemble.seat.toggle', async () => {
@@ -3520,7 +3522,7 @@ describe('HostNodeDomainPorts', () => {
           { id: 'target' }
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
-      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId, 'seat_toggle')
     })
 
     it('contains a throwing recorder so the command result is unchanged', async () => {

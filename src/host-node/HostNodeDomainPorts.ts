@@ -552,7 +552,12 @@ export class HostNodeDomainPorts {
     }
   }
 
-  private recordControlResponse(chatId: string | undefined, startedAt: number | undefined): void {
+  /** Which control a response answered: the harness's control-action names, as Desktop's. */
+  private recordControlResponse(
+    chatId: string | undefined,
+    startedAt: number | undefined,
+    reason: 'cancel' | 'approval_decision' | 'question_answer' | 'seat_toggle'
+  ): void {
     if (
       chatId === undefined ||
       startedAt === undefined ||
@@ -563,6 +568,7 @@ export class HostNodeDomainPorts {
       this.options.workSpanRecorder.record({
         chatId,
         kind: 'control_response',
+        reason,
         startedAt,
         durationMs: Math.max(0, this.now() - startedAt)
       })
@@ -1168,7 +1174,7 @@ export class HostNodeDomainPorts {
                   : 'run_not_cancellable'
             )
       } finally {
-        this.recordControlResponse(chatId, startedAt)
+        this.recordControlResponse(chatId, startedAt, 'cancel')
       }
     }
 
@@ -1186,7 +1192,7 @@ export class HostNodeDomainPorts {
           ? { status: 'succeeded', resultSummary: 'approval_decided' }
           : failed('approval_not_found')
       } finally {
-        this.recordControlResponse(chatId, startedAt)
+        this.recordControlResponse(chatId, startedAt, 'approval_decision')
       }
     }
 
@@ -1210,7 +1216,7 @@ export class HostNodeDomainPorts {
           ? { status: 'succeeded', resultSummary: 'question_answered' }
           : failed('question_not_found')
       } finally {
-        this.recordControlResponse(chatId, startedAt)
+        this.recordControlResponse(chatId, startedAt, 'question_answer')
       }
     }
 
@@ -1220,7 +1226,7 @@ export class HostNodeDomainPorts {
       try {
         return this.toggleEnsembleSeat(decoded.value)
       } finally {
-        this.recordControlResponse(chatId, startedAt)
+        this.recordControlResponse(chatId, startedAt, 'seat_toggle')
       }
     }
 
