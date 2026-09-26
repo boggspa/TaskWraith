@@ -1046,6 +1046,11 @@ export class HostDeltaStore {
     return this.groupsByCommand.delete(commandId)
   }
 
+  /** The commands whose group is still anchored: slice 14's boot driver releases them. */
+  anchoredCommandIds(): string[] {
+    return [...this.groupsByCommand.keys()]
+  }
+
   private appendGenerationReset(input: HostDeltaAppendInput): HostDeltaAppendResult {
     let preparedPayload = input.payload
     if (input.payload !== undefined) {

@@ -135,6 +135,12 @@ export interface HostTransactionRecoveryInput {
     readonly recoveryState: 'recoverable-indeterminate' | null
     /** The class `begin` recorded durably. */
     readonly commandClass: HostCommandExecutionClass
+    /**
+     * The receipt's error code. Boot recovery's own mark
+     * (`transaction_recovery_indeterminate`) is final: a command with no
+     * prepare has no manifest record to make it so (slice 14a).
+     */
+    readonly errorCode?: string | null
   } | null
   readonly prepare: HostTransactionPrepareRecord | null
   /** The manifest's terminal record for the command, if any. */
@@ -383,7 +389,9 @@ export function decideHostTransactionRecovery(
   // decide. Indeterminate is final once the manifest, or the receipt itself,
   // records it for good: nothing is re-executed or decided again.
   const recoverable =
-    receipt.status === 'indeterminate' && receipt.recoveryState === 'recoverable-indeterminate'
+    receipt.status === 'indeterminate' &&
+    receipt.recoveryState === 'recoverable-indeterminate' &&
+    receipt.errorCode !== 'transaction_recovery_indeterminate'
   if (terminal?.kind === 'indeterminate' || (receipt.status === 'indeterminate' && !recoverable)) {
     return NONE
   }

@@ -15,8 +15,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { HostCommandReceiptStore, type HostCommandReceiptRecord } from './HostCommandReceiptStore'
 import { HostDeltaStore, type HostDeltaCompactionStage } from './HostDeltaStore'
 import { HOST_TRANSACTION_LOG_FILENAME, HostTransactionLog } from './HostTransactionLog'
+import { recoverHostTransactions } from './HostTransactionRecovery'
 import {
-  decideHostTransactionRecovery,
   hostTransactionRecordsCompactable,
   type HostFileIdentity,
   type HostTransactionRecoveryAction,
@@ -420,6 +420,9 @@ interface Stores {
 interface DriverRun {
   decisions: Map<string, HostTransactionRecoveryAction>
   stores: Stores
+  /** Each command's group as the driver found it, before it released anchors. */
+  groups: Map<string, ReturnType<HostDeltaStore['findGroup']>>
+  anchorsReleased: readonly string[]
 }
 
 describe.skipIf(process.platform === 'win32')(
@@ -528,37 +531,11 @@ describe.skipIf(process.platform === 'win32')(
       }
     }
 
-    function recoveryInput(
-      dataDir: string,
-      stores: Stores,
-      commandId: string
-    ): HostTransactionRecoveryInput {
-      const record = receiptOf(stores, commandId)
-      const entry = stores.log.get(commandId)
-      const threadId = entry?.prepare?.threadId ?? record?.target.id ?? THREAD
-      return {
-        receipt: receiptInput(record),
-        prepare: entry?.prepare ?? null,
-        terminal: entry?.terminal ?? null,
-        observed: readIdentity(chatPath(dataDir, threadId)),
-        group: (() => {
-          const group = stores.deltas.findGroup(commandId)
-          return group ? { count: group.count, setDigest: group.setDigest, end: group.end } : null
-        })()
-      }
-    }
-
-    async function appendDurable(stores: Stores, record: unknown): Promise<void> {
-      const result = await stores.log.append(record)
-      if (result.kind !== 'durable' && result.kind !== 'duplicate') {
-        throw new Error(`manifest append failed: ${JSON.stringify(result)}`)
-      }
-    }
-
     /**
-     * The stub recovery driver (§19), on fresh store instances, in RR-2's boot
-     * order: decide everything; apply every D3 and D4; one reset, then every
-     * D1 at it; then the indeterminates.
+     * Boot recovery on fresh store instances: the production driver (slice
+     * 14a, `recoverHostTransactions`), which replaced §19's stub. Each
+     * command's group is read first, since the driver releases the anchors of
+     * the commands it leaves terminal.
      */
     async function runDriver(dataDir: string): Promise<DriverRun> {
       const stores = openStores(dataDir)
@@ -569,88 +546,24 @@ describe.skipIf(process.platform === 'win32')(
         expect(record.status).not.toBe('indeterminate')
         expect(record).not.toHaveProperty('recoveryState')
       }
-      const commandIds = new Set<string>([
-        ...stores.receipts.list().map((record) => record.commandId),
-        ...stores.log.commandIds()
-      ])
-      const decisions = new Map<string, HostTransactionRecoveryAction>()
-      for (const commandId of commandIds) {
-        decisions.set(
-          commandId,
-          decideHostTransactionRecovery(recoveryInput(dataDir, stores, commandId))
-        )
-      }
-
-      for (const [commandId, decision] of decisions) {
-        if (decision.action === 'complete_at_position') {
-          // NH-1's order: the manifest's mark, then the receipt.
-          if (decision.markPublished) {
-            await appendDurable(stores, {
-              kind: 'published',
-              commandId,
-              position: decision.position,
-              at: recordClock++
-            })
-          }
-          stores.receipts.complete({ commandId, status: 'succeeded', position: decision.position })
-        } else if (decision.action === 'mark_published') {
-          await appendDurable(stores, {
-            kind: 'published',
-            commandId,
-            position: decision.position,
-            at: recordClock++
-          })
-        } else if (decision.action === 'fail_interrupted') {
-          if (decision.writeAbort) {
-            await appendDurable(stores, {
-              kind: 'abort',
-              commandId,
-              reason: 'interrupted',
-              at: recordClock++
-            })
-          }
-          if (decision.completeReceipt) {
-            stores.receipts.complete({ commandId, status: 'failed', errorCode: 'interrupted' })
-          }
-        }
-      }
-
-      const resets = [...decisions].filter(
-        ([, decision]) => decision.action === 'reset_and_complete'
+      const groups = new Map(
+        stores.deltas
+          .anchoredCommandIds()
+          .map((commandId) => [commandId, stores.deltas.findGroup(commandId)])
       )
-      if (resets.length > 0) {
-        const reset = stores.deltas.resetGeneration('transaction recovery')
-        if (reset.kind !== 'appended') throw new Error(`reset was ${reset.kind}`)
-        for (const [commandId] of resets) {
-          await appendDurable(stores, {
-            kind: 'published',
-            commandId,
-            position: reset.position,
-            at: recordClock++
-          })
-          stores.receipts.complete({ commandId, status: 'succeeded', position: reset.position })
-        }
-      }
-
-      for (const [commandId, decision] of decisions) {
-        if (decision.action !== 'indeterminate') continue
-        if (stores.log.get(commandId)?.prepare) {
-          await appendDurable(stores, {
-            kind: 'indeterminate',
-            commandId,
-            reason: decision.reason,
-            at: recordClock++
-          })
-        }
-        if (receiptOf(stores, commandId)?.status === 'pending') {
-          stores.receipts.markIndeterminate({
-            commandId,
-            position: stores.deltas.getPosition(),
-            errorCode: 'transaction_recovery_indeterminate'
-          })
-        }
-      }
-      return { decisions, stores }
+      // The production driver (slice 14a) replaces §19's stub.
+      const report = await recoverHostTransactions(
+        {
+          receipts: stores.receipts,
+          log: stores.log,
+          deltas: stores.deltas,
+          profilePath: dataDir,
+          now: () => recordClock++
+        },
+        { reset: 'when-needed' }
+      )
+      const decisions = new Map(report.decisions)
+      return { decisions, stores, groups, anchorsReleased: report.anchorsReleased }
     }
 
     function snapshotFiles(dataDir: string): Map<string, string> {
@@ -760,8 +673,12 @@ describe.skipIf(process.platform === 'win32')(
           const two = writerIdentities(dataDir, 'cmd-2')
           expect(one.prior).toBeNull()
           expect(two.prior).toEqual(one.resulting)
-          const groupOne = first.stores.deltas.findGroup('cmd-1')
-          const groupTwo = first.stores.deltas.findGroup('cmd-2')
+          const groupOne = first.groups.get('cmd-1')
+          const groupTwo = first.groups.get('cmd-2')
+          // Both receipts are terminal now: the driver released both anchors.
+          expect([...first.anchorsReleased].sort()).toEqual(['cmd-1', 'cmd-2'])
+          expect(first.stores.deltas.findGroup('cmd-1')).toBeNull()
+          expect(first.stores.deltas.findGroup('cmd-2')).toBeNull()
           expect(groupOne).toMatchObject({
             count: 1,
             end: { generation: 1, cursor: 1 },
@@ -888,7 +805,10 @@ describe.skipIf(process.platform === 'win32')(
             // with no second group and no reset. K7 and K10 both lack the
             // published record; K8 has it; K9 is already done.
             const end: HostCursorPosition = { generation: 1, cursor: seedCursor + effectCount }
-            const group = first.stores.deltas.findGroup('cmd-1')
+            const group = first.groups.get('cmd-1')
+            // The receipt is terminal now: the driver released the anchor.
+            expect(first.anchorsReleased).toEqual(['cmd-1'])
+            expect(first.stores.deltas.findGroup('cmd-1')).toBeNull()
             expect(group).toMatchObject({
               commandId: 'cmd-1',
               count: effectCount,
@@ -913,11 +833,9 @@ describe.skipIf(process.platform === 'win32')(
             expect(resetLines(dataDir)).toBe(0)
             if (harnessCase.duplicate) {
               // The conflicting re-run answered `exists` in the writer; the
-              // driver never writes a second group either.
-              expect(first.stores.deltas.appendGroup({ commandId: 'cmd-1', effects: [] })).toEqual({
-                kind: 'exists',
-                group
-              })
+              // driver never writes a second group either. (A command whose
+              // receipt is terminal is answered from it, never re-run, so the
+              // released anchor is never asked for again.)
               expect(groupLines(dataDir, 'cmd-1')).toBe(1)
             }
             break
