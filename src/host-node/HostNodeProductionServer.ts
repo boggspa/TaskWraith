@@ -666,7 +666,10 @@ export class HostNodeProductionServer {
                   this.threadCataloguePublisher,
                   this.threadCatalogueMirror
                 )
-              })
+              }),
+              // Slice 13f1: the index publishes only once seeded from the
+              // committed files; until then persists take today's path.
+              seed: {}
             }
           : undefined
       const queuedStartSlot = queuedStartEnabled ? createHostQueuedStartStartedSlot() : null
@@ -830,6 +833,21 @@ export class HostNodeProductionServer {
         ...(threadRecordTransaction ? { threadRecordTransaction } : {})
       })
       await this.composition.recoverQueuedStarts()
+      // Slice 13f1: seed the public window index in the background. The
+      // listener opens as today; clients move to the index at one reset.
+      const seeding = this.composition.startPublicWindowSeed?.()
+      void seeding?.seeded.then((outcome) => {
+        const report = outcome.report
+        const counts = report
+          ? ` (${report.modelled} modelled, ${report.absent} absent, ${report.invalid} invalid, ` +
+            `${report.abandoned.length} abandoned, ${Math.round(report.ms)} ms)`
+          : ''
+        writeHostStderr(
+          outcome.kind === 'switched'
+            ? `taskwraith-host: public window seeded${counts}\n`
+            : `taskwraith-host: public window seed abandoned: ${outcome.reason}${counts}; persists stay on today's path\n`
+        )
+      })
       projectionDirtyRef.current = () => {
         void this.composition!.reconcileProjection().catch(() => undefined)
       }

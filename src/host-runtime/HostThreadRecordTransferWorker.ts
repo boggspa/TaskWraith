@@ -188,6 +188,11 @@ function decodeError(error: { name: string; message: string }): HostThreadRecord
 }
 
 const defaultEntryPath = join(__dirname, 'HostThreadRecordTransferWorkerEntry.js')
+
+/** The compiled worker entry beside this module: a private pool spawns the same one. */
+export function hostThreadRecordTransferWorkerEntryPath(): string {
+  return defaultEntryPath
+}
 // Each pending publication owns an eagerly cloned record. Bound that memory;
 // saturation retains the existing synchronous path rather than delaying capture.
 const MAX_PENDING_JOBS = 4

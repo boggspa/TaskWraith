@@ -13,10 +13,10 @@
  * never chooses a path or reads the environment itself.
  */
 
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { lstatSync, mkdirSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
-import { isBootEpoch, type HostCapability } from '../shared/hostProtocol'
+import { isBootEpoch, type HostCapability, type HostCursorPosition } from '../shared/hostProtocol'
 import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   AppStoreHostAuthority,
@@ -76,8 +76,17 @@ import {
   modelHostThreadRecordOffLoop,
   prepareHostThreadRecordOffLoop
 } from './HostThreadRecordTransferWorker'
-import type { HostProfileThread, HostThreadRecordWrittenKind } from './HostProfileDomainStore'
-import { HostPublicWindowFeeder } from './HostPublicWindowFeeder'
+import {
+  HOST_PROFILE_CHATS_DIRECTORY,
+  isHostProfileId,
+  type HostProfileThread,
+  type HostThreadRecordWrittenKind
+} from './HostProfileDomainStore'
+import { HostPublicWindowFeeder, type HostPublicWindowSeedReport } from './HostPublicWindowFeeder'
+import {
+  createHostThreadRecordModelPool,
+  type HostThreadRecordModelPool
+} from './HostThreadRecordModelPool'
 import type { HostThreadRecordFileModel, HostThreadRecordModelInput } from './HostThreadRecordModel'
 import { HostTransactionLog } from './HostTransactionLog'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
@@ -144,7 +153,34 @@ export interface HostStandaloneThreadRecordTransactionInput {
   /** Defaults to the transfer worker's file model; tests pass an in-process one. */
   readonly model?: (input: HostThreadRecordModelInput) => Promise<HostThreadRecordFileModel>
   readonly now?: () => number
+  /**
+   * M4 slice 13f1: seed the public window index from the committed files
+   * before it publishes. Until `startPublicWindowSeed()` switches, persists
+   * take today's path and the index is fed but publishes nothing.
+   */
+  readonly seed?: {
+    readonly poolSize?: number
+    /** Replaces the seed's private workers; tests pass an in-process one. */
+    readonly model?: (input: HostThreadRecordModelInput) => Promise<HostThreadRecordFileModel>
+  }
 }
+
+/** How a seed of the public window index ended (slice 13f1). */
+export type HostPublicWindowSeedOutcome =
+  | {
+      readonly kind: 'switched'
+      readonly report: HostPublicWindowSeedReport
+      /** The generation reset that hands clients to the index. */
+      readonly position: HostCursorPosition
+    }
+  | {
+      readonly kind: 'abandoned'
+      readonly report: HostPublicWindowSeedReport | null
+      readonly reason: string
+    }
+
+/** More threads than this lost to dead workers abandons the seed. */
+export const HOST_PUBLIC_WINDOW_SEED_ABANDON_LIMIT = 3
 
 export interface HostStandaloneCompositionInput {
   readonly runtimePath: string
@@ -229,6 +265,12 @@ export interface HostStandaloneComposition {
     kind: HostThreadRecordWrittenKind,
     thread?: HostProfileThread
   ): void
+  /**
+   * M4 slice 13f1: seed the public window index from the committed files and
+   * switch clients to it with one generation reset. Idempotent. Present only
+   * while the transactional persist is wired with a seed.
+   */
+  startPublicWindowSeed?(): { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
 }
 
 function requireFunction(value: unknown, label: string): void {
@@ -540,7 +582,10 @@ export function createHostStandaloneComposition(
             threadId: string,
             kind: HostThreadRecordWrittenKind,
             thread?: HostProfileThread
-          ) => threadRecordTransaction.feeder.mark(threadId, kind, thread)
+          ) => threadRecordTransaction.feeder.mark(threadId, kind, thread),
+          ...(threadRecordTransaction.startSeed
+            ? { startPublicWindowSeed: threadRecordTransaction.startSeed }
+            : {})
         }
       : {})
   }
@@ -564,6 +609,38 @@ function createSerialLock(): <T>(work: () => Promise<T> | T) => Promise<T> {
  * the thread lanes, the commit gate, the manifest, the public window index
  * and the publication lock, over the runtime's delta and receipt stores.
  */
+/** Every committed chat file's thread id, largest file first. */
+function listCommittedThreadIds(profilePath: string): string[] {
+  const directory = join(profilePath, HOST_PROFILE_CHATS_DIRECTORY)
+  let names: string[]
+  try {
+    names = readdirSync(directory)
+  } catch {
+    return []
+  }
+  const sized: { threadId: string; size: number }[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    const threadId = name.slice(0, -'.json'.length)
+    if (!isHostProfileId(threadId)) continue
+    let size = 0
+    try {
+      const stat = lstatSync(join(directory, name))
+      if (!stat.isFile()) continue
+      size = stat.size
+    } catch {
+      continue
+    }
+    sized.push({ threadId, size })
+  }
+  sized.sort((left, right) => right.size - left.size || compareText(left.threadId, right.threadId))
+  return sized.map((entry) => entry.threadId)
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
 function createThreadRecordTransaction(
   options: HostStandaloneThreadRecordTransactionInput,
   runtime: HostRuntimeBootstrap,
@@ -573,6 +650,7 @@ function createThreadRecordTransaction(
   port: AppStoreHostAuthorityThreadRecordTransaction
   gate: HostCommitGate
   feeder: HostPublicWindowFeeder
+  startSeed?: () => { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
   close(): Promise<void>
 } {
   const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
@@ -588,16 +666,79 @@ function createThreadRecordTransaction(
     publicationLock,
     deltas: runtime.deltaStore,
     model: (threadId) => model({ profilePath: options.profilePath, threadId }),
-    now
+    now,
+    publishing: options.seed === undefined
   })
+  // Without a seed the index publishes from the start (the harness since
+  // slice 12b); with one, only once the seed switches clients to it.
+  let switched = options.seed === undefined
+  let seeding: { readonly seeded: Promise<HostPublicWindowSeedOutcome> } | null = null
+  let seedPool: HostThreadRecordModelPool | undefined
+  const seedOptions = options.seed
+  const startSeed = seedOptions
+    ? (): { readonly seeded: Promise<HostPublicWindowSeedOutcome> } => {
+        seeding ??= {
+          seeded: seedPublicWindow(seedOptions).catch(
+            (error: unknown): HostPublicWindowSeedOutcome => ({
+              kind: 'abandoned',
+              report: null,
+              reason: error instanceof Error ? error.message : 'seed_failed'
+            })
+          )
+        }
+        return seeding
+      }
+    : undefined
+  const seedPublicWindow = async (
+    seed: NonNullable<HostStandaloneThreadRecordTransactionInput['seed']>
+  ): Promise<HostPublicWindowSeedOutcome> => {
+    let seedModel = seed.model
+    if (!seedModel) {
+      seedPool = createHostThreadRecordModelPool({ size: seed.poolSize })
+      if (!seedPool) return { kind: 'abandoned', report: null, reason: 'no_worker_entry' }
+      seedModel = seedPool.model
+    }
+    const read = seedModel
+    try {
+      const threadIds = listCommittedThreadIds(options.profilePath)
+      const report = await feeder.seed(threadIds, (threadId) =>
+        read({ profilePath: options.profilePath, threadId })
+      )
+      if (report.aborted) return { kind: 'abandoned', report, reason: 'aborted' }
+      if (report.abandoned.length > HOST_PUBLIC_WINDOW_SEED_ABANDON_LIMIT) {
+        return { kind: 'abandoned', report, reason: 'workers_failed' }
+      }
+      // No committer mid-publish and no observer mid-capture: clients move
+      // from today's captures to the index at one reset.
+      const entered = await gate.enter('exclusive', { label: 'public-window:switch' })
+      if (!entered.ok) return { kind: 'abandoned', report, reason: 'gate_closed' }
+      try {
+        const reset = await publicationLock(() => {
+          feeder.startPublishing()
+          switched = true
+          return runtime.deltaStore.resetGeneration('public window seeded')
+        })
+        if (reset.kind !== 'appended') {
+          return { kind: 'abandoned', report, reason: 'reset_failed' }
+        }
+        return { kind: 'switched', report, position: reset.position }
+      } finally {
+        entered.lease.release()
+      }
+    } finally {
+      await seedPool?.close()
+    }
+  }
   return {
     gate,
     feeder,
+    ...(startSeed ? { startSeed } : {}),
     port: {
       ledger,
       // Only the manifest's health: a closed ledger routes here and refuses
-      // (host_shutting_down) rather than falling back to today's path.
-      available: () => log.getFailure() === null,
+      // (host_shutting_down) rather than falling back to today's path. Until
+      // a seed switches, persists take today's path (slice 13f1).
+      available: () => switched && log.getFailure() === null,
       create: (legacy) => {
         const transaction = new HostThreadRecordTransaction({
           ledger,
@@ -641,6 +782,8 @@ function createThreadRecordTransaction(
       ledger.close()
       gate.close()
       await Promise.all([...inFlight])
+      // A seed still reading is dropped with the feeder; its workers go too.
+      await seedPool?.close()
     }
   }
 }

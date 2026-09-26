@@ -62,6 +62,29 @@ export interface HostPublicWindowFeederOptions {
   /** The thread's model from its committed file; production runs it in the worker. */
   readonly model: (threadId: string) => Promise<HostThreadRecordFileModel>
   readonly now: () => number
+  /**
+   * Whether drains publish groups (slice 13f1). False while the index is
+   * seeded: the index is fed and committed, but legacy captures are still
+   * the authority, so nothing is appended until `startPublishing()`.
+   */
+  readonly publishing?: boolean
+}
+
+/** One seed of the index from committed files (slice 13f1). */
+export interface HostPublicWindowSeedReport {
+  readonly requested: number
+  /** Seed reads that produced a model. */
+  readonly modelled: number
+  readonly absent: number
+  readonly invalid: number
+  readonly refused: number
+  /** Seed reads that rejected once and were read again. */
+  readonly retried: number
+  /** Threads whose seed read rejected twice: absent until their next write. */
+  readonly abandoned: readonly string[]
+  /** The feeder closed before every thread was taken. */
+  readonly aborted: boolean
+  readonly ms: number
 }
 
 export interface HostPublicWindowFeederCounters {
@@ -97,6 +120,8 @@ export interface HostPublicWindowFeederCounters {
   readonly refillsAbandoned: number
   /** Prepares a drain aborted to read a refill. */
   readonly absorbRounds: number
+  /** Drains that committed the index and appended no group: not yet publishing. */
+  readonly suppressed: number
 }
 
 /**
@@ -108,6 +133,26 @@ type Pending =
   | { readonly kind: 'file' }
   | { readonly kind: 'model'; readonly effects: HostThreadRecordEffectModel }
   | { readonly kind: 'refill' }
+  | { readonly kind: 'seed' }
+
+interface SeedState {
+  readonly model: (threadId: string) => Promise<HostThreadRecordFileModel>
+  /** Threads not yet taken into a drain. */
+  readonly pending: Set<string>
+  /** Threads whose seed read rejected once. */
+  readonly rejected: Set<string>
+  readonly report: {
+    requested: number
+    modelled: number
+    absent: number
+    invalid: number
+    refused: number
+    retried: number
+    abandoned: string[]
+  }
+  readonly startedAt: number
+  readonly resolve: (report: HostPublicWindowSeedReport) => void
+}
 
 type Published =
   | {
@@ -133,6 +178,8 @@ export class HostPublicWindowFeeder {
   private stopReason: string | null = null
   private sequence = 0
   private readonly idleWaiters = new Set<() => void>()
+  private publishingNow: boolean
+  private seeding: SeedState | null = null
   private counts = {
     drained: 0,
     absent: 0,
@@ -149,10 +196,95 @@ export class HostPublicWindowFeeder {
     refillFailures: 0,
     refillsScheduled: 0,
     refillsAbandoned: 0,
-    absorbRounds: 0
+    absorbRounds: 0,
+    suppressed: 0
   }
 
-  constructor(private readonly options: HostPublicWindowFeederOptions) {}
+  constructor(private readonly options: HostPublicWindowFeederOptions) {
+    this.publishingNow = options.publishing ?? true
+  }
+
+  /** Whether drains append groups. */
+  get publishing(): boolean {
+    return this.publishingNow
+  }
+
+  /**
+   * Publish from now on. The caller holds the publication lock, so no drain
+   * is between its index commit and its append.
+   */
+  startPublishing(): void {
+    this.publishingNow = true
+  }
+
+  /**
+   * Seed the index from committed files: each thread is read once through
+   * `model` (the seed's own workers), unless a live mark already covers it.
+   * A live mark later replaces a pending seed read. Resolves once every
+   * thread has been taken into a drain.
+   */
+  seed(
+    threadIds: readonly string[],
+    model: (threadId: string) => Promise<HostThreadRecordFileModel>
+  ): Promise<HostPublicWindowSeedReport> {
+    if (this.seeding !== null) return Promise.reject(new Error('The index is already seeding.'))
+    return new Promise((resolve) => {
+      const state: SeedState = {
+        model,
+        pending: new Set(),
+        rejected: new Set(),
+        report: {
+          requested: 0,
+          modelled: 0,
+          absent: 0,
+          invalid: 0,
+          refused: 0,
+          retried: 0,
+          abandoned: []
+        },
+        startedAt: performance.now(),
+        resolve
+      }
+      this.seeding = state
+      for (const threadId of new Set(threadIds)) {
+        state.report.requested += 1
+        if (this.closed || this.stopReason !== null || this.marked.has(threadId)) continue
+        if (this.deleted.has(threadId)) continue
+        state.pending.add(threadId)
+        this.marked.set(threadId, { kind: 'seed' })
+      }
+      if (this.closed || this.stopReason !== null) {
+        this.finishSeed(true)
+        return
+      }
+      if (state.pending.size === 0) this.finishSeed(false)
+      else this.schedule()
+    })
+  }
+
+  private finishSeed(aborted: boolean): void {
+    const state = this.seeding
+    if (state === null) return
+    this.seeding = null
+    for (const threadId of state.pending) {
+      if (this.marked.get(threadId)?.kind === 'seed') this.marked.delete(threadId)
+    }
+    state.resolve({
+      ...state.report,
+      abandoned: [...state.report.abandoned],
+      aborted,
+      ms: performance.now() - state.startedAt
+    })
+  }
+
+  /**
+   * A thread taken into a drain in any form leaves the seed's pending set.
+   * The seed resolves once the drain that took its last thread has
+   * committed, so the index holds every seeded thread when it does.
+   */
+  private taken(threadId: string): void {
+    this.seeding?.pending.delete(threadId)
+  }
 
   /** Why the feeder stopped (a fail-stopped delta store), or null. */
   get stopped(): string | null {
@@ -221,6 +353,8 @@ export class HostPublicWindowFeeder {
   /** Refuse new marks and let the running drain, and those it leaves, finish. */
   async close(): Promise<void> {
     this.closed = true
+    // A seed does not hold shutdown: its unread threads are dropped.
+    this.finishSeed(true)
     await this.idle()
   }
 
@@ -244,16 +378,36 @@ export class HostPublicWindowFeeder {
       const batch = [...this.marked].slice(0, HOST_PUBLIC_WINDOW_FEED_BATCH)
       for (const [threadId] of batch) this.marked.delete(threadId)
       await this.drain(batch)
+      if (this.seeding?.pending.size === 0) this.finishSeed(false)
     }
-    if (this.stopReason !== null) this.marked.clear()
+    if (this.stopReason !== null) {
+      this.marked.clear()
+      this.finishSeed(true)
+    }
   }
 
   private async drain(batch: ReadonlyArray<readonly [string, Pending]>): Promise<void> {
-    // Model outside every lock: the worker reads and decodes the file.
+    // Model outside every lock: the worker (or the seed's own workers) reads
+    // and decodes each file, the batch's files at once.
+    const seedModel = this.seeding?.model
+    const reads = batch.map(([threadId, pending]) => {
+      if (pending.kind === 'file') return this.readFile(this.options.model, threadId)
+      if (pending.kind === 'seed' && seedModel) return this.readFile(seedModel, threadId)
+      return null
+    })
+    const results = await Promise.all(reads)
     const changes: HostPublicWindowChange[] = []
     const refilled = new Set<string>()
     const failed = new Set<string>()
-    for (const [threadId, pending] of batch) {
+    for (let index = 0; index < batch.length; index += 1) {
+      const [threadId, pending] = batch[index]!
+      const result = results[index]
+      if (pending.kind === 'seed') {
+        if (result && this.seedRead(threadId, result, changes)) continue
+        this.taken(threadId)
+        continue
+      }
+      this.taken(threadId)
       if (pending.kind === 'deleted') {
         changes.push({ kind: 'delete', threadId })
         continue
@@ -270,14 +424,12 @@ export class HostPublicWindowFeeder {
         changes.push({ kind: 'model', model: pending.effects })
         continue
       }
-      let modelled: HostThreadRecordFileModel
-      try {
-        modelled = await this.options.model(threadId)
-      } catch {
+      if (!result || result.kind === 'rejected') {
         this.counts.failures += 1
         // A later write marks it again; do not spin on a dead worker here.
         continue
       }
+      const modelled = result.model
       if (modelled.kind === 'absent') {
         this.counts.absent += 1
         continue
@@ -345,6 +497,58 @@ export class HostPublicWindowFeeder {
     }
   }
 
+  private async readFile(
+    model: (threadId: string) => Promise<HostThreadRecordFileModel>,
+    threadId: string
+  ): Promise<{ kind: 'read'; model: HostThreadRecordFileModel } | { kind: 'rejected' }> {
+    try {
+      return { kind: 'read', model: await model(threadId) }
+    } catch {
+      return { kind: 'rejected' }
+    }
+  }
+
+  /**
+   * Account one seed read. Returns true when the thread stays pending: its
+   * read rejected for the first time and it is read again.
+   */
+  private seedRead(
+    threadId: string,
+    result: { kind: 'read'; model: HostThreadRecordFileModel } | { kind: 'rejected' },
+    changes: HostPublicWindowChange[]
+  ): boolean {
+    const state = this.seeding
+    if (state === null) return false
+    const report = state.report
+    if (result.kind === 'rejected') {
+      if (state.rejected.has(threadId)) {
+        report.abandoned.push(threadId)
+        return false
+      }
+      state.rejected.add(threadId)
+      // A live mark taken since covers the thread; otherwise read it again.
+      if (this.marked.has(threadId) || this.closed || this.stopReason !== null) return false
+      report.retried += 1
+      this.marked.set(threadId, { kind: 'seed' })
+      return true
+    }
+    const modelled = result.model
+    if (modelled.kind === 'absent') {
+      report.absent += 1
+      this.counts.absent += 1
+    } else if (modelled.kind === 'invalid') {
+      report.invalid += 1
+      this.counts.invalid += 1
+    } else if (modelled.effects.kind === 'refused') {
+      report.refused += 1
+      this.counts.refused += 1
+    } else {
+      report.modelled += 1
+      changes.push({ kind: 'model', model: modelled.effects })
+    }
+    return false
+  }
+
   /** Read one refill with every lock free; a failure is recorded, not thrown. */
   private async readRefill(
     threadId: string,
@@ -410,6 +614,13 @@ export class HostPublicWindowFeeder {
           }
         }
         return { kind: 'published', end, refill: transaction.refill, setAside }
+      }
+      if (!this.publishingNow) {
+        // Seeding: the index is fed, legacy captures still publish (13f1).
+        transaction.commit()
+        settled = true
+        this.counts.suppressed += 1
+        return done(null)
       }
       const validated = validateHostDomainEffectBatch(transaction.effects)
       if (!validated.ok) {

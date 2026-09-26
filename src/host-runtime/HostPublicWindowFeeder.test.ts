@@ -733,7 +733,8 @@ describe('HostPublicWindowFeeder (M4 slice 13c1)', () => {
         refillFailures: 0,
         refillsScheduled: 0,
         refillsAbandoned: 0,
-        absorbRounds: 0
+        absorbRounds: 0,
+        suppressed: 0
       })
       expect(h.feeder.counters().eagerMs).toBeGreaterThanOrEqual(0)
     })
