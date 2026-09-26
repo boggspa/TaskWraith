@@ -36,11 +36,12 @@ import {
   type AppStoreHostAuthorityThreadCatalogueProvider,
   type AppStoreHostAuthorityThreadCatalogueMaintenanceProvider,
   type AppStoreHostAuthorityThreadOffersProvider,
+  type AppStoreHostAuthorityRecordDerivedSource,
   type AppStoreHostAuthorityThreadRecordTransaction,
   type HostStandaloneAuthorityLeasePort
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
-import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import { HostDomainDeltaPublisher, type HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostCommandReceiptRecord } from './HostCommandReceiptStore'
 import type { HostDeltaAppendListener } from './HostDeltaStore'
 import {
@@ -65,7 +66,7 @@ import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
 import { createHostCommitFence } from './HostCommitFence'
 import { createHostCommitGate, type HostCommitGate } from './HostCommitGate'
 import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
-import { HostPublicWindowIndex } from './HostPublicWindowIndex'
+import { HostPublicWindowIndex, hostPublicWindowOwnsEffect } from './HostPublicWindowIndex'
 import { createHostScopeLedger } from './HostScopeLedger'
 import {
   HostThreadRecordTransaction,
@@ -504,7 +505,11 @@ export function createHostStandaloneComposition(
         : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
       ...(threadRecordTransaction && fence
-        ? { threadRecordTransaction: threadRecordTransaction.port, fence }
+        ? {
+            threadRecordTransaction: threadRecordTransaction.port,
+            fence,
+            recordDerived: threadRecordTransaction.recordDerived
+          }
         : {}),
       onShutdown: shutdown
     }
@@ -533,7 +538,15 @@ export function createHostStandaloneComposition(
       return result.value
     },
     fetchDeltas: (position) => runtime.deltaStore.since(position),
-    publishEffects: (effects) => publisher.publishDurableBatch(effects)
+    publishEffects: (effects) => publisher.publishDurableBatch(effects),
+    ...(threadRecordTransaction
+      ? {
+          // Slice 13f2: once the index publishes, its families are its own.
+          owns: (effect: HostDomainEffectDto) =>
+            threadRecordTransaction.recordDerived.active() &&
+            hostPublicWindowOwnsEffect(effect.family, effect.entityId)
+        }
+      : {})
   })
   const session = new HostSession({
     host: input.host,
@@ -651,6 +664,7 @@ function createThreadRecordTransaction(
   gate: HostCommitGate
   feeder: HostPublicWindowFeeder
   startSeed?: () => { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
+  recordDerived: AppStoreHostAuthorityRecordDerivedSource
   close(): Promise<void>
 } {
   const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
@@ -733,6 +747,13 @@ function createThreadRecordTransaction(
     gate,
     feeder,
     ...(startSeed ? { startSeed } : {}),
+    // Slice 13f2: once switched, snapshots read the five families here.
+    recordDerived: {
+      active: () => switched,
+      // A committed view is never mutated: a later commit builds a new one.
+      read: () => publicationLock(() => index.wire()),
+      durable: () => runtime.deltaStore.awaitDurable()
+    },
     port: {
       ledger,
       // Only the manifest's health: a closed ledger routes here and refuses

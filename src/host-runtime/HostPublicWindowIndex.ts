@@ -242,6 +242,29 @@ export const HOST_PUBLIC_WINDOW_BAND = HOST_PROFILE_RUN_PROJECTION_LIMIT
 /** The code of the warning that counts rows the index withheld. */
 export const HOST_WARNING_PROJECTION_WITHHELD = 'projection_rows_withheld'
 
+const OWNED_DELTA_FAMILIES: ReadonlySet<string> = new Set(['thread', 'run', 'round', 'participant'])
+const OWNED_WARNING_FAMILIES: ReadonlySet<string> = new Set([
+  'threads',
+  'runs',
+  'rounds',
+  'participants',
+  'warnings'
+])
+
+/**
+ * Whether an effect belongs to the index once it publishes (slice 13f2):
+ * every row of the four record-derived families, and every warning the
+ * index or the projector raises for the five families, whose id ends with
+ * `:<family>`. Legacy captures and the reconciler drop these after the
+ * switch; the index's groups are their only publisher.
+ */
+export function hostPublicWindowOwnsEffect(family: string, entityId: string): boolean {
+  if (OWNED_DELTA_FAMILIES.has(family)) return true
+  if (family !== 'warning') return false
+  const separator = entityId.lastIndexOf(':')
+  return separator >= 0 && OWNED_WARNING_FAMILIES.has(entityId.slice(separator + 1))
+}
+
 /** A thread's model, read from its committed record. */
 export interface HostPublicWindowModelChange {
   readonly kind: 'model'

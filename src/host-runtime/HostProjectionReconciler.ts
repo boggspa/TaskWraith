@@ -41,6 +41,13 @@ export interface HostProjectionReconcilerOptions {
   readonly schedule?: (callback: () => void, delayMs: number) => unknown
   readonly cancelScheduled?: (handle: unknown) => void
   readonly log?: (line: string) => void
+  /**
+   * Effects another publisher owns (M4 slice 13f2: the public window index,
+   * once it publishes). They are never reconciled: the capture can run ahead
+   * of the journal the baseline follows, and republishing it could put a
+   * stale row over a newer one.
+   */
+  readonly owns?: (effect: HostDomainEffectDto) => boolean
 }
 
 export type HostProjectionReconcileResult =
@@ -146,6 +153,7 @@ export class HostProjectionReconciler {
   private readonly schedule: (callback: () => void, delayMs: number) => unknown
   private readonly cancelScheduled: (handle: unknown) => void
   private readonly log?: (line: string) => void
+  private readonly owns?: (effect: HostDomainEffectDto) => boolean
   private baseline: HostSnapshot | null = null
   private scheduled: unknown = null
   private running = false
@@ -168,6 +176,7 @@ export class HostProjectionReconciler {
     this.runProjectionOperation = options.runProjectionOperation ?? ((operation) => operation())
     this.fetchDeltas = options.fetchDeltas
     this.publishEffects = options.publishEffects
+    if (options.owns) this.owns = options.owns
     this.intervalMs =
       Number.isFinite(options.intervalMs) && Number(options.intervalMs) > 0
         ? Math.floor(Number(options.intervalMs))
@@ -252,14 +261,16 @@ export class HostProjectionReconciler {
     const before = comparableBaseline(advanced.baseline, advanced.current)
     const diff = diffHostSnapshotDomainEffects(before, advanced.current)
     if (diff.kind !== 'effects') return this.unavailable('diff_failed')
-    if (diff.effects.length === 0) {
+    const owns = this.owns
+    const effects = owns ? diff.effects.filter((effect) => !owns(effect)) : diff.effects
+    if (effects.length === 0) {
       this.baseline = advanced.current
       return { kind: 'unchanged', position: positionOf(advanced.current) }
     }
 
     let published: HostDomainDeltaPublishResult
     try {
-      published = await this.publishEffects(diff.effects)
+      published = await this.publishEffects(effects)
     } catch {
       return this.unavailable('publish_failed')
     }

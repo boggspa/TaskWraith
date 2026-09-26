@@ -21,6 +21,7 @@ import {
   decodeHostCommand,
   TASKWRAITH_DESKTOP_HOST_ACTOR,
   decodeHostCommandReceipt,
+  HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_ID,
   type HostActorIdentity,
   type HostCommand,
@@ -98,7 +99,9 @@ import type {
   HostCommandReceiptRecord,
   HostCommandReceiptTarget
 } from './HostCommandReceiptStore'
-import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import { HostDomainDeltaPublisher, type HostDomainEffectDto } from './HostDomainDeltaPublisher'
+import type { HostDeltaDurabilityResult } from './HostDeltaStore'
+import { hostPublicWindowOwnsEffect, type HostPublicWindowWire } from './HostPublicWindowIndex'
 import {
   HostMutationCompletionCoordinator,
   type HostMutationCompletionResult
@@ -327,6 +330,29 @@ export interface AppStoreHostAuthorityPorts {
    * before-capture. Wired with `threadRecordTransaction`, never without it.
    */
   readonly fence?: HostCommitFence
+  /**
+   * M4 slice 13f2: the public window index, once it publishes. Snapshots
+   * read the five record-derived families from it, and legacy captures and
+   * publications stop carrying them. Wired with `threadRecordTransaction`.
+   */
+  readonly recordDerived?: AppStoreHostAuthorityRecordDerivedSource
+}
+
+/** The index's side of the five record-derived families (M4 slice 13f2). */
+export interface AppStoreHostAuthorityRecordDerivedSource {
+  /** Whether the index publishes: the seed has switched (slice 13f1). */
+  active(): boolean
+  /** The published wire rows, read under the publication lock. */
+  read(): Promise<HostPublicWindowWire>
+  /** Resolves once everything appended so far is durable. */
+  durable(): Promise<HostDeltaDurabilityResult>
+}
+
+/** The donor with the five record-derived families left to the index. */
+function withoutRecordDerived(
+  donor: AppStoreHostAuthoritySnapshotDonorFamilies
+): AppStoreHostAuthoritySnapshotDonorFamilies {
+  return { ...donor, threads: [], runs: [], rounds: [], participants: [], warnings: [] }
 }
 
 /**
@@ -510,6 +536,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
   private readonly fence: HostCommitFence
+  private readonly recordDerived?: AppStoreHostAuthorityRecordDerivedSource
   private readonly domainPublisher: HostDomainDeltaPublisher
   private readonly completionCoordinator: HostMutationCompletionCoordinator
   private readonly now: () => string
@@ -596,10 +623,11 @@ export class AppStoreHostAuthority implements HostAuthority {
           updateReceiptPhase: (commandId, phase, executionClaimCursor) =>
             this.runtime.receiptStore.updatePhase(commandId, phase, executionClaimCursor),
           readScopedFamilies: async (scope) => {
-            const donor = await this.readMutationSnapshotDonor()
+            // The full donor: the start's proof needs its run and thread rows.
+            const donor = await this.readFullSnapshotDonor()
             return scopeHostMutationObservationFamilies(donor, scope)
           },
-          publishEffects: (effects) => this.domainPublisher.publishDurableBatch(effects),
+          publishEffects: (effects) => this.publishLegacyEffects(effects),
           getPosition: () => this.runtime.getPosition(),
           runProjectionOperation: (operation, label) =>
             this.runProjectionOperation(operation, label),
@@ -623,13 +651,14 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.deferredAsk = ports.deferredAsk
     this.threadRecordTransaction = ports.threadRecordTransaction
     this.fence = ports.fence ?? ((_label, operation) => operation())
+    if (ports.recordDerived) this.recordDerived = ports.recordDerived
     this.now = options.now ?? (() => new Date().toISOString())
     // Scope 2: sole-journal publish + completion ports (allowed branch only).
     // A command's observed effects commit as one journal batch behind one
     // fsync: a persist that touched many rows used to pay one per row.
     this.domainPublisher = new HostDomainDeltaPublisher({ store: this.runtime.deltaStore })
     this.completionCoordinator = new HostMutationCompletionCoordinator({
-      publishEffects: (effects) => this.domainPublisher.publishDurableBatch(effects),
+      publishEffects: (effects) => this.publishLegacyEffects(effects),
       getPosition: () => this.runtime.getPosition(),
       completeReceipt: (input) => this.runtime.receiptStore.complete(input),
       markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input)
@@ -666,6 +695,68 @@ export class AppStoreHostAuthority implements HostAuthority {
   }
 
   private async captureSnapshot(): Promise<HostAuthorityResult<HostSnapshot>> {
+    const recordDerived = this.recordDerived?.active() ? this.recordDerived : null
+    if (!recordDerived) return this.captureDonorSnapshot(false)
+    // RR-7: a snapshot is delivered only once everything it shows is durable.
+    // A reset while waiting stamps it in a dead generation: capture once more.
+    let captured = await this.captureIndexSnapshot(recordDerived)
+    if (!captured.ok) return captured
+    let durable = await recordDerived.durable()
+    if (durable.kind === 'reset') {
+      captured = await this.captureIndexSnapshot(recordDerived)
+      if (!captured.ok) return captured
+      durable = await recordDerived.durable()
+    }
+    if (durable.kind === 'fail-stopped') return { ok: false, error: 'host_unavailable' }
+    return captured
+  }
+
+  /**
+   * The donor's families without the five record-derived ones, then the
+   * index's wire rows spliced in. The stamp (the durable head at the donor
+   * read) may precede groups the wire holds: every group's effects are
+   * absolute, so replaying from the stamp ends at the wire, and the index
+   * commits before its group appends, so the wire never lacks a group at or
+   * before the stamp.
+   */
+  private async captureIndexSnapshot(
+    recordDerived: AppStoreHostAuthorityRecordDerivedSource
+  ): Promise<HostAuthorityResult<HostSnapshot>> {
+    const projected = await this.captureDonorSnapshot(true)
+    if (!projected.ok) return projected
+    let wire: HostPublicWindowWire
+    try {
+      wire = await recordDerived.read()
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    const rows = <T>(family: 'thread' | 'run' | 'round' | 'participant' | 'warning'): T[] =>
+      [...(wire.get(family)?.values() ?? [])] as T[]
+    const snapshot = projected.value
+    // The projector raised warnings only for the families it still projects:
+    // with the five emptied, none of its warnings is the index's.
+    const warnings = [
+      ...snapshot.warnings,
+      ...rows<HostSnapshot['warnings'][number]>('warning')
+    ].sort((left, right) =>
+      left.warningId < right.warningId ? -1 : left.warningId > right.warningId ? 1 : 0
+    )
+    return {
+      ok: true,
+      value: {
+        ...snapshot,
+        threads: rows('thread'),
+        runs: rows('run'),
+        rounds: rows('round'),
+        participants: rows('participant'),
+        warnings: warnings.slice(0, HOST_PROTOCOL_MAX_COLLECTION)
+      }
+    }
+  }
+
+  private async captureDonorSnapshot(
+    withoutIndexFamilies: boolean
+  ): Promise<HostAuthorityResult<HostSnapshot>> {
     let donor: AppStoreHostAuthoritySnapshotDonorFamilies
     try {
       donor = await this.snapshotDonor()
@@ -675,6 +766,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     if (!donor || typeof donor !== 'object') {
       return { ok: false, error: 'host_unavailable' }
     }
+    if (withoutIndexFamilies) donor = withoutRecordDerived(donor)
 
     const position = this.runtime.getPosition()
     const generatedAt = this.now()
@@ -1405,7 +1497,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     const actor = toReceiptActor(context.actor)
     let donor: AppStoreHostAuthoritySnapshotDonorFamilies
     try {
-      donor = await this.fence('queued-start:before', () => this.readMutationSnapshotDonor())
+      donor = await this.fence('queued-start:before', () => this.readFullSnapshotDonor())
     } catch {
       // No dispatch yet — settle the begun receipt rather than leave it pending.
       this.runtime.receiptStore.complete({
@@ -1520,12 +1612,39 @@ export class AppStoreHostAuthority implements HostAuthority {
   }
 
   /** Complete donor families before the public per-family cap is applied. */
-  private async readMutationSnapshotDonor(): Promise<AppStoreHostAuthoritySnapshotDonorFamilies> {
+  private async readFullSnapshotDonor(): Promise<AppStoreHostAuthoritySnapshotDonorFamilies> {
     const donor = await this.snapshotDonor()
     if (!donor || typeof donor !== 'object') {
       throw new Error('snapshot donor unavailable')
     }
     return donor
+  }
+
+  /**
+   * A command window's capture. A queued start reads the full donor instead
+   * (`readFullSnapshotDonor`): its completion proof needs the run and thread
+   * rows, and its owned effects are dropped at publication.
+   */
+  private async readMutationSnapshotDonor(): Promise<AppStoreHostAuthoritySnapshotDonorFamilies> {
+    const donor = await this.readFullSnapshotDonor()
+    // Once the index publishes, a command window's captures leave its five
+    // families to it. Both captures of a window sit in one fenced turn, and
+    // the switch holds the gate exclusively, so a window never straddles it.
+    return this.recordDerived?.active() ? withoutRecordDerived(donor) : donor
+  }
+
+  /**
+   * A legacy publication. Once the index publishes, effects it owns are
+   * dropped: a queued start whose before-capture preceded the switch would
+   * otherwise tombstone rows the index serves (slice 13f2).
+   */
+  private publishLegacyEffects(
+    effects: readonly HostDomainEffectDto[]
+  ): ReturnType<HostDomainDeltaPublisher['publishDurableBatch']> {
+    if (!this.recordDerived?.active()) return this.domainPublisher.publishDurableBatch(effects)
+    return this.domainPublisher.publishDurableBatch(
+      effects.filter((effect) => !hostPublicWindowOwnsEffect(effect.family, effect.entityId))
+    )
   }
 
   /** Privacy-clean command-scoped snapshot for observe before/after capture. */
