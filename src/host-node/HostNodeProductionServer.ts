@@ -720,18 +720,6 @@ export class HostNodeProductionServer {
             }
           : {})
       })
-      if (
-        this.threadCatalogue &&
-        this.threadCatalogueMirror &&
-        this.threadRecovery &&
-        this.hostRunOrigin
-      )
-        this.hostRecovery = new ThreadCatalogueHostRecovery({
-          client: this.threadCatalogue,
-          mirror: this.threadCatalogueMirror,
-          controller: this.threadRecovery,
-          origin: this.hostRunOrigin
-        })
       // The first projection is also the baseline for every later Host delta.
       // Resolve account-dependent provider catalogs before that baseline so a
       // cold Host cannot publish the initial empty Ollama/AGY offer set and
@@ -760,6 +748,7 @@ export class HostNodeProductionServer {
       )
       this.composition = (this.options.createComposition ?? createHostStandaloneComposition)({
         runtimePath,
+        profilePath: this.lease.path,
         lease: this.lease,
         host: this.identity,
         hostCapabilityOffer: capabilities,
@@ -832,6 +821,37 @@ export class HostNodeProductionServer {
         historySinceProvider: (request) => this.domain!.historySince(request),
         ...(threadRecordTransaction ? { threadRecordTransaction } : {})
       })
+      // M4 slice 14b (RR-2, R1-M1): every transactional persist a crash left
+      // open is decided before catalogue recovery starts adopting, before any
+      // queued start resumes, and before the seed and the listener. A
+      // recovery that fails (SF-2: a reset it could not write) fails startup.
+      const recovered = await this.composition.recoverTransactions?.()
+      if (recovered) {
+        const counts = Object.entries(recovered.counts)
+          .filter(([action]) => action !== 'none' && action !== 'not_transactional')
+          .map(([action, count]) => `${action}=${count}`)
+          .join(' ')
+        writeHostStderr(
+          `taskwraith-host: transaction recovery${counts ? ` ${counts}` : ' found nothing open'}` +
+            `${recovered.reset ? `; generation reset to ${recovered.reset.generation}` : ''}` +
+            `; ${recovered.anchorsReleased.length} anchor(s) released, ` +
+            `${recovered.artifactsRemoved.length} artifact(s) removed\n`
+        )
+      }
+      if (this.stopRequested) return
+      // Catalogue recovery adopts from its constructor: only after the above.
+      if (
+        this.threadCatalogue &&
+        this.threadCatalogueMirror &&
+        this.threadRecovery &&
+        this.hostRunOrigin
+      )
+        this.hostRecovery = new ThreadCatalogueHostRecovery({
+          client: this.threadCatalogue,
+          mirror: this.threadCatalogueMirror,
+          controller: this.threadRecovery,
+          origin: this.hostRunOrigin
+        })
       await this.composition.recoverQueuedStarts()
       // Slice 13f1: seed the public window index in the background. The
       // listener opens as today; clients move to the index at one reset.

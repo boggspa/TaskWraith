@@ -13,7 +13,7 @@
  * never chooses a path or reads the environment itself.
  */
 
-import { lstatSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { isBootEpoch, type HostCapability, type HostCursorPosition } from '../shared/hostProtocol'
@@ -89,7 +89,12 @@ import {
   type HostThreadRecordModelPool
 } from './HostThreadRecordModelPool'
 import type { HostThreadRecordFileModel, HostThreadRecordModelInput } from './HostThreadRecordModel'
-import { HostTransactionLog } from './HostTransactionLog'
+import { consumeHostCleanExit, recordHostCleanExit } from './HostCleanExit'
+import { HOST_TRANSACTION_LOG_FILENAME, HostTransactionLog } from './HostTransactionLog'
+import {
+  recoverHostTransactions,
+  type HostTransactionRecoveryReport
+} from './HostTransactionRecovery'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { randomBytes } from 'node:crypto'
 
@@ -185,6 +190,11 @@ export const HOST_PUBLIC_WINDOW_SEED_ABANDON_LIMIT = 3
 
 export interface HostStandaloneCompositionInput {
   readonly runtimePath: string
+  /**
+   * The profile the chat files live in: boot recovery reads their identity
+   * (M4 slice 14b). The transaction's own `profilePath` wins when wired.
+   */
+  readonly profilePath?: string
   readonly threadRecordTransaction?: HostStandaloneThreadRecordTransactionInput
   readonly lease: HostStandaloneAuthorityLeasePort
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
@@ -272,6 +282,15 @@ export interface HostStandaloneComposition {
    * while the transactional persist is wired with a seed.
    */
   startPublicWindowSeed?(): { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
+  /**
+   * M4 slice 14b: decide every transactional persist a crash left open,
+   * before any lane, gate or listener opens. Memoized. Null when there is
+   * nothing to recover: no transaction wired, no manifest and no
+   * transactional receipt.
+   */
+  recoverTransactions(): Promise<HostTransactionRecoveryReport | null>
+  /** Whether the previous incarnation left the clean-exit marker (SF-1). */
+  readonly previousExitClean: boolean
 }
 
 function requireFunction(value: unknown, label: string): void {
@@ -391,6 +410,9 @@ export function createHostStandaloneComposition(
         : {})
     }
   })
+  // SF-1: consumed before anything else can write, so a crash from here on
+  // reads unclean at the next boot.
+  const previousExitClean = consumeHostCleanExit(input.runtimePath)
   const perfIdentity: HostPerfSnapshotFileIdentity = Object.freeze({
     process: 'host' as const,
     instanceId: input.host.hostId,
@@ -452,6 +474,13 @@ export function createHostStandaloneComposition(
       // authority before companion claim evidence is rewritten.
       await input.queuedStartClaimCompaction?.(runtime.retainedReceiptCommandIds())
       await input.onShutdown?.()
+      // SF-1: the drain's last step. A failure only costs the next boot a
+      // reset; a shutdown that threw above never gets here.
+      try {
+        recordHostCleanExit(input.runtimePath)
+      } catch {
+        // Read unclean next boot.
+      }
     }
     shutdownPromise = attempt().then(
       () => {
@@ -567,6 +596,36 @@ export function createHostStandaloneComposition(
     quietly(() => hostPerf.stop())
     throw error
   }
+
+  let recovering: Promise<HostTransactionRecoveryReport | null> | null = null
+  const recoverTransactionsOnce = async (): Promise<HostTransactionRecoveryReport | null> => {
+    const manifestPath = join(input.runtimePath, HOST_TRANSACTION_LOG_FILENAME)
+    const transactional = runtime.receiptStore
+      .list()
+      .some((record) => record.commandClass === 'txn-record-persist')
+    // The flag turned off after a crash: recovery still runs whenever a
+    // manifest or a transactional receipt exists (§12.2).
+    const log =
+      threadRecordTransaction?.log ??
+      (existsSync(manifestPath) || transactional
+        ? HostTransactionLog.open({ dataDir: input.runtimePath })
+        : null)
+    if (!log) return null
+    const profilePath = input.threadRecordTransaction?.profilePath ?? input.profilePath
+    if (!profilePath) throw new Error('Transaction recovery needs the profile path')
+    return recoverHostTransactions(
+      {
+        receipts: runtime.receiptStore,
+        log,
+        deltas: runtime.deltaStore,
+        profilePath,
+        now: input.threadRecordTransaction?.now ?? (() => Date.now())
+      },
+      // Decision 2: with the index publishing, an unclean exit resets once.
+      { reset: threadRecordTransaction && !previousExitClean ? 'always' : 'when-needed' }
+    )
+  }
+
   return {
     authority,
     session,
@@ -578,6 +637,11 @@ export function createHostStandaloneComposition(
     },
     getPosition: () => runtime.getPosition(),
     subscribeDeltas: (listener) => runtime.deltaStore.subscribe(listener),
+    previousExitClean,
+    recoverTransactions: () => {
+      recovering ??= recoverTransactionsOnce()
+      return recovering
+    },
     recoverQueuedStarts: async () => {
       const receipts = runtime.receiptStore.list()
       await input.queuedStartRecovery?.(receipts)
@@ -665,6 +729,7 @@ function createThreadRecordTransaction(
   feeder: HostPublicWindowFeeder
   startSeed?: () => { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
   recordDerived: AppStoreHostAuthorityRecordDerivedSource
+  log: HostTransactionLog
   close(): Promise<void>
 } {
   const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
@@ -746,6 +811,7 @@ function createThreadRecordTransaction(
   return {
     gate,
     feeder,
+    log,
     ...(startSeed ? { startSeed } : {}),
     // Slice 13f2: once switched, snapshots read the five families here.
     recordDerived: {
