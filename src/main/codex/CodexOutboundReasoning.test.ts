@@ -114,7 +114,7 @@ describe('resolveCodexOutboundReasoning', () => {
     })
   })
 
-  it.each(['gpt-6-sol', 'gpt-6-luna'])(
+  it.each(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna'])(
     'requests the long-context policy for %s on the exec fallback and thread config',
     (model) => {
       const reasoning = resolveCodexOutboundReasoning(model, 'high')

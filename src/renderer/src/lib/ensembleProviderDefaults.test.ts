@@ -815,6 +815,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   )
 
   it.each([
+    ['gpt-6.1-sol', 'GPT-6.1-Sol'],
     ['gpt-6-sol', 'GPT-6-Sol'],
     ['gpt-6-luna', 'GPT-6-Luna']
   ])(
@@ -1058,6 +1059,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-opus-5-5',
       'claude-opus-5',
       'claude-fable-5-1',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
       'claude-fable-5',
       'claude-sonnet-4-6',
@@ -1073,6 +1075,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
+    expect(claude.fastModeCapableModelIds.has('claude-sonnet-5-5')).toBe(false)
+    expect(claude.modelOptions.find((option) => option.id === 'claude-sonnet-5-5')?.label).toBe(
+      'Sonnet 5.5'
+    )
     expect(
       claude.modelOptions.find((option) => option.id === 'claude-haiku-4-5')
         ?.ultraTaskSupported

@@ -41,6 +41,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('claude', 'claude-mythos-5')).toBe('Claude Mythos 5')
       expect(humaniseModelId('claude', 'claude-sonnet-5')).toBe('Claude Sonnet 5')
       expect(humaniseModelId('claude', 'claude-opus-5-5')).toBe('Claude Opus 5.5')
+      expect(humaniseModelId('claude', 'claude-sonnet-5-5')).toBe('Claude Sonnet 5.5')
       expect(humaniseModelId('claude', 'claude-opus-5')).toBe('Claude Opus 5')
       expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe('Claude Sonnet 5')
       expect(humaniseModelId('claude', 'claude-opus-4-8')).toBe('Claude Opus 4.8')
@@ -89,6 +90,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
       expect(humaniseModelIdCompact('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
       expect(humaniseModelIdTableCell('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
+      expect(humaniseModelId('codex', 'gpt-6.1-sol')).toBe('GPT-6.1-Sol')
     })
   })
 
@@ -257,6 +259,11 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('devin', 'claude-opus-5-high')).toBe('Claude Opus 5')
       expect(canonicalModelIdForProvider('devin', 'claude-opus-5-5-high')).toBe('claude-opus-5-5')
       expect(humaniseModelId('devin', 'claude-opus-5-5-high')).toBe('Claude Opus 5.5')
+      expect(canonicalModelIdForProvider('devin', 'claude-sonnet-5-5-high')).toBe(
+        'claude-sonnet-5-5'
+      )
+      expect(humaniseModelId('devin', 'claude-sonnet-5-5-high')).toBe('Claude Sonnet 5.5')
+      expect(canonicalModelIdForProvider('devin', 'claude-sonnet-5-high')).toBe('claude-sonnet-5')
       expect(canonicalModelIdForProvider('devin', 'devin-custom-x')).toBe('devin-custom-x')
     })
   })
@@ -434,6 +441,8 @@ describe('humaniseModelId', () => {
       expect(labels['claude-opus-4-7']).toBeDefined()
       expect(labels['claude-opus-5-5']).toBe('Claude Opus 5.5')
       expect(labels['gpt-6-sol']).toBe('GPT-6-Sol')
+      expect(labels['gpt-6.1-sol']).toBe('GPT-6.1-Sol')
+      expect(labels['claude-sonnet-5-5']).toBe('Claude Sonnet 5.5')
       expect(labels['gpt-6-luna']).toBe('GPT-6-Luna')
       expect(labels['gpt-5.5']).toBeDefined()
       expect(labels['kimi-k3']).toBeDefined()

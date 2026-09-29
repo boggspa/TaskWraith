@@ -12,6 +12,8 @@ struct IosParityFixesTests {
         #expect(!twModelUsesFastToggle("claude-fable-5-1m"))
         #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
         #expect(twModelUsesFastToggle("claude-opus-5-5"))
+        // Sonnet 5.5 is not on the platform Fast-mode list.
+        #expect(!twModelUsesFastToggle("claude-sonnet-5-5"))
     }
 
     @Test func gpt6SolAndLunaExposeTheCodexFastToggle() {
@@ -20,6 +22,7 @@ struct IosParityFixesTests {
         #expect(twModelUsesFastToggle("gpt-6-sol"))
         #expect(twModelUsesFastToggle("gpt-6-luna"))
         #expect(twModelUsesFastToggle("GPT-6-Luna"))
+        #expect(twModelUsesFastToggle("gpt-6.1-sol"))
     }
 
     @MainActor
@@ -84,6 +87,11 @@ struct IosParityFixesTests {
                 == "medium")
         // Opus 5 stays its own row beside it.
         #expect(claude.contains(where: { $0.id == "claude-opus-5" }))
+        // Sonnet 5.5 sits directly above Sonnet 5 with its High default.
+        let ids = claude.map(\.id)
+        #expect(ids.firstIndex(of: "claude-sonnet-5-5").map { $0 + 1 } == ids.firstIndex(of: "claude-sonnet-5"))
+        #expect(claude.first(where: { $0.id == "claude-sonnet-5-5" })?.label == "Sonnet 5.5")
+        #expect(claude.first(where: { $0.id == "claude-sonnet-5-5" })?.defaultReasoningEffort == "high")
     }
 
     @MainActor
@@ -92,8 +100,10 @@ struct IosParityFixesTests {
         model.enterDemoMode()
 
         let codex = model.providerModels["codex"] ?? []
-        #expect(Array(codex.map(\.id).prefix(3)) == ["gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
-        for (id, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+        #expect(Array(codex.map(\.id).prefix(4)) == ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
+        for (id, label) in [
+            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
+        ] {
             let row = codex.first(where: { $0.id == id })
             #expect(row?.label == label)
             #expect(

@@ -121,6 +121,8 @@ describe('TaskWraith TUI provider presentation', () => {
     // "GPT-6 Sol", so the hyphenated catalog label has to be an explicit row.
     expect(taskWraithModelLabel('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
     expect(taskWraithModelLabel('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+    expect(taskWraithModelLabel('codex', 'gpt-6.1-sol')).toBe('GPT-6.1-Sol')
+    expect(taskWraithModelLabel('claude', 'claude-sonnet-5-5')).toBe('Sonnet 5.5')
     expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3 (1M)')
     expect(taskWraithModelLabel('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
     expect(taskWraithModelLabel('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')

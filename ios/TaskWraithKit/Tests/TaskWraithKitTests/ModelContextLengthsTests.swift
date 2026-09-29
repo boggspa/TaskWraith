@@ -127,6 +127,7 @@ struct ModelContextLengthsTests {
             "claude-opus-5-5",
             "claude-opus-5",
             "claude-fable-5-1",
+            "claude-sonnet-5-5",
             "claude-sonnet-5",
             "claude-fable-5",
             "claude-sonnet-4-6",
@@ -149,21 +150,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.1M")
     }
 
-    @Test("codex gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
+    @Test("codex gpt-6.1-sol, gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
     func codexGpt6SolAndLuna() {
         let codex = ModelContextLengths.buildGroups().first { $0.provider == "codex" }?.models ?? []
-        for (modelId, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+        for (modelId, label) in [
+            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
+        ] {
             let row = codex.first { $0.modelId == modelId }
             #expect(row != nil)
             #expect(row?.label == label)
             #expect(row?.contextWindow == 1_050_000)
             #expect(row?.formatted == "1.1M")
         }
-        // Mirrors the TS order: gpt-5.5 first, the GPT-6 pair, then the 5.6 trio.
+        // Mirrors the TS order: gpt-5.5 first, GPT-6.1 Sol, the GPT-6 pair, then the 5.6 trio.
         let ids = codex.map(\.modelId)
-        #expect(ids.firstIndex(of: "gpt-6-sol") == 1)
-        #expect(ids.firstIndex(of: "gpt-6-luna") == 2)
-        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 3)
+        #expect(ids.firstIndex(of: "gpt-6.1-sol") == 1)
+        #expect(ids.firstIndex(of: "gpt-6-sol") == 2)
+        #expect(ids.firstIndex(of: "gpt-6-luna") == 3)
+        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 4)
     }
 
     @Test("codex drops the rows retired on 2026-09-18")

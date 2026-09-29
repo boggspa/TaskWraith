@@ -193,20 +193,30 @@ describe('notification registry', () => {
       expect(model.accentProvider).toBeUndefined()
     }
 
-    // Claude leads for Opus 5.5 (2026-09-22), with Fable 5.1 (2026-09-01) still
-    // listed beneath it; Devin is a whole new seat led by Cognition's own SWE
+    // Claude leads for Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22), with
+    // Fable 5.1 (2026-09-01) still listed beneath them; Devin is a whole new seat led by Cognition's own SWE
     // models — never a 'CLI default'.
     const claude = groups.find((g) => g.provider === 'claude')
-    expect(claude?.models.map((m) => m.name)).toEqual(['Opus 5.5', 'Fable 5.1'])
-    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
-    expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
-    // Codex: GPT-6 Sol and Luna (2026-09-22) lead the group above Astra
-    // (2026-09-03), each blurb carrying the window, ladder and list price.
+    expect(claude?.models.map((m) => m.name)).toEqual(['Sonnet 5.5', 'Opus 5.5', 'Fable 5.1'])
+    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*\$2\/\$10/i)
+    expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
+    expect(claude?.models[2]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
+    // Codex: GPT-6.1 Sol (2026-09-29), then GPT-6 Sol and Luna (2026-09-22),
+    // lead the group above Astra (2026-09-03), each blurb carrying the window,
+    // ladder and list price.
     const codex = groups.find((g) => g.provider === 'codex')
-    expect(codex?.models.map((m) => m.name)).toEqual(['GPT-6 Sol', 'GPT-6 Luna', 'GPT-6 Astra'])
-    expect(codex?.models[0]?.blurb).toMatch(/1\.05M context.*Low through Max.*\$2\/\$10/i)
-    expect(codex?.models[1]?.blurb).toMatch(/high-volume.*1\.05M.*\$0\.10\/\$0\.50/i)
-    expect(codex?.models[2]?.blurb).toMatch(/most capable GPT-6.*organisation/i)
+    expect(codex?.models.map((m) => m.name)).toEqual([
+      'GPT-6.1 Sol',
+      'GPT-6 Sol',
+      'GPT-6 Luna',
+      'GPT-6 Astra'
+    ])
+    expect(codex?.models[0]?.blurb).toMatch(
+      /near-Astra.*1\.05M context.*Low through Max.*\$2\/\$10/i
+    )
+    expect(codex?.models[1]?.blurb).toMatch(/1\.05M context.*Low through Max.*\$2\/\$10/i)
+    expect(codex?.models[2]?.blurb).toMatch(/high-volume.*1\.05M.*\$0\.10\/\$0\.50/i)
+    expect(codex?.models[3]?.blurb).toMatch(/most capable GPT-6.*organisation/i)
     const devin = groups.find((g) => g.provider === 'devin')
     expect(devin?.models.map((m) => m.name)).toEqual([
       'SWE-2',

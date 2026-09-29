@@ -290,7 +290,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       models: [
         // GPT-6 Sol and Luna (rolling out from 2026-09-22) lead the offers on
         // the standard Host ladder; Terra keeps the requested default flag
-        // until that default is moved on purpose.
+        // until that default is moved on purpose. GPT-6.1 Sol (2026-09-29)
+        // leads them.
+        model('gpt-6.1-sol', 'GPT-6.1-Sol'),
         model('gpt-6-sol', 'GPT-6-Sol'),
         model('gpt-6-luna', 'GPT-6-Luna'),
         model('gpt-5.6-sol', 'GPT-5.6-Sol'),
@@ -312,6 +314,7 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('claude-opus-5-5', 'Opus 5.5', CLAUDE_REASONING),
         model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
         model('claude-fable-5-1', 'Fable 5.1', CLAUDE_REASONING),
+        model('claude-sonnet-5-5', 'Sonnet 5.5', CLAUDE_REASONING),
         model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),
         model('claude-fable-5', 'Fable 5 Legacy', CLAUDE_REASONING),
         model('claude-sonnet-4-6', 'Sonnet 4.6 Legacy', CLAUDE_REASONING),

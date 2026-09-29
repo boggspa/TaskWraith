@@ -147,6 +147,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // GPT-6 Sol and Luna (2026-09-22): 1,050,000 raw API window on both official
   // model pages (developers.openai.com/api/docs/models/gpt-6-sol, -luna).
   'gpt-6-sol': 1_050_000,
+  // GPT-6.1 Sol (2026-09-29): 1,050,000 on its official model page.
+  'gpt-6.1-sol': 1_050_000,
   'gpt-6-luna': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
@@ -171,6 +173,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'claude-opus-4-8-1m': 1_000_000,
   'claude-opus-4-7': 200_000,
   'claude-opus-4-7-1m': 1_000_000,
+  'claude-sonnet-5-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
   'claude-sonnet-4-6': 200_000,
   'claude-haiku-4-5': 200_000,

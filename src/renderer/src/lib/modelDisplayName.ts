@@ -72,6 +72,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
 
   // ── Codex (GPT) ───────────────────────────────────────────
   'gpt-6-astra': 'GPT-6-Astra',
+  'gpt-6.1-sol': 'GPT-6.1-Sol',
   'gpt-6-sol': 'GPT-6-Sol',
   'gpt-6-luna': 'GPT-6-Luna',
   'gpt-5.5': 'GPT-5.5',
@@ -90,6 +91,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'preview:openai:gpt-5.6:luna': 'GPT-5.6-Luna',
 
   // ── Claude ────────────────────────────────────────────────
+  'claude-sonnet-5-5': 'Claude Sonnet 5.5',
   'claude-sonnet-5': 'Claude Sonnet 5',
   'preview:anthropic:claude-sonnet-5': 'Claude Sonnet 5',
   'claude-fable-5-1': 'Claude Fable 5.1',

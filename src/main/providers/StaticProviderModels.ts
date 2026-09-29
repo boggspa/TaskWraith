@@ -130,6 +130,12 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
   // (developers.openai.com/api/docs/models/gpt-6-sol and -luna) publish the
   // same 1,050,000 raw API window and 128K max output as Astra, so both take
   // the same long-context override.
+  // GPT-6.1 Sol (2026-09-29): same 1,050,000 window and 128K max output on
+  // developers.openai.com/api/docs/models/gpt-6.1-sol.
+  'gpt-6.1-sol': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
   'gpt-6-sol': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
@@ -195,13 +201,15 @@ function codexModelRequiresFullStandardReasoning(modelId?: string | null): boole
 
 // Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
 // `max` tier ("Maximum reasoning depth for the hardest problems"). GPT-6 Sol
-// and Luna (2026-09-22) list `max` on their official model pages too.
+// and Luna (2026-09-22) and GPT-6.1 Sol (2026-09-29) list `max` on their
+// official model pages too.
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
     .toLowerCase()
   return (
     id === 'gpt-6-astra' ||
+    id === 'gpt-6.1-sol' ||
     id === 'gpt-6-sol' ||
     id === 'gpt-6-luna' ||
     id === 'gpt-5.6-sol' ||
@@ -404,6 +412,11 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
   // the day discovery returns it.
   'gpt-6-sol',
   'gpt-6-luna',
+  // GPT-6.1 Sol (2026-09-29): the official model and pricing pages list the
+  // id, but Codex CLI 0.155.1 carries no metadata row for it ("Model metadata
+  // for `gpt-6.1-sol` not found") and a ChatGPT-account turn was refused with
+  // "model is not supported" — the same staged rollout as the 6.0 pair.
+  'gpt-6.1-sol',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna'
@@ -488,6 +501,24 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    // GPT-6.1 Sol (2026-09-29). Official model page
+    // (developers.openai.com/api/docs/models/gpt-6.1-sol): low..max ladder
+    // with a Medium default and Fast mode at 2x; no `ultra` tier documented,
+    // so `ultracode` waits for the live `model/list`. Sits behind Astra and
+    // above the 6.0 pair; GPT-5.5 stays the default.
+    id: 'gpt-6.1-sol',
+    label: 'GPT-6.1-Sol',
+    description: 'Near-Astra performance for complex work at a lower cost.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6.1-sol', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast'],
     ultraTaskSupported: true
   },
@@ -711,6 +742,17 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
+  },
+  {
+    // Sonnet 5.5 (2026-09-28): 1M context, adaptive thinking with a High
+    // API default, no Fast mode (platform models overview and pricing page).
+    // Sonnet 5 keeps the default.
+    id: 'claude-sonnet-5-5',
+    label: 'Sonnet 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'high',
     ultraTaskSupported: true
   },
   {

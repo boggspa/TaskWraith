@@ -76,6 +76,10 @@ struct ContextWindowsTests {
         #expect(ContextWindows.byModel["gpt-6-luna"] == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-6-sol") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-6-luna") == 1_050_000)
+        // GPT-6.1 Sol (2026-09-29) and Sonnet 5.5 (2026-09-28), pinned on the table.
+        #expect(ContextWindows.byModel["gpt-6.1-sol"] == 1_050_000)
+        #expect(ContextWindows.byModel["claude-sonnet-5-5"] == 1_000_000)
+        #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5-5") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)

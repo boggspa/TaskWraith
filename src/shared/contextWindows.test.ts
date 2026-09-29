@@ -137,7 +137,7 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('codex', 'gpt-6-astra', 258_400)).toBe(258_400)
   })
 
-  it.each(['gpt-6-sol', 'gpt-6-luna'])(
+  it.each(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna'])(
     'carries the documented 1.05M window for %s on the table itself',
     (modelId) => {
       // The codex provider fallback is also 1_050_000, so `resolve` alone cannot
@@ -159,6 +159,11 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(knownModelContextWindow('claude-opus-5-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-opus-5-5')).toBe(1_000_000)
     expect(knownModelContextWindow('claude-opus-5-5-1m')).toBeUndefined()
+  })
+
+  it('carries the 1M default window for Claude Sonnet 5.5 on its base id', () => {
+    expect(knownModelContextWindow('claude-sonnet-5-5')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-sonnet-5-5')).toBe(1_000_000)
   })
 
   it('carries the 1M window for Pi Space Bunny Alpha on the table itself', () => {

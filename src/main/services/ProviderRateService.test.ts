@@ -222,6 +222,30 @@ describe('BAKED_IN_RATES', () => {
     })
   })
 
+  it('records GPT-6.1 Sol at its launch-day rate with the halved cached-input price', () => {
+    const codexRows = BAKED_IN_RATES.codex.models
+    expect(codexRows.find((model) => model.modelId === 'gpt-6.1-sol')).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 10,
+      longContextThresholdTokens: 272_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 0.2,
+      longContextOutputUsdPerMillion: 15,
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing'
+    })
+  })
+
+  it('records Claude Sonnet 5.5 at its launch-day $2/$10 rate with $0.20 cache reads', () => {
+    const claudeRows = BAKED_IN_RATES.claude.models
+    expect(claudeRows.find((model) => model.modelId === 'claude-sonnet-5-5')).toMatchObject({
+      inputUsdPerMillion: 2,
+      outputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 0.2,
+      sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing'
+    })
+  })
+
   it('records Claude Opus 5.5 at its launch-day $4/$20 rate with $0.20 cache reads', () => {
     const claudeRows = BAKED_IN_RATES.claude.models
     expect(claudeRows.find((model) => model.modelId === 'claude-opus-5-5')).toMatchObject({

@@ -33,6 +33,8 @@ public enum ContextWindows {
         // official model pages — mirrors src/shared/contextWindows.ts.
         "gpt-6-sol": 1_050_000,
         "gpt-6-luna": 1_050_000,
+        // GPT-6.1 Sol (2026-09-29): 1,050,000 on its official model page.
+        "gpt-6.1-sol": 1_050_000,
         // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on
         // all three — mirrors src/shared/contextWindows.ts.
         "gpt-5.6-sol": 1_050_000,
@@ -55,6 +57,7 @@ public enum ContextWindows {
         "claude-opus-4-8-1m": 1_000_000,
         "claude-opus-4-7": 200_000,
         "claude-opus-4-7-1m": 1_000_000,
+        "claude-sonnet-5-5": 1_000_000,
         "claude-sonnet-5": 1_000_000,
         "claude-sonnet-4-6": 200_000,
         "claude-haiku-4-5": 200_000,

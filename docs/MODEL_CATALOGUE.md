@@ -44,12 +44,17 @@ not the monoline glyph set.
 | Model                                         | Reasoning                                       | Fast   | Notes                                                            |
 | --------------------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------------------------------- |
 | **GPT-6-Astra** `gpt-6-astra`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Leads the picker from 2026-09-03. Not the seat default.          |
+| **GPT-6.1-Sol** `gpt-6.1-sol`                 | Light · Medium · High · Extra · Max             | Toggle | Near-Astra performance at a lower cost. Rolling out 2026-09-29.  |
 | **GPT-6-Sol** `gpt-6-sol`                     | Light · Medium · High · Extra · Max             | Toggle | Complex coding and agentic work. Rolling out from 2026-09-22.    |
 | **GPT-6-Luna** `gpt-6-luna`                   | Light · Medium · High · Extra · Max             | Toggle | Most efficient GPT-6 for focused, high-volume tasks.             |
 | **GPT-5.6-Sol** `gpt-5.6-sol`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Latest frontier agentic coding model.                            |
 | **GPT-5.6-Terra** `gpt-5.6-terra`             | Light · Medium · High · Extra · Max · Ultracode | Toggle | Balanced agentic coding for everyday work.                       |
 | **GPT-5.6-Luna** `gpt-5.6-luna`               | Light · Medium · High · Extra · Max             | Toggle | Fast and affordable agentic coding.                              |
 | **GPT-5.5** `gpt-5.5` **(Default)**           | Light · Medium · High · Extra                   | Toggle | Default while the GPT-5.6 rollout remains account-dependent.     |
+
+GPT-6.1 Sol (2026-09-29) follows the same pattern: 1,050,000 window, Low..Max
+with a Medium default, Fast mode, no `ultra`, staged. Codex CLI 0.155.1 has no
+metadata row for it yet and this account's turn was refused as unsupported.
 
 GPT-6 Sol and GPT-6 Luna began rolling out on 2026-09-22 (Codex changelog,
 alongside Codex CLI 0.155.0). Their official model pages document a
@@ -82,6 +87,7 @@ keep their labels.
 | **Opus 5.5** `claude-opus-5-5`                      | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, always-on adaptive thinking.    |
 | **Opus 5** `claude-opus-5`                          | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, adaptive thinking.              |
 | **Fable 5.1** `claude-fable-5-1`                    | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking.                         |
+| **Sonnet 5.5** `claude-sonnet-5-5`                  | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking. High default effort.    |
 | **Sonnet 5** `claude-sonnet-5` **(Default)**        | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, extended thinking.                         |
 | **Fable 5 Legacy** `claude-fable-5`                 | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context legacy Fable, adaptive thinking.            |
 | **Sonnet 4.6 Legacy** `claude-sonnet-4-6`           | Light · Medium · High · Max                     | —      | 200K context legacy Sonnet.                            |
@@ -92,6 +98,9 @@ keep their labels.
 Opus 5.5 (released 2026-09-22; $4 / $20 per 1M tokens, cache reads $0.20) dispatches
 only through Claude Code 2.1.280 or newer: 2.1.276 rejects the id with
 `claude_code_version_too_old`. Opus 5 keeps its row and label.
+
+Sonnet 5.5 (released 2026-09-28; $2 / $10 per 1M tokens, cache reads $0.20, no
+Fast mode) dispatches through Claude Code 2.1.284. Sonnet 5 stays the default.
 
 <table>
   <tr>
@@ -280,6 +289,7 @@ llama-server.
 | **Claude Fable 5.1** `claude-fable-5-1` | Anthropic | Low · **Medium** · High · Extra High · Max | $10 / $50 | new |
 | **Claude Opus 5.5** `claude-opus-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | new; Devin's own list price (Anthropic bills $4 / $20 first-party). `opus` still resolves to Opus 5 |
 | **Claude Opus 5** `claude-opus-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | `opus` alias resolves here |
+| **Claude Sonnet 5.5** `claude-sonnet-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | new; no alias |
 | **Claude Sonnet 5** `claude-sonnet-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | `claude` / `sonnet` alias resolves here |
 | **GPT-5.6 Sol** `gpt-5-6-sol` | OpenAI | None · Low · **Medium** · High · Extra High · Max | $4 / $20 | — |
 | **GPT-5.6 Terra** `gpt-5-6-terra` | OpenAI | **None** · Low · Medium · High · Extra High · Max | $2 / $12 | `gpt` alias resolves here |

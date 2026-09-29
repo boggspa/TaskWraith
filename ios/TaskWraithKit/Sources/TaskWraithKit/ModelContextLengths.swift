@@ -58,9 +58,10 @@ public enum ModelContextLengths {
         case "codex":
             return [
                 (id: "gpt-5.5",              label: "GPT-5.5"),
-                // GPT-6 Sol and Luna (2026-09-22) — mirrors the rows that
+                // GPT-6.1 Sol (2026-09-29), GPT-6 Sol and Luna (2026-09-22) — mirrors the rows that
                 // ensembleProviderDefaults.ts lists between gpt-6-astra (which
                 // has no iOS row) and the 5.6 trio.
+                (id: "gpt-6.1-sol",          label: "GPT-6.1-Sol"),
                 (id: "gpt-6-sol",            label: "GPT-6-Sol"),
                 (id: "gpt-6-luna",           label: "GPT-6-Luna"),
                 // GPT-5.6 trio — GA 2026-07-09, official hyphenated display
@@ -77,6 +78,7 @@ public enum ModelContextLengths {
                 (id: "claude-opus-5-5",     label: "Opus 5.5"),
                 (id: "claude-opus-5",       label: "Opus 5"),
                 (id: "claude-fable-5-1",    label: "Fable 5.1"),
+                (id: "claude-sonnet-5-5",   label: "Sonnet 5.5"),
                 (id: "claude-sonnet-5",     label: "Sonnet 5"),
                 (id: "claude-fable-5",      label: "Fable 5 Legacy"),
                 (id: "claude-sonnet-4-6",   label: "Sonnet 4.6 Legacy"),

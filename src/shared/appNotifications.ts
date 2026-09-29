@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-23'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-29'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,15 +162,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Opus 5.5, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
-        // Opus 5.5 released 2026-09-22: the headline launch of this lineup, so
-        // Claude leads the card again. Fable 5.1 stays listed beneath it.
+        // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) head this lineup,
+        // so Claude leads the card. Fable 5.1 stays listed beneath them.
         provider: 'claude',
         label: 'Claude',
         models: [
+          {
+            name: 'Sonnet 5.5',
+            blurb:
+              "Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."
+          },
           {
             name: 'Opus 5.5',
             blurb:
@@ -190,9 +195,15 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         // them. All three are announced regardless of this seat's entitlement:
         // access ramps by account and client version, so the card names the
         // models rather than the seat's current access to them.
+        // GPT-6.1 Sol (2026-09-29) joins at the top on the same ramp.
         provider: 'codex',
         label: 'Codex',
         models: [
+          {
+            name: 'GPT-6.1 Sol',
+            blurb:
+              "OpenAI's near-Astra GPT-6.1 at a lower cost — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
+          },
           {
             name: 'GPT-6 Sol',
             blurb:

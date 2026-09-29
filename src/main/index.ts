@@ -9234,6 +9234,8 @@ const CODEX_PICKER_LEAD_ORDER = [
   // ranks last, so a TaskWraith-appended row would otherwise sink below the
   // generation it supersedes.
   'gpt-6-astra',
+  // GPT-6.1 Sol (2026-09-29) follows Astra, above the 6.0 pair.
+  'gpt-6.1-sol',
   // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
   'gpt-6-sol',
   'gpt-6-luna',

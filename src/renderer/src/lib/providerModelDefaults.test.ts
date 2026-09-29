@@ -97,12 +97,13 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with Astra, GPT-6 Sol and Luna, then the GPT-5.6 trio, keeping 5.5 the default', () => {
+  it('leads the picker with Astra, GPT-6.1 Sol, GPT-6 Sol and Luna, then the GPT-5.6 trio, keeping 5.5 the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
-    // Astra leads from 2026-09-03; GPT-6 Sol and Luna (2026-09-22) follow it,
-    // above the 5.6 trio in Sol → Terra → Luna order.
-    expect(ids.slice(0, 6)).toEqual([
+    // Astra leads from 2026-09-03; GPT-6.1 Sol (2026-09-29) then GPT-6 Sol and
+    // Luna (2026-09-22) follow it, above the 5.6 trio in Sol → Terra → Luna order.
+    expect(ids.slice(0, 7)).toEqual([
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -124,6 +125,7 @@ describe('Codex provider model defaults', () => {
   })
 
   it.each([
+    ['gpt-6.1-sol', 'GPT-6.1-Sol', 'Near-Astra performance for complex work at a lower cost.'],
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
@@ -212,6 +214,7 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('claude-opus-4-8')).toBe(true)
     expect(isClaudeModelId('claude-opus-5')).toBe(true)
     expect(isClaudeModelId('claude-opus-5-5')).toBe(true)
+    expect(isClaudeModelId('claude-sonnet-5-5')).toBe(true)
   })
 
   it('exposes only 1M Opus defaults while keeping Sonnet as the default model', () => {
@@ -237,6 +240,22 @@ describe('Claude provider model defaults', () => {
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
     expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(byId.get('claude-sonnet-5-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
+  it('offers Sonnet 5.5 on the full ladder with a High default without taking the default', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-sonnet-5-5')).toMatchObject({
+      label: 'Sonnet 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'high'
+    })
+    expect(byId.get('claude-sonnet-5-5')).not.toMatchObject({ isDefault: true })
+    expect(
+      (byId.get('claude-sonnet-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option: { reasoningEffort: string; disabled?: boolean }) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
   it('offers Opus 5.5 as the leading Claude row on the full Opus ladder with a Medium default', () => {
@@ -266,6 +285,7 @@ describe('Claude provider model defaults', () => {
       'claude-opus-5-5',
       'claude-opus-5',
       'claude-fable-5-1',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
       'claude-fable-5',
       'claude-sonnet-4-6',

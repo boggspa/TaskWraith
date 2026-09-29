@@ -310,6 +310,8 @@ function museReasoningOptions(
 const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
+  // GPT-6.1 Sol (2026-09-29) follows Astra, above the 6.0 pair.
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' },
   // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
   { id: 'gpt-6-sol', label: 'GPT-6-Sol' },
   { id: 'gpt-6-luna', label: 'GPT-6-Luna' },
@@ -333,6 +335,7 @@ const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-fable-5', label: 'Fable 5 Legacy' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
@@ -617,7 +620,9 @@ const OLLAMA_MODELS = withCuratedUltraTaskSupport(OLLAMA_MODEL_ROWS)
 
 const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.5',
-  // GPT-6 Sol and Luna (2026-09-22) sit on OpenAI's Fast-mode pricing table.
+  // GPT-6 Sol and Luna (2026-09-22) and GPT-6.1 Sol (2026-09-29) sit on
+  // OpenAI's Fast-mode pricing table.
+  'gpt-6.1-sol',
   'gpt-6-sol',
   'gpt-6-luna',
   // GPT-5.6 trio (GA, 5.5 parity) — all expose the Fast speed tier
@@ -712,7 +717,7 @@ export function getEnsembleReasoningOptions(
     case 'codex': {
       // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
       // tiers: Astra, 5.6 Sol, and 5.6 Terra get max + ultra('ultracode');
-      // GPT-6 Sol, GPT-6 Luna and 5.6 Luna get max only (their official model
+      // GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna and 5.6 Luna get max only (their official model
       // pages document none..max and no `ultra`); everything else stops at
       // xhigh. Stale pre-un-gate placeholder ids count as their concrete slugs.
       const codexModel = String(modelId || '')
@@ -728,6 +733,7 @@ export function getEnsembleReasoningOptions(
         return CODEX_FULL_REASONING
       }
       if (
+        codexModel === 'gpt-6.1-sol' ||
         codexModel === 'gpt-6-sol' ||
         codexModel === 'gpt-6-luna' ||
         codexModel === 'gpt-5.6-luna' ||

@@ -5,7 +5,8 @@
  * Provenance: `devin models list --format json` from Devin CLI 3000.6.14
  * (18033302), retrieved 2026-09-11 on a signed-in self-serve seat; first
  * generated from 3000.6.7 (260a97c8) on 2026-09-01; the Claude Opus 5.5 family
- * was added from 3000.11.1 (cc4e349ca55e) on 2026-09-22. Every variant `uid` below
+ * was added from 3000.11.1 (cc4e349ca55e) on 2026-09-22, and Claude Sonnet 5.5
+ * from the same build on 2026-09-29. Every variant `uid` below
  * is a `model_uid` from that output — the exact value `devin acp --model <uid>`
  * receives — and every label is the CLI's own.
  *
@@ -429,6 +430,55 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
     ],
     defaultEffort: 'medium',
     pricing: { input: 5, cachedInput: 0.5, output: 25 }
+  },
+  {
+    // Released 2026-09-28; listed by 3000.11.1 on 2026-09-29 at $2 / $0.2 / $10.
+    // Sonnet 5 keeps the `claude` / `sonnet` aliases.
+    id: 'claude-sonnet-5-5',
+    label: 'Claude Sonnet 5.5',
+    familySlug: 'claude-sonnet-5.5',
+    aliases: [],
+    vendor: 'Anthropic',
+    variants: [
+      {
+        uid: 'claude-sonnet-5-5-medium',
+        label: 'Claude Sonnet 5.5 Medium',
+        effort: 'medium',
+        pricing: { input: 2, cachedInput: 0.2, output: 10 },
+        isNew: true
+      },
+      {
+        uid: 'claude-sonnet-5-5-low',
+        label: 'Claude Sonnet 5.5 Low',
+        effort: 'low',
+        pricing: { input: 2, cachedInput: 0.2, output: 10 },
+        isNew: true
+      },
+      {
+        uid: 'claude-sonnet-5-5-high',
+        label: 'Claude Sonnet 5.5 High',
+        effort: 'high',
+        pricing: { input: 2, cachedInput: 0.2, output: 10 },
+        isNew: true
+      },
+      {
+        uid: 'claude-sonnet-5-5-xhigh',
+        label: 'Claude Sonnet 5.5 XHigh',
+        effort: 'xhigh',
+        pricing: { input: 2, cachedInput: 0.2, output: 10 },
+        isNew: true
+      },
+      {
+        uid: 'claude-sonnet-5-5-max',
+        label: 'Claude Sonnet 5.5 Max',
+        effort: 'max',
+        pricing: { input: 2, cachedInput: 0.2, output: 10 },
+        isNew: true
+      }
+    ],
+    defaultEffort: 'medium',
+    pricing: { input: 2, cachedInput: 0.2, output: 10 },
+    isNew: true
   },
   {
     id: 'claude-sonnet-5',

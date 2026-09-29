@@ -33,6 +33,7 @@ describe('codexModelContextConfig', () => {
 
   it('returns the explicit 1M config for long-context Codex models', () => {
     expect(codexModelContextConfig('gpt-6-astra')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6.1-sol')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-6-sol')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-6-luna')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
@@ -273,6 +274,11 @@ describe('normalizeCliProviderModel (claude)', () => {
     expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-5')
   })
 
+  it('keeps Sonnet 5.5 distinct from Sonnet 5', () => {
+    expect(normalizeCliProviderModel('claude', 'claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
+    expect(normalizeCliProviderModel('claude', 'claude-sonnet-5')).toBe('claude-sonnet-5')
+  })
+
   it('keeps the legacy Sonnet 4.6 id runnable for historical selections', () => {
     expect(normalizeCliProviderModel('claude', 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
@@ -286,6 +292,8 @@ describe('claudeModelSupportsFastMode', () => {
     expect(claudeModelSupportsFastMode('claude-opus-4-7')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-fable-5')).toBe(false)
     expect(claudeModelSupportsFastMode('claude-fable-5-1m')).toBe(false)
+    // Sonnet 5.5 is not on the platform's Fast-mode list.
+    expect(claudeModelSupportsFastMode('claude-sonnet-5-5')).toBe(false)
   })
 })
 
@@ -512,9 +520,11 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const ids = models.map((model) => model.id)
     // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
     // shipped it "without changing the default model".
-    // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
-    expect(ids.slice(0, 6)).toEqual([
+    // GPT-6.1 Sol (2026-09-29), then GPT-6 Sol and Luna (2026-09-22), follow
+    // Astra, above the 5.6 generation.
+    expect(ids.slice(0, 7)).toEqual([
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -548,6 +558,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
   })
 
   it.each([
+    ['gpt-6.1-sol', 'GPT-6.1-Sol', 'Near-Astra performance for complex work at a lower cost.'],
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
@@ -579,7 +590,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
 
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    for (const modelId of ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
+    for (const modelId of ['gpt-5.5', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
       expect(
         models
           .find((model) => model.id === modelId)
@@ -869,6 +880,7 @@ describe('mergeCodexLiveModelRows', () => {
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -896,6 +908,7 @@ describe('mergeCodexLiveModelRows', () => {
   it('appends nothing extra once live discovery carries every managed row', () => {
     const live = [
       { id: 'gpt-6-astra' },
+      { id: 'gpt-6.1-sol' },
       { id: 'gpt-6-sol' },
       { id: 'gpt-6-luna' },
       { id: 'gpt-5.6-sol' },
@@ -909,9 +922,10 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(10)
+    expect(merged).toHaveLength(11)
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -1148,6 +1162,7 @@ describe('getStaticProviderModels (claude)', () => {
       'claude-opus-5-5',
       'claude-opus-5',
       'claude-fable-5-1',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
       'claude-fable-5',
       'claude-sonnet-4-6',
@@ -1177,6 +1192,22 @@ describe('getStaticProviderModels (claude)', () => {
     expect(byId.get('claude-opus-5-5')?.isDefault).toBeFalsy()
     expect(
       (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+  })
+
+  it('offers Sonnet 5.5 above Sonnet 5 on the full ladder with a High default and no Fast tier', () => {
+    expect(byId.get('claude-sonnet-5-5')).toMatchObject({
+      label: 'Sonnet 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'high'
+    })
+    expect(byId.get('claude-sonnet-5-5')?.isDefault).toBeFalsy()
+    expect(byId.get('claude-sonnet-5')?.isDefault).toBe(true)
+    expect(byId.get('claude-sonnet-5-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(
+      (byId.get('claude-sonnet-5-5')?.supportedReasoningEfforts ?? [])
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])

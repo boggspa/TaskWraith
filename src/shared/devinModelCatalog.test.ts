@@ -106,6 +106,36 @@ describe('devinModelCatalog', () => {
     expect(isDevinCatalogModelId('claude-opus-5-5')).toBe(true)
   })
 
+  it('carries the Claude Sonnet 5.5 family beside Sonnet 5 without a prefix collision', () => {
+    // Devin CLI 3000.11.1 lists the family (2026-09-29) at $2 / $0.2 / $10 with
+    // no alias: `claude` and `sonnet` still resolve to Sonnet 5.
+    expect(findDevinCatalogRow('claude-sonnet-5-5')).toMatchObject({
+      label: 'Claude Sonnet 5.5',
+      familySlug: 'claude-sonnet-5.5',
+      aliases: [],
+      vendor: 'Anthropic',
+      defaultEffort: 'medium',
+      pricing: { input: 2, cachedInput: 0.2, output: 10 },
+      isNew: true
+    })
+    expect(findDevinCatalogRow('claude-sonnet-5')?.aliases).toEqual(['claude', 'sonnet'])
+    expect(devinReasoningEfforts('claude-sonnet-5-5')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    expect(DEVIN_MODEL_LABELS['claude-sonnet-5-5-max']).toBe('Claude Sonnet 5.5 Max')
+    // `claude-sonnet-5-5-high` starts with `claude-sonnet-5`: every fold must stay exact.
+    expect(resolveDevinVariantId('claude-sonnet-5-5', 'high')).toBe('claude-sonnet-5-5-high')
+    expect(resolveDevinVariantId('claude-sonnet-5-5', null)).toBe('claude-sonnet-5-5-medium')
+    expect(resolveDevinVariantId('claude-sonnet-5', 'high')).toBe('claude-sonnet-5-high')
+    expect(normalizeDevinModelId('claude-sonnet-5-5-xhigh')).toBe('claude-sonnet-5-5')
+    expect(normalizeDevinModelId('claude-sonnet-5-xhigh')).toBe('claude-sonnet-5')
+    expect(findDevinVariant('claude-sonnet-5-5-low')?.family.id).toBe('claude-sonnet-5-5')
+  })
+
   it('omits speed-tier duplicates and opaque legacy uids', () => {
     const uids = DEVIN_MODEL_CATALOG.flatMap((family) => family.variants.map((v) => v.uid))
     for (const uid of uids) {

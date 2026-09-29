@@ -359,6 +359,22 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes:
           'Standard tier; prompts at or above 272K tokens bill every token at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
       },
+      // GPT-6.1 Sol — 2026-09-29. Same list and long-context rates as GPT-6
+      // Sol, but the pricing page halves the cached-input rate ($0.10 / $0.20).
+      {
+        modelId: 'gpt-6.1-sol',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.1,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 15.0,
+        longContextCachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
       // GPT-6 Sol and Luna — rolling out from 2026-09-22. The pricing page
       // publishes the long-context tier outright for both, and each model page
       // states the rule: prompts with more than 272K input tokens are priced at
@@ -552,6 +568,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://www.anthropic.com/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Previous-gen Opus; same published $5/$25 rate as 4.7/4.8.'
+      },
+      {
+        modelId: 'claude-sonnet-5-5',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current-gen Sonnet, released 2026-09-28 at $2/$10 (platform pricing page, read 2026-09-29). Cache reads $0.20/MTok (standard 0.1x). 1M context at standard pricing — no -1m variant. No Fast mode.'
       },
       {
         modelId: 'claude-sonnet-5',

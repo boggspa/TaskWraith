@@ -205,14 +205,16 @@ describe('HostProviderCatalog', () => {
     expect(opus55?.reasoning.every((entry) => entry.available)).toBe(true)
   })
 
-  it('offers GPT-6 Sol and Luna as the leading Codex rows on the standard ladder without moving the default', () => {
+  it('offers GPT-6.1 Sol, GPT-6 Sol and Luna as the leading Codex rows on the standard ladder without moving the default', () => {
     const codex = hostProviderCatalogEntry('codex')
-    expect(codex?.models.map((model) => model.modelId).slice(0, 3)).toEqual([
+    expect(codex?.models.map((model) => model.modelId).slice(0, 4)).toEqual([
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol'
     ])
     for (const [modelId, label] of [
+      ['gpt-6.1-sol', 'GPT-6.1-Sol'],
       ['gpt-6-sol', 'GPT-6-Sol'],
       ['gpt-6-luna', 'GPT-6-Luna']
     ] as const) {

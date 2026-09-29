@@ -428,7 +428,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Claude leads the lineup from the Opus 5.5 release (2026-09-22).
+      // Claude leads the lineup from the Opus 5.5 (2026-09-22) and Sonnet 5.5
+      // (2026-09-28) releases.
       'claude',
       'codex',
       'kimi',
@@ -446,7 +447,7 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
-    ).toBe('Opus 5.5')
+    ).toBe('Sonnet 5.5')
     expect(newAdditions?.groups?.find((group) => group.provider === 'devin')?.models[0]?.name).toBe(
       'SWE-2'
     )

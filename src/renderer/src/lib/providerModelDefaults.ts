@@ -100,6 +100,22 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
     additionalSpeedTiers: ['fast']
   },
   {
+    // GPT-6.1 Sol (2026-09-29): low..max with a Medium default and Fast mode on
+    // its official model page; no `ultra` documented. Not the default.
+    id: 'gpt-6.1-sol',
+    label: 'GPT-6.1-Sol',
+    description: 'Near-Astra performance for complex work at a lower cost.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     // GPT-6 Sol and Luna (2026-09-22). The official model pages document a
     // none..max ladder with a Medium default and Fast mode on the pricing
     // page; no `ultra` is documented, so ultracode waits for the live catalog.
@@ -283,6 +299,14 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
+  },
+  {
+    // Sonnet 5.5 (2026-09-28): High API default effort, no Fast mode.
+    id: 'claude-sonnet-5-5',
+    label: 'Sonnet 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'high'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -949,6 +973,7 @@ const CLAUDE_MODEL_IDS = new Set([
   'claude-fable-5-1m',
   'claude-mythos-5',
   'claude-opus-4-7-1m',
+  'claude-sonnet-5-5',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-haiku-4-5'
