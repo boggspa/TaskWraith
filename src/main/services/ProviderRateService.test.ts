@@ -246,6 +246,16 @@ describe('BAKED_IN_RATES', () => {
     })
   })
 
+  it('records Claude Sonnet 5 at its now-standard $2/$10 rate, not the cancelled $3/$15', () => {
+    const claudeRows = BAKED_IN_RATES.claude.models
+    expect(claudeRows.find((model) => model.modelId === 'claude-sonnet-5')).toMatchObject({
+      inputUsdPerMillion: 2,
+      outputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 0.2,
+      sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing'
+    })
+  })
+
   it('records Claude Opus 5.5 at its launch-day $4/$20 rate with $0.20 cache reads', () => {
     const claudeRows = BAKED_IN_RATES.claude.models
     expect(claudeRows.find((model) => model.modelId === 'claude-opus-5-5')).toMatchObject({

@@ -341,9 +341,10 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
     isNew: true
   },
   {
-    // Released 2026-09-22. Devin lists it at its own $5 / $0.5 / $25 rate card
-    // (Anthropic's first-party rate is $4 / $20); the CLI's price is what a
-    // self-serve Devin seat pays, so it is recorded as shown, not corrected.
+    // Released 2026-09-22. Devin first listed it at its own $5 / $0.5 / $25
+    // rate card; by 3000.11.1 on 2026-09-29 the CLI shows Anthropic's $4 /
+    // $0.2 / $20. The CLI's price is what a self-serve seat pays, so it is
+    // recorded as shown.
     id: 'claude-opus-5-5',
     label: 'Claude Opus 5.5',
     familySlug: 'claude-opus-5.5',
@@ -354,40 +355,40 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
         uid: 'claude-opus-5-5-medium',
         label: 'Claude Opus 5.5 Medium',
         effort: 'medium',
-        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        pricing: { input: 4, cachedInput: 0.2, output: 20 },
         isNew: true
       },
       {
         uid: 'claude-opus-5-5-low',
         label: 'Claude Opus 5.5 Low',
         effort: 'low',
-        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        pricing: { input: 4, cachedInput: 0.2, output: 20 },
         isNew: true
       },
       {
         uid: 'claude-opus-5-5-high',
         label: 'Claude Opus 5.5 High',
         effort: 'high',
-        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        pricing: { input: 4, cachedInput: 0.2, output: 20 },
         isNew: true
       },
       {
         uid: 'claude-opus-5-5-xhigh',
         label: 'Claude Opus 5.5 XHigh',
         effort: 'xhigh',
-        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        pricing: { input: 4, cachedInput: 0.2, output: 20 },
         isNew: true
       },
       {
         uid: 'claude-opus-5-5-max',
         label: 'Claude Opus 5.5 Max',
         effort: 'max',
-        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        pricing: { input: 4, cachedInput: 0.2, output: 20 },
         isNew: true
       }
     ],
     defaultEffort: 'medium',
-    pricing: { input: 5, cachedInput: 0.5, output: 25 },
+    pricing: { input: 4, cachedInput: 0.2, output: 20 },
     isNew: true
   },
   {

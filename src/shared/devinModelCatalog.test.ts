@@ -82,8 +82,18 @@ describe('devinModelCatalog', () => {
       aliases: [],
       vendor: 'Anthropic',
       defaultEffort: 'medium',
-      pricing: { input: 5, cachedInput: 0.5, output: 25 },
+      // Devin's own list price as of 3000.11.1 (2026-09-29), matching
+      // Anthropic's first-party rate; Opus 5 keeps its $5 / $25.
+      pricing: { input: 4, cachedInput: 0.2, output: 20 },
       isNew: true
+    })
+    expect(findDevinCatalogRow('claude-opus-5-5')?.variants.map((v) => v.pricing)).toEqual(
+      Array(5).fill({ input: 4, cachedInput: 0.2, output: 20 })
+    )
+    expect(findDevinCatalogRow('claude-opus-5')?.pricing).toEqual({
+      input: 5,
+      cachedInput: 0.5,
+      output: 25
     })
     expect(findDevinCatalogRow('claude-opus-5')?.aliases).toEqual(['opus'])
     expect(devinReasoningEfforts('claude-opus-5-5')).toEqual([

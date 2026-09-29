@@ -581,13 +581,13 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       },
       {
         modelId: 'claude-sonnet-5',
-        inputUsdPerMillion: 3.0,
-        outputUsdPerMillion: 15.0,
-        cachedInputUsdPerMillion: 0.3,
-        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current-gen Sonnet. Published rate $3/$15 (verified against platform.claude.com 2026-06-30); cached-read at the standard 0.1x input = $0.3. Shares the Opus 4.8 reasoning ladder but Sonnet-tier billing, NOT Opus $5/$25. NOTE: introductory pricing of $2/$10 per MTok applies through 2026-08-31 — the table tracks the standard post-intro rate so historical/forward costs stay correct after the promo ends.'
+          'Previous-gen Sonnet as of Sonnet 5.5 (2026-09-28). $2/$10 is the standard price: the pricing page (read 2026-09-29) says the launch introductory rate became permanent and the scheduled 2026-09-01 rise to $3/$15 will not occur. Cached-read at the standard 0.1x input = $0.2. Shares the Opus reasoning ladder but Sonnet-tier billing.'
       },
       {
         modelId: 'claude-sonnet-4-6',

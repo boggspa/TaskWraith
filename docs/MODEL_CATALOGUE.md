@@ -287,7 +287,7 @@ llama-server.
 | **SWE-1.7 Lightning** `swe-1-7-lightning` | Cognition | Medium · **Max** | $2.5 / $12.5 | Held the `swe` alias until 3000.6.14 moved it to SWE-2; the CLI now lists this family with no aliases |
 | **Adaptive** `adaptive` | Cognition | — | $0.5 / $2 | Cognition's model router; enterprise admins must enable it |
 | **Claude Fable 5.1** `claude-fable-5-1` | Anthropic | Low · **Medium** · High · Extra High · Max | $10 / $50 | new |
-| **Claude Opus 5.5** `claude-opus-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | new; Devin's own list price (Anthropic bills $4 / $20 first-party). `opus` still resolves to Opus 5 |
+| **Claude Opus 5.5** `claude-opus-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $4 / $20 | new; Devin's list price matches Anthropic's first-party rate as of 3000.11.1 (2026-09-29). `opus` still resolves to Opus 5 |
 | **Claude Opus 5** `claude-opus-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | `opus` alias resolves here |
 | **Claude Sonnet 5.5** `claude-sonnet-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | new; no alias |
 | **Claude Sonnet 5** `claude-sonnet-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | `claude` / `sonnet` alias resolves here |
