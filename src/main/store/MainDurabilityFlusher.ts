@@ -53,6 +53,9 @@ interface FileState {
   nextDirtySince?: number
   prompt: boolean
   dependencies: Map<FileState, number>
+  /** Flat retained acknowledgement debt after rotation transfers scheduler custody. */
+  barrierDependencies: Map<FileState, number>
+  custodyTransferred?: boolean
   waiters: Waiter[]
   error?: Error
   forgetting: boolean
@@ -121,6 +124,7 @@ export class MainDurabilityFlusher {
       durable: durableOffset,
       prompt: false,
       dependencies: new Map(),
+      barrierDependencies: new Map(),
       waiters: [],
       forgetting: false,
       forgotten: false
@@ -137,6 +141,7 @@ export class MainDurabilityFlusher {
     options: { after?: readonly DurabilityDependency[] } = {}
   ): void {
     const file = this.active(identity)
+    if (file.custodyTransferred) throw new Error('Transferred predecessor is sealed')
     this.validateOffset(endOffset)
     if (endOffset < file.end) throw new Error('Write offset regressed')
     // Validate the complete declaration before changing any state.
@@ -164,7 +169,9 @@ export class MainDurabilityFlusher {
       file.end = endOffset
     }
     file.prompt ||= durability === 'prompt'
-    const failedDependency = [...file.dependencies.keys()].some((dependency) => dependency.error)
+    const failedDependency = [...file.dependencies.keys(), ...file.barrierDependencies.keys()].some(
+      (dependency) => dependency.error
+    )
     if (durability === 'sync' || file.error || failedDependency) {
       if (file.error || failedDependency) this.counters.escalations++
       this.sync(file, durability === 'sync' ? 'strict' : 'escalation')
@@ -184,6 +191,51 @@ export class MainDurabilityFlusher {
     })
     this.pump()
     return promise
+  }
+
+  /** Rotation-only seam. Atomic validation, no syscall or scheduler pump.
+   * The successor owns the flat fsync graph; predecessor barriers retain their
+   * flat name prerequisites independently, without a transitive fsync graph.
+   */
+  transferDependencies(
+    predecessorIdentity: DurabilityFile,
+    successorIdentity: DurabilityFile,
+    predecessorOffset: number
+  ): void {
+    const predecessor = this.active(predecessorIdentity)
+    const successor = this.active(successorIdentity)
+    this.validateOffset(predecessorOffset)
+    if (predecessor === successor) throw new Error('Cannot transfer to the same inode')
+    if (predecessorOffset !== predecessor.end)
+      throw new Error('Transfer must cover predecessor extent')
+    if (successor.end !== successor.durable || this.flight?.file === successor) {
+      throw new Error('Successor must have no unflushed writes')
+    }
+    if (predecessor.custodyTransferred) throw new Error('Predecessor custody already transferred')
+    const transferred = new Map(successor.dependencies)
+    for (const [dependency, end] of predecessor.dependencies) {
+      if (
+        dependency === successor ||
+        dependency.forgetting ||
+        dependency.forgotten ||
+        dependency.dependencies.size
+      ) {
+        throw new Error('Transfer requires live flat prerequisites')
+      }
+      transferred.set(dependency, Math.max(end, transferred.get(dependency) ?? 0))
+    }
+    for (const other of this.files) {
+      if (other.dependencies.has(predecessor) || other.dependencies.has(successor)) {
+        throw new Error('Transfer cannot alter an inode already used as a prerequisite')
+      }
+    }
+    transferred.set(predecessor, predecessorOffset)
+    // No throws beyond this point. Failed prerequisites retain their state and
+    // descriptor ownership; neither acknowledged offsets nor errors are reset.
+    predecessor.barrierDependencies = new Map(predecessor.dependencies)
+    predecessor.dependencies.clear()
+    predecessor.custodyTransferred = true
+    successor.dependencies = transferred
   }
 
   /** Caller must already have durably adopted any covering checkpoint.
@@ -274,7 +326,7 @@ export class MainDurabilityFlusher {
   private satisfied(file: FileState, offset: number): boolean {
     return (
       (file.forgotten || file.durable >= offset) &&
-      [...file.dependencies].every(
+      [...file.dependencies, ...file.barrierDependencies].every(
         ([dependency, end]) => dependency.forgotten || dependency.durable >= end
       )
     )
@@ -285,6 +337,10 @@ export class MainDurabilityFlusher {
       for (const [dependency, end] of file.dependencies) {
         if (dependency.forgotten || dependency.durable >= end) file.dependencies.delete(dependency)
       }
+      for (const [dependency, end] of file.barrierDependencies) {
+        if (dependency.forgotten || dependency.durable >= end)
+          file.barrierDependencies.delete(dependency)
+      }
       const pending: Waiter[] = []
       for (const waiter of file.waiters) {
         if (file.forgetting && !file.forgotten && !file.closeFailed) {
@@ -294,7 +350,10 @@ export class MainDurabilityFlusher {
         if (file.forgotten || this.satisfied(file, waiter.offset)) waiter.resolve()
         else if (file.error) waiter.reject(file.error)
         else {
-          const dependencyError = [...file.dependencies.keys()].find(
+          const dependencyError = [
+            ...file.dependencies.keys(),
+            ...file.barrierDependencies.keys()
+          ].find(
             (dependency) => dependency.error && (!dependency.forgetting || dependency.closeFailed)
           )
           if (dependencyError?.error) waiter.reject(dependencyError.error)
@@ -324,7 +383,7 @@ export class MainDurabilityFlusher {
     this.syncDepth++
     try {
       this.joinFlight()
-      for (const [dependency, end] of file.dependencies) {
+      for (const [dependency, end] of [...file.dependencies, ...file.barrierDependencies]) {
         if (!dependency.forgotten && dependency.durable < end) {
           if (dependency.forgetting) throw new Error('Dependency adoption is not complete')
           this.counters.dependencySyncFsyncs++
@@ -364,6 +423,7 @@ export class MainDurabilityFlusher {
       file.closeFailed = false
       file.forgotten = true
       file.dependencies.clear()
+      file.barrierDependencies.clear()
       file.error = undefined
       file.durable = file.end
       this.settle()
@@ -404,7 +464,11 @@ export class MainDurabilityFlusher {
       for (const file of candidates) {
         const rank = file.waiters.length > 0 ? 0 : file.prompt ? 1 : 2
         priority.set(file, Math.min(priority.get(file) ?? 2, rank))
-        for (const [dependency, offset] of file.dependencies) {
+        const prerequisites =
+          file.waiters.length > 0
+            ? [...file.dependencies, ...file.barrierDependencies]
+            : [...file.dependencies]
+        for (const [dependency, offset] of prerequisites) {
           if (dependency.durable < offset && !dependency.forgotten) {
             priority.set(dependency, Math.min(priority.get(dependency) ?? 2, rank))
           }
