@@ -22,6 +22,7 @@ const FAIRNESS = 'TASKWRAITH_CODEX_COHORT_FAIRNESS'
 const TRANSACTION = 'TASKWRAITH_HOST_TXN_PERSIST'
 const JOURNAL = 'TASKWRAITH_JOURNAL_FLUSHER'
 const RUN_EVENT = 'TASKWRAITH_RUN_EVENT_FLUSHER'
+const CATALOGUE = 'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
 
 type Spawned = { cmd: string; args: string[]; opts: { env: Record<string, string> } }
 
@@ -50,9 +51,10 @@ afterEach(() => {
 })
 
 describe('programme rollout flags', () => {
-  it.each([JOURNAL, RUN_EVENT])(
+  it.each([CATALOGUE, JOURNAL, RUN_EVENT])(
     'pins inherited %s off and enables only its explicit declaration',
     (flag) => {
+      vi.stubEnv(CATALOGUE, '1')
       vi.stubEnv(JOURNAL, '1')
       vi.stubEnv(RUN_EVENT, '1')
       for (const declared of [[], [flag]]) {
@@ -60,7 +62,7 @@ describe('programme rollout flags', () => {
         const plan = pinRolloutFlagsOnSpawnPlan(buildElectronSpawnPlan(planBase), resolved)
         const spawned: Spawned[] = []
         spawnExactElectronChild({ spawnPlan: plan, adapters: { spawn: fakeSpawn(spawned) } })
-        for (const name of [JOURNAL, RUN_EVENT]) {
+        for (const name of [CATALOGUE, JOURNAL, RUN_EVENT]) {
           const token = declared.includes(name) ? '1' : '0'
           expect(spawned[0].opts.env[name]).toBe(token)
           expect(plan.shellCommand).toContain(`${name}=${token}`)
@@ -98,6 +100,7 @@ describe('programme rollout flags', () => {
 
   it('lists exactly the flags the source reads as the exact token 1', () => {
     expect(PROGRAMME_ROLLOUT_FLAGS).toEqual([
+      CATALOGUE,
       CHECKPOINT,
       FAIRNESS,
       QUEUED,
@@ -110,6 +113,7 @@ describe('programme rollout flags', () => {
   it('pins every flag off by default and records each as off', () => {
     const resolved = resolveRolloutFlags()
     expect(resolved.values).toEqual({
+      [CATALOGUE]: '0',
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '0',
@@ -121,6 +125,7 @@ describe('programme rollout flags', () => {
       schemaVersion: 1,
       declared: [],
       effective: {
+        [CATALOGUE]: 'off',
         [CHECKPOINT]: 'off',
         [FAIRNESS]: 'off',
         [QUEUED]: 'off',
@@ -135,6 +140,7 @@ describe('programme rollout flags', () => {
   it('turns on only the declared flags and pins the rest off', () => {
     const resolved = resolveRolloutFlags({ declared: [QUEUED] })
     expect(resolved.values).toEqual({
+      [CATALOGUE]: '0',
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '1',
@@ -144,6 +150,7 @@ describe('programme rollout flags', () => {
     })
     expect(resolved.record.declared).toEqual([QUEUED])
     expect(resolved.record.effective).toEqual({
+      [CATALOGUE]: 'off',
       [CHECKPOINT]: 'off',
       [FAIRNESS]: 'off',
       [QUEUED]: 'on',
@@ -182,6 +189,7 @@ describe('spawn plan pinning', () => {
     const pinned = pinRolloutFlagsOnSpawnPlan(plan, resolveRolloutFlags({ declared: [QUEUED] }))
     expect(pinned.env).toEqual({
       ...plan.env,
+      [CATALOGUE]: '0',
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '1',
@@ -190,7 +198,7 @@ describe('spawn plan pinning', () => {
       [RUN_EVENT]: '0'
     })
     expect(pinned.shellCommand).toBe(
-      `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 ${plan.shellCommand}`
+      `env ${CATALOGUE}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 ${plan.shellCommand}`
     )
     expect(pinned.argv).toEqual(plan.argv)
     // The unpinned plan is left untouched.
@@ -292,6 +300,33 @@ describe('environment record', () => {
 })
 
 describe('T2 runner', () => {
+  it('records an explicitly declared catalogue pin in the runner plan', async () => {
+    const outDir = mkdtempSync(path.join(tmpdir(), 'tw-t2-catalogue-pin-'))
+    try {
+      const dry = await runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--dry-run',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfCatalogueDry01',
+          `--home=${path.join(outDir, 'home')}`,
+          `--out-dir=${outDir}`,
+          `--flag=${CATALOGUE}`
+        ],
+        { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+      )
+      expect(dry.ok).toBe(true)
+      expect(dry.report.environment.rolloutFlags.declared).toEqual([CATALOGUE])
+      expect(dry.report.environment.rolloutFlags.effective[CATALOGUE]).toBe('on')
+      expect(dry.spawnPlan.env[CATALOGUE]).toBe('1')
+      expect(dry.report.launchPlan.shellCommand).toContain(`${CATALOGUE}=1`)
+      expect(validateRolloutFlagRecord(dry.report.environment.rolloutFlags)).toEqual([])
+    } finally {
+      rmSync(outDir, { recursive: true, force: true })
+    }
+  })
+
   it('records declared flags in the environment and the reproducible command', async () => {
     vi.stubEnv(CHECKPOINT, '1')
     const outDir = mkdtempSync(path.join(tmpdir(), 'tw-t2-flags-'))
@@ -314,6 +349,7 @@ describe('T2 runner', () => {
         schemaVersion: 1,
         declared: [QUEUED],
         effective: {
+          [CATALOGUE]: 'off',
           [CHECKPOINT]: 'off',
           [FAIRNESS]: 'off',
           [QUEUED]: 'on',
@@ -327,7 +363,7 @@ describe('T2 runner', () => {
       expect(dry.spawnPlan.env[CHECKPOINT]).toBe('0')
       expect(
         dry.report.launchPlan.shellCommand.startsWith(
-          `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 `
+          `env ${CATALOGUE}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 `
         )
       ).toBe(true)
     } finally {

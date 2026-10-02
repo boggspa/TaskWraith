@@ -26,6 +26,7 @@
 
 /** Every reader compares against the exact string '1'; '0' is off for each. */
 const ROLLOUT_FLAG_TOKENS = Object.freeze({
+  TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_CHECKPOINT_WORKER: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_CODEX_COHORT_FAIRNESS: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_HOST_QUEUED_START: Object.freeze({ on: '1', off: '0' }),
