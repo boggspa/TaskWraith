@@ -67,12 +67,7 @@ function managerFixture(
     (_command: string, _args: string[], _options: SpawnOptions) => child as unknown as ChildProcess
   )
   const spawnGatedProcess = vi.fn(
-    (
-      _command: string,
-      _args: string[],
-      _options: SpawnOptions,
-      _workspaceLockOwnerId: string
-    ) => ({
+    (_command: string, _args: string[], _options: SpawnOptions, _workspaceLockOwnerId: string) => ({
       child: child as unknown as ChildProcess,
       start: () => gatedStarts.push(child.pid)
     })
@@ -111,6 +106,229 @@ function managerFixture(
     workspacePath
   }
 }
+
+describe('LaunchManager audit shutdown', () => {
+  it('keeps an admitted stop joined through close cleanup started after admission closes', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    let releaseCleanup!: () => void
+    let cleanupStarted!: () => void
+    const cleaning = new Promise<void>((resolve) => {
+      cleanupStarted = resolve
+    })
+    const start = await h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath),
+      workspaceLockOwnerId: 'test-owner',
+      workspaceLockLifecycle: {
+        bind: async () => {},
+        release: () => {
+          cleanupStarted()
+          return new Promise<void>((resolve) => {
+            releaseCleanup = resolve
+          })
+        }
+      }
+    })
+    if (!start.attempt) throw new Error('start failed')
+    let finishKill!: (result: KillResult) => void
+    h.killProcess.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishKill = resolve
+        })
+    )
+    const stop = h.manager.stopAttempt(start.attempt.id)
+    h.manager.beginShutdown()
+    h.child.emit('close', 0, null)
+    await cleaning
+    finishKill({ ok: true, escalated: false })
+    let joined = false
+    const join = h.manager.join().then(() => {
+      joined = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(joined).toBe(false)
+    releaseCleanup()
+    await stop
+    await join
+    expect(joined).toBe(true)
+  })
+
+  it('does not join pending approval and refuses late acceptance without spawning or events', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    let accept!: (allowed: boolean) => void
+    h.requestApproval.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          accept = resolve
+        })
+    )
+    const start = h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath)
+    })
+    await Promise.resolve()
+    h.manager.beginShutdown()
+    await h.manager.join()
+    accept(true)
+    expect(await start).toMatchObject({ ok: false })
+    expect(h.spawnProcess).not.toHaveBeenCalled()
+    expect(h.lifecycleEvents).toEqual([])
+    expect(h.killProcess).not.toHaveBeenCalled()
+  })
+
+  it('rechecks shutdown after mutation authorization before spawn', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const start = h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath),
+      assertMutationAuthorized: () => {
+        entered()
+        return new Promise<void>((resolve) => {
+          release = resolve
+        })
+      }
+    })
+    await waiting
+    h.manager.beginShutdown()
+    release()
+    expect(await start).toMatchObject({ ok: false })
+    await h.manager.join()
+    expect(h.spawnProcess).not.toHaveBeenCalled()
+    expect(h.lifecycleEvents).toEqual([])
+  })
+
+  it('detaches audit sources while preserving the external child', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    expect(
+      await h.manager.startTarget({
+        sender: null,
+        provider: 'codex',
+        target: target(h.workspacePath)
+      })
+    ).toMatchObject({ ok: true })
+    const count = h.lifecycleEvents.length
+    h.manager.beginShutdown()
+    await h.manager.join()
+    expect(h.child.stdout.listenerCount('data')).toBe(0)
+    expect(h.child.stderr.listenerCount('data')).toBe(0)
+    h.child.emit('error', new Error('late child error'))
+    h.child.emit('close', 1, null)
+    expect(h.lifecycleEvents).toHaveLength(count)
+    expect(h.killProcess).not.toHaveBeenCalled()
+    expect(await h.manager.stopAttempt('any')).toMatchObject({ ok: false })
+  })
+
+  it('joins a stop already executing through its terminal audit, including failure', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    const start = await h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath)
+    })
+    if (!start.ok || !start.attempt) throw new Error('start failed')
+    let finish!: (result: KillResult) => void
+    h.killProcess.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const stop = h.manager.stopAttempt(start.attempt.id)
+    h.manager.beginShutdown()
+    let joined = false
+    const join = h.manager.join().then(() => {
+      joined = true
+    })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+    finish({ ok: false, escalated: false })
+    await stop
+    await join
+    expect(h.lifecycleEvents.length).toBeGreaterThan(1)
+    await h.manager.join()
+  })
+
+  it('joins an executing close callback cleanup and detaches its audit source', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    let release!: () => void
+    let cleaning!: () => void
+    const cleaningStarted = new Promise<void>((resolve) => {
+      cleaning = resolve
+    })
+    const started = await h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath),
+      workspaceLockOwnerId: 'test-owner',
+      workspaceLockLifecycle: {
+        bind: async () => {},
+        release: () => {
+          cleaning()
+          return new Promise<void>((resolve) => {
+            release = resolve
+          })
+        }
+      }
+    })
+    expect(started.ok).toBe(true)
+    h.child.emit('close', 0, null)
+    await cleaningStarted
+    const count = h.lifecycleEvents.length
+    h.manager.beginShutdown()
+    expect(h.child.listenerCount('close')).toBe(1) // cleanup only
+    let joined = false
+    const join = h.manager.join().then(() => {
+      joined = true
+    })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+    release()
+    await join
+    expect(h.lifecycleEvents).toHaveLength(count)
+    expect(h.killProcess).not.toHaveBeenCalled()
+  })
+
+  it('a rejected admitted stop releases its join and repeated join remains usable', async () => {
+    const storage = await tempFile()
+    const h = managerFixture(storage, path.dirname(storage))
+    const started = await h.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(h.workspacePath)
+    })
+    if (!started.ok || !started.attempt) throw new Error('start failed')
+    let reject!: (error: Error) => void
+    h.killProcess.mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    const stopped = h.manager.stopAttempt(started.attempt.id)
+    const failed = expect(stopped).rejects.toThrow('injected stop failure')
+    h.manager.beginShutdown()
+    reject(new Error('injected stop failure'))
+    await failed
+    await h.manager.join()
+    h.manager.beginShutdown()
+    await h.manager.join()
+  })
+})
 
 describe('LaunchManager — self-launch refusal', () => {
   /**
@@ -1477,19 +1695,21 @@ describe('LaunchManager — adopting an agent-spawned process', () => {
       ancestry?: (request: { leafPid: number; rootPid: number }) => Promise<unknown>
       startedAt?: (pid: number) => Promise<string | null>
       approve?: boolean
+      approval?: () => Promise<boolean>
       protectedPids?: number[]
     } = {}
   ) {
     const storagePath = await tempFile()
     const workspacePath = path.dirname(storagePath)
     const approvals: unknown[] = []
+    const lifecycleEvents: unknown[] = []
     const manager = new LaunchManager({
       store: new LaunchAttemptStore(storagePath),
       platform: 'darwin',
       now: () => new Date('2026-06-21T12:00:00.000Z'),
       requestApproval: vi.fn(async (_sender, _provider, _service, _workspace, request) => {
         approvals.push(request)
-        return options.approve ?? true
+        return options.approval ? options.approval() : (options.approve ?? true)
       }),
       createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
       resolveProcessStartedAt: options.startedAt ?? (async () => RECEIPT),
@@ -1506,9 +1726,10 @@ describe('LaunchManager — adopting an agent-spawned process', () => {
           chain: []
         })),
       describeProcess: async () => ({ command: '/opt/app/MyApp --qa', cwd: workspacePath }),
-      processExists: () => true
+      processExists: () => true,
+      recordLifecycleEvent: (event) => lifecycleEvents.push(event)
     })
-    return { manager, workspacePath, approvals }
+    return { manager, workspacePath, approvals, lifecycleEvents }
   }
 
   function adoptInput(workspacePath: string, overrides: Record<string, unknown> = {}) {
@@ -1539,6 +1760,55 @@ describe('LaunchManager — adopting an agent-spawned process', () => {
     })
     // Killing a process group would reach the provider CLI that spawned it.
     expect(result.attempt?.pgid).toBeUndefined()
+  })
+
+  it('pending adoption consent cannot create a late lifecycle event after shutdown', async () => {
+    let accept!: (allowed: boolean) => void
+    let asking!: () => void
+    const requested = new Promise<void>((resolve) => {
+      asking = resolve
+    })
+    const h = await adoptFixture({
+      approval: () => {
+        asking()
+        return new Promise((resolve) => {
+          accept = resolve
+        })
+      }
+    })
+    const adoption = h.manager.adoptProcess(adoptInput(h.workspacePath))
+    await requested
+    h.manager.beginShutdown()
+    await h.manager.join()
+    accept(true)
+    expect(await adoption).toMatchObject({ ok: false })
+    expect(h.lifecycleEvents).toEqual([])
+    expect(h.manager.snapshot().attempts).toEqual([])
+  })
+
+  it('rechecks adoption after async mutation authorization and joins without recording it', async () => {
+    const h = await adoptFixture()
+    let resume!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const adoption = h.manager.adoptProcess({
+      ...adoptInput(h.workspacePath),
+      assertMutationAuthorized: () => {
+        entered()
+        return new Promise<void>((resolve) => {
+          resume = resolve
+        })
+      }
+    })
+    await waiting
+    h.manager.beginShutdown()
+    resume()
+    expect(await adoption).toMatchObject({ ok: false })
+    await h.manager.join()
+    expect(h.lifecycleEvents).toEqual([])
+    expect(h.manager.snapshot().attempts).toEqual([])
   })
 
   it('shows the human what they are adopting before it becomes drivable', async () => {

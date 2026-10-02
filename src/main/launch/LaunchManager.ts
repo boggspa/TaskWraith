@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import type { EventEmitter } from 'node:events'
+import { MainNativeActionGate, type MainNativeActionLease } from '../lifecycle/MainNativeActionGate'
 import os from 'node:os'
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { realpathSync } from 'node:fs'
@@ -173,7 +175,11 @@ export class LaunchManager {
   private readonly store: LaunchAttemptStore
   private readonly platform: NodeJS.Platform
   private readonly now: () => Date
-  private readonly spawnProcess: (command: string, args: string[], options: SpawnOptions) => ChildProcess
+  private readonly spawnProcess: (
+    command: string,
+    args: string[],
+    options: SpawnOptions
+  ) => ChildProcess
   private readonly spawnGatedProcess: LaunchManagerDeps['spawnGatedProcess']
   private readonly activeChildren = new Map<string, ChildProcess>()
   private readonly requestApproval: LaunchManagerDeps['requestApproval']
@@ -200,6 +206,42 @@ export class LaunchManager {
   // across the async approval so two rapid starts can't both spawn one target.
   private readonly startingTargets = new Set<string>()
   private publishTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly shutdownGate = new MainNativeActionGate()
+  private readonly detachAuditSources = new Set<() => void>()
+  /** Only callbacks whose close event has actually arrived, never live children. */
+  private readonly closingChildren = new Map<string, Promise<void>>()
+
+  /** Stop new lifecycle producers without terminating any child process. */
+  beginShutdown(): void {
+    this.shutdownGate.beginShutdown()
+    for (const detach of this.detachAuditSources) detach()
+    this.detachAuditSources.clear()
+    if (this.publishTimer) clearTimeout(this.publishTimer)
+    this.publishTimer = null
+  }
+
+  join(): Promise<void> {
+    return this.shutdownGate.join()
+  }
+
+  private listenForAudit<T extends unknown[]>(
+    source: EventEmitter,
+    event: string,
+    callback: (...args: T) => void
+  ): void {
+    if (this.shutdownGate.snapshot().closed) return
+    const listener = (...args: T): void => {
+      const lease = this.shutdownGate.tryEnter(`launch:${event}`)
+      if (!lease) return
+      try {
+        callback(...args)
+      } finally {
+        lease.release()
+      }
+    }
+    source.on(event, listener)
+    this.detachAuditSources.add(() => source.removeListener(event, listener))
+  }
 
   constructor(deps: LaunchManagerDeps) {
     this.store = deps.store
@@ -326,6 +368,8 @@ export class LaunchManager {
   }
 
   async startTarget(input: StartLaunchTargetInput): Promise<LaunchStartResult> {
+    if (this.shutdownGate.snapshot().closed)
+      return { ok: false, error: 'Launch manager is shutting down.' }
     const { target, provider, sender, chatId, runId } = input
     const existing = this.activeAttemptForTarget(target.id, target.workspacePath)
     if (existing) return { ok: true, attempt: existing }
@@ -337,7 +381,10 @@ export class LaunchManager {
       return { ok: false, error: 'Launch target is not executable by TaskWraith yet.' }
     }
     if (command.shell && target.source !== 'vscode-task') {
-      return { ok: false, error: 'Shell-backed launch targets are only supported for VS Code tasks.' }
+      return {
+        ok: false,
+        error: 'Shell-backed launch targets are only supported for VS Code tasks.'
+      }
     }
     if (command.shell ? !command.raw.trim() : !command.argv?.length) {
       return { ok: false, error: 'Launch target is not executable by TaskWraith yet.' }
@@ -367,6 +414,7 @@ export class LaunchManager {
       return { ok: false, error: 'Launch target is already starting.' }
     }
     this.startingTargets.add(reservationKey)
+    let admitted: MainNativeActionLease | null = null
     try {
       const commandText = launchCommand.raw || launchCommand.argv?.join(' ') || ''
       // Strip library-injection vectors from discovered (repo-controlled) env
@@ -413,6 +461,8 @@ export class LaunchManager {
         }
       )
       if (!allowed) return { ok: false, error: 'Launch denied by TaskWraith approval policy.' }
+      admitted = this.shutdownGate.tryEnter('launch:start')
+      if (!admitted) return { ok: false, error: 'Launch manager is shutting down.' }
 
       let isolatedInstanceId: string | undefined
       if (approvedDirectSelfLaunch) {
@@ -462,6 +512,8 @@ export class LaunchManager {
       let gatedProcess: WorkspaceLockGatedProcess | null = null
       try {
         await input.assertMutationAuthorized?.()
+        if (this.shutdownGate.snapshot().closed)
+          return { ok: false, error: 'Launch manager is shutting down.' }
         const spawnArgv = launchCommand.argv || [commandText]
         const [binary, ...args] = isolatedInstanceId
           ? [...spawnArgv, `${PACKAGED_ISOLATED_INSTANCE_ARG}${isolatedInstanceId}`]
@@ -513,9 +565,16 @@ export class LaunchManager {
           'launch_failed',
           failed || attempt,
           `Launch failed before start: ${target.label}`,
-          { phase: 'spawn', error: failed?.lastError || (err instanceof Error ? err.message : String(err)) }
+          {
+            phase: 'spawn',
+            error: failed?.lastError || (err instanceof Error ? err.message : String(err))
+          }
         )
-        return { ok: false, attempt: failed || attempt, error: failed?.lastError || 'Launch failed.' }
+        return {
+          ok: false,
+          attempt: failed || attempt,
+          error: failed?.lastError || 'Launch failed.'
+        }
       }
 
       this.activeChildren.set(attempt.id, child)
@@ -571,7 +630,8 @@ export class LaunchManager {
           return {
             ok: false,
             attempt: this.store.get(attempt.id) || attempt,
-            error: 'Workspace-lock child binding requires an exact owner id and kernel-assigned PID.'
+            error:
+              'Workspace-lock child binding requires an exact owner id and kernel-assigned PID.'
           }
         }
         bindWorkspaceLock = input.workspaceLockLifecycle.bind(workspaceLockLifecycleInput)
@@ -628,14 +688,33 @@ export class LaunchManager {
       this.publishSoon()
       return { ok: true, attempt: running || attempt }
     } finally {
+      admitted?.release()
       this.startingTargets.delete(reservationKey)
     }
   }
 
   async stopAttempt(attemptId: string): Promise<LaunchStopResult> {
+    const lease = this.shutdownGate.tryEnter('launch:stop')
+    if (!lease) return { ok: false, error: 'Launch manager is shutting down.' }
+    try {
+      return await this.stopAdmittedAttempt(attemptId)
+    } finally {
+      try {
+        // The admitted stop owns cleanup if close arrived while kill awaited.
+        // Do not await a hypothetical future close (failed stops can leave a
+        // child alive): only join the exact callback already executing.
+        await this.closingChildren.get(attemptId)
+      } finally {
+        lease.release()
+      }
+    }
+  }
+
+  private async stopAdmittedAttempt(attemptId: string): Promise<LaunchStopResult> {
     const attempt = this.store.get(attemptId)
     if (!attempt) return { ok: false, error: 'Launch attempt not found.' }
-    const recoveredStoppable = RECOVERED_STOPPABLE_STATUSES.has(attempt.status) && Boolean(attempt.pid)
+    const recoveredStoppable =
+      RECOVERED_STOPPABLE_STATUSES.has(attempt.status) && Boolean(attempt.pid)
     if (!ACTIVE_STATUSES.has(attempt.status) && !recoveredStoppable) return { ok: true, attempt }
     const child = this.activeChildren.get(attemptId)
     if (!attempt.pid) {
@@ -717,7 +796,11 @@ export class LaunchManager {
         `Launch stop failed: ${attempt.targetLabel}`,
         { pid: attempt.pid, pgid: attempt.pgid }
       )
-      return { ok: false, attempt: failed || stopping || attempt, error: 'Failed to stop launch process.' }
+      return {
+        ok: false,
+        attempt: failed || stopping || attempt,
+        error: 'Failed to stop launch process.'
+      }
     }
     const cancelled = this.store.update(attemptId, {
       status: 'cancelled',
@@ -749,9 +832,18 @@ export class LaunchManager {
     // buffered by the stream rather than corrupted into replacement characters.
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk) => this.appendOutput(attemptId, chunk))
-    child.stderr?.on('data', (chunk) => this.appendOutput(attemptId, chunk))
-    child.on('error', (err) => {
+    if (child.stdout)
+      this.listenForAudit(child.stdout, 'data', (chunk: Buffer) =>
+        this.appendOutput(attemptId, chunk)
+      )
+    if (child.stderr)
+      this.listenForAudit(child.stderr, 'data', (chunk: Buffer) =>
+        this.appendOutput(attemptId, chunk)
+      )
+    // An external child may emit error after audit listeners detach. Keep a
+    // non-writing error sink so EventEmitter does not crash the quitting host.
+    child.on('error', () => {})
+    this.listenForAudit(child, 'error', (err: Error) => {
       const attempt = this.store.get(attemptId)
       if (attempt?.pid) this.untrackSpawn(attempt.pid)
       this.activeChildren.delete(attemptId)
@@ -771,7 +863,9 @@ export class LaunchManager {
       this.publishSoon()
       this.log(`[LaunchManager] ${attemptId} failed: ${err.message}`)
     })
-    child.on('close', (exitCode, signal) => {
+    child.on('close', () => {
+      const lease = this.shutdownGate.tryEnter('launch:child-close')
+      this.closingChildren.set(attemptId, close)
       const attempt = this.store.get(attemptId)
       if (attempt?.pid) this.untrackSpawn(attempt.pid)
       this.activeChildren.delete(attemptId)
@@ -786,36 +880,49 @@ export class LaunchManager {
           )
         } finally {
           resolveClose()
+          this.closingChildren.delete(attemptId)
+          lease?.release()
         }
       })()
-      if (!attempt || isTerminal(attempt.status)) return
-      const status =
-        attempt.status === 'stopping' || signal
-          ? 'cancelled'
-          : exitCode === 0
-            ? 'stopped'
-            : 'failed'
-      this.store.update(attemptId, {
-        status,
-        exitCode,
-        signal,
-        endedAt: this.isoNow(),
-        updatedAt: this.isoNow(),
-        ...(status === 'failed' ? { lastError: `Process exited ${exitCode ?? signal ?? 'unknown'}.` } : {})
-      })
-      const updated = this.store.get(attemptId)
-      this.recordLifecycleEvent(
-        status === 'failed'
-          ? 'launch_failed'
-          : status === 'cancelled'
-            ? 'launch_cancelled'
-            : 'launch_stopped',
-        updated || attempt,
-        launchTerminalSummary(status, attempt.targetLabel),
-        { exitCode, signal }
-      )
-      this.publishSoon()
+      // This listener remains solely for cleanup and resolving waiters; the
+      // separate audit source below is detached on shutdown.
     })
+    this.listenForAudit(
+      child,
+      'close',
+      (exitCode: number | null, signal: NodeJS.Signals | null) => {
+        const attempt = this.store.get(attemptId)
+        if (!attempt || isTerminal(attempt.status)) return
+        const status =
+          attempt.status === 'stopping' || signal
+            ? 'cancelled'
+            : exitCode === 0
+              ? 'stopped'
+              : 'failed'
+        this.store.update(attemptId, {
+          status,
+          exitCode,
+          signal,
+          endedAt: this.isoNow(),
+          updatedAt: this.isoNow(),
+          ...(status === 'failed'
+            ? { lastError: `Process exited ${exitCode ?? signal ?? 'unknown'}.` }
+            : {})
+        })
+        const updated = this.store.get(attemptId)
+        this.recordLifecycleEvent(
+          status === 'failed'
+            ? 'launch_failed'
+            : status === 'cancelled'
+              ? 'launch_cancelled'
+              : 'launch_stopped',
+          updated || attempt,
+          launchTerminalSummary(status, attempt.targetLabel),
+          { exitCode, signal }
+        )
+        this.publishSoon()
+      }
+    )
     return close
   }
 
@@ -855,7 +962,8 @@ export class LaunchManager {
     const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
     const nextTail = `${attempt.outputTail}${text}`
     const outputTruncated = attempt.outputTruncated || nextTail.length > OUTPUT_TAIL_LIMIT
-    const outputTail = nextTail.length > OUTPUT_TAIL_LIMIT ? nextTail.slice(-OUTPUT_TAIL_LIMIT) : nextTail
+    const outputTail =
+      nextTail.length > OUTPUT_TAIL_LIMIT ? nextTail.slice(-OUTPUT_TAIL_LIMIT) : nextTail
     const detectedUrls = mergeDetectedUrls(attempt.detectedUrls, detectLaunchUrls(text))
     // High-frequency path: update memory now (live snapshots) and coalesce the
     // disk write. The next status transition flushes any buffered output.
@@ -905,6 +1013,8 @@ export class LaunchManager {
       assertMutationAuthorized?: () => void | Promise<void>
     }
   ): Promise<LaunchStartResult> {
+    if (this.shutdownGate.snapshot().closed)
+      return { ok: false, error: 'Launch manager is shutting down.' }
     const pid = input?.pid
     if (!Number.isSafeInteger(pid) || pid <= 1) {
       return { ok: false, error: 'Adoption requires a positive process id.' }
@@ -922,7 +1032,10 @@ export class LaunchManager {
     const hostPid = this.hostProcessPid()
     const protectedPids = new Set(this.getHostProtectedPids())
     if (pid === hostPid || protectedPids.has(pid)) {
-      return { ok: false, error: 'That process belongs to TaskWraith itself and cannot be adopted.' }
+      return {
+        ok: false,
+        error: 'That process belongs to TaskWraith itself and cannot be adopted.'
+      }
     }
     if (!this.processExists(pid)) {
       return { ok: false, error: `Process ${pid} is not running.` }
@@ -993,57 +1106,65 @@ export class LaunchManager {
     if (!allowed) {
       return { ok: false, error: 'Adoption denied by TaskWraith approval policy.' }
     }
-    await input.assertMutationAuthorized?.()
+    const lease = this.shutdownGate.tryEnter('launch:adopt')
+    if (!lease) return { ok: false, error: 'Launch manager is shutting down.' }
+    try {
+      await input.assertMutationAuthorized?.()
+      if (this.shutdownGate.snapshot().closed)
+        return { ok: false, error: 'Launch manager is shutting down.' }
 
-    const existing = this.store
-      .list()
-      .find(
-        (candidate) =>
-          candidate.adopted === true &&
-          candidate.pid === pid &&
-          candidate.processStartedAt === processStartedAt &&
-          (candidate.status === 'starting' || candidate.status === 'running')
-      )
-    if (existing) return { ok: true, attempt: existing }
+      const existing = this.store
+        .list()
+        .find(
+          (candidate) =>
+            candidate.adopted === true &&
+            candidate.pid === pid &&
+            candidate.processStartedAt === processStartedAt &&
+            (candidate.status === 'starting' || candidate.status === 'running')
+        )
+      if (existing) return { ok: true, attempt: existing }
 
-    const now = this.isoNow()
-    const snapshot = adoptedTargetSnapshot(workspacePath, label, commandText, cwd)
-    const attempt: LaunchAttempt = {
-      schemaVersion: 1,
-      id: this.store.createId(),
-      targetId: snapshot.id,
-      targetLabel: label,
-      targetSource: snapshot.source,
-      targetKind: snapshot.kind,
-      targetSnapshot: snapshot,
-      targetSnapshotHash: hashTargetSnapshot(snapshot),
-      provider: input.provider,
-      workspacePath,
-      cwd,
-      commandRaw: commandText,
-      argv: [commandText],
-      pid,
-      // Deliberately no pgid: an adopted process shares its group with the
-      // provider process that spawned it, so a group kill would take the agent
-      // down with the app.
-      processStartedAt,
-      adopted: true,
-      status: 'running',
-      startedAt: now,
-      updatedAt: now,
-      outputTail: '',
-      outputTailBytes: 0,
-      outputTruncated: false,
-      chatId,
-      runId
+      const now = this.isoNow()
+      const snapshot = adoptedTargetSnapshot(workspacePath, label, commandText, cwd)
+      const attempt: LaunchAttempt = {
+        schemaVersion: 1,
+        id: this.store.createId(),
+        targetId: snapshot.id,
+        targetLabel: label,
+        targetSource: snapshot.source,
+        targetKind: snapshot.kind,
+        targetSnapshot: snapshot,
+        targetSnapshotHash: hashTargetSnapshot(snapshot),
+        provider: input.provider,
+        workspacePath,
+        cwd,
+        commandRaw: commandText,
+        argv: [commandText],
+        pid,
+        // Deliberately no pgid: an adopted process shares its group with the
+        // provider process that spawned it, so a group kill would take the agent
+        // down with the app.
+        processStartedAt,
+        adopted: true,
+        status: 'running',
+        startedAt: now,
+        updatedAt: now,
+        outputTail: '',
+        outputTailBytes: 0,
+        outputTruncated: false,
+        chatId,
+        runId
+      }
+      this.store.save(attempt)
+      this.publishSoon()
+      this.recordLifecycleEvent('launch_started', attempt, `Adopted running process: ${label}`, {
+        phase: 'adopt',
+        pid
+      })
+      return { ok: true, attempt }
+    } finally {
+      lease.release()
     }
-    this.store.save(attempt)
-    this.publishSoon()
-    this.recordLifecycleEvent('launch_started', attempt, `Adopted running process: ${label}`, {
-      phase: 'adopt',
-      pid
-    })
-    return { ok: true, attempt }
   }
 
   private async safeDescribeProcess(
@@ -1081,8 +1202,7 @@ export class LaunchManager {
             attempt.targetId === targetId &&
             attempt.workspacePath === workspacePath &&
             ACTIVE_STATUSES.has(attempt.status)
-        ) ||
-      null
+        ) || null
     )
   }
 
@@ -1091,6 +1211,7 @@ export class LaunchManager {
   }
 
   private publishSoon(): void {
+    if (this.shutdownGate.snapshot().closed) return
     if (this.publishTimer) return
     this.publishTimer = setTimeout(() => {
       this.publishTimer = null
@@ -1439,7 +1560,12 @@ function commandWithSanitizedLaunchEnv(
 }
 
 function isTerminal(status: LaunchAttempt['status']): boolean {
-  return status === 'stopped' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
+  return (
+    status === 'stopped' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'interrupted'
+  )
 }
 
 /**
