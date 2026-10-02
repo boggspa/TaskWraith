@@ -60,6 +60,22 @@ function makePack(over: Partial<MemoryProposalPack> = {}): MemoryProposalPack {
 }
 
 describe('MemoryProposalReviewPanel', () => {
+  it('renders the explicit supersede selector for an eligible expanded successor', () => {
+    const pack = makePack()
+    pack.proposals = [
+      { ...pack.proposals[0]!, id: 'old', status: 'approved' },
+      { ...pack.proposals[0]!, id: 'new', status: 'proposed' }
+    ]
+    const html = renderToStaticMarkup(
+      <MemoryProposalReviewPanel
+        packs={[pack]}
+        initialExpandedProposalId="new"
+        onSupersedeMemoryProposal={async () => ({ ok: false })}
+      />
+    )
+    expect(html).toContain('Choose an earlier proposal')
+    expect(html).not.toContain('Confirm supersede')
+  })
   it('renders proposal rows with kind/scope badges and safety note', () => {
     const html = renderToStaticMarkup(
       <MemoryProposalReviewPanel packs={[makePack()]} onUpdateProposalStatus={() => undefined} />

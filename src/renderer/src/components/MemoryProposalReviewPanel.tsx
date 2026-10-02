@@ -26,6 +26,10 @@ import {
   memoryProposalStatusLabel
 } from '../lib/memoryProposalDisplay'
 import './MemoryProposalReviewPanel.css'
+import {
+  MemoryProposalSupersedeReview,
+  type SupersedeReceipt
+} from './MemoryProposalSupersedeReview'
 
 /**
  * MemoryProposalReviewPanel — Thread Introspection review UI (slice 3).
@@ -40,6 +44,11 @@ import './MemoryProposalReviewPanel.css'
  */
 
 export interface MemoryProposalReviewPanelProps {
+  onSupersedeMemoryProposal?: (
+    packId: string,
+    successorId: string,
+    predecessorId: string
+  ) => Promise<SupersedeReceipt>
   /** Pre-fetched packs (tests / host-controlled mode). */
   packs?: MemoryProposalPack[]
   loading?: boolean
@@ -84,6 +93,7 @@ export function MemoryProposalReviewPanel({
   fetchPacks,
   onUpdateProposalStatus,
   onApplyMemoryProposal,
+  onSupersedeMemoryProposal,
   initialExpandedProposalId = null
 }: MemoryProposalReviewPanelProps): React.JSX.Element {
   const [fetchedPacks, setFetchedPacks] = useState<MemoryProposalPack[]>([])
@@ -627,6 +637,20 @@ export function MemoryProposalReviewPanel({
                                 <span className="memory-proposal-review-action-hint">
                                   {memoryProposalApplyHint(proposal)}
                                 </span>
+                                {onSupersedeMemoryProposal && (
+                                  <MemoryProposalSupersedeReview
+                                    key={`${selectedPack.id}:${proposal.id}`}
+                                    pack={selectedPack}
+                                    successor={proposal}
+                                    onSupersede={onSupersedeMemoryProposal}
+                                    onCommitted={(updatedPack) => {
+                                      mergePackUpdate(updatedPack)
+                                      setApplyNotice(
+                                        `Earlier proposal superseded; successor remains ${proposal.status}.`
+                                      )
+                                    }}
+                                  />
+                                )}
                               </div>
                             </div>
                           </div>

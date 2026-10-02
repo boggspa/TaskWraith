@@ -3,6 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
 
 describe('ThreadIntrospectionSettingsPanel', () => {
+  it('does not expose supersede selection without the preload capability', () => {
+    const html = renderToStaticMarkup(<ThreadIntrospectionSettingsPanel workspaceId="ws-1" />)
+    expect(html).not.toContain('Confirm supersede')
+    expect(html).not.toContain('Choose an earlier proposal')
+  })
   it('renders run toolbar, schedule section, and review panel shell', () => {
     const html = renderToStaticMarkup(<ThreadIntrospectionSettingsPanel />)
     expect(html).toContain('Daily retrospective')

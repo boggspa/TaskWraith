@@ -33,6 +33,11 @@ export interface RunManualIntrospectionResponse {
 export type { IntrospectionScheduleSettings } from '../lib/threadIntrospectionSchedule'
 
 interface ThreadIntrospectionApi {
+  supersedeMemoryProposal?: (
+    packId: string,
+    successorId: string,
+    predecessorId: string
+  ) => Promise<import('./MemoryProposalSupersedeReview').SupersedeReceipt>
   getMemoryProposalPacks?: (workspaceId?: string | null) => Promise<MemoryProposalPack[]>
   updateMemoryProposal?: (
     packId: string,
@@ -144,6 +149,14 @@ export function ThreadIntrospectionSettingsPanel({
         throw new Error('Thread Introspection apply IPC is not wired yet.')
       }
       return api.applyMemoryProposal(packId, proposalId)
+    },
+    [api]
+  )
+
+  const onSupersedeMemoryProposal = useCallback(
+    async (packId: string, successorId: string, predecessorId: string) => {
+      if (!api?.supersedeMemoryProposal) throw new Error('Supersede IPC is not wired yet.')
+      return api.supersedeMemoryProposal(packId, successorId, predecessorId)
     },
     [api]
   )
@@ -345,6 +358,9 @@ export function ThreadIntrospectionSettingsPanel({
         workspaceId={workspaceId}
         fetchPacks={ipcReady ? fetchPacks : undefined}
         onUpdateProposalStatus={ipcReady ? onUpdateProposalStatus : undefined}
+        onSupersedeMemoryProposal={
+          api?.supersedeMemoryProposal ? onSupersedeMemoryProposal : undefined
+        }
         onApplyMemoryProposal={ipcReady && applyIpcReady ? onApplyMemoryProposal : undefined}
         error={ipcReady ? null : 'Thread Introspection IPC is not wired yet.'}
       />
