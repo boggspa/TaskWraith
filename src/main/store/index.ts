@@ -69,7 +69,9 @@ import {
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import { CurrentChatAuthorityIndex, type CurrentChatAuthorityMetadata } from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
+import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import {
   CheckpointPreparationWorker,
@@ -385,6 +387,8 @@ import {
   TOOL_DETAIL_EXTERNALIZATION_GENERATION
 } from './ChatToolDetailExternalization'
 import { prepareChatForPersistence } from './ChatPersistencePreparation'
+import { createChatDetailDependencyBindings } from './ChatDetailDependencyBindings'
+import { ToolActivityDetailDurability } from './ToolActivityDetailDurability'
 import {
   ToolActivityDetailBatchWriter,
   hydrateToolActivityDetails,
@@ -1113,6 +1117,18 @@ const mainDurabilityRuntime = createMainDurabilityRuntime({
   workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js')
 })
 const runEventLedgerWriter = mainDurabilityRuntime.writer
+let mainDetailDurability: ToolActivityDetailDurability | undefined
+mainDurabilityRuntime.attachDetail((ports) => {
+  const participant = new ToolActivityDetailDurability(ports)
+  mainDetailDurability = participant
+  return participant
+})
+let mainCatalogueDurability: MainCatalogueDurability | undefined
+mainDurabilityRuntime.attachCatalogue((ports) => {
+  const participant = new MainCatalogueDurability(ports)
+  mainCatalogueDurability = participant
+  return participant
+})
 let incrementalJournalDescriptorCache: IncrementalChatJournalDescriptorCache | undefined
 let incrementalJournalDescriptorDrainSync: (() => void) | undefined
 mainDurabilityRuntime.attachJournal(({ flusher, directoryLeases }) => {
@@ -4599,6 +4615,7 @@ function runArtifactDirPath(runId: string): string {
 // ignored so a partially-written run cannot abort the chat deletion.
 function deleteRunForensicFiles(runId: string): void {
   if (!runId) return
+  mainDetailDurability?.retireForErasureSync([runArtifactDirPath(runId)])
   runEventLedgerWriter.retireSync([runId])
   deletedRunIds.add(runId)
   runEventLedgerWriter.forgetHead(runId)
@@ -4922,6 +4939,7 @@ export class AppStore {
     // silently stops firing.
     openApprovalSignatureByChatId.clear()
     this.chatRecordCache.clear()
+    this.authorityMetadataSources.clear()
     chatListIndexStore.clearCache()
     chatListRebuildMemo.clear()
     incrementalChatPersistence.clear()
@@ -4956,6 +4974,7 @@ export class AppStore {
 
   static clearChatRecordCacheForTests(): void {
     this.chatRecordCache.clear()
+    this.authorityMetadataSources.clear()
   }
 
   static setHistoryDeletionFailureInjectionForTests(steps: HistoryDeletionStep[]): void {
@@ -6061,11 +6080,25 @@ export class AppStore {
    * files to discover that ~none of them have open runs. Entries tombstone
    * themselves: the save that seals a chat's last run removes it here. */
   private static openRunChatIds = new Set<string>()
+  private static authorityMetadataSources = new CurrentChatAuthorityIndex<ChatRecord>(
+    (chatId) => this.authorityMetadataSource(chatId)
+  )
+
+  private static authorityMetadataSource(chatId: string): string {
+    try {
+      const stat = fs.statSync(chatPathForId(chatsDir, chatId), { bigint: true })
+      return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'
+      throw error
+    }
+  }
 
   private static rememberChatRecord(
     chatId: string,
     entry: { mtimeMs: number; size: number; record: ChatRecord }
   ): void {
+    this.authorityMetadataSources.remember(chatId, entry.record)
     if (chatHasReconcilableRun(entry.record)) this.openRunChatIds.add(chatId)
     else this.openRunChatIds.delete(chatId)
     this.chatRecordCache.delete(chatId)
@@ -6079,7 +6112,10 @@ export class AppStore {
       })),
       CHAT_RECORD_CACHE_MAX_BYTES
     )
-    for (const evicted of evictions) this.chatRecordCache.delete(evicted)
+    for (const evicted of evictions) {
+      this.chatRecordCache.delete(evicted)
+      this.authorityMetadataSources.delete(evicted)
+    }
   }
 
   /** Move a cache hit to the recency tail so the budget evicts cold records. */
@@ -6229,6 +6265,7 @@ export class AppStore {
       canWrite: incrementalJournalSidebandWritable,
       canManageRecoveryHolds: () => manageHolds && incrementalJournalSidebandWritable(),
       onChanged,
+      deferredDurability: mainCatalogueDurability?.publication,
       repairSource,
       onError: (error) => console.error('[thread-catalogue] source publication failed', error)
     })
@@ -7058,6 +7095,27 @@ export class AppStore {
   static getChat(chatId: string): ChatRecord | null {
     if (!isSafeChatId(chatId)) return null
     return this.readChatRecordCached(chatId, chatPathForId(chatsDir, chatId))
+  }
+
+  static getCurrentChatAuthorityMetadata(chatId: string): CurrentChatAuthorityMetadata | null {
+    if (!isSafeChatId(chatId)) return null
+    const record = this.authorityMetadataSources.read(chatId, {
+      deleted: () => deletedChatIds.has(chatId),
+      cached: () => this.chatRecordCache.get(chatId)?.record,
+      invalidateClean: () => {
+        const cached = this.chatRecordCache.get(chatId)
+        if (cached && cached.mtimeMs !== -1 && !hostPersistShadowChatIds.has(chatId)) {
+          this.chatRecordCache.delete(chatId)
+        }
+      },
+      reconcile: () => this.getChat(chatId)
+    })
+    if (!record) return null
+    return {
+      appChatId: record.appChatId,
+      workspaceId: record.workspaceId ?? null,
+      persistenceRevision: chatPersistenceRevision(record)
+    }
   }
 
   static getChatRecordPath(chatId: string): string | null {
@@ -8227,6 +8285,7 @@ export class AppStore {
           : { ensemble: this.withoutChatListEnsembleProjectionFlag(chat.ensemble!) }
         : {})
     }
+    const detailDependencies = createChatDetailDependencyBindings()
     const preparation = prepareChatForPersistence({
       chat: chatWithMainOwnedFields,
       previous: previousChatForFeedback,
@@ -8235,7 +8294,9 @@ export class AppStore {
       // merge changed the message array, the supplied authored ops no longer
       // describe it and the mutation must be recomputed from before/after.
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
-      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir,
+        mainDetailDurability ? { owner: mainDetailDurability, onDependency: (dependency) => detailDependencies.collect([dependency]) } : undefined),
+      onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
       persistDetailCheckpoint: (checkpoint) => {
         this.appendRunEvent(
@@ -8247,6 +8308,10 @@ export class AppStore {
       },
       maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
     })
+    detailDependencies.seal()
+    // Detail references may enter journal mutations only after their process-local
+    // debts drain. Strict receipts retain their existing earlier barrier.
+    detailDependencies.flushSync()
     const normalizedChat = this.normalizeChatRecord(preparation.chat)
     normalizedChat.updatedAt = Date.now()
     const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
@@ -8303,7 +8368,7 @@ export class AppStore {
         record: normalizedChat,
         expectedRevision
       },
-      { durabilityFallback }
+      { durabilityFallback, ...(detailDependencies.hasDependencies() ? { detailDependencies } : {}) }
     )
     if (stageResult === 'staged' || stageResult === 'replaced') {
       hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
@@ -8453,12 +8518,15 @@ export class AppStore {
         : {})
     }
 
+    const detailDependencies = createChatDetailDependencyBindings()
     const preparation = prepareChatForPersistence({
       chat: chatWithMainOwnedFields,
       previous: previousChatForFeedback,
       authoredTranscript: options.authoredTranscript,
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
-      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir,
+        mainDetailDurability ? { owner: mainDetailDurability, onDependency: (dependency) => detailDependencies.collect([dependency]) } : undefined),
+      onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
       persistDetailCheckpoint: (checkpoint) => {
         this.appendRunEvent(
@@ -8470,6 +8538,8 @@ export class AppStore {
       },
       maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
     })
+    detailDependencies.seal()
+    detailDependencies.flushSync()
     const authoredTranscript = preparation.authoredTranscript
     const normalizedChat = this.normalizeChatRecord(preparation.chat)
     normalizedChat.updatedAt = Date.now()
@@ -9984,6 +10054,9 @@ export class AppStore {
       return
     }
     if (step === 'run-artifacts') {
+      mainDetailDurability?.retireForErasureSync(
+        intent.kind === 'global' ? undefined : intent.runIds.map(runArtifactDirPath)
+      )
       if (intent.kind === 'global') {
         removePathStrict(runArtifactsDir, 'run artifact history directory')
       } else {

@@ -1077,10 +1077,12 @@ import {
 } from './store/PersistenceWriteWorker'
 import {
   createMainPerfInstrumentation,
-  type MainPerfSnapshotOptions,
   type MainPerfInstrumentation
 } from './perf/MainPerfSnapshot'
 import { actualMainDurabilityPerf } from './perf/ActualMainDurabilityPerf'
+import { productionMainPerfClock } from './perf/MainPerfClock'
+import { readProviderRunAuthorityMetadata } from './ProviderRunAuthorityMetadata'
+import { createMainPerfSnapshotHandler } from './ipc/MainPerfSnapshotHandler'
 import { MainNativeActionGate } from './lifecycle/MainNativeActionGate'
 import { createMainQuitProducerBarrier, MainQuitSessionRegistry } from './services/MainQuitProducerRegistry'
 import { createMainQuitDurabilityIntegration } from './services/MainQuitDurabilityIntegration'
@@ -4119,18 +4121,11 @@ function currentProviderRunPersistenceAuthority(
   appChatId: string,
   workspacePath?: string
 ): HistoryClearDispatchAuthority | null {
-  const normalizedChatId = appChatId.trim()
-  if (!normalizedChatId) return null
-  const chat = AppStore.getChat(normalizedChatId)
-  if (!chat) return null
-  if (durableHistoryDeletionBlocks(normalizedChatId, chat.workspaceId)) return null
-  const persistenceRevision = chat.persistenceRevision
-  if (!Number.isSafeInteger(persistenceRevision) || (persistenceRevision ?? -1) < 0) return null
-  return {
-    appChatId: normalizedChatId,
-    workspaceId: chat.workspaceId || workspaceIdForApprovalPush(workspacePath),
-    persistenceRevision: persistenceRevision as number
-  }
+  return readProviderRunAuthorityMetadata({
+    readCurrent: (chatId) => AppStore.getCurrentChatAuthorityMetadata(chatId),
+    deletionBlocks: (chatId, workspaceId) => durableHistoryDeletionBlocks(chatId, workspaceId ?? undefined),
+    workspaceForPath: workspaceIdForApprovalPush
+  }, appChatId, workspacePath)
 }
 
 function sameProviderDispatchIncarnation(
@@ -47428,6 +47423,16 @@ if (isGeminiMcpBridgeProcess) {
     // ADR's G-lag gate (p95 < 25ms under 30-seat continuous) becomes readable
     // outside a profiling harness.
     mainPerfInstrumentationRef = createMainPerfInstrumentation({
+      windowClock: productionMainPerfClock,
+      acquireWindowProtection: () => {
+        const id = powerSaveBlocker.start('prevent-app-suspension')
+        return {
+          held: () => powerSaveBlocker.isStarted(id),
+          release: () => {
+            if (powerSaveBlocker.isStarted(id)) powerSaveBlocker.stop(id)
+          }
+        }
+      },
       sections: {
         mainDurability: () => actualMainDurabilityPerf({ snapshot: () => AppStore.getMainDurabilitySnapshot() }, process.env),
         incrementalChatPersistence: () => AppStore.getIncrementalChatPersistenceStats(),
@@ -47445,13 +47450,10 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     mainPerfInstrumentationRef.start()
-    ipcMain.handle('get-main-perf-snapshot', (event, options?: MainPerfSnapshotOptions) => {
-      if (!isMainRendererSender(event)) return null
-      return mainPerfInstrumentationRef?.snapshot({
-        resetLagWindow: options?.resetLagWindow === true,
-        window: options?.window
-      })
-    })
+    ipcMain.handle('get-main-perf-snapshot', createMainPerfSnapshotHandler({
+      isMainSender: isMainRendererSender,
+      instrumentation: () => mainPerfInstrumentationRef
+    }))
     const rendererDiagnosticRecorder = new RendererDiagnosticRecorder({
       filePath: join(app.getPath('userData'), 'renderer-diagnostics.json'),
       getAppMetrics: () => app.getAppMetrics(),
