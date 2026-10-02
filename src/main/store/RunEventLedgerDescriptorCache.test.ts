@@ -5,6 +5,73 @@ import { it, expect } from 'vitest'
 import { vi } from 'vitest'
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import { RunEventLedgerDescriptorCache } from './RunEventLedgerDescriptorCache'
+import { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
+
+it.each([false, true])(
+  'closes failed data registration and preserves strict create debt (shared=%s)',
+  (shared) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-cache-admission-'))
+    const flusher = new MainDurabilityFlusher({
+      now: () => 0,
+      setTimer: () => 0,
+      clearTimer: () => {},
+      fsync: (_fd, done) => ({ joinSync: () => done() }),
+      fsyncSync: (fd) => fs.fsyncSync(fd),
+      close: (fd) => fs.closeSync(fd)
+    })
+    const cache = new RunEventLedgerDescriptorCache(
+      flusher,
+      128,
+      shared ? new MainDurabilityDirectoryLeases(flusher) : undefined
+    )
+    const realOpen = flusher.open.bind(flusher)
+    let failedFd: number | undefined
+    const registration = vi.spyOn(flusher, 'open').mockImplementation((dev, ino, fd, offset) => {
+      if (failedFd === undefined && fs.fstatSync(fd).isFile()) {
+        failedFd = fd
+        throw new Error('data registration failed')
+      }
+      return realOpen(dev, ino, fd, offset)
+    })
+    try {
+      const ledger = path.join(root, 'ledger')
+      expect(() => cache.append('run', ledger, '{}\n', 'sync')).toThrow('data registration failed')
+      expect(() => fs.fstatSync(failedFd!)).toThrow()
+      cache.append('run', ledger, '{}\n', 'sync')
+      expect(flusher.counters.dependencySyncFsyncs).toBe(process.platform === 'win32' ? 0 : 1)
+      expect(fs.readFileSync(ledger, 'utf8')).toBe('{}\n')
+      cache.retireSync()
+    } finally {
+      registration.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it('shares a cold parent with another consumer without duplicate directory registration', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-parent-'))
+  const flusher = new MainDurabilityFlusher({
+    now: () => 0,
+    setTimer: () => 0,
+    clearTimer: () => {},
+    fsync: (_fd, done) => ({ joinSync: () => done() }),
+    fsyncSync: (fd) => fs.fsyncSync(fd),
+    close: (fd) => fs.closeSync(fd)
+  })
+  const registry = new MainDurabilityDirectoryLeases(flusher)
+  const journal = registry.acquire(root)
+  const cache = new RunEventLedgerDescriptorCache(flusher, 128, registry)
+  try {
+    journal.noteMutation()
+    cache.append('a', path.join(root, 'events', 'a'), '{}\n', 'sync')
+    cache.retireSync()
+    expect(() => journal.noteMutation()).not.toThrow()
+    journal.releaseSync()
+    await registry.retire()
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 
 it('sync retirement propagates close failure and cold mkdir fsyncs its parent', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-cache-parent-'))

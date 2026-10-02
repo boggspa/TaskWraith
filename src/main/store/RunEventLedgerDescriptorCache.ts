@@ -5,12 +5,16 @@ import {
   type DurabilityFile,
   type DurabilityClass
 } from './MainDurabilityFlusher'
+import { MainDurabilityDirectoryLeases, type DirectoryLease } from './MainDurabilityDirectoryLeases'
+import type { DurabilityDependency } from './MainDurabilityFlusher'
 
 interface Entry {
   fd: number
   file: DurabilityFile
   end: number
   directory?: DurabilityFile
+  dependencies?: DurabilityDependency[]
+  pendingDirectory?: string
 }
 
 /** Main owns synchronous page-cache writes. The injected flusher owns closing
@@ -22,10 +26,14 @@ export class RunEventLedgerDescriptorCache {
   private readonly directories = new Map<string, { file: DurabilityFile; offset: number }>()
   private readonly retiring = new Map<string, Promise<void>>()
   private globalRetirement?: Promise<void>
+  private readonly sharedLeases = new Map<string, DirectoryLease>()
+  private readonly pendingParents = new Set<string>()
+  private readonly pendingCreates = new Set<string>()
 
   constructor(
     private readonly flusher: MainDurabilityFlusher,
-    private readonly limit = 128
+    private readonly limit = 128,
+    private readonly directoryLeases?: MainDurabilityDirectoryLeases
   ) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Invalid descriptor capacity')
   }
@@ -46,28 +54,52 @@ export class RunEventLedgerDescriptorCache {
       const directoryExisted = fs.existsSync(path.dirname(filePath))
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
       if (!directoryExisted && process.platform !== 'win32') {
-        // Matches legacy strict cold-mkdir name durability. This setup barrier
-        // precedes the file create; leaf-file durability remains deferred.
-        const parentFd = fs.openSync(path.dirname(path.dirname(filePath)), 'r')
-        try {
-          fs.fsyncSync(parentFd)
-        } finally {
-          fs.closeSync(parentFd)
+        if (this.directoryLeases) {
+          this.pendingParents.add(path.dirname(path.dirname(filePath)))
+        } else {
+          // Matches legacy strict cold-mkdir name durability. This setup barrier
+          // precedes the file create; leaf-file durability remains deferred.
+          const parentFd = fs.openSync(path.dirname(path.dirname(filePath)), 'r')
+          try {
+            fs.fsyncSync(parentFd)
+          } finally {
+            fs.closeSync(parentFd)
+          }
         }
       }
+      for (const parent of this.pendingParents) {
+        const debt = this.sharedDirectory(parent).noteMutation()
+        this.flusher.noteWrite(debt.file, debt.offset, 'sync')
+        this.pendingParents.delete(parent)
+      }
       const fd = fs.openSync(filePath, 'a+')
-      const stat = fs.fstatSync(fd)
-      entry = { fd, file: this.flusher.open(stat.dev, stat.ino, fd, stat.size), end: stat.size }
+      if (!existed) this.pendingCreates.add(filePath)
+      try {
+        const stat = fs.fstatSync(fd)
+        entry = { fd, file: this.flusher.open(stat.dev, stat.ino, fd, stat.size), end: stat.size }
+      } catch (error) {
+        fs.closeSync(fd)
+        throw error
+      }
       this.entries.set(runId, entry)
-      if (!existed && process.platform !== 'win32') {
-        const directoryPath = path.dirname(filePath)
+    }
+    if (this.pendingCreates.has(filePath) && process.platform !== 'win32') {
+      const directoryPath = path.dirname(filePath)
+      if (this.directoryLeases) {
+        entry.pendingDirectory = directoryPath
+      } else {
         let directory = this.directories.get(directoryPath)
         if (!directory) {
           const directoryFd = fs.openSync(directoryPath, 'r')
-          const identity = fs.fstatSync(directoryFd)
-          directory = {
-            file: this.flusher.open(identity.dev, identity.ino, directoryFd),
-            offset: 0
+          try {
+            const identity = fs.fstatSync(directoryFd)
+            directory = {
+              file: this.flusher.open(identity.dev, identity.ino, directoryFd),
+              offset: 0
+            }
+          } catch (error) {
+            fs.closeSync(directoryFd)
+            throw error
           }
           this.directories.set(directoryPath, directory)
         }
@@ -78,6 +110,11 @@ export class RunEventLedgerDescriptorCache {
     }
     this.entries.delete(runId)
     this.entries.set(runId, entry)
+    if (entry.pendingDirectory) {
+      entry.dependencies = [this.sharedDirectory(entry.pendingDirectory).noteMutation()]
+      entry.pendingDirectory = undefined
+    }
+    this.pendingCreates.delete(filePath)
     const size = fs.fstatSync(entry.fd).size
     const byte = Buffer.allocUnsafe(1)
     if (size > 0 && fs.readSync(entry.fd, byte, 0, 1, size - 1) !== 1)
@@ -95,7 +132,9 @@ export class RunEventLedgerDescriptorCache {
         entry.directory &&
         [...this.directories.values()].find((row) => row.file === entry!.directory)
       this.flusher.noteWrite(entry.file, entry.end, durability, {
-        after: directory ? [{ file: directory.file, offset: directory.offset }] : []
+        after:
+          entry.dependencies ??
+          (directory ? [{ file: directory.file, offset: directory.offset }] : [])
       })
     } catch (error) {
       if (!writeError) throw error
@@ -121,9 +160,16 @@ export class RunEventLedgerDescriptorCache {
     if (!runIds) files.push(...[...this.directories.values()].map((row) => row.file))
     const prior = keys.flatMap((key) => (this.retiring.get(key) ? [this.retiring.get(key)!] : []))
     const promise = Promise.all([...prior, this.flusher.forget(files)])
-      .then(() => {
+      .then(async () => {
         for (const key of keys) this.entries.delete(key)
-        if (!runIds) this.directories.clear()
+        if (!runIds) {
+          this.directories.clear()
+          this.pendingParents.clear()
+          for (const [directoryPath, lease] of this.sharedLeases) {
+            await lease.release()
+            this.sharedLeases.delete(directoryPath)
+          }
+        }
       })
       .finally(() => {
         for (const key of keys) if (this.retiring.get(key) === promise) this.retiring.delete(key)
@@ -145,6 +191,22 @@ export class RunEventLedgerDescriptorCache {
     if (!runIds) files.push(...[...this.directories.values()].map((row) => row.file))
     this.flusher.forgetSync(files)
     for (const key of keys) this.entries.delete(key)
-    if (!runIds) this.directories.clear()
+    if (!runIds) {
+      this.directories.clear()
+      this.pendingParents.clear()
+      for (const [directoryPath, lease] of this.sharedLeases) {
+        lease.releaseSync()
+        this.sharedLeases.delete(directoryPath)
+      }
+    }
+  }
+
+  private sharedDirectory(directoryPath: string): DirectoryLease {
+    let lease = this.sharedLeases.get(directoryPath)
+    if (!lease) {
+      lease = this.directoryLeases!.acquire(directoryPath)
+      this.sharedLeases.set(directoryPath, lease)
+    }
+    return lease
   }
 }

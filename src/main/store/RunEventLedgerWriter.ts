@@ -12,12 +12,14 @@ import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { runEventLedgerAppendPrefix } from './RunEventLedgerTail'
 import { RunEventLedgerDescriptorCache } from './RunEventLedgerDescriptorCache'
 import type { MainDurabilityFlusher } from './MainDurabilityFlusher'
+import type { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import type { RunEventArtifactRef, RunEventInput, RunEventRecord } from './types'
 
 export interface RunEventLedgerWriterOptions {
   runEventsDir: string
   runArtifactsDir: string
   durabilityFlusher?: MainDurabilityFlusher
+  directoryLeases?: MainDurabilityDirectoryLeases
 }
 
 export interface RunEventLedgerAppendOptions {
@@ -39,7 +41,11 @@ export class RunEventLedgerWriter {
 
   constructor(private readonly options: RunEventLedgerWriterOptions) {
     if (options.durabilityFlusher)
-      this.descriptors = new RunEventLedgerDescriptorCache(options.durabilityFlusher)
+      this.descriptors = new RunEventLedgerDescriptorCache(
+        options.durabilityFlusher,
+        128,
+        options.directoryLeases
+      )
   }
 
   async retire(runIds?: readonly string[]): Promise<void> {

@@ -11,6 +11,7 @@ import {
 } from '../RunEventStore'
 import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
+import { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import type { RunEventInput, RunEventRecord } from './types'
 
 describe('RunEventLedgerWriter', () => {
@@ -72,11 +73,12 @@ describe('RunEventLedgerWriter', () => {
     const injected = new RunEventLedgerWriter({
       runEventsDir,
       runArtifactsDir,
-      durabilityFlusher: flusher
+      durabilityFlusher: flusher,
+      directoryLeases: new MainDurabilityDirectoryLeases(flusher)
     })
     const first = injected.append(input('injected'))
     expect(records('injected')).toEqual([first])
-    expect(syncs).toBe(0)
+    expect(syncs).toBe(process.platform === 'win32' ? 0 : 1)
     injected.append(input('injected', { kind: 'lifecycle' }))
     expect(completions.length).toBeGreaterThan(0)
     const strict = injected.append(input('injected'), { durability: 'strict' })
