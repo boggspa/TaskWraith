@@ -280,7 +280,7 @@ async function runTwins(
 }
 
 function expectOwnerOnly(path: string): void {
-  if (POSIX) expect(lstatSync(path).mode & 0o777).toBe(0o600)
+  if (process.platform !== 'win32') expect(lstatSync(path).mode & 0o777).toBe(0o600)
 }
 
 /**
@@ -766,6 +766,8 @@ describe('prepareHostThreadRecord differential (contract §20.3 items 1, 2, 4)',
     expect(prepared.artifact.source).toBe('normalized')
     expect(prepared.artifact.path).toBe(leftoverPath)
     const replaced = lstatSync(leftoverPath, { bigint: true })
+    // @portability-ok: publication allocates a temporary file before atomically
+    // renaming it over the live leftover, so its inode cannot reuse the leftover's.
     expect(String(replaced.ino)).not.toBe(String(leftover.ino))
     expect(readFileSync(leftoverPath, 'utf8')).not.toContain('leftover')
   })
