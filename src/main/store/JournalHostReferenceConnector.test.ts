@@ -16,6 +16,31 @@ import type {
 } from './CheckpointPreparationProtocol'
 
 describe('production journal Host reference connector', () => {
+  it('forwards actual lane deadline refusal to the observer without changing cancellation or slot custody', () => {
+    const observed: string[] = []
+    const connector = new JournalHostReferenceConnector({
+      workerEntryPath: '/unused/worker.js',
+      capture: () => null,
+      owns: () => true,
+      residualObserver: (counter) => {
+        observed.push(counter)
+        throw new Error('telemetry failed')
+      }
+    })
+    connector.lane.enqueue(
+      { chatId: 'chat', revision: 1, generation: 1, purpose: 'publication' },
+      0
+    )
+    connector.lane.advance(0)
+    expect(connector.lane.advance(300)).toEqual([
+      { type: 'cancel', id: 1, reason: 'deadline' },
+      { type: 'refused', id: 1, reason: 'deadline' }
+    ])
+    expect(observed).toEqual(['preparationRefusals'])
+    expect(connector.lane.stats().active).toBe(1)
+    connector.lane.finishCancellation(1)
+    expect(connector.lane.stats().active).toBe(0)
+  })
   it('joins real journal bytes through Host staging and an exact successful receipt without record transfer', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-host-e2e-'))
     const entry = path.join(root, 'worker.cjs')
@@ -57,7 +82,7 @@ describe('production journal Host reference connector', () => {
         publish: () => {
           throw new Error('Full-record transfer forbidden')
         },
-        remove: () => {}
+        remove: () => false
       },
       broker: {
         submitCommand: async (command: HostCommand) => {
@@ -80,14 +105,14 @@ describe('production journal Host reference connector', () => {
               idempotencyKey: command.idempotencyKey,
               name: command.name,
               actor: command.actor,
-              authority: 'allow',
+              authority: { decision: 'allow' },
               status: 'succeeded',
               commandFingerprint: 'f'.repeat(64),
               generation: 1,
               cursor: 1,
               createdAt: '2026-10-02T00:00:00Z',
               updatedAt: '2026-10-02T00:00:00Z'
-            } as HostCommandReceipt
+            } satisfies HostCommandReceipt
           }
         },
         lookupReceipt: async () => {

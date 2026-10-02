@@ -7,6 +7,28 @@ import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { RunEventInput } from './types'
 
 describe('Main durability runtime', () => {
+  it('forwards the real legacy strict observer and contains its failure without counting pooled writes twice', async () => {
+    const events: string[] = []
+    const residualObserver = (counter: string) => {
+      events.push(counter)
+      throw new Error('observer failed')
+    }
+    const legacy = createMainDurabilityRuntime({ ...options(), env: {}, residualObserver })
+    expect(legacy.writer.append(input, { durability: 'strict' }).sequence).toBe(1)
+    expect(events).toEqual(['strictRunEventFsyncs'])
+    await legacy.shutdown()
+    const pooled = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_RUN_EVENT_FLUSHER: '1' },
+      createAdapter: () => adapter(),
+      residualObserver
+    })
+    pooled.writer.append({ ...input, runId: 'pooled' }, { durability: 'strict' })
+    expect(events).toEqual(['strictRunEventFsyncs'])
+    expect(pooled.snapshot().telemetry.poolOwners?.['run-events'].strictFsyncs).toBe(1)
+    await pooled.shutdown()
+  })
   it.each([
     ['0', '0', false],
     ['1', '0', false],

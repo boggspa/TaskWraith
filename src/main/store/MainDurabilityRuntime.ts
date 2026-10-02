@@ -7,6 +7,7 @@ import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import type { RunEventInput, RunEventRecord } from './types'
 import type { RunEventLedgerAppendOptions } from './RunEventLedgerWriter'
 import { readMainDurabilityTelemetry } from './MainDurabilityTelemetry'
+import type { ResidualObserver } from './MainDurabilityResiduals'
 
 export type JournalDurabilityFlusher = Pick<
   MainDurabilityFlusher,
@@ -36,6 +37,7 @@ export interface DurabilityConsumerSnapshot {
 }
 
 export interface MainDurabilityRuntimeOptions {
+  residualObserver?: ResidualObserver
   runEventsDir: string
   runArtifactsDir: string
   /** Exact emitted worker path supplied by composition, never source discovery. */
@@ -124,6 +126,7 @@ export function createMainDurabilityRuntime(
   const writer = new FencedWriter({
     runEventsDir: options.runEventsDir,
     runArtifactsDir: options.runArtifactsDir,
+    residualObserver: options.residualObserver,
     ...(requested && flusher ? { durabilityFlusher: flusher, directoryLeases } : {})
   })
   let journal: DurabilityParticipant | undefined

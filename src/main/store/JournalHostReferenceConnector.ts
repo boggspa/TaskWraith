@@ -30,7 +30,7 @@ interface Request {
 
 /** One shared scalar lane. Artifact custody survives Host transport uncertainty. */
 export class JournalHostReferenceConnector implements HostThreadRecordReferenceStagingPort {
-  readonly lane = new ChatPreparationLane()
+  readonly lane: ChatPreparationLane
   readonly counters = { admitted: 0, unavailable: 0, artifacts: 0, retained: 0 }
   // Execution concurrency belongs to the single lane. Retained artifacts use
   // separate bounded credits so one slow Host receipt does not pin execution.
@@ -69,6 +69,7 @@ export class JournalHostReferenceConnector implements HostThreadRecordReferenceS
   >()
   constructor(
     private readonly ports: {
+      residualObserver?: import('./MainDurabilityResiduals').ResidualObserver
       workerEntryPath: string
       capture(chatId: string, revision: number): JournalCaptureLease | null
       owns(chatId: string, revision: number): boolean
@@ -76,7 +77,9 @@ export class JournalHostReferenceConnector implements HostThreadRecordReferenceS
       runMaintenance?(ticket: ChatPreparationTicket): Promise<void>
       now?: () => number
     }
-  ) {}
+  ) {
+    this.lane = new ChatPreparationLane(ports.residualObserver)
+  }
 
   stage(input: Parameters<HostThreadRecordReferenceStagingPort['stage']>[0]) {
     const revision = input.persist.revision
