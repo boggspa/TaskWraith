@@ -356,7 +356,11 @@ async function runLiveLaneWindows(options) {
   const windows = []
   const runReasons = []
 
-  for (let repetition = 0; repetition < count; repetition += 1) {
+  const repetitionIndex = options.repetitionIndex ?? 0
+  if (!Number.isSafeInteger(repetitionIndex) || repetitionIndex < 0 || repetitionIndex > 2)
+    throw new Error('invalid live repetition index')
+  for (let offset = 0; offset < count; offset += 1) {
+    const repetition = repetitionIndex + offset
     const before = lanes.snapshot()
     const stopped = before.observer.failure ?? before.light.failure ?? before.heavy.failure ?? null
     if (stopped !== null) {

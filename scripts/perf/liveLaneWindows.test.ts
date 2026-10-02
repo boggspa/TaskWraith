@@ -479,6 +479,23 @@ function run(w: ReturnType<typeof world>, options: Record<string, unknown> = {})
 }
 
 describe('runLiveLaneWindows', () => {
+  it('binds repetition offset at admission through main, Host fold and callback', async () => {
+    const w = world()
+    const requests: string[] = []
+    const callbacks: number[] = []
+    const result = await run(w, {
+      windows: 1, repetitionIndex: 2,
+      onWindow: (window: any) => callbacks.push(window.repetition),
+      readMainPerfWindow: async (request: any) => {
+        requests.push(request.id)
+        return request.action === 'begin' ? { status: 'started', id: request.id } : { status: 'unavailable', reason: 'test-only' }
+      }
+    })
+    expect(requests).toEqual(['light_beside_2', 'light_beside_2'])
+    expect(callbacks).toEqual([2])
+    expect(result.windows[0].repetition).toBe(2)
+    expect(result.windows[0].host?.repetition).toBe(2)
+  })
   it('never qualifies X1b without complete protected timestamped gaps', () => {
     const gap = { expectedAtMs: 105, observedAtMs: 135, durationMs: 30 }
     const window = {

@@ -81,6 +81,7 @@ const {
   aggregateHostWindowSamples
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
+const { collectM5X2Artifacts } = require('./collectors/m5X2Artifacts.cjs')
 const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 const {
   parseCellName,
@@ -1497,6 +1498,8 @@ function parseArgs(argv) {
     else if (arg === '--accept-unfolded-cross-thread') out.acceptUnfoldedCrossThread = true
     else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg === '--live-rounds') out.liveRounds = true
+    else if (arg.startsWith('--live-repetitions=')) out.liveRepetitions = Number(arg.split('=')[1])
+    else if (arg.startsWith('--live-repetition-index=')) out.liveRepetitionIndex = Number(arg.split('=')[1])
     else if (arg === '--live-lanes') {
       out.liveRounds = true
       out.liveLanes = true
@@ -1634,6 +1637,12 @@ Options:
  */
 async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv)
+  if (args.liveRepetitions !== undefined && ![1, 3].includes(args.liveRepetitions))
+    throw new Error('live repetitions must be 1 or 3')
+  if (args.liveRepetitionIndex !== undefined && (!Number.isSafeInteger(args.liveRepetitionIndex) || args.liveRepetitionIndex < 0 || args.liveRepetitionIndex > 2 || args.liveRepetitions !== 1))
+    throw new Error('live repetition index requires one repetition and index 0..2')
+  if ((args.liveRepetitions !== undefined || args.liveRepetitionIndex !== undefined) && !args.liveLanes)
+    throw new Error('live repetition controls require --live-lanes')
   if (args.help) {
     printHelp()
     return { ok: true, helped: true }
@@ -2663,7 +2672,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         setCapturePhase('live_rounds', {}, { log: true })
         const readDaemonState =
           options.liveDaemonState || (() => readScriptedDaemonState(liveDaemon.baseUrl))
-        const { rounds, verdict } = await runLiveRoundSequence({
+        const { rounds, heavyWarmups, verdict } = await runLiveRoundSequence({
+          heavyChatIds: fixture.chats.slice(1).map((chat) => chat.appChatId),
           ...(options.liveSmokeRound ? { runRound: options.liveSmokeRound } : {}),
           roundOptions: {
             page,
@@ -2678,7 +2688,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               { log: true }
             )
         })
-        report.liveRounds = { ...report.liveRounds, rounds, verdict }
+        report.liveRounds = { ...report.liveRounds, rounds, heavyWarmups, verdict }
         if (args.liveLanes) {
           // M1 S5d: the measured live windows, started only once the warm-up
           // and the smoke settled. The Host window sampler feeds the S3b
@@ -2693,6 +2703,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             lanes = await (options.runLiveLanes || runT2LiveLanes)({
               page,
               mainSession: mainInspector,
+              windowOptions: { windows: args.liveRepetitions ?? 3 },
+              repetitionIndex: args.liveRepetitionIndex ?? 0,
               lightChatId: chats.light,
               lightChatTitle: chats.lightTitle,
               heavyChatId: chats.heavy,
@@ -3128,6 +3140,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },
         { log: true }
       )
+      if (report.liveRounds?.lanes) report.liveRounds.lanes.x2 = collectM5X2Artifacts({ windows: report.liveRounds.lanes.windows, profilePath: mainCpuPath, artifactPath: path.join(artifactDir, 'main-x2-attribution.json') })
       if (typeof options.onCaptureSessionComplete === 'function') {
         await options.onCaptureSessionComplete({ report })
       }

@@ -399,6 +399,7 @@ async function runT2LiveLanes(options) {
       await sleep(settings.heavyLeadInMs)
       windowsResult = await runLiveLaneWindows({
         ...windowOptions,
+        repetitionIndex: options.repetitionIndex ?? 0,
         lanes,
         lightChatId,
         heavyChatId,

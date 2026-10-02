@@ -415,9 +415,10 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
           roundStatus: 'completed',
           turnsFinished: 4,
           d1: {
-            delta: smokeOk
-              ? { deferredAppends: 3, normalSaves: 2 }
-              : { deferredAppends: 0, normalSaves: 0 }
+            delta:
+              smokeOk || round.prompt.startsWith('M5 heavy warm-up')
+                ? { deferredAppends: 3, normalSaves: 2 }
+                : { deferredAppends: 0, normalSaves: 0 }
           }
         }),
         hostWelcomeProbe: async () => ({

@@ -574,7 +574,29 @@ function liveRoundsVerdict(rounds) {
 async function runLiveRoundSequence(options) {
   const runRound = options.runRound || runLiveSmokeRound
   const rounds = []
+  const heavyWarmups = []
   let previousRoundId = null
+  for (const chatId of options.heavyChatIds || []) {
+    const warm = await runRound({
+      ...options.roundOptions,
+      chatId,
+      prompt: 'M5 heavy warm-up save: answer briefly.',
+      previousRoundId: null
+    })
+    heavyWarmups.push({ ...warm, chatId, purpose: 'heavy_warm_up' })
+    rounds.push({ ...warm, chatId, purpose: 'heavy_warm_up' })
+    if (
+      warm.outcome !== 'settled' ||
+      warm.roundStatus !== 'completed' ||
+      !(warm.turnsFinished > 0) ||
+      !(warm.d1?.delta?.normalSaves > 0)
+    )
+      return {
+        rounds,
+        heavyWarmups,
+        verdict: { ok: false, reasons: ['heavy warm-up save unproven'] }
+      }
+  }
   for (const purpose of LIVE_ROUND_PURPOSES) {
     const round = await runRound({
       ...options.roundOptions,
@@ -586,7 +608,7 @@ async function runLiveRoundSequence(options) {
     if (round.outcome !== 'settled') break
     previousRoundId = round.roundId
   }
-  return { rounds, verdict: liveRoundsVerdict(rounds) }
+  return { rounds, heavyWarmups, verdict: liveRoundsVerdict(rounds) }
 }
 
 /**
