@@ -15,6 +15,7 @@ import type {
 } from './IncrementalChatJournal'
 import type { ChatMessage, ChatRecord } from './types'
 import type { DeferredCheckpointResult } from './CheckpointPreparationProtocol'
+import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 
 export type IncrementalChatPersistenceBoundary = 'normal' | 'approval' | 'terminal'
 
@@ -100,6 +101,7 @@ export interface IncrementalChatPersistence {
 }
 
 export interface IncrementalChatPersistenceOptions {
+  residualObserver?: ResidualObserver
   journal: IncrementalChatJournal
   canWrite?: () => boolean
   logger?: Pick<Console, 'error' | 'warn'>
@@ -336,6 +338,7 @@ export function createIncrementalChatPersistence(
       replaceAuthoritative(chatId, previous)
     }
     baselineChecks += 1
+    observeResidual(options.residualObserver, 'baselineVerifies')
     if (!verify(chatId, previous, true)) {
       // verify(..., true) repaired the side-band state from the authoritative
       // legacy record. Keep this chat marked verified for subsequent hot saves.
