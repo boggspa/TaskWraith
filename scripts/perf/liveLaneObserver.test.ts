@@ -204,15 +204,31 @@ describe('the live-lane page observer', () => {
     expect(lanes.heavy).toMatchObject({ carrying: 3, nextSeq: 3, otherSource: 0 })
   })
 
-  it('counts a chat seen on the other lane’s channel, and ignores other chats', () => {
+  it('observes spectator light and focused heavy on either channel, and ignores other chats', () => {
     const page = installed()
     page.deliver(snapshot(HEAVY, round('h-1', 'running')))
     page.invalidate(invalidation(LIGHT, { ensemble: round('r-1', 'running') }))
+    page.deliver(snapshot(HEAVY, round('h-1', 'completed')))
+    page.invalidate(invalidation(LIGHT, { ensemble: round('r-1', 'completed') }))
+    page.invalidate(invalidation(LIGHT, {}))
+    page.deliver(patchV2(HEAVY, { title: 'silent' }))
     page.deliver(snapshot('another-chat', round('x-1', 'running')))
     page.invalidate(invalidation('another-chat', { ensemble: round('x-1', 'running') }))
     const { lanes } = readOk(page)
-    expect(lanes.light).toMatchObject({ otherSource: 1, carrying: 0, transitions: [] })
-    expect(lanes.heavy).toMatchObject({ otherSource: 1, carrying: 0, transitions: [] })
+    expect(lanes.light).toMatchObject({
+      otherSource: 3,
+      carrying: 2,
+      roundId: 'r-1',
+      status: 'completed'
+    })
+    expect(lanes.heavy).toMatchObject({
+      otherSource: 3,
+      carrying: 2,
+      roundId: 'h-1',
+      status: 'completed'
+    })
+    expect(lanes.light.transitions.map((entry) => entry.status)).toEqual(['running', 'completed'])
+    expect(lanes.heavy.transitions.map((entry) => entry.status)).toEqual(['running', 'completed'])
   })
 
   it('never throws into the app’s dispatch, and counts what it could not read', () => {

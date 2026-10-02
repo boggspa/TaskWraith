@@ -22,8 +22,8 @@
  * channel, one reads what they saw, one removes them. The listeners never
  * ack (the app's own listener does), never throw into the app's dispatch,
  * and keep only round ids, statuses and page wall-clock times, so no content
- * leaves the page. A chat's deliveries on the other lane's channel are only
- * counted: they mean the renderer's interest in it changed. Each lane keeps
+ * leaves the page. A chat's deliveries on the other lane's channel are observed
+ * and counted: they mean the renderer's interest in it changed. Each lane keeps
  * its last transitions under a sequence, so a round that starts and ends
  * between two reads is still seen, and a reader that fell behind is told.
  * Each install has its own id: a reloaded page restarts the sequences, and a
@@ -125,6 +125,8 @@ function installLaneObserverInPage(config) {
         if (!isObject(payload)) return
         if (payload.chatId === other.chatId) {
           other.otherSource += 1
+          var otherHeld = read(payload)
+          if (otherHeld !== null) observe(other, otherHeld.value)
           return
         }
         if (payload.chatId !== own.chatId) return
