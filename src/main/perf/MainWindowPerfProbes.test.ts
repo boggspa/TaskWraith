@@ -189,6 +189,11 @@ describe('main window probes', () => {
     const f = fixture()
     expect(f.probes.request({ action: 'begin', id: 'beside_0', durationMs: 120 })).toEqual({
       status: 'started',
+      clock: {
+        clockId: 'injected.nowMs',
+        identity: 'unverified',
+        provenance: 'injected-unverified'
+      },
       id: 'beside_0',
       startedAtMs: 100,
       expectedEndAtMs: 220,

@@ -1,9 +1,12 @@
+import { resolveMainPerfClock, type MainPerfClock } from './MainPerfClock'
+
 export interface MainSuspensionProtection {
   held(): boolean
   release(): void
 }
 
 export interface MainLoopGapSnapshot {
+  clock: Omit<MainPerfClock, 'nowMs'>
   intervalMs: 5
   thresholdMs: 25
   startedAtMs: number
@@ -22,13 +25,16 @@ export interface MainLoopGapSnapshot {
 export function createMainLoopGapRecorder(
   options: {
     nowMs?: () => number
+    clock?: MainPerfClock
     setTimer?: (callback: () => void, ms: number) => unknown
     clearTimer?: (timer: unknown) => void
     acquireProtection?: () => MainSuspensionProtection
     capacity?: number
   } = {}
 ) {
-  const now = options.nowMs ?? Date.now
+  const timebase = resolveMainPerfClock(options.clock, options.nowMs)
+  const now = timebase.nowMs
+  const { nowMs: _readClock, ...clockIdentity } = timebase
   const setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
   const clearTimer =
     options.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>))
@@ -160,6 +166,7 @@ export function createMainLoopGapRecorder(
     if (observedForMs === 0) reasons.add('gap_window_empty')
     release()
     result = {
+      clock: clockIdentity,
       intervalMs: 5,
       thresholdMs: 25,
       startedAtMs,

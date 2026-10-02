@@ -35,6 +35,7 @@ import {
   type MainWindowPerfReceipt
 } from './MainWindowPerfProbes'
 import type { MainSuspensionProtection } from './MainLoopGapRecorder'
+import type { MainPerfClock } from './MainPerfClock'
 
 export interface MainPerfSnapshotOptions {
   resetLagWindow?: boolean
@@ -63,6 +64,7 @@ export interface MainPerfInstrumentationOptions {
   /** Injection seam for tests; production reads the real OS counters. */
   hostLoad?: HostLoadSampler
   now?: () => Date
+  windowClock?: MainPerfClock
   windowProbes?: ReturnType<typeof createMainWindowPerfProbes>
   acquireWindowProtection?: () => MainSuspensionProtection
 }
@@ -77,6 +79,7 @@ export function createMainPerfInstrumentation(
   const windowProbes =
     options.windowProbes ??
     createMainWindowPerfProbes({
+      clock: options.windowClock,
       acquireProtection: options.acquireWindowProtection,
       readDurability: () => sections.mainDurability?.() ?? null
     })

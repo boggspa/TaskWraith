@@ -8,6 +8,7 @@ import {
   type MainLoopGapSnapshot,
   type MainSuspensionProtection
 } from './MainLoopGapRecorder'
+import { resolveMainPerfClock, type MainPerfClock } from './MainPerfClock'
 
 export type MainWindowPerfRequest =
   | { action: 'begin'; id: string; durationMs: number }
@@ -16,6 +17,7 @@ export type MainWindowPerfRequest =
 export type MainWindowPerfReceipt =
   | {
       status: 'started'
+      clock: Omit<MainPerfClock, 'nowMs'>
       id: string
       startedAtMs: number
       expectedEndAtMs: number
@@ -23,6 +25,7 @@ export type MainWindowPerfReceipt =
     }
   | {
       status: 'complete'
+      clock: Omit<MainPerfClock, 'nowMs'>
       id: string
       startedAtMs: number
       endedAtMs: number
@@ -47,6 +50,7 @@ export function createMainWindowPerfProbes(
   options: {
     createMeter?: () => EventLoopLagMeter
     nowMs?: () => number
+    clock?: MainPerfClock
     setTimer?: (callback: () => void, ms: number) => unknown
     clearTimer?: (timer: unknown) => void
     readDurability?: () => unknown
@@ -54,8 +58,10 @@ export function createMainWindowPerfProbes(
     createGapRecorder?: () => ReturnType<typeof createMainLoopGapRecorder>
   } = {}
 ) {
-  const nowMs = options.nowMs ?? Date.now
-  const createMeter = options.createMeter ?? createEventLoopLagMeter
+  const clock = resolveMainPerfClock(options.clock, options.nowMs)
+  const nowMs = clock.nowMs
+  const { nowMs: _readClock, ...clockIdentity } = clock
+  const createMeter = options.createMeter ?? (() => createEventLoopLagMeter({ now: nowMs }))
   const readDurability = () => {
     try {
       return options.readDurability?.() ?? null
@@ -125,7 +131,7 @@ export function createMainWindowPerfProbes(
       try {
         gaps =
           options.createGapRecorder?.() ??
-          createMainLoopGapRecorder({ nowMs, acquireProtection: options.acquireProtection })
+          createMainLoopGapRecorder({ clock, acquireProtection: options.acquireProtection })
       } catch {
         try {
           meter.stop()
@@ -151,11 +157,7 @@ export function createMainWindowPerfProbes(
         timer: undefined
       }
       try {
-        if (
-          !Number.isFinite(startedAtMs) ||
-          startedAtMs < 0 ||
-          !Number.isSafeInteger(expectedEndAtMs)
-        )
+        if (!Number.isFinite(startedAtMs) || startedAtMs < 0 || !Number.isFinite(expectedEndAtMs))
           throw new Error('Invalid clock')
         meter.start()
         if (!gaps.start(startedAtMs)) throw new Error('Gap recorder refused')
@@ -171,6 +173,7 @@ export function createMainWindowPerfProbes(
             const loopGaps = gaps.finish(false, endedAtMs)
             window.receipt = {
               status: 'complete',
+              clock: clockIdentity,
               id: window.id,
               startedAtMs,
               endedAtMs,
@@ -191,7 +194,14 @@ export function createMainWindowPerfProbes(
         cleanup(window)
         return { status: 'unavailable', reason: 'window_start_failed' }
       }
-      return { status: 'started', id: input.id, startedAtMs, expectedEndAtMs, durability }
+      return {
+        status: 'started',
+        clock: clockIdentity,
+        id: input.id,
+        startedAtMs,
+        expectedEndAtMs,
+        durability
+      }
     }
     if (input.action !== 'end' || !held || held.id !== input.id) {
       return { status: 'unavailable', reason: 'window_missing' }
