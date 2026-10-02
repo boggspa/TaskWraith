@@ -9,6 +9,7 @@
  * renderer.
  */
 import { createHash, randomUUID } from 'node:crypto'
+import type { MainNativeActionGate } from '../lifecycle/MainNativeActionGate'
 
 import type {
   CanvasElementDetail,
@@ -147,6 +148,8 @@ export interface CanvasWindowDriverFactoryOptions {
    * fails the click before action budget is consumed or a daemon RPC is sent.
    */
   readonly clickAuditClaim?: CanvasWindowClickAuditClaim
+  /** Main-owned shutdown admission; consent waits never acquire a lease. */
+  readonly nativeActionGate?: MainNativeActionGate
   /** Injectable only for deterministic tests; production uses randomUUID(). */
   readonly createClickReceipt?: () => string
   /** One-use click receipts are intentionally short lived (maximum one minute). */
@@ -1157,7 +1160,8 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
     private readonly releaseAccess: NativeWindowCoordinatorAccessParams,
     private readonly gate: SerializedNativeWindowRequests,
     /** Factory-owned, synchronous one-use receipt claim at the RPC boundary. */
-    private readonly claimClickReceipt: (request: CanvasWindowClickRequest) => void
+    private readonly claimClickReceipt: (request: CanvasWindowClickRequest) => void,
+    private readonly nativeActionGate?: MainNativeActionGate
   ) {}
 
   async adopt(request: { lease: CanvasWindowLeaseIdentity }): Promise<CanvasWindowAdoptResult> {
@@ -1310,58 +1314,77 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
         }
   ): Promise<CanvasWindowActResult> {
     return this.gate.run(async () => {
-      if (verb === 'click') {
-        // This lookup deletes the receipt before every validation/audit check.
-        // It is synchronous and immediately precedes the action-budget consume
-        // and daemon enqueue, so a stale/replayed/mismatched receipt cannot
-        // cross either consequential boundary.
-        this.claimClickReceipt(request as CanvasWindowClickRequest)
+      const lease = this.nativeActionGate?.tryEnter(`nativeWindow.${verb}`)
+      if (this.nativeActionGate && !lease) {
+        factoryError('native-rpc-failed', 'Native action admission is closed for shutdown.')
       }
-      this.assertBoundLease(request.lease)
-      // This is intentionally inside the serial queue and immediately precedes
-      // dispatch. A failure after this point is indeterminate and is never retried.
-      const access = this.consumeAction(request.lease, verb)
-      let completed = false
       try {
-        const response = await this.requestDaemon(`nativeWindow.${verb}`, {
-          ...attachmentParams(access.attachment),
-          observationId: request.observationId,
-          inputEpoch: request.inputEpoch,
-          ref: request.ref,
-          // Receipt material is never sent to the daemon; it is factory-local
-          // authorization state consumed above.
-          ...(verb === 'fill' ? { value: (request as { readonly value: string }).value } : {})
-        })
-        this.assertResponseBinding(response, access)
-        const parsed = parseAction(response, request.observationId, request.inputEpoch)
-        this.coordinator.completeAppDriveAction(coordinatorOwner(this.owner), access.driveAction, {
-          executed: parsed.result.executed,
-          surfaceVerification: 'unknown',
-          ...(parsed.result.refusalReason ? { refusalCode: parsed.result.refusalReason } : {})
-        })
-        completed = true
-        this.pendingDriveAction = {
-          nativeActionId: parsed.actionId,
-          driveAction: access.driveAction,
-          executed: parsed.result.executed
-        }
-        const after = this.resolveRead(request.lease, 'observe')
-        return { lease: after.lease, driveAction: access.driveAction, ...parsed }
-      } catch (error) {
-        if (!completed) {
-          this.coordinator.completeAppDriveAction(
-            coordinatorOwner(this.owner),
-            access.driveAction,
-            {
-              executed: null,
-              surfaceVerification: 'unknown',
-              refusalCode: 'native_dispatch_error'
-            }
-          )
-        }
-        throw error
+        return await this.performAdmittedAction(verb, request)
+      } finally {
+        lease?.release()
       }
     })
+  }
+
+  private async performAdmittedAction(
+    verb: NativeWindowLeaseControlVerb,
+    request:
+      | CanvasWindowClickRequest
+      | {
+          lease: CanvasWindowLeaseIdentity
+          observationId: string
+          inputEpoch: number
+          ref: string
+          value: string
+        }
+  ): Promise<CanvasWindowActResult> {
+    if (verb === 'click') {
+      // This lookup deletes the receipt before every validation/audit check.
+      // It is synchronous and immediately precedes the action-budget consume
+      // and daemon enqueue, so a stale/replayed/mismatched receipt cannot
+      // cross either consequential boundary.
+      this.claimClickReceipt(request as CanvasWindowClickRequest)
+    }
+    this.assertBoundLease(request.lease)
+    // This is intentionally inside the serial queue and immediately precedes
+    // dispatch. A failure after this point is indeterminate and is never retried.
+    const access = this.consumeAction(request.lease, verb)
+    let completed = false
+    try {
+      const response = await this.requestDaemon(`nativeWindow.${verb}`, {
+        ...attachmentParams(access.attachment),
+        observationId: request.observationId,
+        inputEpoch: request.inputEpoch,
+        ref: request.ref,
+        // Receipt material is never sent to the daemon; it is factory-local
+        // authorization state consumed above.
+        ...(verb === 'fill' ? { value: (request as { readonly value: string }).value } : {})
+      })
+      this.assertResponseBinding(response, access)
+      const parsed = parseAction(response, request.observationId, request.inputEpoch)
+      this.coordinator.completeAppDriveAction(coordinatorOwner(this.owner), access.driveAction, {
+        executed: parsed.result.executed,
+        surfaceVerification: 'unknown',
+        ...(parsed.result.refusalReason ? { refusalCode: parsed.result.refusalReason } : {})
+      })
+      completed = true
+      this.pendingDriveAction = {
+        nativeActionId: parsed.actionId,
+        driveAction: access.driveAction,
+        executed: parsed.result.executed
+      }
+      const after = this.resolveRead(request.lease, 'observe')
+      return { lease: after.lease, driveAction: access.driveAction, ...parsed }
+    } catch (error) {
+      if (!completed) {
+        this.coordinator.completeAppDriveAction(coordinatorOwner(this.owner), access.driveAction, {
+          executed: null,
+          surfaceVerification: 'unknown',
+          refusalCode: 'native_dispatch_error'
+        })
+      }
+      throw error
+    }
   }
 
   private resolveRead(
@@ -1432,6 +1455,7 @@ export class CanvasWindowDriverFactory {
   private readonly targetTtlMs: number
   private readonly clickConfirmation?: CanvasWindowClickConfirmation
   private readonly clickAuditClaim?: CanvasWindowClickAuditClaim
+  private readonly nativeActionGate?: MainNativeActionGate
   private readonly createClickReceipt: () => string
   private readonly clickReceiptTtlMs: number
   private readonly targets = new Map<string, PendingTargetBinding>()
@@ -1454,6 +1478,7 @@ export class CanvasWindowDriverFactory {
     this.createTargetId = options.createTargetId ?? randomUUID
     this.clickConfirmation = options.clickConfirmation
     this.clickAuditClaim = options.clickAuditClaim
+    this.nativeActionGate = options.nativeActionGate
     this.createClickReceipt = options.createClickReceipt ?? randomUUID
     const ttl = options.targetTtlMs ?? DEFAULT_TARGET_TTL_MS
     if (!Number.isSafeInteger(ttl) || ttl < 1 || ttl > MAX_TARGET_TTL_MS) {
@@ -1765,7 +1790,8 @@ export class CanvasWindowDriverFactory {
         access.lease,
         access.attachment,
         this.gate,
-        (request) => this.claimClickReceipt(binding.owner, access.lease, request)
+        (request) => this.claimClickReceipt(binding.owner, access.lease, request),
+        this.nativeActionGate
       ),
       // Always inject the factory-owned broker. With no confirmation/audit
       // integration it returns null, preserving the fail-closed driver policy.

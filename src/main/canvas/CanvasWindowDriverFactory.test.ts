@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
+import { MainNativeActionGate } from '../lifecycle/MainNativeActionGate'
 
 import type {
   CanvasWindowActionTargetTelemetry,
@@ -323,6 +324,7 @@ function setupDriver(
     now?: () => number
     createClickReceipt?: () => string
     clickReceiptTtlMs?: number
+    nativeActionGate?: MainNativeActionGate
   } = {}
 ) {
   let nextTarget = 0
@@ -342,7 +344,8 @@ function setupDriver(
     ...(options.now ? { now: options.now } : {}),
     ...(options.clickReceiptTtlMs ? { clickReceiptTtlMs: options.clickReceiptTtlMs } : {}),
     ...(clickConfirmation ? { clickConfirmation } : {}),
-    ...(clickAuditClaim ? { clickAuditClaim } : {})
+    ...(clickAuditClaim ? { clickAuditClaim } : {}),
+    nativeActionGate: options.nativeActionGate
   })
   const target = factory.issueOpenTarget(OWNER)
   return {
@@ -361,6 +364,164 @@ async function open(driver: ReturnType<CanvasWindowDriverFactory['takeDriver']>)
 function errorCode(error: unknown): string | undefined {
   return error instanceof CanvasWindowDriverFactoryError ? error.code : undefined
 }
+
+describe('native action quit admission', () => {
+  it('refuses fill queued behind a read when shutdown closes before its serial turn', async () => {
+    const gate = new MainNativeActionGate()
+    const daemon = new FakeDaemon()
+    daemon.handlers.set('nativeWindow.adopt', () => adoption())
+    daemon.handlers.set('nativeWindow.observe', () => rawObservation())
+    const { driver, coordinator } = setupDriver(daemon, new FakeCoordinator(), {
+      nativeActionGate: gate
+    })
+    await open(driver)
+    const bridge = clickInternals(driver).bridge
+    let release!: (value: unknown) => void
+    let entered!: () => void
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    daemon.handlers.set('nativeWindow.observe', () => {
+      entered()
+      return new Promise((resolve) => {
+        release = resolve
+      })
+    })
+    const read = bridge.observe({ lease: LEASE })
+    await reading
+    const fill = bridge.fill({
+      lease: LEASE,
+      observationId: 'observation-a',
+      inputEpoch: 5,
+      ref: 'field',
+      value: 'text'
+    })
+    const refused = expect(fill).rejects.toThrow('closed for shutdown')
+    gate.beginShutdown()
+    await gate.join()
+    release(rawObservation())
+    await read
+    await refused
+    expect(coordinator.actionCalls).toHaveLength(0)
+    expect(daemon.calls.filter((call) => call.method === 'nativeWindow.fill')).toHaveLength(0)
+  })
+
+  it('releases admission when strict intent audit fails before dispatch', async () => {
+    const gate = new MainNativeActionGate()
+    const daemon = new FakeDaemon()
+    daemon.handlers.set('nativeWindow.adopt', () => adoption())
+    daemon.handlers.set('nativeWindow.observe', () => rawObservation())
+    const { driver, coordinator } = setupDriver(daemon, new FakeCoordinator(), {
+      nativeActionGate: gate,
+      clickAuditClaim: {
+        claim: () => {
+          throw new Error('audit failure')
+        }
+      }
+    })
+    await open(driver)
+    await driver.observe()
+    await expect(
+      driver.click({
+        kind: 'click',
+        ref: 'field',
+        expectedObservationId: 'observation-a',
+        expectedInputEpoch: 5
+      })
+    ).rejects.toThrow('audit could not be claimed')
+    gate.beginShutdown()
+    await gate.join()
+    expect(coordinator.actionCalls).toHaveLength(0)
+    expect(gate.snapshot().inFlight).toBe(0)
+  })
+
+  it('does not hold quit for pending consent or audit/dispatch after late acceptance', async () => {
+    const gate = new MainNativeActionGate()
+    const daemon = new FakeDaemon()
+    daemon.handlers.set('nativeWindow.adopt', () => adoption())
+    daemon.handlers.set('nativeWindow.observe', () => rawObservation())
+    let confirm!: (value: boolean) => void
+    let requested!: () => void
+    const asking = new Promise<void>((resolve) => {
+      requested = resolve
+    })
+    let audits = 0
+    const { driver, coordinator } = setupDriver(daemon, new FakeCoordinator(), {
+      nativeActionGate: gate,
+      clickConfirmation: {
+        confirm: () => {
+          requested()
+          return new Promise<boolean>((resolve) => {
+            confirm = resolve
+          })
+        }
+      },
+      clickAuditClaim: {
+        claim: () => {
+          audits++
+        }
+      }
+    })
+    await open(driver)
+    await driver.observe()
+    const click = driver.click({
+      kind: 'click',
+      ref: 'field',
+      expectedObservationId: 'observation-a',
+      expectedInputEpoch: 5
+    })
+    await asking
+    gate.beginShutdown()
+    await gate.join()
+    confirm(true)
+    await expect(click).rejects.toThrow('closed for shutdown')
+    expect(audits).toBe(0)
+    expect(coordinator.actionCalls).toHaveLength(0)
+  })
+
+  it('joins admitted dispatch through completion reporting and releases after failure', async () => {
+    const gate = new MainNativeActionGate()
+    const daemon = new FakeDaemon()
+    daemon.handlers.set('nativeWindow.adopt', () => adoption())
+    daemon.handlers.set('nativeWindow.observe', () => rawObservation())
+    let reject!: (error: Error) => void
+    let dispatched!: () => void
+    const dispatch = new Promise<void>((resolve) => {
+      dispatched = resolve
+    })
+    daemon.handlers.set('nativeWindow.click', () => {
+      dispatched()
+      return new Promise((_, fail) => {
+        reject = fail
+      })
+    })
+    const { driver, coordinator } = setupDriver(daemon, new FakeCoordinator(), {
+      nativeActionGate: gate
+    })
+    await open(driver)
+    await driver.observe()
+    const click = driver.click({
+      kind: 'click',
+      ref: 'field',
+      expectedObservationId: 'observation-a',
+      expectedInputEpoch: 5
+    })
+    const failed = expect(click).rejects.toThrow()
+    await dispatch
+    gate.beginShutdown()
+    let joined = false
+    const join = gate.join().then(() => {
+      joined = true
+    })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+    reject(new Error('daemon failure'))
+    await failed
+    await join
+    expect(coordinator.completionCalls).toHaveLength(1)
+    expect(gate.snapshot().inFlight).toBe(0)
+  })
+})
 
 type ClickDriverInternals = {
   readonly bridge: CanvasWindowNativeBridge
