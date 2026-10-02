@@ -1,9 +1,12 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { build } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 import { JournalHostReferenceConnector } from './JournalHostReferenceConnector'
+import { HostThreadRecordPersistClient } from '../host/HostThreadRecordPersistCommand'
+import type { HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import { hostThreadRecordTransferPath } from '../../host-runtime/HostThreadRecordTransfer'
 import type { ChatRecord } from './types'
@@ -13,6 +16,106 @@ import type {
 } from './CheckpointPreparationProtocol'
 
 describe('production journal Host reference connector', () => {
+  it('joins real journal bytes through Host staging and an exact successful receipt without record transfer', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-host-e2e-'))
+    const entry = path.join(root, 'worker.cjs')
+    await build({
+      entryPoints: ['src/main/store/JournalPublicationPreparationWorker.ts'],
+      outfile: entry,
+      platform: 'node',
+      format: 'cjs',
+      bundle: true,
+      target: 'node22'
+    })
+    const journal = createIncrementalChatJournal(path.join(root, 'journal'))
+    const record = {
+      appChatId: 'chat',
+      title: 'exact R7',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [],
+      runs: [],
+      persistenceRevision: 7
+    } as ChatRecord
+    journal.initialize('chat', record)
+    let eraseDuringCapture = false
+    const connector = new JournalHostReferenceConnector({
+      workerEntryPath: entry,
+      owns: (_id, revision) => revision === 7,
+      capture: (id, revision) => {
+        const lease = journal.captureSource?.(id, revision) ?? null
+        if (eraseDuringCapture) connector.cancelChat(id)
+        return lease
+      }
+    })
+    let submissions = 0
+    const client = new HostThreadRecordPersistClient({
+      profilePath: root,
+      referenceStaging: connector,
+      transfer: {
+        publish: () => {
+          throw new Error('Full-record transfer forbidden')
+        },
+        remove: () => {}
+      },
+      broker: {
+        submitCommand: async (command: HostCommand) => {
+          submissions++
+          const transferId = String(command.arguments.transferId)
+          const bytes = fs.readFileSync(hostThreadRecordTransferPath(root, transferId))
+          expect(createHash('sha256').update(bytes).digest('hex')).toBe(command.arguments.sha256)
+          expect(bytes).toEqual(Buffer.from(JSON.stringify(record)))
+          expect(bytes.byteLength).toBe(command.arguments.byteLength)
+          expect(JSON.parse(bytes.toString()).persistenceRevision).toBe(7)
+          expect(JSON.parse(bytes.toString()).title).toBe('exact R7')
+          expect(command.arguments.expectedRevision).toBe(6)
+          expect(connector.snapshot().retainedArtifacts).toBe(1)
+          return {
+            ok: true as const,
+            receipt: {
+              type: 'host.receipt',
+              protocolVersion: command.protocolVersion,
+              commandId: command.commandId,
+              idempotencyKey: command.idempotencyKey,
+              name: command.name,
+              actor: command.actor,
+              authority: 'allow',
+              status: 'succeeded',
+              commandFingerprint: 'f'.repeat(64),
+              generation: 1,
+              cursor: 1,
+              createdAt: '2026-10-02T00:00:00Z',
+              updatedAt: '2026-10-02T00:00:00Z'
+            } as HostCommandReceipt
+          }
+        },
+        lookupReceipt: async () => {
+          throw new Error('Unexpected receipt lookup')
+        }
+      }
+    })
+    try {
+      await client.persist({ chatId: 'chat', record, expectedRevision: 6 })
+      expect(submissions).toBe(1)
+      expect(connector.snapshot().retainedArtifacts).toBe(0)
+      expect(connector.snapshot().credits.jobs).toBe(0)
+      eraseDuringCapture = true
+      await expect(
+        client.persist({ chatId: 'chat', record, expectedRevision: 6 })
+      ).rejects.toMatchObject({ code: 'artifact_publish_failed' })
+      expect(submissions).toBe(1)
+      const exitDeadline = Date.now() + 2000
+      while (connector.snapshot().active && Date.now() < exitDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      expect(connector.snapshot().active).toBe(false)
+      expect(connector.snapshot().credits.jobs).toBe(0)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects queued erased publication instead of triggering record fallback', async () => {
     let reject!: (error: Error) => void
     const result = new Promise<PreparedCheckpoint>((_resolve, fail) => {
