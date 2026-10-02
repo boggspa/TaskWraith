@@ -35,7 +35,10 @@ import {
   type HostThreadRecordTransferDescriptor
 } from '../../host-runtime/HostThreadRecordTransfer'
 import { publishHostThreadRecordTransferOffLoop } from '../../host-runtime/HostThreadRecordTransferWorker'
-import { installHostThreadRecordTransferTransport } from './HostThreadRecordTransferTransport'
+import {
+  installHostThreadRecordTransferTransport,
+  stageHostThreadRecordTransfer
+} from './HostThreadRecordTransferTransport'
 import type { HostActorIdentity, HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import {
   HOST_PROTOCOL_VERSION,
@@ -603,6 +606,7 @@ export interface HostThreadRecordDeletePort {
 }
 
 export interface HostThreadRecordPersistClientOptions extends HostPersistenceDiagnosticOptions {
+  readonly referenceStaging?: import('./HostThreadRecordTransferTransport').HostThreadRecordReferenceStagingPort
   readonly broker: HostThreadRecordPersistBrokerPort
   /** Host profile directory. On Desktop this is app userData (bootstrap.ts:146-148). */
   readonly profilePath: string
@@ -715,6 +719,16 @@ export class HostThreadRecordPersistClient
   private readonly broker: HostThreadRecordPersistBrokerPort
   private readonly profilePath: string
   private readonly transfer: HostThreadRecordTransferPort
+  private readonly referenceStaging?: HostThreadRecordPersistClientOptions['referenceStaging']
+  private readonly stagingCounters = {
+    referenceArtifacts: 0,
+    recordArtifacts: 0,
+    referenceDeclines: 0,
+    referenceFailures: 0
+  }
+  stagingSnapshot(): Readonly<typeof this.stagingCounters> {
+    return { ...this.stagingCounters }
+  }
   private readonly actor: HostActorIdentity
   private readonly nowMs: () => number
   private readonly createId: () => string
@@ -747,6 +761,7 @@ export class HostThreadRecordPersistClient
     this.broker = options.broker
     this.profilePath = options.profilePath
     this.transfer = options.transfer ?? defaultTransferPort
+    this.referenceStaging = options.referenceStaging
     this.actor = options.actor ?? { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
     this.nowMs = options.nowMs ?? Date.now
     this.createId = options.createId ?? randomUUID
@@ -790,10 +805,13 @@ export class HostThreadRecordPersistClient
           this.spans,
           { chatId: input.chatId },
           () =>
-            this.transfer.publish({
+            stageHostThreadRecordTransfer({
               profilePath: this.profilePath,
               transferId,
-              record: input.record
+              persist: input,
+              reference: this.referenceStaging,
+              transfer: this.transfer,
+              counters: this.stagingCounters
             }),
           (published) => published.byteLength
         )
@@ -844,13 +862,23 @@ export class HostThreadRecordPersistClient
         })
         return receipt
       } catch (error) {
-        // The Host removes the artifact only when it actually consumes it, so a
-        // command that never landed would otherwise leak an owner-only file.
-        try {
-          this.transfer.remove({ profilePath: this.profilePath, transferId: descriptor.transferId })
-        } catch {
-          // Best-effort: the persist failure is the reportable fault.
-        }
+        // Only a matched authority denial proves execution never consumed the
+        // descriptor. Submission/lookup errors, timeouts and even execution
+        // failures can leave a command in transit: preserve exact artifact custody.
+        const denied =
+          error instanceof HostThreadRecordPersistError &&
+          error.receipt?.status === 'denied' &&
+          error.receipt.authority?.decision === 'deny' &&
+          receiptMatches(command, error.receipt, this.actor)
+        if (denied)
+          try {
+            this.transfer.remove({
+              profilePath: this.profilePath,
+              transferId: descriptor.transferId
+            })
+          } catch {
+            // Best-effort: the persist failure is the reportable fault.
+          }
         operation?.finish('failed', {
           commandId,
           commandName: command.name,
@@ -1306,6 +1334,7 @@ export function createDesktopHostThreadRecordPersistClient(
     onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
     recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
     spans?: HostThreadRecordPersistClientOptions['spans']
+    referenceStaging?: HostThreadRecordPersistClientOptions['referenceStaging']
   }
 ): HostThreadRecordPersistClient {
   // Desktop publishes every record through the shared off-loop worker; run it
@@ -1332,6 +1361,7 @@ export function createDesktopHostThreadRecordPersistClient(
     diagnosticCreateId: input.diagnosticCreateId,
     ...(input.onPersisted ? { onPersisted: input.onPersisted } : {}),
     ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {}),
+    ...(input.referenceStaging ? { referenceStaging: input.referenceStaging } : {}),
     spans: input.spans ?? mainWorkSpanSink()
   })
 }

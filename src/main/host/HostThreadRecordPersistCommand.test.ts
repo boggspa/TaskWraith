@@ -223,6 +223,128 @@ function createClient(
 }
 
 describe('HostThreadRecordPersistClient command shape', () => {
+  it.each(['timeout', 'submit', 'recovered', 'denied'] as const)(
+    'preserves reference artifact custody for %s and cleans only proven non-consumption',
+    async (outcome) => {
+      const transfer = fakeTransfer()
+      let clock = 0
+      const denial: HostCommandReceipt['authority'] = { decision: 'deny', reason: 'not authorized' }
+      const broker = scriptedBroker((command) =>
+        outcome === 'timeout'
+          ? [receiptFor(command, 'pending')]
+          : outcome === 'recovered'
+            ? [{ error: 'lost reply' }, receiptFor(command, 'succeeded')]
+            : outcome === 'denied'
+              ? [
+                  receiptFor(command, 'denied', {
+                    authority: denial
+                  })
+                ]
+              : [{ error: 'lost submit' }, { error: 'lookup unavailable' }]
+      )
+      const client = new HostThreadRecordPersistClient({
+        broker,
+        profilePath: PROFILE,
+        transfer,
+        nowMs: () => clock,
+        wait: async (ms) => {
+          clock += ms
+        },
+        pollIntervalMs: 25,
+        timeoutMs: 100,
+        referenceStaging: {
+          stage: ({ transferId }) => ({ transferId, sha256: 'c'.repeat(64), byteLength: 400 })
+        }
+      })
+      const work = client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+      if (outcome === 'recovered') await work
+      else
+        await expect(work).rejects.toMatchObject({
+          code:
+            outcome === 'timeout'
+              ? 'host_timeout'
+              : outcome === 'denied'
+                ? 'host_rejected'
+                : 'host_unavailable'
+        })
+      expect(transfer.published).toHaveLength(0)
+      expect(transfer.removed).toHaveLength(outcome === 'denied' ? 1 : 0)
+      if (outcome === 'denied')
+        expect(transfer.removed[0]).toBe(broker.commands[0].arguments.transferId)
+    }
+  )
+
+  it('stages an injected exact-source descriptor without record publication or changing CAS input', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const transfer = fakeTransfer()
+    let release!: () => void
+    const input = { chatId: 'chat-1', record: chatRecord(), expectedRevision: 7 }
+    const client = new HostThreadRecordPersistClient({
+      broker,
+      profilePath: PROFILE,
+      transfer,
+      referenceStaging: {
+        stage: (request) => {
+          expect(request.persist).toEqual({
+            chatId: input.chatId,
+            expectedRevision: input.expectedRevision,
+            revision: input.record.persistenceRevision
+          })
+          expect('record' in request.persist).toBe(false)
+          return new Promise((resolve) => {
+            release = () =>
+              resolve({ transferId: request.transferId, sha256: 'b'.repeat(64), byteLength: 900 })
+          })
+        }
+      }
+    })
+    const pending = client.persist(input)
+    await Promise.resolve()
+    expect(broker.commands).toHaveLength(0)
+    release()
+    await pending
+    expect(transfer.published).toHaveLength(0)
+    expect(broker.commands[0].arguments).toMatchObject({
+      expectedRevision: 7,
+      sha256: 'b'.repeat(64),
+      byteLength: 900
+    })
+    expect(client.stagingSnapshot()).toEqual({
+      referenceArtifacts: 1,
+      recordArtifacts: 0,
+      referenceDeclines: 0,
+      referenceFailures: 0
+    })
+  })
+
+  it('counts an explicit reference decline and preserves the record fallback; rejection fails closed', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const transfer = fakeTransfer()
+    const declined = new HostThreadRecordPersistClient({
+      broker,
+      profilePath: PROFILE,
+      transfer,
+      referenceStaging: { stage: () => null }
+    })
+    await declined.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    expect(declined.stagingSnapshot().recordArtifacts).toBe(1)
+    expect(declined.stagingSnapshot().referenceDeclines).toBe(1)
+    const failed = new HostThreadRecordPersistClient({
+      broker,
+      profilePath: PROFILE,
+      transfer,
+      referenceStaging: {
+        stage: () => {
+          throw new Error('capture rejected')
+        }
+      }
+    })
+    await expect(
+      failed.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).rejects.toMatchObject({ code: 'artifact_publish_failed' })
+    expect(transfer.published).toHaveLength(1)
+    expect(failed.stagingSnapshot().referenceFailures).toBe(1)
+  })
   it('holds submission and the durability barrier until async publication finishes', async () => {
     const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
     const spans: unknown[] = []
@@ -492,7 +614,7 @@ describe('HostThreadRecordPersistClient failure paths', () => {
     ).rejects.toMatchObject({ code: 'invalid_host_receipt' })
   })
 
-  it('removes the staged artifact when the command fails, so nothing leaks', async () => {
+  it('retains the staged artifact when submission and recovery are uncertain', async () => {
     const broker = scriptedBroker(() => [{ error: 'socket closed' }, { error: 'still down' }])
     const transfer = fakeTransfer()
     const client = createClient(broker, { transfer })
@@ -502,7 +624,7 @@ describe('HostThreadRecordPersistClient failure paths', () => {
     ).rejects.toBeInstanceOf(HostThreadRecordPersistError)
 
     expect(transfer.published).toEqual(['id-1'])
-    expect(transfer.removed).toEqual(['id-1'])
+    expect(transfer.removed).toEqual([])
   })
 
   it('leaves the artifact in place on success — the Host consumes and removes it', async () => {
@@ -769,7 +891,7 @@ describe('integration with the landed transfer primitive', () => {
     expect(readdirSync(join(profile, HOST_THREAD_RECORD_TRANSFER_DIRECTORY))).toEqual([])
   })
 
-  it('removes the real artifact when the command fails', async () => {
+  it('retains the real artifact when submission and recovery are uncertain', async () => {
     const profile = createRealProfile()
     const broker = scriptedBroker(() => [{ error: 'socket closed' }, { error: 'still down' }])
     const client = new HostThreadRecordPersistClient({
@@ -783,7 +905,9 @@ describe('integration with the landed transfer primitive', () => {
       client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
     ).rejects.toBeInstanceOf(HostThreadRecordPersistError)
 
-    expect(readdirSync(join(profile, HOST_THREAD_RECORD_TRANSFER_DIRECTORY))).toEqual([])
+    expect(readdirSync(join(profile, HOST_THREAD_RECORD_TRANSFER_DIRECTORY))).toEqual([
+      'real-transfer-2.record.json'
+    ])
   })
 })
 
@@ -1229,7 +1353,7 @@ describe('Host persistence local observations', () => {
     ])
     expect(ends(thrown.events, 'recovery_lookup')).toEqual([])
     expect(JSON.stringify(thrown.events)).not.toContain('PRIVATE')
-    expect((thrown.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+    expect((thrown.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual([])
   })
 
   it('records staging failure before any command ID exists without consuming an ID', async () => {
@@ -1540,7 +1664,7 @@ describe('Host persistence local observations', () => {
       }
     })
     await expect(f.client.persist(entry)).rejects.toBe(original)
-    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual([])
   })
 
   it('bounds and contains inner metadata getters reached through an outer accessor', async () => {
@@ -1604,7 +1728,7 @@ describe('Host persistence local observations', () => {
       throw original
     })
     await expect(f.client.persist(request())).rejects.toBe(original)
-    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual(['id-1'])
+    expect((f.transfer as ReturnType<typeof fakeTransfer>).removed).toEqual([])
     expect(ends(f.events, 'persist')).toMatchObject([{ outcome: 'failed', errorCode: 'unknown' }])
   })
 

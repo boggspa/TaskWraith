@@ -22,6 +22,78 @@ import {
   type HostThreadRecordTransferChannelFactory,
   type UtilityProcessLike
 } from '../../host-runtime/HostThreadRecordTransferWorker'
+import type { HostThreadRecordTransferDescriptor } from '../../host-runtime/HostThreadRecordTransfer'
+import type {
+  HostThreadRecordPersistInput,
+  HostThreadRecordTransferPort
+} from './HostThreadRecordPersistCommand'
+
+export interface HostThreadRecordReferenceStagingPort {
+  /** Null means ineligible: retain the existing record publication route.
+   * Rejection fails staging; it never licenses an implicit record fallback.
+   * The port owns capture custody and must return the requested transfer ID.
+   */
+  stage(input: {
+    profilePath: string
+    transferId: string
+    persist: Pick<HostThreadRecordPersistInput, 'chatId' | 'expectedRevision'> & {
+      revision: number | undefined
+    }
+  }): HostThreadRecordTransferDescriptor | null | Promise<HostThreadRecordTransferDescriptor | null>
+}
+
+export interface HostThreadRecordStagingCounters {
+  referenceArtifacts: number
+  recordArtifacts: number
+  referenceDeclines: number
+  referenceFailures: number
+}
+
+export async function stageHostThreadRecordTransfer(input: {
+  profilePath: string
+  transferId: string
+  persist: HostThreadRecordPersistInput
+  reference?: HostThreadRecordReferenceStagingPort
+  transfer: HostThreadRecordTransferPort
+  counters: HostThreadRecordStagingCounters
+}): Promise<HostThreadRecordTransferDescriptor> {
+  if (input.reference) {
+    try {
+      const descriptor = await input.reference.stage({
+        profilePath: input.profilePath,
+        transferId: input.transferId,
+        persist: {
+          chatId: input.persist.chatId,
+          expectedRevision: input.persist.expectedRevision,
+          revision: input.persist.record.persistenceRevision
+        }
+      })
+      if (descriptor) {
+        if (
+          descriptor.transferId !== input.transferId ||
+          !/^[a-f0-9]{64}$/.test(descriptor.sha256) ||
+          !Number.isSafeInteger(descriptor.byteLength) ||
+          descriptor.byteLength < 1
+        ) {
+          throw new Error('Invalid reference staging descriptor')
+        }
+        input.counters.referenceArtifacts++
+        return descriptor
+      }
+      input.counters.referenceDeclines++
+    } catch (error) {
+      input.counters.referenceFailures++
+      throw error
+    }
+  }
+  const descriptor = await input.transfer.publish({
+    profilePath: input.profilePath,
+    transferId: input.transferId,
+    record: input.persist.record
+  })
+  input.counters.recordArtifacts++
+  return descriptor
+}
 
 export const HOST_THREAD_RECORD_TRANSFER_WORKER_THREAD_ENV =
   'TASKWRAITH_THREAD_RECORD_TRANSFER_WORKER_THREAD'

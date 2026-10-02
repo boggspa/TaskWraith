@@ -16,7 +16,8 @@ import { createDesktopHostThreadRecordPersistClient } from './HostThreadRecordPe
 import {
   HOST_THREAD_RECORD_TRANSFER_WORKER_THREAD_ENV,
   electronUtilityProcess,
-  installHostThreadRecordTransferTransport
+  installHostThreadRecordTransferTransport,
+  stageHostThreadRecordTransfer
 } from './HostThreadRecordTransferTransport'
 
 // The Desktop factory builds a projection broker; construction alone must not
@@ -68,6 +69,33 @@ afterEach(() => {
 })
 
 describe('thread-record transfer transport (Desktop)', () => {
+  it('rejects mismatched reference descriptors without publishing a fallback record', async () => {
+    const publish = vi.fn()
+    const counters = {
+      referenceArtifacts: 0,
+      recordArtifacts: 0,
+      referenceDeclines: 0,
+      referenceFailures: 0
+    }
+    await expect(
+      stageHostThreadRecordTransfer({
+        profilePath: '/tmp/profile',
+        transferId: 'wanted',
+        persist: {
+          chatId: 'chat',
+          expectedRevision: 0,
+          record: {} as import('../store/types').ChatRecord
+        },
+        reference: {
+          stage: () => ({ transferId: 'other', sha256: 'a'.repeat(64), byteLength: 3 })
+        },
+        transfer: { publish, remove: () => true },
+        counters
+      })
+    ).rejects.toThrow('Invalid reference')
+    expect(publish).not.toHaveBeenCalled()
+    expect(counters.referenceFailures).toBe(1)
+  })
   it('resolves the Electron utility process only under Electron main', () => {
     const utility: UtilityProcessLike = {
       fork: () => {
