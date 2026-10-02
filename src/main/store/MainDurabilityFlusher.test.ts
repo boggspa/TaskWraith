@@ -97,6 +97,35 @@ function setup(): { disk: VirtualDisk; flusher: MainDurabilityFlusher } {
 }
 
 describe('MainDurabilityFlusher pure model', () => {
+  it('advances sealed name prerequisites with an empty successor and no successor append', async () => {
+    const { disk, flusher } = setup()
+    const blocker = flusher.open(1, 9, 9)
+    const directory = flusher.open(1, 1, 10)
+    const sealed = flusher.open(1, 2, 11)
+    const successor = flusher.open(1, 3, 12)
+    // Hold the one fsync slot so the sealed barrier is already pending when
+    // custody moves. The successor never becomes a dirty scheduler candidate.
+    flusher.noteWrite(blocker, 1, 'prompt')
+    flusher.noteWrite(directory, 1, 'soft')
+    flusher.noteWrite(sealed, 1, 'soft', { after: [{ file: directory, offset: 1 }] })
+    let settled = false
+    const barrier = flusher.awaitDurable(sealed, 1).then(() => {
+      settled = true
+    })
+    const beforeTransfer = disk.log.length
+    flusher.transferDependencies(sealed, successor, 1)
+    expect(disk.log).toHaveLength(beforeTransfer)
+    expect(flusher.counters.syncFsyncs).toBe(0)
+    disk.advance(30)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    disk.advance(70)
+    await barrier
+    expect(settled).toBe(true)
+    expect(disk.log.map((row) => row.fd)).toEqual([9, 10, 11])
+    expect(flusher.counters.syncFsyncs).toBe(0)
+    expect(disk.maxActive).toBe(1)
+  })
   it('transfers cold-create debt atomically without fsync and preserves sealed barriers', async () => {
     const { disk, flusher } = setup()
     const directory = flusher.open(1, 1, 10)
