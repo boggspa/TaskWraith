@@ -221,8 +221,16 @@ describe('RunQueueService', () => {
     expect(service.leaseQueuedJob()).toBeNull()
     expect(service.leasePromotedSteerJob({ runId: 'run-1', ownerToken: 'owner' })).toBeNull()
     expect(service.promoteQueuedJobForSteer({ runId: 'run-1', ownerToken: 'owner' })).toBeNull()
-    expect(service.fallbackPromotedSteerJob({ runId: 'run-1', ownerToken: 'owner', reason: 'retry' })).toBeNull()
-    expect(service.releasePromotedSteerAfterDefiniteNonAdmission({ runId: 'run-1', ownerToken: 'owner', reason: 'retry' })).toBeNull()
+    expect(
+      service.fallbackPromotedSteerJob({ runId: 'run-1', ownerToken: 'owner', reason: 'retry' })
+    ).toBeNull()
+    expect(
+      service.releasePromotedSteerAfterDefiniteNonAdmission({
+        runId: 'run-1',
+        ownerToken: 'owner',
+        reason: 'retry'
+      })
+    ).toBeNull()
     expect(service.transitionJob('run-1', 'queued')).toBeNull()
     expect(service.transitionJob('run-1', 'starting')).toBeNull()
     expect(service.getJobs()[0].runId).toBe('run-1')
@@ -239,8 +247,17 @@ describe('RunQueueService', () => {
       service.beginShutdown()
       return prepared
     })
-    expect(() => service.requestJob({ provider: 'codex', runId: 'new', chatId: 'chat-1', workspaceId: 'workspace-1', workspacePath: '/repo', scope: 'workspace', source: 'manual' }))
-      .toThrow('shutting down')
+    expect(() =>
+      service.requestJob({
+        provider: 'codex',
+        runId: 'new',
+        chatId: 'chat-1',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo',
+        scope: 'workspace',
+        source: 'manual'
+      })
+    ).toThrow('shutting down')
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
     expect(() => service.requestJob({})).toThrow('shutting down')
   })
@@ -256,13 +273,16 @@ describe('RunQueueService', () => {
     expect(repository.leaseQueuedRun).not.toHaveBeenCalled()
   })
 
-  it.each(['completed', 'failed', 'cancelled'] as const)('allows existing %s settlements after shutdown', (status) => {
-    const { deps, repository } = makeDeps()
-    const service = new RunQueueService(deps)
-    service.beginShutdown()
-    expect(service.transitionJob('run-1', status)?.status).toBe(status)
-    expect(repository.transitionRunQueueJob).toHaveBeenCalledOnce()
-  })
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'allows existing %s settlements after shutdown',
+    (status) => {
+      const { deps, repository } = makeDeps()
+      const service = new RunQueueService(deps)
+      service.beginShutdown()
+      expect(service.transitionJob('run-1', status)?.status).toBe(status)
+      expect(repository.transitionRunQueueJob).toHaveBeenCalledOnce()
+    }
+  )
 
   it('allows terminal session persistence but blocks active session queue updates', () => {
     const { deps, repository } = makeDeps()

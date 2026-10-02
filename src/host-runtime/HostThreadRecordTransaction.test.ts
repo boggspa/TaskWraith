@@ -1237,62 +1237,77 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
   })
 
   describe('6. an unpublishable group', () => {
-    it.each([false, true])('a committed index failure resets, unless reset throws (%s)', async (failReset) => {
-      const h = harness()
-      h.seed()
-      h.begin()
-      let prepares = 0
-      const outcome = await h.execute({}, h.withPorts({
-        index: {
-          prepare: (...args) => {
-            if (++prepares === 1) throw new Error('injected index prepare failure')
-            return h.index.prepare(...args)
-          }
-        },
-        deltas: {
-          appendGroup: (input) => h.deltas.appendGroup(input),
-          awaitDurable: () => h.deltas.awaitDurable(),
-          getPosition: () => h.deltas.getPosition(),
-          resetGeneration: (reason) => {
-            expect(h.gate.snapshot().holding).toBe('exclusive')
-            if (failReset) throw new Error('injected reset failure')
-            return h.deltas.resetGeneration(reason)
-          }
-        }
-      }))
-      expect(outcome.kind).toBe(failReset ? 'indeterminate' : 'succeeded')
-      expect(h.receipt()?.status).toBe(failReset ? 'indeterminate' : 'succeeded')
-      expect(h.log.get(COMMAND_ID)?.terminal?.kind).toBe(failReset ? 'indeterminate' : 'published')
-      expect(h.groupLines(COMMAND_ID)).toBe(0)
-      expect(wireIds(h.index, 'thread')).toEqual([THREAD_ID])
-      expect(readIdentity(h.chatPath)).toEqual(h.log.get(COMMAND_ID)?.prepare?.resulting)
-      expect(h.gate.snapshot().holders).toEqual([])
-      expectLaneFree(h)
-    })
+    it.each([false, true])(
+      'a committed index failure resets, unless reset throws (%s)',
+      async (failReset) => {
+        const h = harness()
+        h.seed()
+        h.begin()
+        let prepares = 0
+        const outcome = await h.execute(
+          {},
+          h.withPorts({
+            index: {
+              prepare: (...args) => {
+                if (++prepares === 1) throw new Error('injected index prepare failure')
+                return h.index.prepare(...args)
+              }
+            },
+            deltas: {
+              appendGroup: (input) => h.deltas.appendGroup(input),
+              awaitDurable: () => h.deltas.awaitDurable(),
+              getPosition: () => h.deltas.getPosition(),
+              resetGeneration: (reason) => {
+                expect(h.gate.snapshot().holding).toBe('exclusive')
+                if (failReset) throw new Error('injected reset failure')
+                return h.deltas.resetGeneration(reason)
+              }
+            }
+          })
+        )
+        expect(outcome.kind).toBe(failReset ? 'indeterminate' : 'succeeded')
+        expect(h.receipt()?.status).toBe(failReset ? 'indeterminate' : 'succeeded')
+        expect(h.log.get(COMMAND_ID)?.terminal?.kind).toBe(
+          failReset ? 'indeterminate' : 'published'
+        )
+        expect(h.groupLines(COMMAND_ID)).toBe(0)
+        expect(wireIds(h.index, 'thread')).toEqual([THREAD_ID])
+        expect(readIdentity(h.chatPath)).toEqual(h.log.get(COMMAND_ID)?.prepare?.resulting)
+        expect(h.gate.snapshot().holders).toEqual([])
+        expectLaneFree(h)
+      }
+    )
 
     it('a known rename with a rejected group completes through a reset without replaying effects', async () => {
       const h = harness()
       h.seed()
       h.begin()
       let appends = 0
-      const outcome = await h.execute({}, h.withPorts({
-        deltas: {
-          ...h.ports.deltas,
-          appendGroup: () => {
-            appends += 1
-            const position = h.deltas.getPosition()
-            return {
-              kind: 'rejected' as const,
-              failedAtIndex: 0,
-              result: { kind: 'rejected' as const, reason: 'invalid_envelope' as const, position },
-              position
-            }
-          },
-          awaitDurable: () => h.deltas.awaitDurable(),
-          getPosition: () => h.deltas.getPosition(),
-          resetGeneration: (reason: string) => h.deltas.resetGeneration(reason)
-        } as HostThreadRecordTransactionPorts['deltas']
-      }))
+      const outcome = await h.execute(
+        {},
+        h.withPorts({
+          deltas: {
+            ...h.ports.deltas,
+            appendGroup: () => {
+              appends += 1
+              const position = h.deltas.getPosition()
+              return {
+                kind: 'rejected' as const,
+                failedAtIndex: 0,
+                result: {
+                  kind: 'rejected' as const,
+                  reason: 'invalid_envelope' as const,
+                  position
+                },
+                position
+              }
+            },
+            awaitDurable: () => h.deltas.awaitDurable(),
+            getPosition: () => h.deltas.getPosition(),
+            resetGeneration: (reason: string) => h.deltas.resetGeneration(reason)
+          } as HostThreadRecordTransactionPorts['deltas']
+        })
+      )
       expect(outcome).toMatchObject({ kind: 'succeeded', position: RESET_POSITION })
       expect(appends).toBe(1)
       expect(h.receipt()).toMatchObject({ status: 'succeeded' })

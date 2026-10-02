@@ -391,7 +391,9 @@ export class HostThreadRecordTransaction {
   } | null> {
     const reset = this.ports.deltas.resetGeneration
     if (!reset) return null
-    const entered = await this.ports.gate.enter('exclusive', { label: `txn-reset:${input.commandId}` })
+    const entered = await this.ports.gate.enter('exclusive', {
+      label: `txn-reset:${input.commandId}`
+    })
     if (!entered.ok) return null
     try {
       return await this.ports.publicationLock(() => {
@@ -403,7 +405,11 @@ export class HostThreadRecordTransaction {
         transaction.commit()
         const result = reset.call(this.ports.deltas, `transaction committed: ${reason}`)
         if (result.kind !== 'appended') return null
-        return { position: result.position, refill: transaction.refill, ignored: transaction.ignored }
+        return {
+          position: result.position,
+          refill: transaction.refill,
+          ignored: transaction.ignored
+        }
       })
     } catch {
       return null

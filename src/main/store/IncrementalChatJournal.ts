@@ -661,7 +661,11 @@ export function createIncrementalChatJournal(
     }
   }
 
-  const recoverTornTail = (chatId: string, parsed: ParsedJournal, filePath = journalPath(chatId)): void => {
+  const recoverTornTail = (
+    chatId: string,
+    parsed: ParsedJournal,
+    filePath = journalPath(chatId)
+  ): void => {
     if (!parsed.torn) return
     options.descriptorCache?.retireSync([chatId])
     invalidatePreparation(chatId)
@@ -682,7 +686,8 @@ export function createIncrementalChatJournal(
   // Readers discover rotated files regardless of rollout flags. Each segment's
   // repair remains behind the existing authority boundary; never concatenate
   // a torn sealed suffix with active bytes and rewrite them as one file.
-  const sealedPath = (chatId: string): string => path.join(baseDir, `${chatId}.sealed.mutations.jsonl`)
+  const sealedPath = (chatId: string): string =>
+    path.join(baseDir, `${chatId}.sealed.mutations.jsonl`)
   const parseJournal = (chatId: string): ParsedJournal => {
     const sealed = parseSegment(chatId, sealedPath(chatId))
     const active = parseSegment(chatId, journalPath(chatId))
@@ -690,8 +695,12 @@ export function createIncrementalChatJournal(
       recoverTornTail(chatId, sealed, sealedPath(chatId))
       recoverTornTail(chatId, active)
     }
-    return { batches: [...sealed.batches, ...active.batches], bytes: sealed.bytes + active.bytes,
-      torn: sealed.torn || active.torn, validContent: '' }
+    return {
+      batches: [...sealed.batches, ...active.batches],
+      bytes: sealed.bytes + active.bytes,
+      torn: sealed.torn || active.torn,
+      validContent: ''
+    }
   }
 
   const validateRevisionChain = (
@@ -1020,8 +1029,15 @@ export function createIncrementalChatJournal(
   const captureSource = (chatId: string, revision: number): JournalCaptureLease | null => {
     assertChatId(chatId)
     const state = states.get(chatId)
-    if (!state || state.tombstoned || state.headRevision !== revision ||
-      !Number.isSafeInteger(revision) || revision < 0 || fs.existsSync(tombstonePath(chatId))) return null
+    if (
+      !state ||
+      state.tombstoned ||
+      state.headRevision !== revision ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      fs.existsSync(tombstonePath(chatId))
+    )
+      return null
     const generation = captureEpochs.get(chatId) ?? 0
     captureEpochs.set(chatId, generation)
     const opened: number[] = []
@@ -1031,7 +1047,11 @@ export function createIncrementalChatJournal(
       released = true
       let failure: unknown
       for (const fd of opened) {
-        try { fs.closeSync(fd) } catch (error) { failure ??= error }
+        try {
+          fs.closeSync(fd)
+        } catch (error) {
+          failure ??= error
+        }
       }
       if (failure) throw failure
     }
@@ -1040,11 +1060,20 @@ export function createIncrementalChatJournal(
       const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
       opened.push(fd)
       const stat = fs.fstatSync(fd, { bigint: true })
-      if (!stat.isFile() || String(stat.dev) !== file.identity.dev || String(stat.ino) !== file.identity.ino ||
-        Number(stat.size) !== file.identity.size || String(stat.mtimeNs) !== file.identity.mtimeNs)
+      if (
+        !stat.isFile() ||
+        String(stat.dev) !== file.identity.dev ||
+        String(stat.ino) !== file.identity.ino ||
+        Number(stat.size) !== file.identity.size ||
+        String(stat.mtimeNs) !== file.identity.mtimeNs
+      )
         throw new Error('Capture source changed during open')
-      return Object.freeze({ file: Object.freeze({ ...file, identity: Object.freeze({ ...file.identity }) }),
-        fd, prefixBytes: file.identity.size, mutablePrefix })
+      return Object.freeze({
+        file: Object.freeze({ ...file, identity: Object.freeze({ ...file.identity }) }),
+        fd,
+        prefixBytes: file.identity.size,
+        mutablePrefix
+      })
     }
     try {
       const checkpoint = open(checkpointPath(chatId), false)
@@ -1052,27 +1081,58 @@ export function createIncrementalChatJournal(
       const active = fs.existsSync(journalPath(chatId)) ? open(journalPath(chatId), true) : null
       const current = (reference: JournalCaptureReadReference, paths: string[]): boolean => {
         const identity = reference.file.identity
-        const same = (stat: fs.BigIntStats): boolean => stat.isFile() &&
-          String(stat.dev) === identity.dev && String(stat.ino) === identity.ino &&
-          (reference.mutablePrefix ? Number(stat.size) >= reference.prefixBytes :
-            Number(stat.size) === reference.prefixBytes && String(stat.mtimeNs) === identity.mtimeNs)
+        const same = (stat: fs.BigIntStats): boolean =>
+          stat.isFile() &&
+          String(stat.dev) === identity.dev &&
+          String(stat.ino) === identity.ino &&
+          (reference.mutablePrefix
+            ? Number(stat.size) >= reference.prefixBytes
+            : Number(stat.size) === reference.prefixBytes &&
+              String(stat.mtimeNs) === identity.mtimeNs)
         if (!same(fs.fstatSync(reference.fd, { bigint: true }))) return false
         return paths.some((filePath) => {
-          try { return same(fs.lstatSync(filePath, { bigint: true })) } catch { return false }
+          try {
+            return same(fs.lstatSync(filePath, { bigint: true }))
+          } catch {
+            return false
+          }
         })
       }
-      return Object.freeze({ chatId, revision, generation, checkpoint, sealed, active,
+      return Object.freeze({
+        chatId,
+        revision,
+        generation,
+        checkpoint,
+        sealed,
+        active,
         isCurrent: (): boolean => {
-          if (released || (captureEpochs.get(chatId) ?? 0) !== generation ||
-            states.get(chatId) !== state || state.tombstoned || fs.existsSync(tombstonePath(chatId))) return false
+          if (
+            released ||
+            (captureEpochs.get(chatId) ?? 0) !== generation ||
+            states.get(chatId) !== state ||
+            state.tombstoned ||
+            fs.existsSync(tombstonePath(chatId))
+          )
+            return false
           try {
-            return current(checkpoint, [checkpointPath(chatId)]) &&
+            return (
+              current(checkpoint, [checkpointPath(chatId)]) &&
               (!sealed || current(sealed, [sealedPath(chatId)])) &&
               (!active || current(active, [journalPath(chatId), sealedPath(chatId)]))
-          } catch { return false }
-        }, release: close, cancel: close })
+            )
+          } catch {
+            return false
+          }
+        },
+        release: close,
+        cancel: close
+      })
     } catch (error) {
-      try { close() } catch { /* Preserve the source-open failure. */ }
+      try {
+        close()
+      } catch {
+        /* Preserve the source-open failure. */
+      }
       throw error
     }
   }
@@ -1092,8 +1152,13 @@ export function createIncrementalChatJournal(
     options.descriptorCache.rotate(chatId, sealedPath(chatId))
     // Existing production worker accepts checkpoint + one immutable journal.
     // That journal is now sealed at exactly R; streaming goes to another inode.
-    const source = { chatId, revision, savedAt: new Date(now()).toISOString(), checkpoint,
-      journal: checkpointFileReference(sealedPath(chatId)) }
+    const source = {
+      chatId,
+      revision,
+      savedAt: new Date(now()).toISOString(),
+      checkpoint,
+      journal: checkpointFileReference(sealedPath(chatId))
+    }
     rotatedSources.set(chatId, source)
     rotatedAccounting.set(chatId, { entries: state.journalEntries, bytes: state.journalBytes })
     return source
@@ -1175,7 +1240,12 @@ export function createIncrementalChatJournal(
       return ids
     }
     for (const entry of entries) {
-      for (const suffix of ['.checkpoint.json', '.sealed.mutations.jsonl', '.mutations.jsonl', '.tombstone']) {
+      for (const suffix of [
+        '.checkpoint.json',
+        '.sealed.mutations.jsonl',
+        '.mutations.jsonl',
+        '.tombstone'
+      ]) {
         if (!entry.endsWith(suffix)) continue
         const chatId = entry.slice(0, -suffix.length)
         if (CHAT_ID_PATTERN.test(chatId)) ids.add(chatId)
@@ -1222,7 +1292,7 @@ export function createIncrementalChatJournal(
     if (fs.existsSync(tombstonePath(chatId))) return 'superseded'
     const entries = state.journalEntries
     const rotated = options.rotationEnabled
-      ? rotatedSources.get(chatId) ?? rotateForPreparation(chatId)
+      ? (rotatedSources.get(chatId) ?? rotateForPreparation(chatId))
       : null
     if (options.rotationEnabled && !rotated) return 'unavailable'
     const source = rotated ?? {
@@ -1250,8 +1320,9 @@ export function createIncrementalChatJournal(
         states.get(chatId) !== state ||
         state.tombstoned ||
         fs.existsSync(tombstonePath(chatId)) ||
-        (rotated ? (preparationEpochs.get(chatId) ?? 0) !== epoch :
-          state.headRevision !== revision || state.journalEntries !== entries) ||
+        (rotated
+          ? (preparationEpochs.get(chatId) ?? 0) !== epoch
+          : state.headRevision !== revision || state.journalEntries !== entries) ||
         !checkpointReferenceIsCurrent(source.checkpoint) ||
         !checkpointReferenceIsCurrent(source.journal)
       )
@@ -1274,10 +1345,12 @@ export function createIncrementalChatJournal(
       fs.renameSync(job.output.path, checkpointPath(chatId))
       if (rotated) {
         const installed = checkpointFileReference(checkpointPath(chatId))
-        if (installed.identity.dev !== prepared.identity.dev ||
+        if (
+          installed.identity.dev !== prepared.identity.dev ||
           installed.identity.ino !== prepared.identity.ino ||
           installed.identity.size !== prepared.identity.size ||
-          installed.identity.mtimeNs !== prepared.identity.mtimeNs)
+          installed.identity.mtimeNs !== prepared.identity.mtimeNs
+        )
           throw new Error('Installed checkpoint identity mismatch')
         // Rename changes ctime on supported filesystems. Pin the verified
         // installed inode's post-rename fingerprint for the barrier/retry.
@@ -1286,11 +1359,16 @@ export function createIncrementalChatJournal(
       if (rotated) {
         await options.descriptorCache!.awaitDirectoryMutation(baseDir)
         options.beforeSourceMutation?.(chatId)
-        if (!canWrite() || preparations.get(chatId) !== job || states.get(chatId) !== state ||
-          state.tombstoned || fs.existsSync(tombstonePath(chatId)) ||
+        if (
+          !canWrite() ||
+          preparations.get(chatId) !== job ||
+          states.get(chatId) !== state ||
+          state.tombstoned ||
+          fs.existsSync(tombstonePath(chatId)) ||
           (preparationEpochs.get(chatId) ?? 0) !== epoch ||
           !checkpointReferenceIsCurrent(source.journal) ||
-          !checkpointReferenceIsCurrent(installedCheckpoint!))
+          !checkpointReferenceIsCurrent(installedCheckpoint!)
+        )
           return 'superseded'
         options.descriptorCache!.retireSealedSync(chatId)
         fs.unlinkSync(sealedPath(chatId))
@@ -1324,10 +1402,13 @@ export function createIncrementalChatJournal(
       // A failed directory barrier leaves a renamed but not yet adopted
       // checkpoint. Preserve sealed custody and re-pin only the verified
       // installed inode; the retry replays duplicate sealed batches safely.
-      if (rotated && installedCheckpoint &&
+      if (
+        rotated &&
+        installedCheckpoint &&
         (preparationEpochs.get(chatId) ?? 0) === epoch &&
         checkpointReferenceIsCurrent(installedCheckpoint) &&
-        checkpointReferenceIsCurrent(source.journal)) {
+        checkpointReferenceIsCurrent(source.journal)
+      ) {
         rotatedSources.set(chatId, { ...source, checkpoint: installedCheckpoint })
       }
       throw error
@@ -1469,7 +1550,12 @@ export function createIncrementalChatJournal(
     assertWritable()
     assertChatId(chatId)
     options.descriptorCache?.retireSync([chatId])
-    for (const filePath of [journalPath(chatId), sealedPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
+    for (const filePath of [
+      journalPath(chatId),
+      sealedPath(chatId),
+      checkpointPath(chatId),
+      tombstonePath(chatId)
+    ]) {
       try {
         fs.unlinkSync(filePath)
       } catch (error: unknown) {
@@ -1482,7 +1568,8 @@ export function createIncrementalChatJournal(
 
   const clear = (): void => {
     assertWritable()
-    for (const chatId of captureEpochs.keys()) captureEpochs.set(chatId, captureEpochs.get(chatId)! + 1)
+    for (const chatId of captureEpochs.keys())
+      captureEpochs.set(chatId, captureEpochs.get(chatId)! + 1)
     options.descriptorCache?.retireSync()
     cancelCheckpointPreparations()
     let entries: fs.Dirent[] = []
