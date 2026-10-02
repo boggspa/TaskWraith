@@ -49,12 +49,14 @@ export interface MainDurabilityRuntime {
   readonly writer: RunEventLedgerWriter
   attachJournal(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
   attachCatalogue(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
+  attachDetail(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
   snapshot(): {
     requested: boolean
     mode: 'legacy' | 'worker' | 'degraded'
     runEvents: DurabilityConsumerSnapshot
     journal: DurabilityConsumerSnapshot & { attached: boolean }
     catalogue: DurabilityConsumerSnapshot & { attached: boolean }
+    detail: DurabilityConsumerSnapshot & { attached: boolean }
     fenced: boolean
     closed: boolean
     failure: string | null
@@ -124,6 +126,7 @@ export function createMainDurabilityRuntime(
   })
   let journal: DurabilityParticipant | undefined
   let catalogue: DurabilityParticipant | undefined
+  let detail: DurabilityParticipant | undefined
   let constructing = false
   const consumer = (enabled: boolean): DurabilityConsumerSnapshot => ({
     requested: enabled,
@@ -131,18 +134,18 @@ export function createMainDurabilityRuntime(
   })
   let shutdown: Promise<void> | undefined
   const attach = (
-    kind: 'journal' | 'catalogue',
+    kind: 'journal' | 'catalogue' | 'detail',
     create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant
   ): boolean => {
     if (fenced) throw new Error('Main durability runtime is shutting down')
     if (
-      !(kind === 'journal' ? journalRequested : catalogueRequested) ||
+      !(kind === 'catalogue' ? catalogueRequested : journalRequested) ||
       !flusher ||
       !directoryLeases
     )
       return false
     if (constructing) throw new Error('Durability participant construction is already active')
-    if (kind === 'journal' ? journal : catalogue)
+    if (kind === 'journal' ? journal : kind === 'catalogue' ? catalogue : detail)
       throw new Error('Durability participant already attached')
     let enabled = false
     const guarded = <T extends object>(target: T): T =>
@@ -175,7 +178,8 @@ export function createMainDurabilityRuntime(
       constructing = false
     }
     if (kind === 'journal') journal = participant
-    else catalogue = participant
+    else if (kind === 'catalogue') catalogue = participant
+    else detail = participant
     enabled = true
     return true
   }
@@ -183,12 +187,14 @@ export function createMainDurabilityRuntime(
     writer,
     attachJournal: (create) => attach('journal', create),
     attachCatalogue: (create) => attach('catalogue', create),
+    attachDetail: (create) => attach('detail', create),
     snapshot: () => ({
       requested,
       mode: consumer(requested).mode,
       runEvents: consumer(requested),
       journal: { ...consumer(journalRequested), attached: journal !== undefined },
       catalogue: { ...consumer(catalogueRequested), attached: catalogue !== undefined },
+      detail: { ...consumer(journalRequested), attached: detail !== undefined },
       fenced,
       closed,
       failure,
@@ -201,12 +207,15 @@ export function createMainDurabilityRuntime(
         try {
           journal?.fence()
           catalogue?.fence()
+          detail?.fence()
           writer.drainDurabilitySync()
           journal?.drainSync()
           catalogue?.drainSync()
+          detail?.drainSync()
           await writer.retire()
           await journal?.retire()
           await catalogue?.retire()
+          await detail?.retire()
           await directoryLeases?.retire()
           // Retirement closes every ledger and directory fd before worker exit.
           await adapter?.dispose()

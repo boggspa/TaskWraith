@@ -7,6 +7,44 @@ import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { RunEventInput } from './types'
 
 describe('Main durability runtime', () => {
+  it('enrolls detail under the journal flag and retires it before sole adapter disposal', async () => {
+    const ports = adapter()
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_JOURNAL_FLUSHER: '1' },
+      createAdapter: () => ports
+    })
+    const order: string[] = []
+    const retire = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('detail close failed'))
+      .mockImplementationOnce(async () => {
+        order.push('retire')
+      })
+    expect(
+      runtime.attachDetail(() => ({
+        fence: () => {
+          order.push('fence')
+        },
+        drainSync: () => {
+          order.push('drain')
+        },
+        retire
+      }))
+    ).toBe(true)
+    expect(runtime.snapshot().detail).toMatchObject({
+      requested: true,
+      attached: true,
+      mode: 'worker'
+    })
+    await expect(runtime.shutdown()).rejects.toThrow('detail close failed')
+    expect(runtime.snapshot().closed).toBe(false)
+    await runtime.shutdown()
+    expect(order).toEqual(['fence', 'drain', 'fence', 'drain', 'retire'])
+    expect(runtime.snapshot().closed).toBe(true)
+  })
+
   it('guards catalogue construction resources and permits retry after refusal', async () => {
     const ports = adapter()
     const runtime = createMainDurabilityRuntime({
