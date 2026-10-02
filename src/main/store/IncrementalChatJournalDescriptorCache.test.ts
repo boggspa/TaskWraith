@@ -3,6 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
+import { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
+import { RunEventLedgerDescriptorCache } from './RunEventLedgerDescriptorCache'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 
 const roots: string[] = []
@@ -38,9 +40,46 @@ function fixture(write?: (fd: number, bytes: Buffer) => void) {
     close: (fd) => fs.closeSync(fd)
   })
   const cache = new IncrementalChatJournalDescriptorCache(flusher, { write })
-  return { root, cache, syncs, pending }
+  return { root, cache, syncs, pending, flusher }
 }
 describe('journal descriptor adapter', () => {
+  it('shares the common parent inode with the ledger and retires independently', async () => {
+    const { root, flusher } = fixture()
+    const registry = new MainDurabilityDirectoryLeases(flusher)
+    const opened: string[] = []
+    const originalOpen = flusher.open.bind(flusher)
+    flusher.open = (dev, ino, fd, durableOffset) => {
+      if (fs.fstatSync(fd).isDirectory()) opened.push(`${dev}:${ino}`)
+      return originalOpen(dev, ino, fd, durableOffset)
+    }
+    const journal = new IncrementalChatJournalDescriptorCache(flusher, {
+      directoryLeases: registry
+    })
+    const ledger = new RunEventLedgerDescriptorCache(flusher, 128, registry)
+    journal.append('chat', path.join(root, 'journal', 'chat.jsonl'), 'journal\n', 'immediate')
+    ledger.append('run', path.join(root, 'ledger', 'run.jsonl'), 'ledger\n', 'sync')
+    const parent = fs.statSync(root)
+    expect(opened.filter((key) => key === `${parent.dev}:${parent.ino}`)).toHaveLength(1)
+    journal.retireSync()
+    ledger.append('run', path.join(root, 'ledger', 'run.jsonl'), 'later\n', 'sync')
+    expect(fs.readFileSync(path.join(root, 'ledger', 'run.jsonl'), 'utf8')).toBe('ledger\nlater\n')
+    ledger.retireSync()
+    await registry.retire()
+  })
+  it('shares directory custody with another consumer and releases only its own lease', async () => {
+    const { root, flusher } = fixture()
+    const registry = new MainDurabilityDirectoryLeases(flusher)
+    const peer = registry.acquire(root)
+    peer.noteMutation()
+    const cache = new IncrementalChatJournalDescriptorCache(flusher, {
+      directoryLeases: registry
+    })
+    cache.append('chat', path.join(root, 'chat.jsonl'), 'one\n', 'immediate')
+    cache.retireSync()
+    expect(() => peer.noteMutation()).not.toThrow()
+    peer.releaseSync()
+    await registry.retire()
+  })
   it('retains create-name debt after directory registration fails and closes all registered fds', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-init-'))
     roots.push(root)

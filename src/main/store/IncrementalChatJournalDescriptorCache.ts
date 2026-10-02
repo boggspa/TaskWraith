@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import type { DirectoryLease, MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import type { DurabilityDependency, DurabilityFile } from './MainDurabilityFlusher'
 
 export interface JournalDescriptorFlusher {
@@ -32,6 +33,7 @@ export class IncrementalChatJournalDescriptorCache {
   private creationDebt = new Map<string, string[]>()
   private entries = new Map<string, Entry>()
   private directories = new Map<string, { file: DurabilityFile; offset: number }>()
+  private directoryLeases = new Map<string, DirectoryLease>()
   private retiring = new Map<string, Promise<void>>()
   private globalRetirement?: Promise<void>
 
@@ -40,6 +42,7 @@ export class IncrementalChatJournalDescriptorCache {
     private readonly options: {
       write?: (fd: number, bytes: Buffer) => void
       maxFiles?: number
+      directoryLeases?: MainDurabilityDirectoryLeases
     } = {}
   ) {}
 
@@ -140,7 +143,11 @@ export class IncrementalChatJournalDescriptorCache {
     const files = keys.flatMap((id) => (this.entries.has(id) ? [this.entries.get(id)!.file] : []))
     if (!ids) files.push(...[...this.directories.values()].map((row) => row.file))
     const promise = Promise.all([...prior, this.flusher.forget(files)])
-      .then(() => {
+      .then(async () => {
+        if (!ids) {
+          await Promise.all([...this.directoryLeases.values()].map((lease) => lease.release()))
+          this.directoryLeases.clear()
+        }
         for (const id of keys) this.entries.delete(id)
         if (!ids) this.directories.clear()
       })
@@ -160,11 +167,23 @@ export class IncrementalChatJournalDescriptorCache {
     const files = keys.flatMap((id) => (this.entries.has(id) ? [this.entries.get(id)!.file] : []))
     if (!ids) files.push(...[...this.directories.values()].map((row) => row.file))
     this.flusher.forgetSync(files)
+    if (!ids) {
+      for (const lease of this.directoryLeases.values()) lease.releaseSync()
+      this.directoryLeases.clear()
+    }
     for (const id of keys) this.entries.delete(id)
     if (!ids) this.directories.clear()
   }
 
   private directoryWrite(directory: string): DurabilityDependency {
+    if (this.options.directoryLeases) {
+      let lease = this.directoryLeases.get(directory)
+      if (!lease) {
+        lease = this.options.directoryLeases.acquire(directory)
+        this.directoryLeases.set(directory, lease)
+      }
+      return lease.noteMutation()
+    }
     let row = this.directories.get(directory)
     if (!row) {
       const fd = fs.openSync(directory, 'r')
