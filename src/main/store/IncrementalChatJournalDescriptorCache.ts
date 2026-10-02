@@ -23,6 +23,7 @@ export interface JournalDescriptorFlusher {
 }
 
 interface Entry {
+  retired?: boolean
   path: string
   fd: number
   file: DurabilityFile
@@ -227,6 +228,30 @@ export class IncrementalChatJournalDescriptorCache {
     for (const id of keys) this.sealed.delete(id)
     for (const id of keys) this.rotationFailures.delete(id)
     if (!ids) this.directories.clear()
+  }
+
+  async awaitDirectoryMutation(directory: string): Promise<void> {
+    const dependency = this.directoryWrite(directory)
+    await this.flusher.awaitDurable(dependency.file, dependency.offset)
+  }
+
+  retireSealedSync(chatId: string): void {
+    const entry = this.sealed.get(chatId)
+    if (!entry) throw new Error('Sealed custody unavailable')
+    const current = fs.statSync(entry.path)
+    if (current.dev !== entry.file.dev || current.ino !== entry.file.ino)
+      throw new Error('Sealed inode replaced before retirement')
+    if (entry.retired) return
+    if (!this.flusher.forgetSync) throw new Error('Synchronous retirement adapter unavailable')
+    this.flusher.forgetSync([entry.file])
+    entry.retired = true
+  }
+
+  completeSealedUnlink(chatId: string): void {
+    const entry = this.sealed.get(chatId)
+    if (!entry?.retired) throw new Error('Sealed retirement incomplete')
+    if (fs.existsSync(entry.path)) throw new Error('Sealed unlink incomplete')
+    this.sealed.delete(chatId)
   }
 
   private directoryWrite(directory: string): DurabilityDependency {

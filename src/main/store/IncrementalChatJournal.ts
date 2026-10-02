@@ -310,7 +310,13 @@ export function createIncrementalChatJournal(
   )
   const states = new Map<string, RuntimeState>()
   const preparations = new Map<string, CheckpointPreparationJob>()
+  const preparationEpochs = new Map<string, number>()
+  const rotatedSources = new Map<string, CheckpointPreparationSource>()
+  const rotatedAccounting = new Map<string, { entries: number; bytes: number }>()
   const invalidatePreparation = (chatId: string): void => {
+    preparationEpochs.set(chatId, (preparationEpochs.get(chatId) ?? 0) + 1)
+    rotatedSources.delete(chatId)
+    rotatedAccounting.delete(chatId)
     const job = preparations.get(chatId)
     // Fence before cancellation can synchronously deliver any callback.
     preparations.delete(chatId)
@@ -1001,8 +1007,11 @@ export function createIncrementalChatJournal(
     options.descriptorCache.rotate(chatId, sealedPath(chatId))
     // Existing production worker accepts checkpoint + one immutable journal.
     // That journal is now sealed at exactly R; streaming goes to another inode.
-    return { chatId, revision, savedAt: new Date(now()).toISOString(), checkpoint,
+    const source = { chatId, revision, savedAt: new Date(now()).toISOString(), checkpoint,
       journal: checkpointFileReference(sealedPath(chatId)) }
+    rotatedSources.set(chatId, source)
+    rotatedAccounting.set(chatId, { entries: state.journalEntries, bytes: state.journalBytes })
+    return source
   }
 
   const append = (
@@ -1118,7 +1127,7 @@ export function createIncrementalChatJournal(
     assertChatId(chatId)
     // Existing worker protocol reads one active segment. Do not hand it an
     // incomplete source until the separate rotation/capture slice extends it.
-    if (fs.existsSync(sealedPath(chatId))) return 'unavailable'
+    if (!options.rotationEnabled && fs.existsSync(sealedPath(chatId))) return 'unavailable'
     // Maintenance must never cold-load a full record on main just to enqueue.
     const state = states.get(chatId)
     if (!state || state.tombstoned || state.journalEntries === 0 || state.headRevision === null)
@@ -1126,18 +1135,24 @@ export function createIncrementalChatJournal(
     if (!options.checkpointPreparation || preparations.has(chatId)) return 'unavailable'
     options.beforeSourceMutation?.(chatId)
     if (fs.existsSync(tombstonePath(chatId))) return 'superseded'
-    const revision = state.headRevision
     const entries = state.journalEntries
-    const source = {
+    const rotated = options.rotationEnabled
+      ? rotatedSources.get(chatId) ?? rotateForPreparation(chatId)
+      : null
+    if (options.rotationEnabled && !rotated) return 'unavailable'
+    const source = rotated ?? {
       chatId,
-      revision,
+      revision: state.headRevision,
       savedAt: new Date(now()).toISOString(),
       checkpoint: checkpointFileReference(checkpointPath(chatId)),
       journal: checkpointFileReference(journalPath(chatId))
     }
+    const revision = source.revision
+    const epoch = preparationEpochs.get(chatId) ?? 0
     const job = options.checkpointPreparation.start(source)
     if (!job) return 'unavailable'
     preparations.set(chatId, job)
+    let installedCheckpoint: CheckpointPreparationSource['checkpoint'] | undefined
     try {
       const prepared = await job.result
       if (preparations.get(chatId) !== job) return 'superseded'
@@ -1150,8 +1165,8 @@ export function createIncrementalChatJournal(
         states.get(chatId) !== state ||
         state.tombstoned ||
         fs.existsSync(tombstonePath(chatId)) ||
-        state.headRevision !== revision ||
-        state.journalEntries !== entries ||
+        (rotated ? (preparationEpochs.get(chatId) ?? 0) !== epoch :
+          state.headRevision !== revision || state.journalEntries !== entries) ||
         !checkpointReferenceIsCurrent(source.checkpoint) ||
         !checkpointReferenceIsCurrent(source.journal)
       )
@@ -1172,6 +1187,40 @@ export function createIncrementalChatJournal(
       // checkpoint before unlinking the old tail. A crash between the two is
       // handled by the existing duplicate-revision replay rule.
       fs.renameSync(job.output.path, checkpointPath(chatId))
+      if (rotated) {
+        const installed = checkpointFileReference(checkpointPath(chatId))
+        if (installed.identity.dev !== prepared.identity.dev ||
+          installed.identity.ino !== prepared.identity.ino ||
+          installed.identity.size !== prepared.identity.size ||
+          installed.identity.mtimeNs !== prepared.identity.mtimeNs)
+          throw new Error('Installed checkpoint identity mismatch')
+        // Rename changes ctime on supported filesystems. Pin the verified
+        // installed inode's post-rename fingerprint for the barrier/retry.
+        installedCheckpoint = installed
+      }
+      if (rotated) {
+        await options.descriptorCache!.awaitDirectoryMutation(baseDir)
+        options.beforeSourceMutation?.(chatId)
+        if (!canWrite() || preparations.get(chatId) !== job || states.get(chatId) !== state ||
+          state.tombstoned || fs.existsSync(tombstonePath(chatId)) ||
+          (preparationEpochs.get(chatId) ?? 0) !== epoch ||
+          !checkpointReferenceIsCurrent(source.journal) ||
+          !checkpointReferenceIsCurrent(installedCheckpoint!))
+          return 'superseded'
+        options.descriptorCache!.retireSealedSync(chatId)
+        fs.unlinkSync(sealedPath(chatId))
+        options.descriptorCache!.completeSealedUnlink(chatId)
+        preparationEpochs.set(chatId, epoch + 1)
+        rotatedSources.delete(chatId)
+        // Preserve active accounting without reading or parsing its payload.
+        const sealedAccounting = rotatedAccounting.get(chatId)!
+        state.journalEntries -= sealedAccounting.entries
+        state.journalBytes -= sealedAccounting.bytes
+        rotatedAccounting.delete(chatId)
+        checkpointsWritten += 1
+        checkpointBytesWritten += prepared.identity.size
+        return 'checkpointed'
+      }
       fsyncDirectory()
       checkpointsWritten += 1
       checkpointBytesWritten += prepared.identity.size
@@ -1186,6 +1235,15 @@ export function createIncrementalChatJournal(
       return 'checkpointed'
     } catch (error) {
       if (preparations.get(chatId) !== job) return 'superseded'
+      // A failed directory barrier leaves a renamed but not yet adopted
+      // checkpoint. Preserve sealed custody and re-pin only the verified
+      // installed inode; the retry replays duplicate sealed batches safely.
+      if (rotated && installedCheckpoint &&
+        (preparationEpochs.get(chatId) ?? 0) === epoch &&
+        checkpointReferenceIsCurrent(installedCheckpoint) &&
+        checkpointReferenceIsCurrent(source.journal)) {
+        rotatedSources.set(chatId, { ...source, checkpoint: installedCheckpoint })
+      }
       throw error
     } finally {
       if (preparations.get(chatId) === job) preparations.delete(chatId)

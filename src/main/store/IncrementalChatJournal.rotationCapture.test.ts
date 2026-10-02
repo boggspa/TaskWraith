@@ -1,7 +1,8 @@
 import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
@@ -11,13 +12,147 @@ import { prepareCheckpoint } from './CheckpointPreparationCore'
 import type { ChatRecord } from './types'
 
 describe('real rotation custody and immutable R preparation', () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true]
+  ])(
+    'adopts sealed custody with barrier failure=%s and unlink failure=%s',
+    async (failFirstBarrier, failFirstUnlink) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rotation-adopt-'))
+      const pending: Array<() => void> = []
+      const flusher = new MainDurabilityFlusher({
+        now: () => 0,
+        setTimer: () => 0,
+        clearTimer: () => {},
+        fsync(fd, done) {
+          const finish = () => {
+            fs.fsyncSync(fd)
+            done()
+          }
+          pending.push(finish)
+          return {
+            joinSync() {
+              pending.splice(pending.indexOf(finish), 1)
+              finish()
+            }
+          }
+        },
+        fsyncSync: fs.fsyncSync,
+        close: fs.closeSync
+      })
+      const cache = new IncrementalChatJournalDescriptorCache(flusher)
+      const originalUnlink = fs.unlinkSync.bind(fs)
+      let unlinkFailed = false
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+        if (
+          failFirstUnlink &&
+          !unlinkFailed &&
+          fs.existsSync(file) &&
+          String(file).endsWith('.sealed.mutations.jsonl')
+        ) {
+          unlinkFailed = true
+          throw Object.assign(new Error('Injected sealed unlink failure'), { code: 'EACCES' })
+        }
+        originalUnlink(file)
+      })
+      syncBuiltinESMExports()
+      const originalDirectoryBarrier = cache.awaitDirectoryMutation.bind(cache)
+      let firstBarrier = true
+      cache.awaitDirectoryMutation = async (directory) => {
+        if (failFirstBarrier && firstBarrier) {
+          firstBarrier = false
+          throw new Error('Injected directory durability failure')
+        }
+        await originalDirectoryBarrier(directory)
+      }
+      const journal = createIncrementalChatJournal(root, {
+        descriptorCache: cache,
+        descriptorDrainSync: () => flusher.drainSync(),
+        rotationEnabled: true,
+        checkpointPreparation: {
+          start(source) {
+            const outputPath = path.join(root, 'adoption.tmp')
+            fs.writeFileSync(outputPath, '')
+            const output = checkpointFileReference(outputPath)
+            const prepared = prepareCheckpoint({ ...source, output, maxOutputBytes: 1024 * 1024 })
+            return {
+              output,
+              result: Promise.resolve(prepared),
+              cancel() {
+                /* synchronous fake has exited */
+              },
+              release() {
+                /* no retained fake credit */
+              }
+            }
+          }
+        }
+      })
+      const first: ChatRecord = {
+        appChatId: 'chat',
+        title: 'one',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        messages: [],
+        runs: [],
+        persistenceRevision: 1
+      }
+      try {
+        journal.initialize('chat', first)
+        const second = { ...first, title: 'two', persistenceRevision: 2 }
+        journal.append(deriveChatRecordMutation(first, second), { durability: 'deferred' })
+        if (!journal.checkpointDeferred || !journal.awaitDeferredDurability)
+          throw new Error('Missing seams')
+        const adoption = journal.checkpointDeferred('chat')
+        // Attach rejection handling before the injected failure's microtask.
+        const observed = adoption.then(
+          (result) => ({ result }),
+          (error: Error) => ({ error })
+        )
+        await Promise.resolve()
+        const third = { ...second, title: 'three', persistenceRevision: 3 }
+        journal.append(deriveChatRecordMutation(second, third), { durability: 'deferred' })
+        expect(fs.existsSync(path.join(root, 'chat.sealed.mutations.jsonl'))).toBe(true)
+        while (pending.length) pending.shift()!()
+        const outcome = await observed
+        if (failFirstBarrier || failFirstUnlink) {
+          expect(outcome).toMatchObject({
+            error: {
+              message: failFirstBarrier
+                ? 'Injected directory durability failure'
+                : 'Injected sealed unlink failure'
+            }
+          })
+          expect(fs.existsSync(path.join(root, 'chat.sealed.mutations.jsonl'))).toBe(true)
+          const retry = journal.checkpointDeferred('chat')
+          await Promise.resolve()
+          while (pending.length) pending.shift()!()
+          expect(await retry).toBe('checkpointed')
+        } else expect(outcome).toEqual({ result: 'checkpointed' })
+        expect(fs.existsSync(path.join(root, 'chat.sealed.mutations.jsonl'))).toBe(false)
+        expect(fs.existsSync(path.join(root, 'chat.mutations.jsonl'))).toBe(true)
+        expect(journal.replay('chat').revision).toBe(3)
+      } finally {
+        unlinkSpy.mockRestore()
+        syncBuiltinESMExports()
+        cache.retireSync()
+        fs.rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
   it('bounds outstanding sealed history with counted synchronous checkpoints', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rotation-bound-'))
     const flusher = new MainDurabilityFlusher({
       now: () => 0,
       setTimer: () => 0,
       clearTimer: () => {},
-      fsync: () => ({ joinSync() {} }),
+      fsync: () => ({
+        joinSync() {
+          /* strict-only test never starts an async flight */
+        }
+      }),
       fsyncSync: fs.fsyncSync,
       close: fs.closeSync
     })
