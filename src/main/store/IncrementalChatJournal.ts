@@ -9,6 +9,7 @@ import {
   type ChatRecordMutationOperation
 } from './ChatRecordMutation'
 import type { ChatRecord } from './types'
+import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import {
   checkpointFileReference,
@@ -107,6 +108,7 @@ export interface IncrementalChatAppendOptions {
 }
 
 export interface IncrementalChatJournalOptions {
+  residualObserver?: ResidualObserver
   /** Root injects only for exact TASKWRAITH_JOURNAL_FLUSHER=1. */
   descriptorCache?: IncrementalChatJournalDescriptorCache
   descriptorDrainSync?: () => void
@@ -449,13 +451,14 @@ export function createIncrementalChatJournal(
   // here": re-fsyncing the directory for a leftover empty file is harmless.
   const createdByThisAppend = (fd: number): boolean => fs.fstatSync(fd).size === 0
 
-  const appendLine = (filePath: string, line: string): number => {
+  const appendLine = (filePath: string, line: string, explicitImmediate = false): number => {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created = false
     try {
       created = createdByThisAppend(fd)
       fs.writeSync(fd, line)
+      if (explicitImmediate) observeResidual(options.residualObserver, 'd2d3Durability')
       fs.fsyncSync(fd)
     } finally {
       fs.closeSync(fd)
@@ -1197,12 +1200,14 @@ export function createIncrementalChatJournal(
     const line = `${JSON.stringify(batch)}\n`
     let bytes: number
     if (options.descriptorCache && !deferred) {
+      if (appendOptions?.durability !== 'deferred')
+        observeResidual(options.residualObserver, 'd2d3Durability')
       options.descriptorCache.append(batch.chatId, journalPath(batch.chatId), line, 'immediate')
       bytes = Buffer.byteLength(line, 'utf8')
     } else {
       bytes = deferred
         ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
-        : appendLine(journalPath(batch.chatId), line)
+        : appendLine(journalPath(batch.chatId), line, appendOptions?.durability !== 'deferred')
     }
     if (!deferred) acknowledgeJournalBarrier(batch.chatId)
     if (deferred) deferredAppends += 1
@@ -1224,6 +1229,7 @@ export function createIncrementalChatJournal(
           // Ratified S4: an outstanding sealed segment cannot disable bounds.
           // The covering checkpoint permits both inode retirements and removal.
           forcedSynchronousCheckpoints += 1
+          observeResidual(options.residualObserver, 'forcedSynchronousCheckpoints')
           checkpoint(batch.chatId, 'bounded')
         } else rotateForPreparation(batch.chatId)
       } else checkpoint(batch.chatId, 'bounded')
@@ -1287,14 +1293,21 @@ export function createIncrementalChatJournal(
     const state = states.get(chatId)
     if (!state || state.tombstoned || state.journalEntries === 0 || state.headRevision === null)
       return 'unchanged'
-    if (!options.checkpointPreparation || preparations.has(chatId)) return 'unavailable'
+    if (!options.checkpointPreparation) return 'unavailable'
+    if (preparations.has(chatId)) {
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      return 'unavailable'
+    }
     options.beforeSourceMutation?.(chatId)
     if (fs.existsSync(tombstonePath(chatId))) return 'superseded'
     const entries = state.journalEntries
     const rotated = options.rotationEnabled
       ? (rotatedSources.get(chatId) ?? rotateForPreparation(chatId))
       : null
-    if (options.rotationEnabled && !rotated) return 'unavailable'
+    if (options.rotationEnabled && !rotated) {
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      return 'unavailable'
+    }
     const source = rotated ?? {
       chatId,
       revision: state.headRevision,
@@ -1305,7 +1318,10 @@ export function createIncrementalChatJournal(
     const revision = source.revision
     const epoch = preparationEpochs.get(chatId) ?? 0
     const job = options.checkpointPreparation.start(source)
-    if (!job) return 'unavailable'
+    if (!job) {
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      return 'unavailable'
+    }
     preparations.set(chatId, job)
     let installedCheckpoint: CheckpointPreparationSource['checkpoint'] | undefined
     try {
