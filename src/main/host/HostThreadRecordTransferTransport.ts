@@ -29,6 +29,10 @@ import type {
 } from './HostThreadRecordPersistCommand'
 
 export interface HostThreadRecordReferenceStagingPort {
+  /** Called only after a matched successful receipt for this exact descriptor. */
+  acknowledgeTransfer?(transferId: string): void
+  /** Called only after a matched authority denial proves no consumption. */
+  discard?(transferId: string): boolean
   /** Null means ineligible: retain the existing record publication route.
    * Rejection fails staging; it never licenses an implicit record fallback.
    * The port owns capture custody and must return the requested transfer ID.

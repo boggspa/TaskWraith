@@ -850,6 +850,11 @@ export class HostThreadRecordPersistClient
       try {
         const receipt = await this.execute(command, operation, this.diagnostics?.contextFrom(input))
         try {
+          this.referenceStaging?.acknowledgeTransfer?.(descriptor.transferId)
+        } catch {
+          // Host success is authoritative; retain uncertain local custody.
+        }
+        try {
           this.onPersisted?.(input, receipt)
         } catch {
           // The Host write is already durable. Local rebase bookkeeping must
@@ -872,10 +877,12 @@ export class HostThreadRecordPersistClient
           receiptMatches(command, error.receipt, this.actor)
         if (denied)
           try {
-            this.transfer.remove({
-              profilePath: this.profilePath,
-              transferId: descriptor.transferId
-            })
+            if (this.referenceStaging?.discard?.(descriptor.transferId) !== true) {
+              this.transfer.remove({
+                profilePath: this.profilePath,
+                transferId: descriptor.transferId
+              })
+            }
           } catch {
             // Best-effort: the persist failure is the reportable fault.
           }

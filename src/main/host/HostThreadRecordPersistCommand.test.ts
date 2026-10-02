@@ -227,6 +227,8 @@ describe('HostThreadRecordPersistClient command shape', () => {
     'preserves reference artifact custody for %s and cleans only proven non-consumption',
     async (outcome) => {
       const transfer = fakeTransfer()
+      const acknowledged = vi.fn()
+      const discarded = vi.fn(() => false)
       let clock = 0
       const denial: HostCommandReceipt['authority'] = { decision: 'deny', reason: 'not authorized' }
       const broker = scriptedBroker((command) =>
@@ -253,6 +255,8 @@ describe('HostThreadRecordPersistClient command shape', () => {
         pollIntervalMs: 25,
         timeoutMs: 100,
         referenceStaging: {
+          acknowledgeTransfer: acknowledged,
+          discard: discarded,
           stage: ({ transferId }) => ({ transferId, sha256: 'c'.repeat(64), byteLength: 400 })
         }
       })
@@ -268,6 +272,12 @@ describe('HostThreadRecordPersistClient command shape', () => {
                 : 'host_unavailable'
         })
       expect(transfer.published).toHaveLength(0)
+      expect(acknowledged).toHaveBeenCalledTimes(outcome === 'recovered' ? 1 : 0)
+      expect(discarded).toHaveBeenCalledTimes(outcome === 'denied' ? 1 : 0)
+      if (outcome === 'recovered')
+        expect(acknowledged).toHaveBeenCalledWith(broker.commands[0].arguments.transferId)
+      if (outcome === 'denied')
+        expect(discarded).toHaveBeenCalledWith(broker.commands[0].arguments.transferId)
       expect(transfer.removed).toHaveLength(outcome === 'denied' ? 1 : 0)
       if (outcome === 'denied')
         expect(transfer.removed[0]).toBe(broker.commands[0].arguments.transferId)
@@ -278,12 +288,14 @@ describe('HostThreadRecordPersistClient command shape', () => {
     const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
     const transfer = fakeTransfer()
     let release!: () => void
+    const acknowledged = vi.fn()
     const input = { chatId: 'chat-1', record: chatRecord(), expectedRevision: 7 }
     const client = new HostThreadRecordPersistClient({
       broker,
       profilePath: PROFILE,
       transfer,
       referenceStaging: {
+        acknowledgeTransfer: acknowledged,
         stage: (request) => {
           expect(request.persist).toEqual({
             chatId: input.chatId,
@@ -303,6 +315,8 @@ describe('HostThreadRecordPersistClient command shape', () => {
     expect(broker.commands).toHaveLength(0)
     release()
     await pending
+    expect(acknowledged).toHaveBeenCalledOnce()
+    expect(acknowledged).toHaveBeenCalledWith(broker.commands[0].arguments.transferId)
     expect(transfer.published).toHaveLength(0)
     expect(broker.commands[0].arguments).toMatchObject({
       expectedRevision: 7,
