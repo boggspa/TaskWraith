@@ -1077,8 +1077,13 @@ import {
 } from './store/PersistenceWriteWorker'
 import {
   createMainPerfInstrumentation,
+  type MainPerfSnapshotOptions,
   type MainPerfInstrumentation
 } from './perf/MainPerfSnapshot'
+import { actualMainDurabilityPerf } from './perf/ActualMainDurabilityPerf'
+import { MainNativeActionGate } from './lifecycle/MainNativeActionGate'
+import { createMainQuitProducerBarrier, MainQuitSessionRegistry } from './services/MainQuitProducerRegistry'
+import { createMainQuitDurabilityIntegration } from './services/MainQuitDurabilityIntegration'
 import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
 import { bindMainWorkSpanSink } from './perf/mainWorkSpanSink'
 import { installMainPerfWorkSpanHandle } from './perf/perfWorkSpanHandle'
@@ -4002,6 +4007,10 @@ const providerRunPersistenceAuthorities = new Map<string, HistoryClearRunPersist
 // history deletion. RunManager terminal state alone is insufficient because a
 // provider abort/kill can settle before the adapter's close/cleanup callback.
 const providerAdapterRunsInFlight = new Map<string, Promise<void>>()
+const scheduledLaunchOperations = new ProviderOperationRegistry()
+let mainProducerAdmissionsClosed = false
+const mainNativeActionGate = new MainNativeActionGate()
+let launchManagerForQuit: LaunchManager | null = null
 const providerTransportOperations = new ProviderOperationRegistry()
 const providerProcessTerminationBackstop = new ProviderProcessTerminationBackstop(4_000)
 const hostCommandOperations = new HostCommandOperationRegistry()
@@ -4060,6 +4069,7 @@ function providerDispatchAuthorityForPayload(
 }
 
 function reserveProviderDispatchForPayload(payload: AgentRunPayload): ProviderDispatchReservation {
+  if (mainProducerAdmissionsClosed) throw new Error('App shutdown has closed provider admission.')
   const authority = providerDispatchAuthorityForPayload(payload)
   return Object.freeze({
     authority,
@@ -4076,6 +4086,7 @@ function validateProviderDispatchReservation(
   payload: AgentRunPayload,
   reservation: ProviderDispatchReservation | undefined
 ): HistoryClearDispatchAuthority {
+  if (mainProducerAdmissionsClosed) throw new Error('App shutdown has closed provider admission.')
   const currentAuthority = providerDispatchAuthorityForPayload(payload)
   if (
     !reservation ||
@@ -4279,6 +4290,7 @@ let dispatchRunWithProviderPauseRef:
     ) => Promise<{ dispatched: boolean; appRunId: string }>)
   | null = null
 let threadCatalogueQueueRecoveryRef: ThreadCatalogueQueueRecovery | null = null
+let unsubscribeCatalogueQueueRecovery: (() => void) | null = null
 let threadCatalogueRecoveryRef: ThreadCatalogueRecovery | null = null
 // Scheduled occurrences dispatch through their own facade: MAIN already owns
 // their exact durable prompt + run identity, so one must never be treated as
@@ -5341,6 +5353,7 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
+  nativeActionGate: mainNativeActionGate,
   appDriveLeases: appDriveSurfaceLeases,
   onSurfaceAuthorityInvalidated: (input) => {
     if (input.record.driver === 'emulator') {
@@ -7246,7 +7259,7 @@ function historyClearAdmissionBlocked(
   workspacePath?: string,
   chatId?: string
 ): boolean {
-  if (historyClearAdmissionGate.isGlobalBlocked()) return true
+  if (mainProducerAdmissionsClosed || historyClearAdmissionGate.isGlobalBlocked()) return true
   const session = runId ? runManager.get(runId) : undefined
   const authoritativeChatId = chatId || session?.appChatId
   const chat = authoritativeChatId ? AppStore.getChat(authoritativeChatId) : null
@@ -18054,6 +18067,7 @@ async function dispatchDueScheduledTaskHeadless(
 }
 
 function emitDueScheduledTasks() {
+  if (mainProducerAdmissionsClosed) return
   let dueTaskCount = 0
   try {
     if (scheduledOccurrenceRecoveryBlockedReason) {
@@ -18144,7 +18158,7 @@ function emitDueScheduledTasks() {
           failScheduledOccurrence(owner, 'Claimed scheduled occurrence disappeared before launch.')
           continue
         }
-        const launch =
+        const launch = Promise.resolve().then(() =>
           owner.rootOwner === 'ensemble-root'
             ? dispatchDueEnsembleScheduledTaskHeadless(claimedTask, owner)
             : owner.rootOwner === 'loop-root' && loopCfg
@@ -18152,12 +18166,13 @@ function emitDueScheduledTasks() {
               : owner.rootOwner === 'solo'
                 ? dispatchDueScheduledTaskHeadless(claimedTask, owner)
                 : Promise.reject(new Error('Scheduled occurrence root family is inconsistent.'))
-        void launch.catch((error) => {
+        ).catch((error) => {
           failScheduledOccurrence(
             owner,
             `Scheduled occurrence launch failed: ${error instanceof Error ? error.message : String(error)}`
           )
         })
+        scheduledLaunchOperations.track(owner.ownerRunId, launch.then(() => {}))
       } catch (error) {
         console.error(`[scheduled-occurrence] task ${task.id} failed in scheduler pump`, error)
       }
@@ -18319,6 +18334,7 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
+  if (mainProducerAdmissionsClosed) return
   // Workspace-lock STARTUP failure already sets `scheduledOccurrenceRecoveryBlockedReason`
   // in the same catch, so that case is covered by the first disjunct. Reading the
   // workspace-lock flag directly here additionally caught the MID-SESSION mutation
@@ -47413,6 +47429,7 @@ if (isGeminiMcpBridgeProcess) {
     // outside a profiling harness.
     mainPerfInstrumentationRef = createMainPerfInstrumentation({
       sections: {
+        mainDurability: () => actualMainDurabilityPerf({ snapshot: () => AppStore.getMainDurabilitySnapshot() }, process.env),
         incrementalChatPersistence: () => AppStore.getIncrementalChatPersistenceStats(),
         persistenceCoalescing: () => AppStore.getPersistenceCoalescingStats(),
         chatUpdateProtocol: () => chatUpdateDeliveryCoordinator.protocolCounters(),
@@ -47428,10 +47445,11 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     mainPerfInstrumentationRef.start()
-    ipcMain.handle('get-main-perf-snapshot', (event, options?: { resetLagWindow?: boolean }) => {
+    ipcMain.handle('get-main-perf-snapshot', (event, options?: MainPerfSnapshotOptions) => {
       if (!isMainRendererSender(event)) return null
       return mainPerfInstrumentationRef?.snapshot({
-        resetLagWindow: options?.resetLagWindow === true
+        resetLagWindow: options?.resetLagWindow === true,
+        window: options?.window
       })
     })
     const rendererDiagnosticRecorder = new RendererDiagnosticRecorder({
@@ -56755,37 +56773,92 @@ if (isGeminiMcpBridgeProcess) {
       quit: () => app.quit()
     })
 
-    const quitPersistence = createQuitPersistenceCoordinator({
-      flush: async () => {
-        const failures: unknown[] = []
-        try {
-          const admissionDrains = await Promise.allSettled([
-            shutdownAndJoinEnsembleDelegatedRuns(),
-            ensembleOrchestratorRef
-              ? ensembleOrchestratorRef.shutdownHostAdmission()
-              : Promise.resolve(ensembleHostAdmissionRuntime.shutdown())
-          ])
-          for (const result of admissionDrains) {
-            if (result.status === 'rejected') failures.push(result.reason)
-          }
-        } catch (error) {
-          failures.push(error)
-        } finally {
-          try {
-            await threadCatalogueRecoveryRef?.quiesce()
-            threadCatalogueRecoveryRef?.dispose()
-            await AppStore.flushAllChatSaves()
-            await startupThreadCatalogue.dispose()
-          } catch (error) {
-            failures.push(error)
-          }
-        }
-        if (failures.length > 0) {
-          throw new AggregateError(failures, 'Quit admission and chat persistence drain failed.')
-        }
+    const quitSessionRegistry = new MainQuitSessionRegistry()
+    const quitProducers = createMainQuitProducerBarrier({
+      fenceAdmissions: () => {
+        mainProducerAdmissionsClosed = true
+        clearScheduledTaskTimer()
+        if (stallReconcilerInterval) clearInterval(stallReconcilerInterval)
+        stallReconcilerInterval = null
+        if (chatRunReconcilerInterval) clearInterval(chatRunReconcilerInterval)
+        chatRunReconcilerInterval = null
+        unsubscribeCatalogueQueueRecovery?.()
+        unsubscribeCatalogueQueueRecovery = null
+        threadCatalogueQueueRecoveryRef?.beginShutdown()
+        return Promise.all([
+          shutdownAndJoinEnsembleDelegatedRuns(),
+          ensembleOrchestratorRef
+            ? ensembleOrchestratorRef.shutdownHostAdmission()
+            : Promise.resolve(ensembleHostAdmissionRuntime.shutdown())
+        ]).then(() => {})
       },
+      fenceQueue: () => { runQueueServiceRef?.beginShutdown() },
+      fenceNative: () => {
+        mainNativeActionGate.beginShutdown()
+        canvasService.beginShutdown()
+        launchManagerForQuit?.beginShutdown()
+      },
+      joinNative: () => Promise.all([mainNativeActionGate.join(), canvasService.join(), launchManagerForQuit?.join()]).then(() => {}),
+      operations: () => [...providerAdapterRunsInFlight.entries(), ...providerTransportOperations.entries(), ...scheduledLaunchOperations.entries()],
+      sessions: () => {
+        const active = RUN_MANAGER_PROVIDERS.flatMap((provider) =>
+        runManager.getActiveByProvider(provider).map((session) => {
+          const mainOwned = Boolean(
+            providerAdapterRunsInFlight.has(session.runId) ||
+            providerTransportOperations.get(session.runId) ||
+            ((session.process || session.abortController) && providerRunPersistenceAuthorities.has(session.runId))
+          )
+          return quitSessionRegistry.capture(session, session.runId, mainOwned ? 'main' : 'unknown', async () => {
+            const hasCloseOperation = Boolean(providerAdapterRunsInFlight.get(session.runId) || providerTransportOperations.get(session.runId))
+            const stopped = await terminateAndJoinMainProviderRun({
+              getSession: (id) => runManager.get(id),
+              getOperations: (id) => [providerAdapterRunsInFlight.get(id), providerTransportOperations.get(id)]
+                .filter((operation): operation is Promise<void> => operation !== undefined),
+              isActive: isActiveRunSessionStatus,
+              terminate: (owner, id) => terminateExactProviderSession(owner, id, 'cancelled'),
+              wait: waitForProviderOperationSettlement
+            }, session.provider, session.runId)
+            // Abort/kill and terminal status alone cannot prove final callbacks
+            // closed. An untracked main transport remains an incomplete drain.
+            return stopped && hasCloseOperation
+          })
+        })
+        )
+        return [...new Set([...active, ...quitSessionRegistry.pending()])]
+      },
+      joinOperation: async (runId, operation) => {
+              const session = runManager.get(runId)
+              if (session) {
+                if (!(await terminateAndJoinMainProviderRun({
+                  getSession: (id) => runManager.get(id),
+                  getOperations: () => [operation],
+                  isActive: isActiveRunSessionStatus,
+                  terminate: (provider, id) => terminateExactProviderSession(provider, id, 'cancelled'),
+                  wait: waitForProviderOperationSettlement
+                }, session.provider, runId))) return false
+              }
+              return waitForProviderOperationSettlement(operation, 10_000)
+      }
+    })
+    const quitDurability = createMainQuitDurabilityIntegration({
+      quiesceProducers: () => quitProducers.quiesce(),
+      saveFinalState: async () => {
+        await threadCatalogueQueueRecoveryRef?.quiesce()
+        await canvasService.closeAll()
+        await threadCatalogueRecoveryRef?.quiesce()
+        threadCatalogueRecoveryRef?.dispose()
+        await AppStore.flushAllChatSaves()
+        await startupThreadCatalogue.dispose()
+      },
+      shutdownDurability: () => AppStore.shutdownMainDurability()
+    })
+    const quitPersistence = createQuitPersistenceCoordinator({
+      flush: () => quitDurability.flush(),
       requestQuit: () => app.quit(),
-      onDrainError: (error) => console.error('Failed to flush pending chat saves on quit', error)
+      onDrainError: (error) => {
+        quitDurability.abandon()
+        console.error('Quit producer or durability drain incomplete', error)
+      }
     })
     app.on('will-quit', quitPersistence.handle)
 
@@ -57683,6 +57756,7 @@ if (isGeminiMcpBridgeProcess) {
       notifyRenderer: publishNativeWindowRendererEvent
     })
     canvasWindowDriverFactoryRef = new CanvasWindowDriverFactory({
+      nativeActionGate: mainNativeActionGate,
       coordinator: nativeWindowCoordinatorRef,
       daemon: nativeWindowDaemonProxy,
       clickConfirmation: {
@@ -57706,6 +57780,7 @@ if (isGeminiMcpBridgeProcess) {
       })
     }, 30_000)
     nativeWindowExpirySweepTimer.unref?.()
+    launchManagerForQuit = launchManager
     canvasLaunchAttemptsSnapshot = () => launchManager.snapshot().attempts
     launchManager.subscribe((snapshot) => {
       void nativeWindowCoordinatorRef?.onLaunchSnapshot(snapshot.attempts).catch((error) => {
@@ -64432,7 +64507,7 @@ if (isGeminiMcpBridgeProcess) {
           scheduleRemoteComposerQueuePumpRef?.()
         }
       })
-      startupThreadCatalogue.mirror.subscribe(() => threadCatalogueQueueRecoveryRef?.reconcile())
+      unsubscribeCatalogueQueueRecovery = startupThreadCatalogue.mirror.subscribe(() => threadCatalogueQueueRecoveryRef?.reconcile())
       threadCatalogueQueueRecoveryRef.reconcile()
     }
     threadCatalogueRecoveryRef = new ThreadCatalogueRecovery({

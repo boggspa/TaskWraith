@@ -20,6 +20,10 @@ export class ProviderOperationRegistry {
   get(runId: string): Promise<void> | undefined {
     return this.operations.get(runId)
   }
+
+  entries(): Array<[string, Promise<void>]> {
+    return [...this.operations.entries()]
+  }
 }
 
 export interface ForceKillableProviderProcess {

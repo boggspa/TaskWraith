@@ -3015,8 +3015,9 @@ declare global {
       getToolActivityDetails: (
         refs: ToolActivityDetailRef[]
       ) => Promise<HydratedToolActivityDetail[]>
-      getMainPerfSnapshot: (options?: { resetLagWindow?: boolean }) => Promise<{
+      getMainPerfSnapshot: (options?: import('../main/perf/MainPerfSnapshot').MainPerfSnapshotOptions) => Promise<{
         capturedAt: string
+        window?: import('../main/perf/MainWindowPerfProbes').MainWindowPerfReceipt
         eventLoopLag: {
           observedForMs: number
           p50Ms: number

@@ -1,4 +1,5 @@
 import { createThreadCatalogueReads } from './ThreadCatalogueReads'
+import type { MainPerfSnapshotOptions } from '../main/perf/MainPerfSnapshot'
 import './applicationMenuBridge'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
@@ -2887,7 +2888,7 @@ const api = {
   getRunEvents: (filter: any = {}) => ipcRenderer.invoke('get-run-events', filter),
   getToolActivityDetails: (refs: ToolActivityDetailRef[]): Promise<HydratedToolActivityDetail[]> =>
     ipcRenderer.invoke('get-tool-activity-details', refs),
-  getMainPerfSnapshot: (options: { resetLagWindow?: boolean } = {}) =>
+  getMainPerfSnapshot: (options: MainPerfSnapshotOptions = {}) =>
     ipcRenderer.invoke('get-main-perf-snapshot', options),
   getRunEventReplay: (runId: string) => ipcRenderer.invoke('get-run-event-replay', runId),
   analyzeRun: (request: RunAnalystRequest) =>
