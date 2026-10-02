@@ -101,7 +101,7 @@ export class IncrementalChatJournalDescriptorCache {
       const fd = fs.openSync(absolute, 'a+')
       try {
         const stat = fs.fstatSync(fd)
-        const file = this.flusher.open(stat.dev, stat.ino, fd, stat.size)
+        const file = this.flusher.open(stat.dev, stat.ino, fd, stat.size, 'journal')
         entry = { path: absolute, fd, file, end: stat.size, dependencies }
         this.entries.set(chatId, entry)
       } catch (error) {
@@ -268,7 +268,7 @@ export class IncrementalChatJournalDescriptorCache {
       const fd = fs.openSync(directory, 'r')
       try {
         const stat = fs.fstatSync(fd)
-        row = { file: this.flusher.open(stat.dev, stat.ino, fd), offset: 0 }
+        row = { file: this.flusher.open(stat.dev, stat.ino, fd, 0, 'directory'), offset: 0 }
         this.directories.set(directory, row)
       } catch (error) {
         fs.closeSync(fd)

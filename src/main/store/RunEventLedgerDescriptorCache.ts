@@ -76,7 +76,11 @@ export class RunEventLedgerDescriptorCache {
       if (!existed) this.pendingCreates.add(filePath)
       try {
         const stat = fs.fstatSync(fd)
-        entry = { fd, file: this.flusher.open(stat.dev, stat.ino, fd, stat.size), end: stat.size }
+        entry = {
+          fd,
+          file: this.flusher.open(stat.dev, stat.ino, fd, stat.size, 'run-events'),
+          end: stat.size
+        }
       } catch (error) {
         fs.closeSync(fd)
         throw error
@@ -94,7 +98,7 @@ export class RunEventLedgerDescriptorCache {
           try {
             const identity = fs.fstatSync(directoryFd)
             directory = {
-              file: this.flusher.open(identity.dev, identity.ino, directoryFd),
+              file: this.flusher.open(identity.dev, identity.ino, directoryFd, 0, 'directory'),
               offset: 0
             }
           } catch (error) {

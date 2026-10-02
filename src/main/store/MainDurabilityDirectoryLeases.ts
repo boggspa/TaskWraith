@@ -51,7 +51,7 @@ export class MainDurabilityDirectoryLeases {
           throw new Error('Directory identity changed during acquisition')
         }
         // A failed registration never takes descriptor ownership.
-        const file = this.flusher.open(Number(actual.dev), Number(actual.ino), fd)
+        const file = this.flusher.open(Number(actual.dev), Number(actual.ino), fd, 0, 'directory')
         state = { file, extent: 0, refs: 0, retiring: false, closed: false }
         this.directories.set(key, state)
       } catch (error) {

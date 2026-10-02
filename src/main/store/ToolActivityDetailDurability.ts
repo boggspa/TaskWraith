@@ -62,7 +62,7 @@ export class ToolActivityDetailDurability implements DurabilityParticipant {
       try {
         const stat = fs.fstatSync(fd)
         if (stat.size !== expectedSize) throw new Error('Detail artifact changed while staging')
-        const file = this.ports.flusher.open(stat.dev, stat.ino, fd, stat.size)
+        const file = this.ports.flusher.open(stat.dev, stat.ino, fd, stat.size, 'detail')
         entry = { fd, file, end: stat.size, namePending: this.createdNames.has(filePath) }
         this.entries.set(filePath, entry)
       } catch (error) {

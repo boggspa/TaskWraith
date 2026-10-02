@@ -8,7 +8,7 @@ export class MainCatalogueDurability implements DurabilityParticipant {
 
   constructor(private readonly ports: DurabilityAttachmentPorts) {
     this.publication = new ThreadCatalogueDurability({
-      open: (...args) => ports.flusher.open(...args),
+      open: (dev, ino, fd, offset) => ports.flusher.open(dev, ino, fd, offset, 'catalogue'),
       noteWrite: (...args) => ports.flusher.noteWrite(...args),
       awaitDurable: (...args) => ports.flusher.awaitDurable(...args),
       forget: (...args) => ports.flusher.forget(...args),

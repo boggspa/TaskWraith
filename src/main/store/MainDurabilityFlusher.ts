@@ -1,5 +1,25 @@
 /** Pure M5 scheduler. No filesystem adapter or rollout wiring is installed here. */
 export type DurabilityClass = 'soft' | 'prompt' | 'sync'
+export type DurabilityOwner =
+  | 'run-events'
+  | 'journal'
+  | 'detail'
+  | 'catalogue'
+  | 'directory'
+  | 'unattributed'
+export interface DurabilityOwnerCounters extends DurabilityFlusherCounters {
+  writtenBytes: number
+  directoryMutations: number
+  registeredFiles: number
+}
+const OWNERS: readonly DurabilityOwner[] = [
+  'run-events',
+  'journal',
+  'detail',
+  'catalogue',
+  'directory',
+  'unattributed'
+]
 
 export interface DurabilityFile {
   readonly dev: number
@@ -45,6 +65,7 @@ interface Waiter {
 }
 
 interface FileState {
+  owner: DurabilityOwner
   identity: DurabilityFile
   fd: number
   end: number
@@ -95,6 +116,48 @@ export class MainDurabilityFlusher {
   private pumping = false
   private syncDepth = 0
   private capacity: number
+  private readonly owners = Object.fromEntries(
+    OWNERS.map((owner) => [
+      owner,
+      {
+        asyncFsyncs: 0,
+        syncFsyncs: 0,
+        strictFsyncs: 0,
+        dependencySyncFsyncs: 0,
+        hardBoundFsyncs: 0,
+        escalations: 0,
+        errors: 0,
+        writtenBytes: 0,
+        directoryMutations: 0,
+        registeredFiles: 0
+      }
+    ])
+  ) as Record<DurabilityOwner, DurabilityOwnerCounters>
+
+  ownerSnapshot(): Record<
+    DurabilityOwner,
+    DurabilityOwnerCounters & { activeFiles: number; dirtyBytes: number }
+  > {
+    return Object.fromEntries(
+      OWNERS.map((owner) => {
+        const active = [...this.files].filter((file) => file.owner === owner && !file.forgotten)
+        return [
+          owner,
+          {
+            ...this.owners[owner],
+            activeFiles: active.length,
+            dirtyBytes:
+              owner === 'directory'
+                ? 0
+                : active.reduce((bytes, file) => bytes + Math.max(0, file.end - file.durable), 0)
+          }
+        ]
+      })
+    ) as Record<
+      DurabilityOwner,
+      DurabilityOwnerCounters & { activeFiles: number; dirtyBytes: number }
+    >
+  }
 
   constructor(
     private readonly ports: DurabilityFlusherPorts,
@@ -106,7 +169,14 @@ export class MainDurabilityFlusher {
     this.capacity = capacityPerSecond
   }
 
-  open(dev: number, ino: number, fd: number, durableOffset = 0): DurabilityFile {
+  open(
+    dev: number,
+    ino: number,
+    fd: number,
+    durableOffset = 0,
+    owner: DurabilityOwner = 'unattributed'
+  ): DurabilityFile {
+    if (!OWNERS.includes(owner)) throw new Error('Invalid durability owner')
     this.validateOffset(durableOffset)
     for (const file of this.files.values()) {
       if (
@@ -118,6 +188,7 @@ export class MainDurabilityFlusher {
     }
     const identity = Object.freeze({ dev, ino, generation: ++this.generation })
     const file: FileState = {
+      owner,
       identity,
       fd,
       end: durableOffset,
@@ -131,6 +202,7 @@ export class MainDurabilityFlusher {
     }
     this.identities.set(identity, file)
     this.files.add(file)
+    this.owners[owner].registeredFiles++
     return identity
   }
 
@@ -163,6 +235,9 @@ export class MainDurabilityFlusher {
       file.dependencies.set(target, Math.max(offset, file.dependencies.get(target) ?? 0))
     }
     if (endOffset > file.end) {
+      if (file.owner === 'directory')
+        this.owners[file.owner].directoryMutations += endOffset - file.end
+      else this.owners[file.owner].writtenBytes += endOffset - file.end
       const now = this.ports.now()
       file.dirtySince ??= now
       if (this.flight?.file === file) file.nextDirtySince ??= now
@@ -173,7 +248,10 @@ export class MainDurabilityFlusher {
       (dependency) => dependency.error
     )
     if (durability === 'sync' || file.error || failedDependency) {
-      if (file.error || failedDependency) this.counters.escalations++
+      if (file.error || failedDependency) {
+        this.counters.escalations++
+        this.owners[file.owner].escalations++
+      }
       this.sync(file, durability === 'sync' ? 'strict' : 'escalation')
     }
     this.pump()
@@ -367,6 +445,7 @@ export class MainDurabilityFlusher {
   private fail(file: FileState, error: Error): void {
     file.error = error
     this.counters.errors++
+    this.owners[file.owner].errors++
     this.settle()
   }
 
@@ -387,12 +466,19 @@ export class MainDurabilityFlusher {
         if (!dependency.forgotten && dependency.durable < end) {
           if (dependency.forgetting) throw new Error('Dependency adoption is not complete')
           this.counters.dependencySyncFsyncs++
+          this.owners[dependency.owner].dependencySyncFsyncs++
           this.syncOne(dependency)
         }
       }
       if (file.durable < file.end || file.error) {
-        if (reason === 'strict') this.counters.strictFsyncs++
-        if (reason === 'hard') this.counters.hardBoundFsyncs++
+        if (reason === 'strict') {
+          this.counters.strictFsyncs++
+          this.owners[file.owner].strictFsyncs++
+        }
+        if (reason === 'hard') {
+          this.counters.hardBoundFsyncs++
+          this.owners[file.owner].hardBoundFsyncs++
+        }
         this.syncOne(file)
       }
       this.settle()
@@ -403,6 +489,7 @@ export class MainDurabilityFlusher {
 
   private syncOne(file: FileState): void {
     this.counters.syncFsyncs++
+    this.owners[file.owner].syncFsyncs++
     try {
       this.ports.fsyncSync(file.fd)
       file.durable = file.end
@@ -522,6 +609,7 @@ export class MainDurabilityFlusher {
     this.flight = flight
     file.nextDirtySince = undefined
     this.counters.asyncFsyncs++
+    this.owners[file.owner].asyncFsyncs++
     const complete = (error?: Error): void => {
       if (this.flight !== flight) return
       this.flight = undefined
