@@ -10,6 +10,7 @@ import {
   verifyRunEventHashChain
 } from '../RunEventStore'
 import { RunEventLedgerWriter } from './RunEventLedgerWriter'
+import { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { RunEventInput, RunEventRecord } from './types'
 
 describe('RunEventLedgerWriter', () => {
@@ -49,6 +50,44 @@ describe('RunEventLedgerWriter', () => {
       .map(parseRunEventLine)
       .filter((record): record is RunEventRecord => record !== null)
   }
+
+  it('uses injected soft/prompt/strict durability while preserving read-your-writes and retirement', async () => {
+    let syncs = 0
+    const completions: (() => void)[] = []
+    const flusher = new MainDurabilityFlusher({
+      now: () => 0,
+      setTimer: () => 0,
+      clearTimer: () => {},
+      fsync: (_fd, done) => {
+        const complete = () => done()
+        completions.push(complete)
+        return { joinSync: complete }
+      },
+      fsyncSync: (fd) => {
+        syncs++
+        fs.fsyncSync(fd)
+      },
+      close: (fd) => fs.closeSync(fd)
+    })
+    const injected = new RunEventLedgerWriter({
+      runEventsDir,
+      runArtifactsDir,
+      durabilityFlusher: flusher
+    })
+    const first = injected.append(input('injected'))
+    expect(records('injected')).toEqual([first])
+    expect(syncs).toBe(0)
+    injected.append(input('injected', { kind: 'lifecycle' }))
+    expect(completions.length).toBeGreaterThan(0)
+    const strict = injected.append(input('injected'), { durability: 'strict' })
+    expect(records('injected').at(-1)).toEqual(strict)
+    expect(syncs).toBeGreaterThan(0)
+    injected.drainDurabilitySync()
+    await injected.awaitDurable('injected')
+    injected.retireSync(['injected'])
+    await injected.retire()
+    expect(verifyRunEventHashChain(records('injected'))).toBe(true)
+  })
 
   it('keeps independent run chains and resumes the exact on-disk head after reopening', () => {
     const first = writer.append(input('run-a'))

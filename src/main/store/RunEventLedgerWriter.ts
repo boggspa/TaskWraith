@@ -10,11 +10,14 @@ import {
 } from '../RunEventStore'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { runEventLedgerAppendPrefix } from './RunEventLedgerTail'
+import { RunEventLedgerDescriptorCache } from './RunEventLedgerDescriptorCache'
+import type { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { RunEventArtifactRef, RunEventInput, RunEventRecord } from './types'
 
 export interface RunEventLedgerWriterOptions {
   runEventsDir: string
   runArtifactsDir: string
+  durabilityFlusher?: MainDurabilityFlusher
 }
 
 export interface RunEventLedgerAppendOptions {
@@ -32,8 +35,31 @@ export interface RunEventLedgerAppendOptions {
  */
 export class RunEventLedgerWriter {
   private readonly heads = new Map<string, { sequence: number; hash: string }>()
+  private readonly descriptors?: RunEventLedgerDescriptorCache
 
-  constructor(private readonly options: RunEventLedgerWriterOptions) {}
+  constructor(private readonly options: RunEventLedgerWriterOptions) {
+    if (options.durabilityFlusher)
+      this.descriptors = new RunEventLedgerDescriptorCache(options.durabilityFlusher)
+  }
+
+  async retire(runIds?: readonly string[]): Promise<void> {
+    await this.descriptors?.retire(runIds)
+    if (runIds) for (const runId of runIds) this.heads.delete(runId)
+    else this.heads.clear()
+  }
+
+  retireSync(runIds?: readonly string[]): void {
+    this.descriptors?.retireSync(runIds)
+    if (runIds) for (const runId of runIds) this.heads.delete(runId)
+    else this.heads.clear()
+  }
+
+  drainDurabilitySync(): void {
+    this.descriptors?.drainSync()
+  }
+  awaitDurable(runId: string): Promise<void> {
+    return this.descriptors?.awaitDurable(runId) ?? Promise.resolve()
+  }
 
   /** Forget only cached state; the caller owns deletion and its admission fence. */
   forgetHead(runId: string): void {
@@ -61,6 +87,21 @@ export class RunEventLedgerWriter {
       artifacts
     })
     const directoryPath = path.dirname(filePath)
+    if (this.descriptors) {
+      try {
+        this.descriptors.append(
+          input.runId,
+          filePath,
+          serializeRunEventRecord(record),
+          options.durability === 'strict' ? 'sync' : input.kind === 'lifecycle' ? 'prompt' : 'soft'
+        )
+      } catch (error) {
+        this.heads.delete(input.runId)
+        throw error
+      }
+      this.heads.set(input.runId, { sequence: record.sequence, hash: record.hash || previousHash })
+      return record
+    }
     const directoryExisted = fs.existsSync(directoryPath)
     const fileExisted = fs.existsSync(filePath)
     fs.mkdirSync(directoryPath, { recursive: true })
