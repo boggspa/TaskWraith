@@ -42,6 +42,7 @@ function catalogueSourceFiles(options: ThreadCatalogueReaderOptions, chatId: str
     legacy,
     path.join(root, 'chat-journal-v2', `${chatId}.checkpoint.json`),
     path.join(root, 'chat-journal-v2', `${chatId}.mutations.jsonl`),
+    path.join(root, 'chat-journal-v2', `${chatId}.sealed.mutations.jsonl`),
     path.join(root, 'chat-journal-v2', `${chatId}.tombstone`),
     path.join(root, 'chat-composer-selections', `${chatId}.json`)
   ])

@@ -580,8 +580,7 @@ export function createIncrementalChatJournal(
     return parsed
   }
 
-  const parseJournal = (chatId: string): ParsedJournal => {
-    const filePath = journalPath(chatId)
+  const parseSegment = (chatId: string, filePath: string): ParsedJournal => {
     let stat: fs.Stats
     try {
       stat = fs.statSync(filePath)
@@ -625,15 +624,15 @@ export function createIncrementalChatJournal(
     }
   }
 
-  const recoverTornTail = (chatId: string, parsed: ParsedJournal): void => {
+  const recoverTornTail = (chatId: string, parsed: ParsedJournal, filePath = journalPath(chatId)): void => {
     if (!parsed.torn) return
     options.descriptorCache?.retireSync([chatId])
     invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
-    if (parsed.validContent) atomicWrite(journalPath(chatId), parsed.validContent)
+    if (parsed.validContent) atomicWrite(filePath, parsed.validContent)
     else {
       try {
-        fs.unlinkSync(journalPath(chatId))
+        fs.unlinkSync(filePath)
         fsyncDirectory()
       } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -641,6 +640,21 @@ export function createIncrementalChatJournal(
     }
     parsed.bytes = Buffer.byteLength(parsed.validContent, 'utf8')
     tornTailsRecovered += 1
+  }
+
+  // Readers discover rotated files regardless of rollout flags. Each segment's
+  // repair remains behind the existing authority boundary; never concatenate
+  // a torn sealed suffix with active bytes and rewrite them as one file.
+  const sealedPath = (chatId: string): string => path.join(baseDir, `${chatId}.sealed.mutations.jsonl`)
+  const parseJournal = (chatId: string): ParsedJournal => {
+    const sealed = parseSegment(chatId, sealedPath(chatId))
+    const active = parseSegment(chatId, journalPath(chatId))
+    if (canRepair()) {
+      recoverTornTail(chatId, sealed, sealedPath(chatId))
+      recoverTornTail(chatId, active)
+    }
+    return { batches: [...sealed.batches, ...active.batches], bytes: sealed.bytes + active.bytes,
+      torn: sealed.torn || active.torn, validContent: '' }
   }
 
   const validateRevisionChain = (
@@ -675,7 +689,6 @@ export function createIncrementalChatJournal(
     const parsed = tombstoned
       ? { batches: [], bytes: 0, torn: false, validContent: '' }
       : parseJournal(chatId)
-    if (canRepair()) recoverTornTail(chatId, parsed)
     if (!checkpoint && parsed.batches.length > 0) {
       throw new Error(`Incremental chat journal for ${chatId} has no checkpoint baseline`)
     }
@@ -730,6 +743,15 @@ export function createIncrementalChatJournal(
       record
     }
     const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(checkpoint))
+    options.descriptorCache?.retireSync([chatId])
+    for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
+      try {
+        fs.unlinkSync(filePath)
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    fsyncDirectory()
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
     state.headRevision = revision
@@ -759,7 +781,6 @@ export function createIncrementalChatJournal(
     }
     const parsed = parseJournal(chatId)
     const repairedTornTail = parsed.torn && canRepair()
-    if (repairedTornTail) recoverTornTail(chatId, parsed)
     const applicableBatches: ChatRecordMutationBatch[] = []
     let revision = recordRevision(checkpoint.record)
     let skippedBatches = 0
@@ -828,11 +849,13 @@ export function createIncrementalChatJournal(
     // real replay path, which validates and fails exactly as it does today.
     if (!CHAT_ID_PATTERN.test(chatId)) return { hasTail: true, checkpointRevision: null }
     let hasTail = false
-    try {
-      hasTail = fs.statSync(journalPath(chatId)).size > 0
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        return { hasTail: true, checkpointRevision: null }
+    for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
+      try {
+        hasTail ||= fs.statSync(filePath).size > 0
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          return { hasTail: true, checkpointRevision: null }
+        }
       }
     }
     return { hasTail, checkpointRevision: peekCheckpointRevision(chatId) }
@@ -939,12 +962,14 @@ export function createIncrementalChatJournal(
     options.descriptorCache?.retireSync([chatId])
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
-    try {
-      fs.unlinkSync(journalPath(chatId))
-      fsyncDirectory()
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
+      try {
+        fs.unlinkSync(filePath)
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
+    fsyncDirectory()
     state.headRevision = revision
     state.journalEntries = 0
     acknowledgeJournalBarrier(chatId)
@@ -1022,10 +1047,11 @@ export function createIncrementalChatJournal(
       return ids
     }
     for (const entry of entries) {
-      for (const suffix of ['.checkpoint.json', '.mutations.jsonl', '.tombstone']) {
+      for (const suffix of ['.checkpoint.json', '.sealed.mutations.jsonl', '.mutations.jsonl', '.tombstone']) {
         if (!entry.endsWith(suffix)) continue
         const chatId = entry.slice(0, -suffix.length)
         if (CHAT_ID_PATTERN.test(chatId)) ids.add(chatId)
+        break
       }
     }
     return ids
@@ -1056,6 +1082,9 @@ export function createIncrementalChatJournal(
   const checkpointDeferred = async (chatId: string): Promise<DeferredCheckpointResult> => {
     assertWritable()
     assertChatId(chatId)
+    // Existing worker protocol reads one active segment. Do not hand it an
+    // incomplete source until the separate rotation/capture slice extends it.
+    if (fs.existsSync(sealedPath(chatId))) return 'unavailable'
     // Maintenance must never cold-load a full record on main just to enqueue.
     const state = states.get(chatId)
     if (!state || state.tombstoned || state.journalEntries === 0 || state.headRevision === null)
@@ -1238,7 +1267,7 @@ export function createIncrementalChatJournal(
     assertChatId(chatId)
     atomicWrite(tombstonePath(chatId), '')
     options.descriptorCache?.retireSync([chatId])
-    for (const filePath of [journalPath(chatId), checkpointPath(chatId)]) {
+    for (const filePath of [journalPath(chatId), sealedPath(chatId), checkpointPath(chatId)]) {
       try {
         fs.unlinkSync(filePath)
       } catch (error: unknown) {
@@ -1262,7 +1291,7 @@ export function createIncrementalChatJournal(
     assertWritable()
     assertChatId(chatId)
     options.descriptorCache?.retireSync([chatId])
-    for (const filePath of [journalPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
+    for (const filePath of [journalPath(chatId), sealedPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
       try {
         fs.unlinkSync(filePath)
       } catch (error: unknown) {
