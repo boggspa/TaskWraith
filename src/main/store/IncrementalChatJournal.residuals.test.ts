@@ -143,6 +143,7 @@ describe('actual journal residual sites', () => {
       journal.initialize('chat', first)
       journal.append(deriveChatRecordMutation(first, second), { durability: 'immediate' })
       expect(events).toEqual(['d2d3Durability'])
+      if (!journal.checkpointDeferred) throw new Error('Real journal preparation API unavailable')
       expect(await journal.checkpointDeferred('chat')).toBe('unavailable')
       expect(events).toEqual(['d2d3Durability', 'preparationRefusals'])
       expect(journal.replay('chat').record).toEqual(second)
@@ -157,6 +158,7 @@ describe('actual journal residual sites', () => {
       residualObserver: (counter) => events.push(counter)
     })
     try {
+      if (!journal.checkpointDeferred) throw new Error('Real journal preparation API unavailable')
       expect(await journal.checkpointDeferred('chat')).toBe('unchanged')
       expect(events).toEqual([])
     } finally {
