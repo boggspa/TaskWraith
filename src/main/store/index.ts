@@ -388,6 +388,8 @@ import {
 } from './ChatToolDetailExternalization'
 import { prepareChatForPersistence } from './ChatPersistencePreparation'
 import { createChatDetailDependencyBindings } from './ChatDetailDependencyBindings'
+import { JournalHostReferenceConnector } from './JournalHostReferenceConnector'
+import { journalPreparationEnrollment } from './JournalPreparationEnrollment'
 import { ToolActivityDetailDurability } from './ToolActivityDetailDurability'
 import {
   ToolActivityDetailBatchWriter,
@@ -615,6 +617,7 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
     hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
       userDataPath,
       appVersion: storeRuntime.appVersion || 'unknown',
+      ...(journalPreparationFlags.publication && journalHostReferenceConnector ? { referenceStaging: journalHostReferenceConnector } : {}),
       onPersisted: (input) => acknowledgeHostPersisted(input),
       recoverConflict: (input, error) => AppStore.recoverHostPersistConflict(input, error)
     })
@@ -1141,14 +1144,18 @@ mainDurabilityRuntime.attachJournal(({ flusher, directoryLeases }) => {
     retire: () => cache.retire()
   }
 })
+const journalPreparationFlags = journalPreparationEnrollment(process.env, incrementalJournalDescriptorCache !== undefined)
 const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
   ? new CheckpointPreparationWorker()
   : undefined
-const incrementalChatPersistence = createIncrementalChatPersistence({
-  journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+let sharedCheckpointPreparationPort: import('./CheckpointPreparationProtocol').CheckpointPreparationPort | undefined
+const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDir, {
+    rotationEnabled: journalPreparationFlags.rotation,
     descriptorCache: incrementalJournalDescriptorCache,
     descriptorDrainSync: incrementalJournalDescriptorDrainSync,
-    checkpointPreparation: checkpointPreparationWorker,
+    checkpointPreparation: checkpointPreparationWorker ? {
+      start: (source) => sharedCheckpointPreparationPort?.start(source) ?? null
+    } : undefined,
     beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
     maintenanceScope: 'opened',
     canWrite: incrementalJournalSidebandWritable,
@@ -1157,7 +1164,29 @@ const incrementalChatPersistence = createIncrementalChatPersistence({
     // of merely reading a chat (the read-only import invariant), while the
     // explicit Stage 2 mirror writes above remain permitted.
     canRepairOnRead: legacyStoreCanWrite
-  }),
+  })
+const journalHostReferenceConnector = checkpointPreparationWorker
+  ? new JournalHostReferenceConnector({
+      workerEntryPath: path.join(__dirname, 'journalPublicationPreparationWorker.js'),
+      capture: (chatId, revision) => incrementalJournal.captureSource?.(chatId, revision) ?? null,
+      owns: (chatId, revision) => !deletedChatIds.has(chatId) &&
+        AppStore.getCurrentChatAuthorityMetadata(chatId)?.persistenceRevision === revision,
+      lineage: (chatId, revision) => {
+        const current = AppStore.getCurrentChatAuthorityMetadata(chatId)
+        if (!current || current.persistenceRevision !== revision) return null
+        return { isCurrent: () => {
+          const next = AppStore.getCurrentChatAuthorityMetadata(chatId)
+          return !deletedChatIds.has(chatId) && next?.workspaceId === current.workspaceId &&
+            next.persistenceRevision === revision
+        } }
+      }
+    })
+  : undefined
+sharedCheckpointPreparationPort = checkpointPreparationWorker && journalHostReferenceConnector
+  ? journalHostReferenceConnector.checkpointPort(checkpointPreparationWorker)
+  : undefined
+const incrementalChatPersistence = createIncrementalChatPersistence({
+  journal: incrementalJournal,
   canWrite: incrementalJournalSidebandWritable
 })
 
@@ -1444,6 +1473,7 @@ function purgeChatJournalArtifacts(chatId: string): void {
 }
 
 function purgeChatJournalArtifactsAdmitted(chatId: string): void {
+  journalHostReferenceConnector?.cancelChat(chatId)
   // V2 is a second durable history source. Unlike the legacy best-effort
   // cleanup below, failure must stop the deletion transaction so transcript
   // mutations cannot survive a reported successful delete.
@@ -4925,6 +4955,10 @@ export class AppStore {
     return mainDurabilityRuntime.snapshot()
   }
 
+  static getJournalPublicationPreparationSnapshot() {
+    return journalHostReferenceConnector?.snapshot() ?? null
+  }
+
   static shutdownMainDurability(): Promise<void> {
     return mainDurabilityRuntime.shutdown()
   }
@@ -4938,6 +4972,7 @@ export class AppStore {
     // approval look like an already-rendered transition, and its barrier
     // silently stops firing.
     openApprovalSignatureByChatId.clear()
+    journalHostReferenceConnector?.cancelAll()
     this.chatRecordCache.clear()
     this.authorityMetadataSources.clear()
     chatListIndexStore.clearCache()
@@ -9686,6 +9721,7 @@ export class AppStore {
    */
   private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
     incrementalChatPersistence.cancelCheckpointPreparations(chatId)
+    journalHostReferenceConnector?.cancelChat(chatId)
     // A staged full-record checkpoint is another resurrection source even
     // before it reaches the Host client's queue. Erasure must retire it with
     // every journal artifact.
@@ -9759,6 +9795,7 @@ export class AppStore {
       chatComposerSelectionOverlayStore.clearCache()
       removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
       incrementalChatPersistence.cancelCheckpointPreparations()
+      for (const chatId of intent.chatIds) journalHostReferenceConnector?.cancelChat(chatId)
       removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
       // Stage 3: the segmented store is a durable transcript copy; a global
       // clear must retire it (and its in-memory baselines) with the rest.
@@ -10143,6 +10180,7 @@ export class AppStore {
         // and getChats() enumerates this directory, so the deleted chat would
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
+        journalHostReferenceConnector?.cancelAll()
         incrementalChatPersistence.clear()
         segmentedChatStore.clear()
         chatUpdateProjectionTracker.clear()
