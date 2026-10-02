@@ -69,6 +69,8 @@ import {
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
+import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import {
   CheckpointPreparationWorker,
   isCheckpointPreparationWorkerEnabled
@@ -101,7 +103,6 @@ import {
   type LegacyStoreWriteAdmissionScope
 } from './LegacyStoreWriteAdmission'
 import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
-import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import {
   createDesktopHostThreadRecordPersistClient,
   HostThreadRecordPersistError,
@@ -1099,14 +1100,38 @@ let catalogueSourceWriteGuard: ((chatId: string) => void) | null = null
  * `draining` and `closed` remain read-only: no new mirror writer may start
  * mid-drain, and the legacy admission wrapper keeps its own stricter fence.
  */
+let incrementalJournalDurabilityFenced = false
 function incrementalJournalSidebandWritable(): boolean {
-  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+  return !incrementalJournalDurabilityFenced &&
+    (legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned')
 }
+const runEventsDir = path.join(userDataPath, 'run-events')
+const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
+const mainDurabilityRuntime = createMainDurabilityRuntime({
+  runEventsDir,
+  runArtifactsDir,
+  workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js')
+})
+const runEventLedgerWriter = mainDurabilityRuntime.writer
+let incrementalJournalDescriptorCache: IncrementalChatJournalDescriptorCache | undefined
+let incrementalJournalDescriptorDrainSync: (() => void) | undefined
+mainDurabilityRuntime.attachJournal(({ flusher, directoryLeases }) => {
+  const cache = new IncrementalChatJournalDescriptorCache(flusher, { directoryLeases })
+  incrementalJournalDescriptorCache = cache
+  incrementalJournalDescriptorDrainSync = () => flusher.drainSync()
+  return {
+    fence: () => { incrementalJournalDurabilityFenced = true },
+    drainSync: () => flusher.drainSync(),
+    retire: () => cache.retire()
+  }
+})
 const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
   ? new CheckpointPreparationWorker()
   : undefined
 const incrementalChatPersistence = createIncrementalChatPersistence({
   journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+    descriptorCache: incrementalJournalDescriptorCache,
+    descriptorDrainSync: incrementalJournalDescriptorDrainSync,
     checkpointPreparation: checkpointPreparationWorker,
     beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
     maintenanceScope: 'opened',
@@ -1607,10 +1632,7 @@ const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
 const memoryProposalPacksPath = path.join(userDataPath, 'memory-proposal-packs.json')
 const introspectionSchedulePath = path.join(userDataPath, 'introspection-schedule.json')
-const runEventsDir = path.join(userDataPath, 'run-events')
-const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const historyDeletionIntentPath = path.join(userDataPath, 'history-deletion-intent.json')
-const runEventLedgerWriter = new RunEventLedgerWriter({ runEventsDir, runArtifactsDir })
 // Stage 1 — durable per-execution workflow run ledger (one .jsonl per
 // workflowExecutionId, append-only; the run-events model). Single writer per file.
 const workflowRunsDir = path.join(userDataPath, 'workflow-runs')
@@ -4577,6 +4599,7 @@ function runArtifactDirPath(runId: string): string {
 // ignored so a partially-written run cannot abort the chat deletion.
 function deleteRunForensicFiles(runId: string): void {
   if (!runId) return
+  runEventLedgerWriter.retireSync([runId])
   deletedRunIds.add(runId)
   runEventLedgerWriter.forgetHead(runId)
   try {
@@ -4881,7 +4904,16 @@ export interface ChatSaveOptions {
 }
 
 export class AppStore {
+  static getMainDurabilitySnapshot(): ReturnType<typeof mainDurabilityRuntime.snapshot> {
+    return mainDurabilityRuntime.snapshot()
+  }
+
+  static shutdownMainDurability(): Promise<void> {
+    return mainDurabilityRuntime.shutdown()
+  }
+
   static resetTransientDeletionGuardsForTests(): void {
+    runEventLedgerWriter.retireSync()
     deletedChatIds.clear()
     deletedRunIds.clear()
     runEventLedgerWriter.clearHeads()
@@ -9931,16 +9963,24 @@ export class AppStore {
       return
     }
     if (step === 'run-events') {
-      if (intent.kind === 'global') {
-        removePathStrict(runEventsDir, 'run event history directory')
-      } else {
-        removePathsStrict(
-          intent.runIds.map((runId) => ({
-            targetPath: runEventFilePath(runId),
-            label: `run event history for ${safeRunEventFileName(runId)}`
-          }))
-        )
+      const ids = intent.kind === 'global' ? undefined : intent.runIds
+      const remove = (): void => {
+        if (intent.kind === 'global') {
+          removePathStrict(runEventsDir, 'run event history directory')
+        } else {
+          removePathsStrict(
+            intent.runIds.map((runId) => ({
+              targetPath: runEventFilePath(runId),
+              label: `run event history for ${safeRunEventFileName(runId)}`
+            }))
+          )
+        }
       }
+      if (mainDurabilityRuntime.snapshot().runEvents.mode === 'worker') {
+        return runEventLedgerWriter.retire(ids).then(remove)
+      }
+      runEventLedgerWriter.retireSync(ids)
+      remove()
       return
     }
     if (step === 'run-artifacts') {
