@@ -24,6 +24,11 @@ export interface DurabilityParticipant {
   retire(): Promise<void>
 }
 
+export interface DurabilityAttachmentPorts {
+  flusher: JournalDurabilityFlusher
+  directoryLeases: Pick<MainDurabilityDirectoryLeases, 'acquire'>
+}
+
 export interface DurabilityConsumerSnapshot {
   requested: boolean
   mode: 'legacy' | 'worker' | 'degraded'
@@ -42,17 +47,14 @@ export interface MainDurabilityRuntimeOptions {
 
 export interface MainDurabilityRuntime {
   readonly writer: RunEventLedgerWriter
-  attachJournal(
-    create: (ports: {
-      flusher: JournalDurabilityFlusher
-      directoryLeases: Pick<MainDurabilityDirectoryLeases, 'acquire'>
-    }) => DurabilityParticipant
-  ): boolean
+  attachJournal(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
+  attachCatalogue(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
   snapshot(): {
     requested: boolean
     mode: 'legacy' | 'worker' | 'degraded'
     runEvents: DurabilityConsumerSnapshot
     journal: DurabilityConsumerSnapshot & { attached: boolean }
+    catalogue: DurabilityConsumerSnapshot & { attached: boolean }
     fenced: boolean
     closed: boolean
     failure: string | null
@@ -69,12 +71,13 @@ export function createMainDurabilityRuntime(
   const env = options.env ?? process.env
   const requested = env.TASKWRAITH_RUN_EVENT_FLUSHER === '1'
   const journalRequested = env.TASKWRAITH_JOURNAL_FLUSHER === '1'
+  const catalogueRequested = env.TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY === '1'
   let mode: 'legacy' | 'worker' | 'degraded' = 'legacy'
   let adapter: (DurabilityFlusherPorts & { dispose(): Promise<void> }) | undefined
   let flusher: MainDurabilityFlusher | undefined
   let directoryLeases: MainDurabilityDirectoryLeases | undefined
   let failure: string | null = null
-  if (requested || journalRequested) {
+  if (requested || journalRequested || catalogueRequested) {
     try {
       const entry = options.workerEntryPath
       if (
@@ -120,30 +123,43 @@ export function createMainDurabilityRuntime(
     ...(requested && flusher ? { durabilityFlusher: flusher, directoryLeases } : {})
   })
   let journal: DurabilityParticipant | undefined
+  let catalogue: DurabilityParticipant | undefined
+  let constructing = false
   const consumer = (enabled: boolean): DurabilityConsumerSnapshot => ({
     requested: enabled,
     mode: enabled ? mode : 'legacy'
   })
   let shutdown: Promise<void> | undefined
-  return {
-    writer,
-    attachJournal: (create) => {
-      if (fenced) throw new Error('Main durability runtime is shutting down')
-      if (!journalRequested || !flusher || !directoryLeases) return false
-      if (journal) throw new Error('Journal durability participant already attached')
-      let enabled = false
-      const guarded = <T extends object>(target: T): T =>
-        new Proxy(target, {
-          get: (owner, key) => {
-            const member = Reflect.get(owner, key)
-            if (typeof member !== 'function') return member
-            return (...args: unknown[]) => {
-              if (!enabled) throw new Error('Journal construction must be resource-free')
-              return Reflect.apply(member, owner, args)
-            }
+  const attach = (
+    kind: 'journal' | 'catalogue',
+    create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant
+  ): boolean => {
+    if (fenced) throw new Error('Main durability runtime is shutting down')
+    if (
+      !(kind === 'journal' ? journalRequested : catalogueRequested) ||
+      !flusher ||
+      !directoryLeases
+    )
+      return false
+    if (constructing) throw new Error('Durability participant construction is already active')
+    if (kind === 'journal' ? journal : catalogue)
+      throw new Error('Durability participant already attached')
+    let enabled = false
+    const guarded = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get: (owner, key) => {
+          const member = Reflect.get(owner, key)
+          if (typeof member !== 'function') return member
+          return (...args: unknown[]) => {
+            if (!enabled) throw new Error('Journal construction must be resource-free')
+            return Reflect.apply(member, owner, args)
           }
-        })
-      const participant = create({
+        }
+      })
+    constructing = true
+    let participant: DurabilityParticipant
+    try {
+      participant = create({
         flusher: guarded(flusher),
         directoryLeases: guarded(directoryLeases)
       })
@@ -154,15 +170,25 @@ export function createMainDurabilityRuntime(
         typeof participant.retire !== 'function'
       )
         throw new Error('Invalid journal durability participant')
-      journal = participant
-      enabled = true
-      return true
-    },
+      if (fenced) throw new Error('Main durability runtime is shutting down')
+    } finally {
+      constructing = false
+    }
+    if (kind === 'journal') journal = participant
+    else catalogue = participant
+    enabled = true
+    return true
+  }
+  return {
+    writer,
+    attachJournal: (create) => attach('journal', create),
+    attachCatalogue: (create) => attach('catalogue', create),
     snapshot: () => ({
       requested,
       mode: consumer(requested).mode,
       runEvents: consumer(requested),
       journal: { ...consumer(journalRequested), attached: journal !== undefined },
+      catalogue: { ...consumer(catalogueRequested), attached: catalogue !== undefined },
       fenced,
       closed,
       failure,
@@ -174,10 +200,13 @@ export function createMainDurabilityRuntime(
       shutdown ??= (async () => {
         try {
           journal?.fence()
+          catalogue?.fence()
           writer.drainDurabilitySync()
           journal?.drainSync()
+          catalogue?.drainSync()
           await writer.retire()
           await journal?.retire()
+          await catalogue?.retire()
           await directoryLeases?.retire()
           // Retirement closes every ledger and directory fd before worker exit.
           await adapter?.dispose()

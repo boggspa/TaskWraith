@@ -7,6 +7,31 @@ import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { RunEventInput } from './types'
 
 describe('Main durability runtime', () => {
+  it('guards catalogue construction resources and permits retry after refusal', async () => {
+    const ports = adapter()
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: '1' },
+      createAdapter: () => ports
+    })
+    expect(() =>
+      runtime.attachCatalogue(({ directoryLeases }) => {
+        directoryLeases.acquire(options().runEventsDir)
+        throw new Error('unreachable allocation')
+      })
+    ).toThrow('resource-free')
+    expect(runtime.snapshot().catalogue.attached).toBe(false)
+    expect(
+      runtime.attachCatalogue(() => ({
+        fence: () => {},
+        drainSync: () => {},
+        retire: async () => {}
+      }))
+    ).toBe(true)
+    await runtime.shutdown()
+    expect(ports.events).toEqual(['dispose'])
+  })
   let root: string
   let entry: string
   beforeEach(() => {
