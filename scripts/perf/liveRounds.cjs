@@ -24,8 +24,8 @@
  *   user's send passes, and a verdict with its reasons.
  *
  * A round counts only when main answers `started` with a new round id, and it
- * is settled once main reports that round terminal (`getChat` of the one
- * light chat, read down to its active round's id and status) and no scripted
+ * is settled once compact renderer deliveries report that round terminal
+ * through the lane observer and no scripted
  * stream is open. Every page call is bounded. The smoke is sent only after
  * the warm-up settles, so it can never land in a live round and take the
  * queue or steer path.
@@ -34,6 +34,19 @@
 const { spawn: defaultSpawn } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const {
+  laneObserverConfig,
+  installLaneObserverExpression,
+  readLaneObserverExpression,
+  uninstallLaneObserverExpression
+} = require('./liveLaneObserver.cjs')
+
+function smokeObserverConfig(chatId) {
+  return {
+    ...laneObserverConfig({ lightChatId: chatId, heavyChatId: 'perf-smoke-unused' }),
+    globalName: '__TASKWRAITH_PERF_SMOKE__'
+  }
+}
 
 const DAEMON_SCRIPT = path.join(__dirname, 'scriptedOllamaDaemon.cjs')
 const DEFAULT_READY_TIMEOUT_MS = 10_000
@@ -404,10 +417,12 @@ function d1Delta(before, after) {
  * id and status: no content crosses to the runner.
  */
 function roundStateExpression(chatId) {
+  const expression = readLaneObserverExpression(smokeObserverConfig(chatId))
   return (
-    `Promise.resolve(window.api.getChat(${JSON.stringify(chatId)})).then(function(chat){ ` +
-    'var round = chat && chat.ensemble && chat.ensemble.activeRound; ' +
-    'return round ? { roundId: round.roundId, status: round.status } : null; })'
+    `Promise.resolve(${expression}).then(function(raw){ ` +
+    'if (!raw) return null; var state = JSON.parse(raw); var lane = state.lanes.light; ' +
+    'if (state.faults || lane.firstRetainedSeq !== 1) throw new Error("Smoke observer censored"); ' +
+    'return { roundId: lane.roundId, status: lane.status }; })'
   )
 }
 
@@ -443,64 +458,78 @@ async function runLiveSmokeRound(options) {
   const callTimeoutMs = options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
   const previousRoundId = options.previousRoundId ?? null
 
-  const baseline = await readDaemonState()
-  const d1Before = await readD1Counters(page, { timeoutMs: callTimeoutMs })
-  const sentAtMs = nowMs()
-  const started = await withTimeout(
-    page.evaluate(
-      `Promise.resolve(window.api.runEnsembleRound(${JSON.stringify({ chatId, prompt })}))`
-    ),
-    callTimeoutMs,
-    'runEnsembleRound'
-  )
-  const acceptedAtMs = nowMs()
-  const status =
-    isPlainObject(started) && typeof started.status === 'string' ? started.status : null
-  const roundId =
-    isPlainObject(started) && typeof started.roundId === 'string' ? started.roundId : null
-  const accepted = { status, roundId, sentAtMs, acceptedAtMs }
-  if (status !== 'started' || roundId === null || roundId === previousRoundId) {
-    const state = await readDaemonState()
-    return {
-      outcome: 'not_started',
-      ...accepted,
-      roundStatus: null,
-      settledAtMs: null,
-      turnsFinished: state.turnsDone - baseline.turnsDone,
-      d1: { before: d1Before, after: null, delta: null }
-    }
-  }
-
-  const deadline = sentAtMs + timeoutMs
-  let outcome = 'timeout'
-  let roundStatus = null
-  let settledAtMs = null
-  let state = baseline
-  while (nowMs() <= deadline) {
-    const round = await withTimeout(
-      page.evaluate(roundStateExpression(chatId)),
+  const observerConfig = smokeObserverConfig(chatId)
+  const installToken = JSON.stringify(require('node:crypto').randomUUID())
+  const installExpression = `(function(){ var cancelled = window.__TASKWRAITH_SMOKE_CANCELLED__ || {}; if (cancelled[${installToken}]) return 'install_cancelled'; return ${installLaneObserverExpression(observerConfig)}; })()`
+  const cleanupExpression = `(function(){ var cancelled = window.__TASKWRAITH_SMOKE_CANCELLED__ || (window.__TASKWRAITH_SMOKE_CANCELLED__ = {}); cancelled[${installToken}] = true; return ${uninstallLaneObserverExpression(observerConfig)}; })()`
+  try {
+    const installed = await withTimeout(
+      page.evaluate(installExpression),
       callTimeoutMs,
-      'getChat'
+      'install smoke observer'
     )
-    if (isPlainObject(round) && round.roundId === roundId && typeof round.status === 'string') {
-      roundStatus = round.status
+    if (installed !== 'installed') throw new Error('Smoke observer installation refused')
+    const baseline = await readDaemonState()
+    const d1Before = await readD1Counters(page, { timeoutMs: callTimeoutMs })
+    const sentAtMs = nowMs()
+    const started = await withTimeout(
+      page.evaluate(
+        `Promise.resolve(window.api.runEnsembleRound(${JSON.stringify({ chatId, prompt })}))`
+      ),
+      callTimeoutMs,
+      'runEnsembleRound'
+    )
+    const acceptedAtMs = nowMs()
+    const status =
+      isPlainObject(started) && typeof started.status === 'string' ? started.status : null
+    const roundId =
+      isPlainObject(started) && typeof started.roundId === 'string' ? started.roundId : null
+    const accepted = { status, roundId, sentAtMs, acceptedAtMs }
+    if (status !== 'started' || roundId === null || roundId === previousRoundId) {
+      const state = await readDaemonState()
+      return {
+        outcome: 'not_started',
+        ...accepted,
+        roundStatus: null,
+        settledAtMs: null,
+        turnsFinished: state.turnsDone - baseline.turnsDone,
+        d1: { before: d1Before, after: null, delta: null }
+      }
     }
-    state = await readDaemonState()
-    if (TERMINAL_ROUND_STATUSES.has(roundStatus) && state.inFlight === 0) {
-      outcome = 'settled'
-      settledAtMs = nowMs()
-      break
+
+    const deadline = sentAtMs + timeoutMs
+    let outcome = 'timeout'
+    let roundStatus = null
+    let settledAtMs = null
+    let state = baseline
+    while (nowMs() <= deadline) {
+      const round = await withTimeout(
+        page.evaluate(roundStateExpression(chatId)),
+        callTimeoutMs,
+        'smoke observer read'
+      )
+      if (isPlainObject(round) && round.roundId === roundId && typeof round.status === 'string') {
+        roundStatus = round.status
+      }
+      state = await readDaemonState()
+      if (TERMINAL_ROUND_STATUSES.has(roundStatus) && state.inFlight === 0) {
+        outcome = 'settled'
+        settledAtMs = nowMs()
+        break
+      }
+      await sleep(pollMs)
     }
-    await sleep(pollMs)
-  }
-  const d1After = await readD1Counters(page, { timeoutMs: callTimeoutMs })
-  return {
-    outcome,
-    ...accepted,
-    roundStatus,
-    settledAtMs,
-    turnsFinished: state.turnsDone - baseline.turnsDone,
-    d1: { before: d1Before, after: d1After, delta: d1Delta(d1Before, d1After) }
+    const d1After = await readD1Counters(page, { timeoutMs: callTimeoutMs })
+    return {
+      outcome,
+      ...accepted,
+      roundStatus,
+      settledAtMs,
+      turnsFinished: state.turnsDone - baseline.turnsDone,
+      d1: { before: d1Before, after: d1After, delta: d1Delta(d1Before, d1After) }
+    }
+  } finally {
+    await withTimeout(page.evaluate(cleanupExpression), callTimeoutMs, 'remove smoke observer')
   }
 }
 

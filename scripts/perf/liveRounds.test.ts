@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -328,6 +329,120 @@ describe('D1 counters through the page API', () => {
 })
 
 describe('one live smoke round', () => {
+  it('cancels an ambiguous timed-out install before delayed page execution', async () => {
+    const window: any = {
+      api: { onChatUpdated: () => () => {}, onChatUpdateInvalidated: () => () => {} }
+    }
+    let late = ''
+    await expect(
+      live.runLiveSmokeRound({
+        page: {
+          evaluate: async (expression: string) => {
+            if (expression.includes('function installLaneObserverInPage')) {
+              late = expression
+              return new Promise(() => {})
+            }
+            return runInNewContext(expression, { window })
+          }
+        },
+        chatId: 'smoke',
+        prompt: 'p',
+        readDaemonState: async () => ({ inFlight: 0, turnsDone: 0 }),
+        callTimeoutMs: 5
+      })
+    ).rejects.toThrow('install smoke observer')
+    expect(runInNewContext(late, { window })).toBe('install_cancelled')
+    expect(window.__TASKWRAITH_PERF_SMOKE__).toBeUndefined()
+  })
+  it.each(['api_unavailable', 'install_failed', 'installed_for_other_chats', 'already_installed'])(
+    'refuses %s before send and awaits cleanup',
+    async (installed) => {
+      const evaluated: string[] = []
+      let cleaned = false
+      await expect(
+        live.runLiveSmokeRound({
+          page: {
+            evaluate: async (expression: string) => {
+              evaluated.push(expression)
+              if (expression.includes('function installLaneObserverInPage')) return installed
+              if (expression.includes('function uninstallLaneObserverInPage')) {
+                await Promise.resolve()
+                cleaned = true
+                return 'uninstalled'
+              }
+              throw new Error('Send must not run')
+            }
+          },
+          chatId: 'smoke',
+          prompt: 'p',
+          readDaemonState: async () => ({ inFlight: 0, turnsDone: 0 })
+        })
+      ).rejects.toThrow('installation refused')
+      expect(cleaned).toBe(true)
+      expect(
+        evaluated.some((expression) => expression.includes('window.api.runEnsembleRound'))
+      ).toBe(false)
+    }
+  )
+  it.each(['completed', 'missing', 'censored', 'wrong-id'])(
+    'observes compact deliveries without getChat: %s',
+    async (mode) => {
+      let updated: any
+      let removed = 0
+      let now = 0
+      const window: any = {
+        api: {
+          getChat: () => {
+            throw new Error('source_changed')
+          },
+          onChatUpdated: (listener: any) => {
+            updated = listener
+            return () => {
+              removed++
+            }
+          },
+          onChatUpdateInvalidated: () => () => {
+            removed++
+          },
+          getMainPerfSnapshot: () => ({ sections: {} }),
+          runEnsembleRound: () => {
+            if (mode !== 'missing') {
+              updated({
+                chatId: 'chat-smoke',
+                kind: 'snapshot',
+                chat: {
+                  ensemble: {
+                    activeRound: {
+                      roundId: mode === 'wrong-id' ? 'foreign' : 'accepted',
+                      status: 'completed'
+                    }
+                  }
+                }
+              })
+              if (mode === 'censored') window.__TASKWRAITH_PERF_SMOKE__.faults = 1
+            }
+            return { status: 'started', roundId: 'accepted' }
+          }
+        }
+      }
+      const promise = live.runLiveSmokeRound({
+        page: { evaluate: async (expression: string) => runInNewContext(expression, { window }) },
+        chatId: 'chat-smoke',
+        prompt: 'p',
+        readDaemonState: async () => ({ inFlight: 0, turnsDone: 1 }),
+        nowMs: () => now,
+        sleep: async (ms: number) => {
+          now += ms
+        },
+        timeoutMs: 10,
+        pollMs: 5
+      })
+      if (mode === 'censored') await expect(promise).rejects.toThrow('censored')
+      else expect((await promise).outcome).toBe(mode === 'completed' ? 'settled' : 'timeout')
+      expect(removed).toBe(2)
+      expect(window.__TASKWRAITH_PERF_SMOKE__).toBeUndefined()
+    }
+  )
   function clock() {
     let now = 1_000
     return {
@@ -347,6 +462,7 @@ describe('one live smoke round', () => {
     const page: FakePage = {
       async evaluate(expression) {
         evaluated.push(expression)
+        if (expression.includes('function installLaneObserverInPage')) return 'installed'
         if (expression === live.D1_COUNTERS_EXPRESSION) {
           d1Reads += 1
           const appends = d1Reads === 1 ? d1[0] : d1[1]
@@ -388,11 +504,11 @@ describe('one live smoke round', () => {
       readDaemonState: async () => states.shift() ?? { inFlight: 0, turnsDone: 10 },
       ...clock()
     })
-    expect(evaluated[1]).toBe(
+    expect(evaluated[2]).toBe(
       `Promise.resolve(window.api.runEnsembleRound({"chatId":"${CHAT}","prompt":"measure one live round"}))`
     )
     expect(evaluated).toContain(live.roundStateExpression(CHAT))
-    expect(live.roundStateExpression(CHAT)).toContain(`window.api.getChat("${CHAT}")`)
+    expect(live.roundStateExpression(CHAT)).not.toContain('window.api.getChat')
     expect(result).toMatchObject({
       outcome: 'settled',
       status: 'started',
@@ -448,6 +564,7 @@ describe('one live smoke round', () => {
     let roundReads = 0
     const page: FakePage = {
       async evaluate(expression) {
+        if (expression.includes('function installLaneObserverInPage')) return 'installed'
         if (expression === live.D1_COUNTERS_EXPRESSION)
           return { deferredAppends: 1, normalSaves: 1 }
         if (expression === live.roundStateExpression(CHAT)) {
@@ -504,10 +621,11 @@ describe('one live smoke round', () => {
       })
     ).rejects.toMatchObject({
       code: 'T2_LIVE_PAGE_CALL_TIMEOUT',
-      message: expect.stringMatching(/runEnsembleRound did not settle within 20 ms/)
+      message: expect.stringMatching(/remove smoke observer did not settle within 20 ms/)
     })
     const stalledRead: FakePage = {
       async evaluate(expression) {
+        if (expression.includes('function installLaneObserverInPage')) return 'installed'
         if (expression === live.D1_COUNTERS_EXPRESSION)
           return { deferredAppends: 0, normalSaves: 0 }
         if (expression === live.roundStateExpression(CHAT)) return new Promise(() => undefined)
@@ -522,7 +640,9 @@ describe('one live smoke round', () => {
         readDaemonState: idleDaemon([0]),
         callTimeoutMs: 20
       })
-    ).rejects.toMatchObject({ message: expect.stringMatching(/getChat did not settle/) })
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/smoke observer read did not settle/)
+    })
     const stalledD1: FakePage = { evaluate: () => new Promise(() => undefined) }
     await expect(
       live.runLiveSmokeRound({
