@@ -24,6 +24,7 @@ describe('Main durability runtime', () => {
     timestamp: '2026-10-02T00:00:00.000Z'
   }
   function options() {
+    fs.mkdirSync(path.join(root, 'events'), { recursive: true })
     return {
       runEventsDir: path.join(root, 'events'),
       runArtifactsDir: path.join(root, 'artifacts')
@@ -206,6 +207,169 @@ describe('Main durability runtime', () => {
     })
     expect(runtime.writer.append(input, { durability: 'strict' }).sequence).toBe(1)
     expect(runtime.snapshot().mode).toBe('degraded')
+    expect(warn).toHaveBeenCalledOnce()
+    await runtime.shutdown()
+  })
+  it.each([
+    ['0', '0', 0],
+    ['1', '0', 1],
+    ['0', '1', 1],
+    ['1', '1', 1]
+  ])('uses one pool for independent run=%s journal=%s flags', async (run, journalFlag, workers) => {
+    const ports = adapter()
+    const createAdapter = vi.fn(() => ports)
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_RUN_EVENT_FLUSHER: run, TASKWRAITH_JOURNAL_FLUSHER: journalFlag },
+      createAdapter
+    })
+    const create = vi.fn(() => ({
+      fence: vi.fn(),
+      drainSync: vi.fn(),
+      retire: vi.fn(async () => {})
+    }))
+    expect(runtime.attachJournal(create)).toBe(journalFlag === '1')
+    expect(createAdapter).toHaveBeenCalledTimes(Number(workers))
+    expect(runtime.snapshot()).toMatchObject({
+      runEvents: { requested: run === '1', mode: run === '1' ? 'worker' : 'legacy' },
+      journal: {
+        requested: journalFlag === '1',
+        mode: journalFlag === '1' ? 'worker' : 'legacy',
+        attached: journalFlag === '1'
+      }
+    })
+    runtime.writer.append(input)
+    if (run === '0') expect(runtime.snapshot().flusher?.dirtyFiles ?? 0).toBe(0)
+    await runtime.shutdown()
+    expect(() => runtime.attachJournal(create)).toThrow('shutting down')
+  })
+  it('keeps the shared adapter alive across journal retirement failure and retries fenced', async () => {
+    const ports = adapter()
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_RUN_EVENT_FLUSHER: '1', TASKWRAITH_JOURNAL_FLUSHER: '1' },
+      createAdapter: () => ports
+    })
+    const events: string[] = []
+    const retire = vi
+      .fn(async () => {
+        events.push('retire')
+      })
+      .mockRejectedValueOnce(new Error('journal close failed'))
+    runtime.attachJournal(() => ({
+      fence: () => {
+        events.push('fence')
+      },
+      drainSync: () => {
+        events.push('drain')
+      },
+      retire
+    }))
+    runtime.writer.append(input)
+    await expect(runtime.shutdown()).rejects.toThrow('journal close failed')
+    expect(events).toEqual(['fence', 'drain'])
+    expect(ports.events).not.toContain('dispose')
+    expect(runtime.snapshot()).toMatchObject({ fenced: true, closed: false })
+    await runtime.shutdown()
+    expect(events).toEqual(['fence', 'drain', 'fence', 'drain', 'retire'])
+    expect(ports.events.at(-1)).toBe('dispose')
+  })
+  it('shares a directory inode across ledger and journal and retires it before disposal', async () => {
+    if (process.platform === 'win32') return
+    const ports = adapter()
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_RUN_EVENT_FLUSHER: '1', TASKWRAITH_JOURNAL_FLUSHER: '1' },
+      createAdapter: () => ports
+    })
+    runtime.writer.append(input)
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const events: string[] = []
+    let acquire!: () => ReturnType<
+      import('./MainDurabilityDirectoryLeases').MainDurabilityDirectoryLeases['acquire']
+    >
+    let lease!: ReturnType<typeof acquire>
+    runtime.attachJournal(({ directoryLeases }) => {
+      acquire = () => directoryLeases.acquire(options().runEventsDir)
+      return {
+        fence: () => {
+          events.push('fence')
+        },
+        drainSync: () => {
+          events.push('drain')
+        },
+        retire: async () => {
+          await held
+          await lease.release()
+          events.push('retired')
+        }
+      }
+    })
+    lease = acquire()
+    lease.noteMutation()
+    const shutdown = runtime.shutdown()
+    await Promise.resolve()
+    expect(ports.events).not.toContain('dispose')
+    expect(events).toEqual(['fence', 'drain'])
+    release()
+    await shutdown
+    expect(events.at(-1)).toBe('retired')
+    expect(ports.events.filter((event) => event === 'close')).toHaveLength(2)
+    expect(ports.events.at(-1)).toBe('dispose')
+  })
+  it.each(['acquire', 'open'] as const)(
+    'refuses construction-time %s without leaking resources and permits retry',
+    async (operation) => {
+      const ports = adapter()
+      const runtime = createMainDurabilityRuntime({
+        ...options(),
+        workerEntryPath: entry,
+        env: { TASKWRAITH_JOURNAL_FLUSHER: '1' },
+        createAdapter: () => ports
+      })
+      expect(() =>
+        runtime.attachJournal(({ flusher, directoryLeases }) => {
+          if (operation === 'acquire') directoryLeases.acquire(options().runEventsDir)
+          else flusher.open(1, 2, 123)
+          throw new Error('constructor failed after allocation')
+        })
+      ).toThrow('resource-free')
+      expect(runtime.snapshot().journal.attached).toBe(false)
+      expect(runtime.snapshot().flusher).toMatchObject({ dirtyFiles: 0, inFlight: 0 })
+      expect(
+        runtime.attachJournal(() => ({
+          fence: () => {},
+          drainSync: () => {},
+          retire: async () => {}
+        }))
+      ).toBe(true)
+      await runtime.shutdown()
+      expect(ports.events).toEqual(['dispose'])
+      expect(runtime.snapshot().closed).toBe(true)
+    }
+  )
+  it('refuses journal attachment in degraded journal-only mode without claiming run-event enablement', async () => {
+    const warn = vi.fn()
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: '/missing/main-worker.cjs',
+      env: { TASKWRAITH_JOURNAL_FLUSHER: '1', TASKWRAITH_RUN_EVENT_FLUSHER: '0' },
+      warn
+    })
+    const create = vi.fn()
+    expect(runtime.attachJournal(create)).toBe(false)
+    expect(create).not.toHaveBeenCalled()
+    expect(runtime.snapshot()).toMatchObject({
+      mode: 'legacy',
+      runEvents: { requested: false, mode: 'legacy' },
+      journal: { requested: true, mode: 'degraded', attached: false }
+    })
     expect(warn).toHaveBeenCalledOnce()
     await runtime.shutdown()
   })
