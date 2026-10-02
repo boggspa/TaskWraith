@@ -81,6 +81,7 @@ const {
   aggregateHostWindowSamples
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
+const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 const {
   parseCellName,
   checkFixtureSatisfiesHistory,
@@ -2081,6 +2082,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     safety: spawnPlan.safety
   }
   report.isolation = isolationVerification
+  report.serverInstance = null
   report.diskHeadroom = null
   report.captureDeadline = null
   report.replayWindowedRate = null
@@ -2531,6 +2533,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         note: 'main inspector proved lexical + canonical isolated HOME + TaskWraith Dev <id> userData before replay'
       }
       report.isolation = isolationVerification
+      report.serverInstance = await collectServerInstanceEvidence({
+        userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
+        probe: options.hostWelcomeProbe,
+        fs: options.hostDiscoveryFs,
+        connect: options.hostSocketConnect,
+        timeoutMs: options.hostWelcomeTimeoutMs,
+        maxWaitMs: options.hostDiscoveryMaxWaitMs
+      })
       if (
         claimsAuthoritativeBaseline({
           skipBuild,
