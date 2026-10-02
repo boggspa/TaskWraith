@@ -7,6 +7,8 @@
  * the product's private package-smoke posture, and asks the packaged main
  * process to run the fixed `homebrew-demo` factory/bridge/WASM probe. It does
  * not drive renderer controls or depend on browser selectors.
+ * Receipts survive under .local-only/emulator-smoke; optionally select a fresh
+ * absolute TASKWRAITH_EMULATOR_SMOKE_EVIDENCE_ROOT. No child output is retained.
  */
 
 const { spawn } = require('node:child_process')
@@ -26,6 +28,7 @@ const PACKAGE_EMULATOR_SMOKE_ARG = '--taskwraith-package-emulator-smoke'
 const PACKAGE_EMULATOR_SMOKE_RESULT_ARG = '--taskwraith-package-emulator-smoke-result='
 const PACKAGE_EMULATOR_SMOKE_RESULT_FILE = 'emulator-package-smoke.json'
 const DEFAULT_TIMEOUT_MS = 30_000
+const MAX_RECEIPT_BYTES = 16_384
 const EXIT_STALE_BUNDLE = 20
 const EXIT_UNSAFE_TO_LAUNCH = 21
 const MAX_FAILURE_OUTPUT_CHARS = 4000
@@ -79,30 +82,72 @@ async function main() {
     )
   }
 
-  fs.mkdirSync(smokeUserDataPath, { recursive: true })
+  const evidenceParent = path.join(REPO_ROOT, '.local-only', 'emulator-smoke')
+  const requestedEvidenceRoot = process.env.TASKWRAITH_EMULATOR_SMOKE_EVIDENCE_ROOT
+  if (requestedEvidenceRoot && !path.isAbsolute(requestedEvidenceRoot)) {
+    throw new Error('emulator smoke evidence root must be absolute')
+  }
+  fs.mkdirSync(evidenceParent, { recursive: true })
+  const evidenceRoot =
+    requestedEvidenceRoot || path.join(evidenceParent, path.basename(smokeUserDataPath))
+  // Refuse to consume or overwrite evidence from a previous run.
+  fs.mkdirSync(evidenceRoot, { mode: 0o700 })
+  console.log(`packaged emulator smoke evidence: ${evidenceRoot}`)
   let registryRoot = null
   let child = null
+  let primaryError = null
+  let receipt = null
   try {
+    fs.mkdirSync(smokeUserDataPath, { mode: 0o700 })
     // The app's Host publishes here, never into the caller's ~/.taskwraith/hosts.
     registryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-emulator-smoke-registry-'))
+    fs.mkdirSync(path.join(registryRoot, 'home'), { mode: 0o700 })
     child = launchPackagedApp(packageRoot, launchArgs, registryRoot)
+    fs.writeFileSync(
+      path.join(evidenceRoot, 'launch.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        packageRoot,
+        userDataPath: smokeUserDataPath,
+        home: path.join(registryRoot, 'home'),
+        hostRegistryRoot: registryRoot,
+        mockKeychain: process.platform === 'darwin',
+        childPid: child.pid,
+        launchedAt: new Date().toISOString()
+      }) + '\n',
+      { flag: 'wx', mode: 0o600 }
+    )
     const { result: rawResult, output } = await waitForResult(
       resultPath,
       child,
       readIntegerEnv('TASKWRAITH_EMULATOR_PACKAGE_SMOKE_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)
     )
-    const receipt = validatePackagedEmulatorSmokeResult(rawResult, output)
-    console.log(
-      'packaged emulator runtime smoke ok: ' +
-        `frame ${receipt.before.frameId}->${receipt.after.frameId}, ` +
-        `x ${receipt.before.x}->${receipt.after.x}, ` +
-        `counter ${receipt.before.frameCounter}->${receipt.after.frameCounter}`
+    persistSmokeEvidence(path.join(evidenceRoot, 'result'), rawResult)
+    receipt = validatePackagedEmulatorSmokeResult(rawResult, output)
+  } catch (error) {
+    primaryError = error
+    // Retain a bounded classification, never child output, pixels or memory.
+    fs.writeFileSync(
+      path.join(evidenceRoot, 'failure.json'),
+      JSON.stringify({ schemaVersion: 1, ok: false, exitCode: smokeExitCode(error) }) + '\n',
+      { flag: 'wx', mode: 0o600 }
     )
+    throw error
   } finally {
-    await stopSmokeChild(child)
-    fs.rmSync(smokeUserDataPath, { recursive: true, force: true })
-    if (registryRoot) fs.rmSync(registryRoot, { recursive: true, force: true })
+    await finalizeSmokeCleanup({
+      child,
+      smokeUserDataPath,
+      registryRoot,
+      evidenceRoot,
+      primaryError
+    })
   }
+  console.log(
+    'packaged emulator runtime smoke ok: ' +
+      `frame ${receipt.before.frameId}->${receipt.after.frameId}, ` +
+      `x ${receipt.before.x}->${receipt.after.x}, ` +
+      `counter ${receipt.before.frameCounter}->${receipt.after.frameCounter}`
+  )
 }
 
 function validateEmulatorPackageLayout(resourcesDir) {
@@ -211,10 +256,21 @@ function packagedAppEnvironment(registryRoot, env = process.env) {
   if (typeof registryRoot !== 'string' || !path.isAbsolute(registryRoot)) {
     throw new Error('smoke Host registry root must be absolute')
   }
-  return { ...env, TASKWRAITH_AUTO_UPDATE: 'off', [HOST_REGISTRY_ROOT_ENV]: registryRoot }
+  const home = path.join(registryRoot, 'home')
+  return {
+    ...env,
+    HOME: home,
+    CFFIXED_USER_HOME: home,
+    TASKWRAITH_AUTO_UPDATE: 'off',
+    [HOST_REGISTRY_ROOT_ENV]: registryRoot
+  }
 }
 
 function launchPackagedApp(packageRoot, launchArgs, registryRoot, spawnProcess = spawn) {
+  const isolatedArgs =
+    process.platform === 'darwin' && !launchArgs.includes('--use-mock-keychain')
+      ? [...launchArgs, '--use-mock-keychain']
+      : launchArgs
   const options = {
     cwd: packageRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -224,14 +280,14 @@ function launchPackagedApp(packageRoot, launchArgs, registryRoot, spawnProcess =
   if (process.platform === 'darwin' && packageRoot.endsWith('.app')) {
     // Directly own the spawned app process so a failed private smoke can be
     // terminated without routing a GUI quit through the user's real instance.
-    return spawnProcess(resolveMacExecutablePath(packageRoot), launchArgs, options)
+    return spawnProcess(resolveMacExecutablePath(packageRoot), isolatedArgs, options)
   }
   if (process.platform === 'win32') {
-    return spawnProcess(resolveWindowsExecutablePath(packageRoot), launchArgs, options)
+    return spawnProcess(resolveWindowsExecutablePath(packageRoot), isolatedArgs, options)
   }
   return spawnProcess(
     resolveLinuxExecutablePath(packageRoot),
-    ['--no-sandbox', ...launchArgs],
+    ['--no-sandbox', ...isolatedArgs],
     options
   )
 }
@@ -253,6 +309,10 @@ async function waitForResult(resultPath, child, timeoutMs) {
     if (launchError)
       throw new Error(`Failed to launch packaged emulator smoke: ${launchError.message}`)
     if (fs.existsSync(resultPath)) {
+      const stat = fs.lstatSync(resultPath)
+      if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES) {
+        throw new Error('Packaged emulator smoke receipt is not a bounded regular file.')
+      }
       try {
         return { result: JSON.parse(fs.readFileSync(resultPath, 'utf8')), output }
       } catch {
@@ -278,12 +338,62 @@ function appendBoundedOutput(output, chunk) {
   return next.length <= 16_384 ? next : next.slice(-16_384)
 }
 
-async function stopSmokeChild(child) {
+async function stopSmokeChild(child, wait = waitForChildExit) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
   child.kill('SIGTERM')
-  if (await waitForChildExit(child, 3_000)) return
+  if (await wait(child, 3_000)) return
   child.kill('SIGKILL')
-  await waitForChildExit(child, 2_000)
+  if (!(await wait(child, 2_000))) {
+    throw new Error('Packaged emulator smoke child termination is unconfirmed.')
+  }
+}
+
+async function finalizeSmokeCleanup(input, stop = stopSmokeChild, remove = fs.rmSync) {
+  const cleanupErrors = []
+  try {
+    await stop(input.child)
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError)
+  }
+  // Never remove a root while child termination remains uncertain.
+  if (cleanupErrors.length === 0) {
+    for (const root of [input.smokeUserDataPath, input.registryRoot].filter(Boolean)) {
+      try {
+        remove(root, { recursive: true, force: true })
+      } catch (removalError) {
+        cleanupErrors.push(removalError)
+      }
+    }
+  }
+  if (cleanupErrors.length > 0) {
+    const errors = input.primaryError ? [input.primaryError, ...cleanupErrors] : cleanupErrors
+    const rootsRemaining = {
+      userData: fs.existsSync(input.smokeUserDataPath),
+      registry: Boolean(input.registryRoot && fs.existsSync(input.registryRoot))
+    }
+    try {
+      fs.writeFileSync(
+        path.join(input.evidenceRoot, 'cleanup-failure.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          ok: false,
+          rootsPreserved: rootsRemaining.userData || rootsRemaining.registry,
+          rootsRemaining,
+          primaryFailurePresent: Boolean(input.primaryError),
+          childPid: input.child?.pid ?? null,
+          userDataPath: input.smokeUserDataPath,
+          hostRegistryRoot: input.registryRoot
+        }) + '\n',
+        { flag: 'wx', mode: 0o600 }
+      )
+    } catch (evidenceError) {
+      errors.push(evidenceError)
+    }
+    throw new AggregateError(
+      errors,
+      'Packaged emulator smoke cleanup failed; launch roots preserved.'
+    )
+  }
 }
 
 function waitForChildExit(child, timeoutMs) {
@@ -331,6 +441,73 @@ function validateFrame(value, label) {
     throw new Error('Packaged emulator smoke receipt must not persist PNG bytes or raw ABI data.')
   }
   return value
+}
+
+function assertExactEvidenceKeys(value, keys) {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== keys.length ||
+    Object.keys(value).some((key) => !keys.includes(key))
+  ) {
+    throw new Error('Packaged emulator smoke evidence contains unexpected fields.')
+  }
+}
+
+function persistSmokeEvidence(root, raw) {
+  if (!path.isAbsolute(root)) throw new Error('emulator smoke evidence root must be absolute')
+  if (isRecord(raw) && raw.ok === false) {
+    assertExactEvidenceKeys(raw, ['ok', 'error'])
+    if (!['emulator_smoke_failed', 'emulator_smoke_unavailable'].includes(raw.error)) {
+      throw new Error('Packaged emulator smoke evidence contains an unexpected failure code.')
+    }
+  } else {
+    assertExactEvidenceKeys(raw, ['ok', 'receipt'])
+    assertExactEvidenceKeys(raw.receipt, [
+      'schemaVersion',
+      'sessionId',
+      'entryUrl',
+      'resourceReleased',
+      'before',
+      'after'
+    ])
+    if (
+      raw.ok !== true ||
+      raw.receipt.schemaVersion !== 1 ||
+      raw.receipt.sessionId !== 'package-emulator-smoke' ||
+      raw.receipt.entryUrl !== 'twemu://app/homebrew-demo/index.html' ||
+      typeof raw.receipt.resourceReleased !== 'boolean'
+    ) {
+      throw new Error('Packaged emulator smoke evidence has an unexpected identity.')
+    }
+    for (const observation of [raw.receipt.before, raw.receipt.after]) {
+      assertExactEvidenceKeys(observation, [
+        'frameId',
+        'emulationGeneration',
+        'inputEpoch',
+        'x',
+        'y',
+        'input',
+        'frameCounter',
+        'frame'
+      ])
+      assertExactEvidenceKeys(observation.frame, [
+        'mimeType',
+        'width',
+        'height',
+        'byteLength',
+        'hash'
+      ])
+      validateObservation(observation, 'retained')
+    }
+  }
+  const bytes = JSON.stringify(raw) + '\n'
+  if (Buffer.byteLength(bytes) > MAX_RECEIPT_BYTES) {
+    throw new Error('Packaged emulator smoke evidence exceeds its receipt bound.')
+  }
+  fs.mkdirSync(root, { mode: 0o700 })
+  const target = path.join(root, PACKAGE_EMULATOR_SMOKE_RESULT_FILE)
+  fs.writeFileSync(target, bytes, { flag: 'wx', mode: 0o600 })
+  return target
 }
 
 function validateObservation(value, label) {
@@ -429,6 +606,9 @@ module.exports = {
   HOST_REGISTRY_ROOT_ENV,
   launchPackagedApp,
   packagedAppEnvironment,
+  persistSmokeEvidence,
+  stopSmokeChild,
+  finalizeSmokeCleanup,
   smokeExitCode,
   validateEmulatorPackageLayout,
   validatePackagedEmulatorSmokeResult,

@@ -1,4 +1,12 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +24,9 @@ const {
   HOST_REGISTRY_ROOT_ENV,
   launchPackagedApp,
   packagedAppEnvironment,
+  persistSmokeEvidence,
+  stopSmokeChild,
+  finalizeSmokeCleanup,
   smokeExitCode,
   validatePackagedEmulatorSmokeResult
 }: {
@@ -36,6 +47,13 @@ const {
     ) => unknown
   ) => unknown
   packagedAppEnvironment: (registryRoot: unknown, env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv
+  persistSmokeEvidence: (root: string, raw: unknown) => string
+  stopSmokeChild: (child: unknown, wait?: () => Promise<boolean>) => Promise<void>
+  finalizeSmokeCleanup: (
+    input: Record<string, unknown>,
+    stop?: () => Promise<void>,
+    remove?: typeof rmSync
+  ) => Promise<void>
   smokeExitCode: (error: unknown) => number
   validatePackagedEmulatorSmokeResult: (value: unknown, output?: string) => unknown
 } = require('./smoke-packaged-emulator.cjs')
@@ -85,6 +103,152 @@ function result() {
 }
 
 describe('packaged emulator runtime smoke launcher', () => {
+  it.each([0, 1])(
+    'retains removal failures and remaining roots after %i removals',
+    async (successful) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'emulator-rm-failure-')))
+      const home = join(root, 'home')
+      const registry = join(root, 'registry')
+      const primary = new Error('primary smoke failure')
+      const removal = new Error('root removal failed')
+      mkdirSync(home)
+      mkdirSync(registry)
+      let calls = 0
+      try {
+        await expect(
+          finalizeSmokeCleanup(
+            {
+              child: null,
+              smokeUserDataPath: home,
+              registryRoot: registry,
+              evidenceRoot: root,
+              primaryError: primary
+            },
+            async () => {},
+            (target, options) => {
+              if (calls++ >= successful) throw removal
+              rmSync(target, options)
+            }
+          )
+        ).rejects.toMatchObject({
+          errors: successful === 0 ? [primary, removal, removal] : [primary, removal]
+        })
+        expect(existsSync(home)).toBe(successful === 0)
+        expect(existsSync(registry)).toBe(true)
+        expect(JSON.parse(readFileSync(join(root, 'cleanup-failure.json'), 'utf8'))).toMatchObject({
+          primaryFailurePresent: true,
+          rootsRemaining: { userData: successful === 0, registry: true }
+        })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('rejects a stubborn child after both termination waits fail', async () => {
+    const signals: string[] = []
+    const child = {
+      exitCode: null,
+      signalCode: null,
+      kill: (signal: string) => signals.push(signal)
+    }
+    await expect(stopSmokeChild(child, async () => false)).rejects.toThrow(
+      /termination.*unconfirmed/i
+    )
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+  })
+
+  it('preserves roots and both failures when final cleanup cannot confirm termination', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'emulator-cleanup-')))
+    const home = join(root, 'home')
+    const registry = join(root, 'registry')
+    const primary = new Error('original smoke failure')
+    mkdirSync(home)
+    mkdirSync(registry)
+    try {
+      await expect(
+        finalizeSmokeCleanup(
+          {
+            child: {},
+            smokeUserDataPath: home,
+            registryRoot: registry,
+            evidenceRoot: root,
+            primaryError: primary
+          },
+          async () => {
+            throw new Error('termination unconfirmed')
+          }
+        )
+      ).rejects.toMatchObject({
+        errors: [primary, expect.any(Error)]
+      })
+      expect(existsSync(home)).toBe(true)
+      expect(existsSync(registry)).toBe(true)
+      expect(JSON.parse(readFileSync(join(root, 'cleanup-failure.json'), 'utf8'))).toMatchObject({
+        ok: false,
+        rootsPreserved: true,
+        primaryFailurePresent: true
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces inherited home directories with a disposable home inside the private registry', () => {
+    const registry = join(tmpdir(), 'emulator-private-registry')
+    const env = packagedAppEnvironment(registry, {
+      HOME: '/real/home',
+      CFFIXED_USER_HOME: '/real/corefoundation/home'
+    })
+    expect(env.HOME).toBe(join(registry, 'home'))
+    expect(env.CFFIXED_USER_HOME).toBe(env.HOME)
+  })
+
+  it('retains the bounded raw receipt after disposable launch roots are removed', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'emulator-evidence-')))
+    const raw = result()
+    try {
+      const disposable = join(root, 'launch-profile')
+      mkdirSync(disposable)
+      writeFileSync(join(disposable, 'receipt.json'), JSON.stringify(raw))
+      const target = persistSmokeEvidence(join(root, 'evidence'), raw)
+      rmSync(disposable, { recursive: true })
+      expect(JSON.parse(readFileSync(target, 'utf8'))).toEqual(raw)
+      expect(() => persistSmokeEvidence(join(root, 'evidence'), raw)).toThrow()
+      const unsafe = result()
+      Object.assign(unsafe.receipt.after, { ram: 'private-memory' })
+      expect(() => persistSmokeEvidence(join(root, 'unsafe'), unsafe)).toThrow(/unexpected/i)
+      expect(existsSync(join(root, 'unsafe'))).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retains fixed failure receipts and safe failed observations without accepting arbitrary payloads', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'emulator-failure-evidence-')))
+    try {
+      const failure = { ok: false, error: 'emulator_smoke_failed' }
+      const target = persistSmokeEvidence(join(root, 'failed'), failure)
+      expect(JSON.parse(readFileSync(target, 'utf8'))).toEqual(failure)
+      const wrongStep = result()
+      wrongStep.receipt.after.x = 80
+      const wrongTarget = persistSmokeEvidence(join(root, 'wrong-step'), wrongStep)
+      expect(JSON.parse(readFileSync(wrongTarget, 'utf8'))).toEqual(wrongStep)
+      expect(() => validatePackagedEmulatorSmokeResult(wrongStep)).toThrow(/Right frame/)
+      expect(() =>
+        persistSmokeEvidence(join(root, 'arbitrary'), { ok: false, error: 'raw RAM' })
+      ).toThrow()
+      const pixels = result()
+      Object.assign(pixels.receipt.before.frame, { data: 'pixels' })
+      expect(() => persistSmokeEvidence(join(root, 'pixels'), pixels)).toThrow()
+      const extra = result()
+      Object.assign(extra, { data: 'x'.repeat(20_000) })
+      expect(() => persistSmokeEvidence(join(root, 'oversize'), extra)).toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it("gives the packaged app the smoke's own Host registry root, over any inherited one", () => {
     expect(HOST_REGISTRY_ROOT_ENV).toBe(PRODUCT_HOST_REGISTRY_ROOT_ENV)
     const registryRoot = join(tmpdir(), 'taskwraith-emulator-smoke-registry-x')
@@ -95,6 +259,8 @@ describe('packaged emulator runtime smoke launcher', () => {
     })
     expect(env).toEqual({
       PATH: '/usr/bin',
+      HOME: join(registryRoot, 'home'),
+      CFFIXED_USER_HOME: join(registryRoot, 'home'),
       TASKWRAITH_AUTO_UPDATE: 'off',
       [HOST_REGISTRY_ROOT_ENV]: registryRoot
     })
@@ -123,6 +289,9 @@ describe('packaged emulator runtime smoke launcher', () => {
       expect(calls).toHaveLength(1)
       expect(calls[0].file.startsWith(packageRoot)).toBe(true)
       expect(calls[0].args).toContain('--smoke')
+      if (process.platform === 'darwin') {
+        expect(calls[0].args).toContain('--use-mock-keychain')
+      }
       expect(calls[0].options.cwd).toBe(packageRoot)
       expect(calls[0].options.env[HOST_REGISTRY_ROOT_ENV]).toBe(registryRoot)
       expect(calls[0].options.env.TASKWRAITH_AUTO_UPDATE).toBe('off')
