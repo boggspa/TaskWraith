@@ -1128,7 +1128,9 @@ const mainResiduals = new MainDurabilityResiduals(randomUUID(), () => mainResidu
 const baselineResidualObserver = mainResiduals.enroll([
   'baselineVerifies',
   'preparationRefusals',
-  'strictRunEventFsyncs'
+  'strictRunEventFsyncs',
+  'd2d3Durability',
+  'forcedSynchronousCheckpoints'
 ])
 const mainResidualWindows = createMainResidualWindows(mainResiduals)
 const mainDurabilityRuntime = createMainDurabilityRuntime({
@@ -1175,6 +1177,7 @@ let sharedCheckpointPreparationPort:
   | import('./CheckpointPreparationProtocol').CheckpointPreparationPort
   | undefined
 const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDir, {
+  residualObserver: baselineResidualObserver,
   rotationEnabled: journalPreparationFlags.rotation,
   descriptorCache: incrementalJournalDescriptorCache,
   descriptorDrainSync: incrementalJournalDescriptorDrainSync,

@@ -75,6 +75,11 @@ describe('Store real residual enrollment', () => {
     windows.begin('store_baseline')
     const second = AppStore.saveChat({
       ...first,
+      runs: first.runs.map((run) => ({
+        ...run,
+        status: 'completed',
+        completedAt: '2026-10-02T00:01:00Z'
+      })),
       messages: first.messages.map((message) => ({
         ...message,
         content: 'first plus streamed output'
@@ -82,6 +87,7 @@ describe('Store real residual enrollment', () => {
     })
     const delta = windows.end('store_baseline')
     expect(delta.counters.baselineVerifies).toBe(1)
+    expect(delta.counters.d2d3Durability).toBeGreaterThan(0)
     expect(delta.complete).toBe(false)
     expect(delta.counters.orphanReclaims).toBeNull()
     expect(delta.counters.conflictRecoveryReads).toBeNull()
@@ -93,7 +99,7 @@ describe('Store real residual enrollment', () => {
     expect(persisted).not.toContain('store_baseline')
   })
 
-  it('counts actual legacy strict attempts and lane refusals with only three sources enrolled', () => {
+  it('counts actual legacy strict attempts and lane refusals with only five sources enrolled', () => {
     const windows = AppStore.getMainResidualWindowPort()
     windows.begin('actual_store')
     AppStore.appendRunEvent(
@@ -119,7 +125,15 @@ describe('Store real residual enrollment', () => {
         .filter(([, value]) => value !== null)
         .map(([key]) => key)
         .sort()
-    ).toEqual(['baselineVerifies', 'preparationRefusals', 'strictRunEventFsyncs'].sort())
+    ).toEqual(
+      [
+        'baselineVerifies',
+        'preparationRefusals',
+        'strictRunEventFsyncs',
+        'd2d3Durability',
+        'forcedSynchronousCheckpoints'
+      ].sort()
+    )
     const bytes = fs.readFileSync(path.join(profile, 'run-events', 'residual-run.jsonl'), 'utf8')
     expect(bytes).not.toContain('residualObserver')
     expect(bytes).not.toContain('actual_store')
