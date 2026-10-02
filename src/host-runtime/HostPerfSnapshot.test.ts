@@ -48,6 +48,22 @@ function tickingClock(start = 1_000, stepMs = 10): () => number {
 }
 
 describe('createHostPerfInstrumentation', () => {
+  it('registers late live sections without replacing the Host recorder', () => {
+    const { meter } = fakeMeter()
+    const instrumentation = createHostPerfInstrumentation({ meter })
+    let waiting = 1
+    instrumentation.registerSections({
+      commitGate: () => ({ waiting }),
+      workSpans: () => ({ impostor: true })
+    })
+    expect(instrumentation.snapshot().sections.commitGate).toEqual({ waiting: 1 })
+    waiting = 2
+    const snapshot = instrumentation.snapshot()
+    expect(snapshot.sections.commitGate).toEqual({ waiting: 2 })
+    expect(snapshot.sections.workSpans).toMatchObject({ process: 'host' })
+    expect(snapshot.sections.workSpans).not.toHaveProperty('impostor')
+  })
+
   it('bundles the Host lag snapshot with the workSpans section', () => {
     const { meter } = fakeMeter()
     const spans = createWorkSpanRecorder({ process: 'host', maxRetained: 8, now: tickingClock() })

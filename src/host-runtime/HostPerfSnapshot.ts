@@ -40,6 +40,8 @@ export interface HostPerfInstrumentation {
   start(): void
   stop(): void
   snapshot(options?: { resetLagWindow?: boolean }): HostPerfSnapshot
+  /** Late wiring of live services; the recorder's workSpans section stays reserved. */
+  registerSections(sections: Record<string, () => unknown>): void
   /**
    * The Host-process recorder behind the `workSpans` section. The
    * composition root hands `spans.begin`/`spans.record` to the S2/S3/S5
@@ -192,7 +194,7 @@ export function createHostPerfInstrumentation(
   // The recorder's own section wins over a caller-supplied workSpans entry:
   // this instrumentation exists to make the Host recorder pollable. Both
   // reads run in one synchronous turn, so the tail ends at `recorded`.
-  const sections = {
+  const sections: Record<string, () => unknown> = {
     ...options.sections,
     workSpans: () => ({
       ...spans.section(),
@@ -220,6 +222,18 @@ export function createHostPerfInstrumentation(
     start: () => meter.start(),
     stop: () => meter.stop(),
     snapshot,
+    registerSections: (providers) => {
+      for (const [name, provider] of Object.entries(providers)) {
+        if (name !== 'workSpans') {
+          Object.defineProperty(sections, name, {
+            value: provider,
+            enumerable: true,
+            configurable: true,
+            writable: true
+          })
+        }
+      }
+    },
     spans
   }
 }
