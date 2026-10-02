@@ -49,6 +49,8 @@ describe('journal descriptor integration', () => {
       const second = { ...first, title: 'second', persistenceRevision: 2 }
       journal.append(deriveChatRecordMutation(first, second), { durability: 'deferred' })
       let durable = false
+      if (!journal.awaitDeferredDurability)
+        throw new Error('Injected journal lacks durability barrier')
       const barrier = journal.awaitDeferredDurability('chat').then(() => {
         durable = true
       })
