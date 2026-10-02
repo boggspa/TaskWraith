@@ -50,8 +50,7 @@ export interface HostPerfSnapshotFileIdentity {
   /** Stable id for this Host instance (composition-chosen, e.g. a UUID). */
   readonly instanceId: string
   /**
-   * The standalone composition captures its journal generation at
-   * construction, not a restart counter; later resets do not update it.
+   * Current journal generation at capture; not a restart counter.
    * A PID may distinguish different live processes. Sequence is local to a
    * writer and resets on recreation; neither guarantees unique boot identity.
    * The current collector does not infer restarts or check sequence monotonicity.
@@ -90,6 +89,8 @@ export interface HostPerfSnapshotFileWriterOptions {
   intervalMs: number
   maxBytes: number
   identity: HostPerfSnapshotFileIdentity
+  /** Production reads the runtime synchronously for each capture. Failure refuses the write. */
+  getGeneration?: () => number
   now?: () => Date
   fs?: HostPerfSnapshotFileFs
   timers?: HostPerfSnapshotFileTimers
@@ -304,7 +305,12 @@ export function createHostPerfSnapshotFileWriter(
         throw new Error('Host perf snapshot clock is invalid.')
       }
       const payload: HostPerfSnapshotFilePayload = {
-        identity: frozenIdentity,
+        identity: {
+          ...frozenIdentity,
+          generation: options.getGeneration
+            ? requireNonNegativeInteger(options.getGeneration(), 'Host perf snapshot generation')
+            : frozenIdentity.generation
+        },
         sequence: sequence + 1,
         capturedAt,
         snapshot: transportedSnapshot

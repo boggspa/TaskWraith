@@ -312,7 +312,8 @@ function createSnapshotFileTransport(
   options: HostStandaloneCompositionPerfSnapshotFileInput,
   instrumentation: HostPerfInstrumentation,
   identity: HostPerfSnapshotFileIdentity,
-  now: (() => Date) | undefined
+  now: (() => Date) | undefined,
+  getGeneration: () => number
 ): HostPerfSnapshotFileWriter {
   // Option validation (path, cadence, cap, identity, timer seam shape) throws
   // here, before the meter starts: a misconfigured opt-in fails composition,
@@ -330,6 +331,7 @@ function createSnapshotFileTransport(
     intervalMs: options.intervalMs ?? HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS,
     maxBytes: options.maxBytes ?? HOST_PERF_SNAPSHOT_FILE_MAX_BYTES,
     identity,
+    getGeneration,
     ...(now ? { now } : {}),
     ...(options.fs ? { fs: options.fs } : {}),
     ...(options.timers ? { timers: options.timers } : {})
@@ -423,7 +425,13 @@ export function createHostStandaloneComposition(
     bootEpoch
   })
   const snapshotFile = input.perf?.snapshotFile
-    ? createSnapshotFileTransport(input.perf.snapshotFile, hostPerf, perfIdentity, input.perf.now)
+    ? createSnapshotFileTransport(
+        input.perf.snapshotFile,
+        hostPerf,
+        perfIdentity,
+        input.perf.now,
+        () => runtime.getPosition().generation
+      )
     : null
   // The observer requires one journal position across its before/after pair.
   // Background reconciliation must publish outside that command's window.

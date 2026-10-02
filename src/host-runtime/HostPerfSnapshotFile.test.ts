@@ -58,6 +58,24 @@ function writer(overrides: Partial<HostPerfSnapshotFileWriterOptions> = {}) {
 }
 
 describe('createHostPerfSnapshotFileWriter', () => {
+  it('samples current generation and refuses an unavailable getter without publishing stale identity', () => {
+    let generation = 4
+    const h = writer({
+      getGeneration: () => {
+        if (generation < 0) throw new Error('unavailable')
+        return generation
+      }
+    })
+    expect(h.created.writeOnce()).toBe(true)
+    const path = '/perf/host-snapshot.json'
+    expect(JSON.parse(h.fs.files.get(path)!).identity).toEqual({ ...IDENTITY, generation: 4 })
+    const good = h.fs.files.get(path)
+    generation = -1
+    expect(h.created.writeOnce()).toBe(false)
+    expect(h.fs.files.get(path)).toBe(good)
+    expect(h.created.stats().writeFailures).toBe(1)
+  })
+
   it('writes an atomic identity/sequence/capturedAt envelope via tmp + rename', () => {
     const { created, fs } = writer()
     expect(created.writeOnce()).toBe(true)

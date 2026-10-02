@@ -57,6 +57,7 @@ import {
 } from './HostThreadRecordTransaction'
 import { HOST_TRANSACTION_LOG_FILENAME, HostTransactionLog } from './HostTransactionLog'
 import type { HostFileIdentity } from './HostTransactionManifest'
+import { modelHostThreadRecordFile } from './HostThreadRecordModel'
 
 const TIMEOUT = 15_000
 const NOW_MS = 1_760_000_000_000
@@ -352,6 +353,35 @@ function profile(options: { onShutdown?: () => void | Promise<void> } = {}): Pro
 }
 
 describe('HostStandaloneComposition: the clean-exit marker (M4 slice 14b, SF-1)', () => {
+  it('captures the authenticated generation after real recovery and seed resets', async () => {
+    const p = profile()
+    const path = join(p.profilePath, 'perf.json')
+    const composition = createHostStandaloneComposition({
+      ...p.base,
+      profilePath: p.profilePath,
+      perf: { snapshotFile: { path } },
+      threadRecordTransaction: {
+        ...p.transactionInput(),
+        seed: { model: async (input) => modelHostThreadRecordFile(input) }
+      }
+    })
+    try {
+      await composition.recoverTransactions()
+      expect(composition.getPosition().generation).toBe(2)
+      expect((await composition.startPublicWindowSeed!().seeded).kind).toBe('switched')
+      expect(composition.getPosition().generation).toBe(3)
+      expect(composition.perf.snapshotFile!.writeOnce()).toBe(true)
+      expect(JSON.parse(readFileSync(path, 'utf8')).identity).toMatchObject({
+        generation: composition.getPosition().generation,
+        pid: process.pid,
+        instanceId: p.base.host.hostId,
+        bootEpoch: BOOT_EPOCH
+      })
+    } finally {
+      await composition.shutdown()
+    }
+  })
+
   it(
     'a fresh runtime path reads unclean; a clean shutdown writes the marker, and the next composition over the same runtime path reads clean and consumes it',
     async () => {
