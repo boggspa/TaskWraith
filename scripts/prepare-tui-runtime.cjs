@@ -19,7 +19,7 @@
  * Usage:
  *   node scripts/prepare-tui-runtime.cjs
  *   node scripts/prepare-tui-runtime.cjs --targets=darwin-arm64,darwin-x64
- *   TASKWRAITH_TUI_NODE_VERSION=22.23.2 node scripts/prepare-tui-runtime.cjs
+ *   TASKWRAITH_TUI_NODE_VERSION=22.23.3 node scripts/prepare-tui-runtime.cjs
  */
 
 const fs = require('node:fs')

@@ -35,8 +35,8 @@ describe('TUI Node runtime policy', () => {
       fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')
     )
 
-    expect(resolveRuntimeNodeVersion(packageJson, {}, new Date('2026-07-29T12:00:00Z'))).toBe(
-      '22.23.2'
+    expect(resolveRuntimeNodeVersion(packageJson, {}, new Date('2026-10-02T12:00:00Z'))).toBe(
+      '22.23.3'
     )
   })
 
