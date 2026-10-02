@@ -74,6 +74,10 @@ describe('Multiview pane Composer context parity', () => {
     // last-mounted pane clobbers the shared goalButtonRef and the focused goal
     // popover portals over the wrong pane (position is measured off that ref).
     expect(source.match(/goalButtonRef: paneGoalButtonDiscardRef/g)).toHaveLength(1)
+    expect(source).toContain('openGoalPopover: openPaneGoalControl')
+    expect(source).toContain('goalControlDisabledReason: undefined')
+    expect(source).toContain('projectedChatId: projectedPaneGoalChatIdRef.current')
+    expect(source).toContain('paneGoalHandoffRef.current.observeFocus(multiview.focusedPaneId)')
   })
 
   it('routes the Return-key live steer to the pane chat, never the focused draft', () => {

@@ -202,6 +202,7 @@ import {
   resolveComposerRunTimecodeStartedAt,
   resolveCumulativeRunBaseMs
 } from './lib/cumulativeRunTimecode'
+import { createMultiviewGoalHandoff } from './lib/multiviewGoalHandoff'
 import type {
   AppSettings,
   WorkspaceRecord,
@@ -3422,6 +3423,9 @@ function App(): React.JSX.Element {
   // `run()` closures that need to read or mutate the composer receive a
   // SlashCommandRunContext at dispatch time instead of reaching into globals.
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
+  const paneGoalHandoffRef = useRef(createMultiviewGoalHandoff())
+  const openProjectedPaneGoalRef = useRef<() => void>(() => {})
+  const projectedPaneGoalChatIdRef = useRef<string | null>(null)
   const [goalDraft, setGoalDraft] = useState('')
   const [goalEditing, setGoalEditing] = useState(false)
   const goalButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -20022,6 +20026,23 @@ function App(): React.JSX.Element {
     setGoalPopoverOpen(true)
   }
 
+  openProjectedPaneGoalRef.current = () => openGoalPopover(false)
+  projectedPaneGoalChatIdRef.current = currentChat?.appChatId || null
+  useEffect(
+    () => multiview.focusStore.subscribe(() => {
+      paneGoalHandoffRef.current.observeFocus(multiview.focusedPaneId)
+    }),
+    [multiview.focusStore, multiview.panes]
+  )
+  useLayoutEffect(() => {
+    paneGoalHandoffRef.current.reconcile({
+      panes: multiview.panes,
+      focusedPaneId: multiview.focusedPaneId,
+      projectedChatId: currentChat?.appChatId || null,
+      open: () => openGoalPopover(false)
+    })
+  })
+
   const handleGoalSlashCommand = (
     promptWithoutSlashToken: string,
     rawPrompt: string = prompt,
@@ -31585,6 +31606,18 @@ function App(): React.JSX.Element {
         rememberMultiviewPaneComposerSelection(viewerChatId, patch)
       const focusPaneForGoalControl = (): void =>
         projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
+      const openPaneGoalControl = (): void => {
+        const paneId = multiview.panes[viewerPaneIndex]?.id
+        if (!paneId || multiview.panes[viewerPaneIndex]?.chatId !== viewerChatId) return
+        paneGoalHandoffRef.current.request({ paneId, chatId: viewerChatId })
+        projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
+        paneGoalHandoffRef.current.reconcile({
+          panes: multiview.panes,
+          focusedPaneId: multiview.focusedPaneId,
+          projectedChatId: projectedPaneGoalChatIdRef.current,
+          open: () => openProjectedPaneGoalRef.current()
+        })
+      }
       // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
       // call the chat-level setState setters (which drive the FOCUSED composer's
       // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
@@ -31881,7 +31914,7 @@ function App(): React.JSX.Element {
           ? activeGoalModeLabel(viewerChat.activeGoal.mode)
           : 'Guided by TaskWraith',
         currentGoalButtonTitle: viewerGoalTitle,
-        goalControlDisabledReason: 'Focus this pane to manage its goal.',
+        goalControlDisabledReason: undefined,
         goalDraft: viewerChat.activeGoal?.objective || '',
         goalEditing: false,
         goalPopoverPosition: null,
@@ -31927,7 +31960,7 @@ function App(): React.JSX.Element {
         openDiscordContextPicker: () =>
           paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
         rememberCurrentChatComposerSelection: paneRememberComposerSelection,
-        openGoalPopover: focusPaneForGoalControl,
+        openGoalPopover: openPaneGoalControl,
         setGoalPopoverOpen: focusPaneForGoalControl,
         setGoalFromObjective: focusPaneForGoalControl,
         updateCurrentGoalStatus: focusPaneForGoalControl,
@@ -32000,9 +32033,7 @@ function App(): React.JSX.Element {
         //    composer or stacking portals. ──
         composerAreaRef: paneComposerAreaDiscardRef,
         goalButtonRef: paneGoalButtonDiscardRef,
-        // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
-        // state; force it closed and disable the pane goal control so a resting pane
-        // never appears to accept a goal action that only focused the pane.
+        // The pane goal button hands off to the focused editor after exact projection.
         goalPopoverOpen: false,
         intentNote: '',
         isPreparingDiffReview: false,
