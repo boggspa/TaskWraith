@@ -7,12 +7,59 @@ import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { RunEventInput } from './types'
 
 describe('Main durability runtime', () => {
-  it('enrolls detail under the journal flag and retires it before sole adapter disposal', async () => {
+  it.each([
+    ['0', '0', false],
+    ['1', '0', false],
+    ['0', '1', true],
+    ['1', '1', true],
+    ['0', 'true', false]
+  ] as const)(
+    'independently enrolls detail with journal=%s catalogue=%s',
+    async (journalFlag, catalogueFlag, enrolled) => {
+      const ports = adapter()
+      const createAdapter = vi.fn(() => ports)
+      const runtime = createMainDurabilityRuntime({
+        ...options(),
+        workerEntryPath: entry,
+        env: {
+          TASKWRAITH_JOURNAL_FLUSHER: journalFlag,
+          TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: catalogueFlag
+        },
+        createAdapter
+      })
+      const create = vi.fn(() => ({ fence: () => {}, drainSync: () => {}, retire: async () => {} }))
+      expect(runtime.attachDetail(create)).toBe(enrolled)
+      expect(create).toHaveBeenCalledTimes(enrolled ? 1 : 0)
+      expect(runtime.snapshot().detail).toEqual({
+        requested: enrolled,
+        mode: enrolled ? 'worker' : 'legacy',
+        attached: enrolled
+      })
+      expect(createAdapter.mock.calls.length).toBe(journalFlag === '1' || enrolled ? 1 : 0)
+      await runtime.shutdown()
+    }
+  )
+  it('exposes actual owner operations and keeps absent legacy measurements null', async () => {
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      workerEntryPath: entry,
+      env: { TASKWRAITH_RUN_EVENT_FLUSHER: '1' },
+      createAdapter: () => adapter()
+    })
+    runtime.writer.append(input, { durability: 'strict' })
+    expect(runtime.snapshot().telemetry.poolOwners?.['run-events'].strictFsyncs).toBeGreaterThan(0)
+    expect(runtime.snapshot().telemetry.unmeasured.legacyMainFsyncs).toBeNull()
+    await runtime.shutdown()
+    const off = createMainDurabilityRuntime({ ...options(), env: {} })
+    expect(off.snapshot().telemetry.poolOwners).toBeNull()
+    await off.shutdown()
+  })
+  it('enrolls detail under the catalogue flag and retires it before sole adapter disposal', async () => {
     const ports = adapter()
     const runtime = createMainDurabilityRuntime({
       ...options(),
       workerEntryPath: entry,
-      env: { TASKWRAITH_JOURNAL_FLUSHER: '1' },
+      env: { TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: '1' },
       createAdapter: () => ports
     })
     const order: string[] = []
@@ -357,7 +404,6 @@ describe('Main durability runtime', () => {
     let acquire!: () => ReturnType<
       import('./MainDurabilityDirectoryLeases').MainDurabilityDirectoryLeases['acquire']
     >
-    let lease!: ReturnType<typeof acquire>
     runtime.attachJournal(({ directoryLeases }) => {
       acquire = () => directoryLeases.acquire(options().runEventsDir)
       return {
@@ -374,7 +420,7 @@ describe('Main durability runtime', () => {
         }
       }
     })
-    lease = acquire()
+    const lease = acquire()
     lease.noteMutation()
     const shutdown = runtime.shutdown()
     await Promise.resolve()

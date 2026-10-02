@@ -6,6 +6,7 @@ import { MainDurabilityFlusher, type DurabilityFlusherPorts } from './MainDurabi
 import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import type { RunEventInput, RunEventRecord } from './types'
 import type { RunEventLedgerAppendOptions } from './RunEventLedgerWriter'
+import { readMainDurabilityTelemetry } from './MainDurabilityTelemetry'
 
 export type JournalDurabilityFlusher = Pick<
   MainDurabilityFlusher,
@@ -51,6 +52,7 @@ export interface MainDurabilityRuntime {
   attachCatalogue(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
   attachDetail(create: (ports: DurabilityAttachmentPorts) => DurabilityParticipant): boolean
   snapshot(): {
+    telemetry: ReturnType<typeof readMainDurabilityTelemetry>
     requested: boolean
     mode: 'legacy' | 'worker' | 'degraded'
     runEvents: DurabilityConsumerSnapshot
@@ -139,7 +141,7 @@ export function createMainDurabilityRuntime(
   ): boolean => {
     if (fenced) throw new Error('Main durability runtime is shutting down')
     if (
-      !(kind === 'catalogue' ? catalogueRequested : journalRequested) ||
+      !(kind === 'journal' ? journalRequested : catalogueRequested) ||
       !flusher ||
       !directoryLeases
     )
@@ -189,12 +191,13 @@ export function createMainDurabilityRuntime(
     attachCatalogue: (create) => attach('catalogue', create),
     attachDetail: (create) => attach('detail', create),
     snapshot: () => ({
+      telemetry: readMainDurabilityTelemetry(flusher ?? null),
       requested,
       mode: consumer(requested).mode,
       runEvents: consumer(requested),
       journal: { ...consumer(journalRequested), attached: journal !== undefined },
       catalogue: { ...consumer(catalogueRequested), attached: catalogue !== undefined },
-      detail: { ...consumer(journalRequested), attached: detail !== undefined },
+      detail: { ...consumer(catalogueRequested), attached: detail !== undefined },
       fenced,
       closed,
       failure,
