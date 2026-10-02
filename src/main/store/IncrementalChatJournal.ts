@@ -139,7 +139,30 @@ export interface IncrementalChatJournalOptions {
   scheduleFsync?: (fd: number, done: (error?: NodeJS.ErrnoException | null) => void) => void
 }
 
+export interface JournalCaptureReadReference {
+  readonly file: ReturnType<typeof checkpointFileReference>
+  /** Parent-owned read descriptor; child must inherit/duplicate before use.
+   * A child owns its duplicate independently. Never pass this integer as a
+   * descriptor in another process without an explicit inheritance mapping. */
+  readonly fd: number
+  readonly prefixBytes: number
+  readonly mutablePrefix: boolean
+}
+
+export interface JournalCaptureLease {
+  readonly chatId: string
+  readonly revision: number
+  readonly generation: number
+  readonly checkpoint: JournalCaptureReadReference
+  readonly sealed: JournalCaptureReadReference | null
+  readonly active: JournalCaptureReadReference | null
+  isCurrent(): boolean
+  release(): void
+  cancel(): void
+}
+
 export interface IncrementalChatJournal {
+  captureSource?(chatId: string, revision: number): JournalCaptureLease | null
   rotateForPreparation?(chatId: string): CheckpointPreparationSource | null
   initialize(chatId: string, record: ChatRecord): void
   append(batch: ChatRecordMutationBatch, options?: IncrementalChatAppendOptions): void
@@ -311,9 +334,11 @@ export function createIncrementalChatJournal(
   const states = new Map<string, RuntimeState>()
   const preparations = new Map<string, CheckpointPreparationJob>()
   const preparationEpochs = new Map<string, number>()
+  const captureEpochs = new Map<string, number>()
   const rotatedSources = new Map<string, CheckpointPreparationSource>()
   const rotatedAccounting = new Map<string, { entries: number; bytes: number }>()
-  const invalidatePreparation = (chatId: string): void => {
+  const invalidatePreparation = (chatId: string, invalidateCapture = true): void => {
+    if (invalidateCapture) captureEpochs.set(chatId, (captureEpochs.get(chatId) ?? 0) + 1)
     preparationEpochs.set(chatId, (preparationEpochs.get(chatId) ?? 0) + 1)
     rotatedSources.delete(chatId)
     rotatedAccounting.delete(chatId)
@@ -992,6 +1017,66 @@ export function createIncrementalChatJournal(
     state.lastAppendAtMs = null
   }
 
+  const captureSource = (chatId: string, revision: number): JournalCaptureLease | null => {
+    assertChatId(chatId)
+    const state = states.get(chatId)
+    if (!state || state.tombstoned || state.headRevision !== revision ||
+      !Number.isSafeInteger(revision) || revision < 0 || fs.existsSync(tombstonePath(chatId))) return null
+    const generation = captureEpochs.get(chatId) ?? 0
+    captureEpochs.set(chatId, generation)
+    const opened: number[] = []
+    let released = false
+    const close = (): void => {
+      if (released) return
+      released = true
+      let failure: unknown
+      for (const fd of opened) {
+        try { fs.closeSync(fd) } catch (error) { failure ??= error }
+      }
+      if (failure) throw failure
+    }
+    const open = (filePath: string, mutablePrefix: boolean): JournalCaptureReadReference => {
+      const file = checkpointFileReference(filePath)
+      const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+      opened.push(fd)
+      const stat = fs.fstatSync(fd, { bigint: true })
+      if (!stat.isFile() || String(stat.dev) !== file.identity.dev || String(stat.ino) !== file.identity.ino ||
+        Number(stat.size) !== file.identity.size || String(stat.mtimeNs) !== file.identity.mtimeNs)
+        throw new Error('Capture source changed during open')
+      return Object.freeze({ file: Object.freeze({ ...file, identity: Object.freeze({ ...file.identity }) }),
+        fd, prefixBytes: file.identity.size, mutablePrefix })
+    }
+    try {
+      const checkpoint = open(checkpointPath(chatId), false)
+      const sealed = fs.existsSync(sealedPath(chatId)) ? open(sealedPath(chatId), false) : null
+      const active = fs.existsSync(journalPath(chatId)) ? open(journalPath(chatId), true) : null
+      const current = (reference: JournalCaptureReadReference, paths: string[]): boolean => {
+        const identity = reference.file.identity
+        const same = (stat: fs.BigIntStats): boolean => stat.isFile() &&
+          String(stat.dev) === identity.dev && String(stat.ino) === identity.ino &&
+          (reference.mutablePrefix ? Number(stat.size) >= reference.prefixBytes :
+            Number(stat.size) === reference.prefixBytes && String(stat.mtimeNs) === identity.mtimeNs)
+        if (!same(fs.fstatSync(reference.fd, { bigint: true }))) return false
+        return paths.some((filePath) => {
+          try { return same(fs.lstatSync(filePath, { bigint: true })) } catch { return false }
+        })
+      }
+      return Object.freeze({ chatId, revision, generation, checkpoint, sealed, active,
+        isCurrent: (): boolean => {
+          if (released || (captureEpochs.get(chatId) ?? 0) !== generation ||
+            states.get(chatId) !== state || state.tombstoned || fs.existsSync(tombstonePath(chatId))) return false
+          try {
+            return current(checkpoint, [checkpointPath(chatId)]) &&
+              (!sealed || current(sealed, [sealedPath(chatId)])) &&
+              (!active || current(active, [journalPath(chatId), sealedPath(chatId)]))
+          } catch { return false }
+        }, release: close, cancel: close })
+    } catch (error) {
+      try { close() } catch { /* Preserve the source-open failure. */ }
+      throw error
+    }
+  }
+
   const rotateForPreparation = (chatId: string): CheckpointPreparationSource | null => {
     assertWritable()
     assertChatId(chatId)
@@ -1018,7 +1103,7 @@ export function createIncrementalChatJournal(
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
-    if (!options.rotationEnabled) invalidatePreparation(batch.chatId)
+    if (!options.rotationEnabled) invalidatePreparation(batch.chatId, false)
     options.beforeSourceMutation?.(batch.chatId)
     assertWritable()
     assertChatId(batch.chatId)
@@ -1211,6 +1296,7 @@ export function createIncrementalChatJournal(
         fs.unlinkSync(sealedPath(chatId))
         options.descriptorCache!.completeSealedUnlink(chatId)
         preparationEpochs.set(chatId, epoch + 1)
+        captureEpochs.set(chatId, (captureEpochs.get(chatId) ?? 0) + 1)
         rotatedSources.delete(chatId)
         // Preserve active accounting without reading or parsing its payload.
         const sealedAccounting = rotatedAccounting.get(chatId)!
@@ -1396,6 +1482,7 @@ export function createIncrementalChatJournal(
 
   const clear = (): void => {
     assertWritable()
+    for (const chatId of captureEpochs.keys()) captureEpochs.set(chatId, captureEpochs.get(chatId)! + 1)
     options.descriptorCache?.retireSync()
     cancelCheckpointPreparations()
     let entries: fs.Dirent[] = []
@@ -1436,6 +1523,7 @@ export function createIncrementalChatJournal(
 
   return {
     initialize,
+    captureSource,
     rotateForPreparation,
     append,
     replay,
