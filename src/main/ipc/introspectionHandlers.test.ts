@@ -57,6 +57,7 @@ function sampleRun(id = 'run-1'): IntrospectionRunRecord {
 
 function createDeps() {
   return {
+    expireDueMemoryProposals: vi.fn(),
     getMemoryProposalPacks: vi.fn((workspaceId?: string) => [samplePack(workspaceId || 'all')]),
     getMemoryProposalPack: vi.fn((id: string) => (id === 'pack-1' ? samplePack(id) : null)),
     updateMemoryProposal: vi.fn(() => samplePack('pack-1')),
@@ -87,6 +88,49 @@ function createDeps() {
 }
 
 describe('registerIntrospectionHandlers', () => {
+  it('reconciles scoped expiry before returning list and individual pack reads', () => {
+    const deps = createDeps()
+    registerIntrospectionHandlers(deps)
+    handlerFor('get-memory-proposal-packs')({}, ' ws-1 ')
+    expect(deps.expireDueMemoryProposals).toHaveBeenNthCalledWith(1, { workspaceId: 'ws-1' })
+    expect(deps.expireDueMemoryProposals.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.getMemoryProposalPacks.mock.invocationCallOrder[0]!
+    )
+    handlerFor('get-memory-proposal-pack')({}, ' pack-1 ')
+    expect(deps.expireDueMemoryProposals).toHaveBeenNthCalledWith(2, { packId: 'pack-1' })
+    expect(deps.expireDueMemoryProposals.mock.invocationCallOrder[1]).toBeLessThan(
+      deps.getMemoryProposalPack.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('allows an explicit approval after reconciling expiry', () => {
+    const deps = createDeps()
+    registerIntrospectionHandlers(deps)
+    const result = handlerFor('update-memory-proposal')({}, {
+      packId: 'pack-1',
+      proposalId: 'prop-1',
+      partial: { status: 'approved' }
+    })
+    expect(deps.expireDueMemoryProposals).toHaveBeenCalledWith({ packId: 'pack-1' })
+    expect(deps.expireDueMemoryProposals.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.updateMemoryProposal.mock.invocationCallOrder[0]!
+    )
+    expect(deps.updateMemoryProposal).toHaveBeenCalledWith('pack-1', 'prop-1', { status: 'approved' })
+    expect(result).toEqual(samplePack('pack-1'))
+  })
+
+  it('does not reconcile expiry for invalid read or review input', () => {
+    const deps = createDeps()
+    registerIntrospectionHandlers(deps)
+    expect(handlerFor('get-memory-proposal-pack')({}, '')).toBeNull()
+    expect(() => handlerFor('update-memory-proposal')({}, {
+      packId: 'pack-1',
+      proposalId: 'prop-1',
+      partial: {}
+    })).toThrow('At least one reviewable proposal field is required.')
+    expect(deps.expireDueMemoryProposals).not.toHaveBeenCalled()
+  })
+
   it('registers thread introspection IPC channels', () => {
     registerIntrospectionHandlers(createDeps())
 

@@ -6,6 +6,7 @@ import type {
   MemoryProposalStatus
 } from '../store/types'
 import type { ApplyMemoryProposalResult } from '../introspection/IntrospectionApplyService'
+import type { ExpireDueMemoryProposalsInput } from '../introspection/IntrospectionLifecycleService'
 import type {
   RunManualIntrospectionInput,
   RunManualIntrospectionResult
@@ -14,6 +15,7 @@ import type {
 const REVIEWABLE_STATUSES = new Set<MemoryProposalStatus>(['approved', 'rejected', 'expired'])
 
 export interface IntrospectionHandlersDeps {
+  expireDueMemoryProposals: (input: ExpireDueMemoryProposalsInput) => void
   getMemoryProposalPacks: (workspaceId?: string) => MemoryProposalPack[]
   getMemoryProposalPack: (id: string) => MemoryProposalPack | null
   updateMemoryProposal: (
@@ -150,12 +152,14 @@ function sanitizeRunManualIntrospectionInput(input: unknown): RunManualIntrospec
 export function registerIntrospectionHandlers(deps: IntrospectionHandlersDeps): void {
   ipcMain.handle('get-memory-proposal-packs', (_, workspaceId?: string | null) => {
     const scoped = optionalText(workspaceId, 120)
+    deps.expireDueMemoryProposals({ workspaceId: scoped })
     return deps.getMemoryProposalPacks(scoped)
   })
 
   ipcMain.handle('get-memory-proposal-pack', (_, packId: string) => {
     const id = text(packId, 120)
     if (!id) return null
+    deps.expireDueMemoryProposals({ packId: id })
     return deps.getMemoryProposalPack(id)
   })
 
@@ -169,6 +173,7 @@ export function registerIntrospectionHandlers(deps: IntrospectionHandlersDeps): 
     if (Object.keys(patch).length === 0) {
       throw new Error('At least one reviewable proposal field is required.')
     }
+    deps.expireDueMemoryProposals({ packId })
     return deps.updateMemoryProposal(packId, proposalId, patch)
   })
 

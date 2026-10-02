@@ -185,7 +185,9 @@ export function expireDueMemoryProposals(
   deps: IntrospectionLifecycleServiceDeps,
   input: ExpireDueMemoryProposalsInput = {}
 ): ExpireDueMemoryProposalsResult {
-  const nowMs = Date.parse(deps.now())
+  const nowIso = deps.now()
+  const nowMs = Date.parse(nowIso)
+  if (!Number.isFinite(nowMs)) return { expiredCount: 0, packs: [] }
   const packs = deps.store
     .getMemoryProposalPacks(input.workspaceId)
     .filter((pack) => !input.packId || pack.id === input.packId)
@@ -201,7 +203,7 @@ export function expireDueMemoryProposals(
         proposalId: proposal.id,
         partial: {
           status: 'expired',
-          updatedAt: deps.now()
+          updatedAt: nowIso
         }
       })
     }
@@ -211,7 +213,8 @@ export function expireDueMemoryProposals(
     return { expiredCount: 0, packs: [] }
   }
 
-  const updatedPacks = deps.store.applyMemoryProposalPatches(patches) ?? []
+  const updatedPacks = deps.store.applyMemoryProposalPatches(patches)
+  if (!updatedPacks) return { expiredCount: 0, packs: [] }
   return {
     expiredCount: patches.length,
     packs: updatedPacks

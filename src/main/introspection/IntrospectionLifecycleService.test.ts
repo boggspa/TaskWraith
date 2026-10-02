@@ -82,6 +82,51 @@ function makeStore(seedPacks: MemoryProposalPack[]) {
 }
 
 describe('IntrospectionLifecycleService', () => {
+  it('ignores an invalid clock without reading or patching records', () => {
+    const store = makeStore([pack('due', [proposal('due', { expiresAt: NOW })])])
+    expect(expireDueMemoryProposals({ store, now: () => 'invalid' })).toEqual({
+      expiredCount: 0,
+      packs: []
+    })
+    expect(store.getMemoryProposalPacks).not.toHaveBeenCalled()
+    expect(store.applyMemoryProposalPatches).not.toHaveBeenCalled()
+  })
+
+  it('reports no expiration when the atomic patch fails', () => {
+    const store = makeStore([pack('due', [proposal('due', { expiresAt: NOW })])])
+    store.applyMemoryProposalPatches.mockReturnValueOnce(null)
+    expect(expireDueMemoryProposals({ store, now: () => NOW })).toEqual({
+      expiredCount: 0,
+      packs: []
+    })
+    expect(store.getMemoryProposalPack('due')?.proposals[0]?.status).toBe('proposed')
+  })
+
+  it('expires only explicitly due proposed records in the requested workspace and pack', () => {
+    const records = [
+      proposal('due', { expiresAt: NOW }),
+      proposal('undated'),
+      proposal('invalid', { expiresAt: 'invalid' }),
+      proposal('future', { expiresAt: '2026-07-05T18:00:00.001Z' }),
+      proposal('approved', { status: 'approved', expiresAt: NOW }),
+      proposal('applied', { status: 'applied', expiresAt: NOW, appliedAt: NOW })
+    ]
+    const store = makeStore([
+      pack('selected', records),
+      pack('other-pack', [proposal('other', { expiresAt: NOW })]),
+      pack('other-workspace', [proposal('elsewhere', { expiresAt: NOW })], { workspaceId: 'ws-2' })
+    ])
+    const input = { workspaceId: 'ws-1', packId: 'selected' }
+    const now = vi.fn(() => NOW)
+    expect(expireDueMemoryProposals({ store, now }, input).expiredCount).toBe(1)
+    expect(now).toHaveBeenCalledTimes(1)
+    expect(store.getMemoryProposalPack('selected')?.proposals.slice(1)).toEqual(records.slice(1))
+    expect(store.getMemoryProposalPack('other-pack')?.proposals[0]?.status).toBe('proposed')
+    expect(store.getMemoryProposalPack('other-workspace')?.proposals[0]?.status).toBe('proposed')
+    expect(expireDueMemoryProposals({ store, now }, input)).toEqual({ expiredCount: 0, packs: [] })
+    expect(store.applyMemoryProposalPatches).toHaveBeenCalledTimes(1)
+  })
+
   it('supersede links both proposals across packs', () => {
     const oldProposal = proposal('old')
     const newProposal = proposal('new')

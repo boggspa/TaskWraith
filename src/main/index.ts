@@ -2193,6 +2193,7 @@ import { registerRunQueueHandlers, type RendererRunQueueMutation } from './ipc/r
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
 import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
+import { expireDueMemoryProposals } from './introspection/IntrospectionLifecycleService'
 import {
   createIntrospectionRunServiceDeps,
   runManualIntrospection,
@@ -60155,6 +60156,20 @@ if (isGeminiMcpBridgeProcess) {
       getNowIso: () => new Date().toISOString()
     })
     registerIntrospectionHandlers({
+      expireDueMemoryProposals: (input) =>
+        expireDueMemoryProposals(
+          {
+            store: {
+              getMemoryProposalPacks: (workspaceId) =>
+                AppStore.getMemoryProposalPacks(workspaceId),
+              getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
+              applyMemoryProposalPatches: (patches) =>
+                AppStore.applyMemoryProposalPatches(patches)
+            },
+            now: () => new Date().toISOString()
+          },
+          input
+        ),
       getMemoryProposalPacks: (workspaceId) => AppStore.getMemoryProposalPacks(workspaceId),
       getMemoryProposalPack: (id) => AppStore.getMemoryProposalPack(id),
       updateMemoryProposal: (packId, proposalId, partial) =>
