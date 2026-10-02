@@ -107,6 +107,7 @@ function fixture() {
           gapAttributed: true,
           overflow: 0,
           listedOwnerMs: index % 2 ? 0 : 1000,
+          listedOwnerMsBounds: { lower: index % 2 ? 0 : 1000, upper: index % 2 ? 0 : 1000 },
           nonExemptOwnerGaps: []
         },
         x3: {
@@ -121,6 +122,20 @@ function fixture() {
 }
 const check = (captures: any[]) => compareM5FlagPair({ captures, changedFlags: [flag] })
 describe('M5 X6 evidence comparator', () => {
+  it('uses ON upper/OFF lower and never applies the floor to straddling bounds', () => {
+    const captures = fixture()
+    for (const capture of captures) {
+      capture.window.evidence.x2.listedOwnerMsBounds =
+        capture.state === 'off' ? { lower: 50, upper: 150 } : { lower: 5, upper: 11 }
+    }
+    expect(check(captures).reasons).toContain('80% conservative owner reduction not achieved')
+    for (const capture of captures.filter((row) => row.state === 'on'))
+      capture.window.evidence.x2.listedOwnerMsBounds = { lower: 0, upper: 10 }
+    expect(check(captures).ok).toBe(true)
+    for (const capture of captures.filter((row) => row.state === 'off'))
+      capture.window.evidence.x2.listedOwnerMsBounds = { lower: 0, upper: 99 }
+    expect(check(captures).ok).toBe(true)
+  })
   it.each([false, undefined, null, 'true', 1])(
     'refuses non-true attribution eligibility: %s',
     (value) => {
@@ -237,6 +252,7 @@ describe('M5 X6 evidence comparator', () => {
     captures.forEach((c) => {
       if (c.state === 'off') {
         c.window.evidence.x2.listedOwnerMs = 90
+        c.window.evidence.x2.listedOwnerMsBounds = { lower: 90, upper: 90 }
         const frames = c.window.evidence.x2.gapCoverage[0].frames
         frames[0].endedAtMs = frames[0].startedAtMs + 90
         frames[1].startedAtMs = frames[0].endedAtMs

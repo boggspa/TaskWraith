@@ -484,11 +484,14 @@ describe('runLiveLaneWindows', () => {
     const requests: string[] = []
     const callbacks: number[] = []
     const result = await run(w, {
-      windows: 1, repetitionIndex: 2,
+      windows: 1,
+      repetitionIndex: 2,
       onWindow: (window: any) => callbacks.push(window.repetition),
       readMainPerfWindow: async (request: any) => {
         requests.push(request.id)
-        return request.action === 'begin' ? { status: 'started', id: request.id } : { status: 'unavailable', reason: 'test-only' }
+        return request.action === 'begin'
+          ? { status: 'started', id: request.id }
+          : { status: 'unavailable', reason: 'test-only' }
       }
     })
     expect(requests).toEqual(['light_beside_2', 'light_beside_2'])

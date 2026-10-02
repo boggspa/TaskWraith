@@ -1,4 +1,5 @@
 'use strict'
+const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cjs')
 
 /**
  * M1 live lanes inside a T2 run (Independent Threads, slice S5d):
@@ -406,7 +407,34 @@ async function runT2LiveLanes(options) {
         readMainWindow: (query) =>
           readMainWorkSpanWindow(mainSession, query, settings.callTimeoutMs),
         readD1Counters: () => readD1Counters(page, { timeoutMs: settings.callTimeoutMs }),
-        readMainPerfWindow: (request) => readMainPerfWindow(page, request, settings.callTimeoutMs),
+        readMainPerfWindow: async (request) => {
+          if (request.action === 'begin' && options.onCalibrationMarker) {
+            try {
+              const marker = await captureProfileMarker(mainSession, {
+                windowId: request.id,
+                durationMs: 40,
+                timeoutMs: settings.callTimeoutMs
+              })
+              options.onCalibrationMarker(marker)
+            } catch {
+              options.onCalibrationFailure?.('window_start_marker_failed')
+            }
+          }
+          const receipt = await readMainPerfWindow(page, request, settings.callTimeoutMs)
+          if (request.action === 'end' && options.onCalibrationMarker) {
+            try {
+              const marker = await captureProfileMarker(mainSession, {
+                windowId: request.id,
+                durationMs: 40,
+                timeoutMs: settings.callTimeoutMs
+              })
+              options.onCalibrationMarker(marker)
+            } catch {
+              options.onCalibrationFailure?.('window_end_marker_failed')
+            }
+          }
+          return receipt
+        },
         mainProbeTimeoutMs: settings.callTimeoutMs,
         // The daemon keys whole milliseconds; widen a fractional range outward.
         readLaneActivity: (lane, range) =>

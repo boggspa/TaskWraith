@@ -81,7 +81,11 @@ const {
   aggregateHostWindowSamples
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
-const { collectM5X2Artifacts } = require('./collectors/m5X2Artifacts.cjs')
+const {
+  collectM5X2Artifacts,
+  retainFrozenSourceBinding
+} = require('./collectors/m5X2Artifacts.cjs')
+const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cjs')
 const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 const {
   parseCellName,
@@ -1499,7 +1503,8 @@ function parseArgs(argv) {
     else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg === '--live-rounds') out.liveRounds = true
     else if (arg.startsWith('--live-repetitions=')) out.liveRepetitions = Number(arg.split('=')[1])
-    else if (arg.startsWith('--live-repetition-index=')) out.liveRepetitionIndex = Number(arg.split('=')[1])
+    else if (arg.startsWith('--live-repetition-index='))
+      out.liveRepetitionIndex = Number(arg.split('=')[1])
     else if (arg === '--live-lanes') {
       out.liveRounds = true
       out.liveLanes = true
@@ -1639,9 +1644,18 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv)
   if (args.liveRepetitions !== undefined && ![1, 3].includes(args.liveRepetitions))
     throw new Error('live repetitions must be 1 or 3')
-  if (args.liveRepetitionIndex !== undefined && (!Number.isSafeInteger(args.liveRepetitionIndex) || args.liveRepetitionIndex < 0 || args.liveRepetitionIndex > 2 || args.liveRepetitions !== 1))
+  if (
+    args.liveRepetitionIndex !== undefined &&
+    (!Number.isSafeInteger(args.liveRepetitionIndex) ||
+      args.liveRepetitionIndex < 0 ||
+      args.liveRepetitionIndex > 2 ||
+      args.liveRepetitions !== 1)
+  )
     throw new Error('live repetition index requires one repetition and index 0..2')
-  if ((args.liveRepetitions !== undefined || args.liveRepetitionIndex !== undefined) && !args.liveLanes)
+  if (
+    (args.liveRepetitions !== undefined || args.liveRepetitionIndex !== undefined) &&
+    !args.liveLanes
+  )
     throw new Error('live repetition controls require --live-lanes')
   if (args.help) {
     printHelp()
@@ -2589,6 +2603,19 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         cpuProfilePath: mainCpuPath,
         fs
       })
+      const calibrationMarkers = []
+      const calibrationFailures = []
+      try {
+        calibrationMarkers.push(
+          await captureProfileMarker(mainInspector, {
+            windowId: 'capture-envelope',
+            durationMs: 40,
+            timeoutMs: 5000
+          })
+        )
+      } catch {
+        calibrationFailures.push('start_marker_failed')
+      }
 
       // Deterministic replay through page API
       const page = createCdpEvaluateAdapter(renderer)
@@ -2703,6 +2730,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             lanes = await (options.runLiveLanes || runT2LiveLanes)({
               page,
               mainSession: mainInspector,
+              onCalibrationMarker: (marker) => calibrationMarkers.push(marker),
+              onCalibrationFailure: (reason) => calibrationFailures.push(reason),
               windowOptions: { windows: args.liveRepetitions ?? 3 },
               repetitionIndex: args.liveRepetitionIndex ?? 0,
               lightChatId: chats.light,
@@ -2928,6 +2957,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         awaitWithTimeout(promise, remainingCaptureBudgetMs(), label)
 
       setCapturePhase('profiles_stop', {}, { log: true })
+      try {
+        calibrationMarkers.push(
+          await captureProfileMarker(mainInspector, {
+            windowId: 'capture-envelope',
+            durationMs: 40,
+            timeoutMs: 5000
+          })
+        )
+      } catch {
+        calibrationFailures.push('end_marker_failed')
+      }
       /** @type {{ path?: string } | null} */
       let rendererStopped = null
       /** @type {{ path?: string } | null} */
@@ -3140,7 +3180,27 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },
         { log: true }
       )
-      if (report.liveRounds?.lanes) report.liveRounds.lanes.x2 = collectM5X2Artifacts({ windows: report.liveRounds.lanes.windows, profilePath: mainCpuPath, artifactPath: path.join(artifactDir, 'main-x2-attribution.json') })
+      if (report.liveRounds?.lanes) {
+        const custody = retainFrozenSourceBinding(
+          options.mainProfileSourceBinding,
+          {
+            gitSha,
+            buildId: args.buildId,
+            outputManifestSha256: options.frozenOutputManifestSha256
+          },
+          artifactDir
+        )
+        report.liveRounds.lanes.x2SourceCustody = custody.qualified ? { qualified: true } : custody
+        report.liveRounds.lanes.x2 = collectM5X2Artifacts({
+          windows: report.liveRounds.lanes.windows,
+          profilePath: mainCpuPath,
+          artifactPath: path.join(artifactDir, 'main-x2-attribution.json'),
+          calibrationMarkers,
+          calibrationFailures,
+          calibrationArtifactPath: path.join(artifactDir, 'main-profile-calibration.json'),
+          sourceBinding: custody.qualified ? custody.binding : undefined
+        })
+      }
       if (typeof options.onCaptureSessionComplete === 'function') {
         await options.onCaptureSessionComplete({ report })
       }

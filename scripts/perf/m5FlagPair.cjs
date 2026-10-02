@@ -165,21 +165,53 @@ function compareM5FlagPair(input = {}) {
       fail('X1 interval differs')
     const gaps = x.x1b?.gaps
     const attribution = x.x2?.gapCoverage
+    const intervalNative = x.x2?.exact === false && Array.isArray(x.x2?.intervals)
+    if (intervalNative) {
+      if (
+        x.x2.coverage?.complete !== true ||
+        x.x2.coverage?.sampledWindowMsBounds?.lower < window.endedAtMs - window.startedAtMs ||
+        !Array.isArray(x.x2.unresolvedAttribution) ||
+        x.x2.unresolvedAttribution.length ||
+        x.x2.calibration?.qualified !== true ||
+        x.x2.calibration?.exact !== false ||
+        x.x2.sourceProvenance?.complete !== true ||
+        x.x2.windowId !== window.id ||
+        x.x2.startedAtMs !== window.startedAtMs ||
+        x.x2.endedAtMs !== window.endedAtMs
+      )
+        fail('conservative interval coverage incomplete')
+      if (!finite(x.x2.blockedMsBounds?.upper) || x.x2.blockedMsBounds.upper !== x.x1b?.blockedMs)
+        fail('interval blocking differs from gap artifact')
+      for (const interval of x.x2.intervals) {
+        if (
+          !interval ||
+          interval.exact !== false ||
+          !Array.isArray(interval.sourceEvidence) ||
+          !interval.sourceEvidence.length ||
+          interval.sourceEvidence.some((source) => source.unmapped) ||
+          !finite(interval.clippedOverlap?.upperMs) ||
+          !finite(interval.clippedOverlap?.lowerMs) ||
+          interval.clippedOverlap.lowerMs !== interval.clippedOverlap.upperMs
+        )
+          fail('uncertain or unbound interval attribution')
+      }
+    }
     if (
       !/^[a-f0-9]{64}$/.test(x.x2?.profileSha256 || '') ||
       !/^[a-f0-9]{64}$/.test(x.x2?.gapArtifactSha256 || '')
     )
       fail('X2 source artifact digests required')
     if (
-      !Array.isArray(gaps) ||
-      !Array.isArray(attribution) ||
-      gaps.length !== attribution.length ||
-      x.x2?.windowId !== window.id ||
-      x.x2?.startedAtMs !== window.startedAtMs ||
-      x.x2?.endedAtMs !== window.endedAtMs
+      !intervalNative &&
+      (!Array.isArray(gaps) ||
+        !Array.isArray(attribution) ||
+        gaps.length !== attribution.length ||
+        x.x2?.windowId !== window.id ||
+        x.x2?.startedAtMs !== window.startedAtMs ||
+        x.x2?.endedAtMs !== window.endedAtMs)
     )
       fail('exact X2 window/gap coverage required')
-    else {
+    else if (!intervalNative) {
       let sum = 0
       let ownerSum = 0
       for (let n = 0; n < gaps.length; n++) {
@@ -248,11 +280,11 @@ function compareM5FlagPair(input = {}) {
       fail('X1b missing or invalid')
     if (
       !x.x2 ||
-      !finite(x.x2.listedOwnerMs) ||
+      (!intervalNative && !finite(x.x2.listedOwnerMs)) ||
       x.x2.complete !== true ||
-      x.x2.gapAttributed !== true ||
-      x.x2.overflow !== 0 ||
-      !Array.isArray(x.x2.nonExemptOwnerGaps)
+      (!intervalNative && x.x2.gapAttributed !== true) ||
+      (!intervalNative && x.x2.overflow !== 0) ||
+      (!intervalNative && !Array.isArray(x.x2.nonExemptOwnerGaps))
     )
       fail('X2 missing or invalid')
     if (!Array.isArray(x.x2?.owners) || LISTED_OWNERS.some((owner) => !x.x2.owners.includes(owner)))
@@ -265,7 +297,10 @@ function compareM5FlagPair(input = {}) {
       )
     )
       fail('X3 missing or invalid')
-    if (finite(x.x2?.listedOwnerMs)) owner[state].push(x.x2.listedOwnerMs)
+    const bounds = x.x2?.listedOwnerMsBounds
+    if (finite(bounds?.lower) && finite(bounds?.upper) && bounds.lower <= bounds.upper)
+      owner[state].push(state === 'on' ? bounds.upper : bounds.lower)
+    else fail('owner time bounds unavailable')
     if (state === 'on') {
       if (x.x1?.p95Ms >= 25) fail('X1 lag bound exceeded')
       const cap = finite(x.x1b?.blockedMs) && x.x1b.blockedMs <= identity.windowMs * 0.02
@@ -279,7 +314,13 @@ function compareM5FlagPair(input = {}) {
   const offMedian = owner.off.length === 3 ? median(owner.off) : null
   const onMedian = owner.on.length === 3 ? median(owner.on) : null
   if (offMedian === null || onMedian === null) fail('owner medians unavailable')
-  else if (offMedian >= 100 && onMedian > offMedian * 0.2) fail('80% owner reduction not achieved')
+  else {
+    const offUpper = captures
+      .filter((capture) => capture.state === 'off')
+      .map((capture) => capture.window?.evidence?.x2?.listedOwnerMsBounds?.upper)
+    if (!offUpper.every(finite) || (median(offUpper) >= 100 && onMedian > offMedian * 0.2))
+      fail('80% conservative owner reduction not achieved')
+  }
   return {
     ok: reasons.length === 0,
     reasons: [...new Set(reasons)],
