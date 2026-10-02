@@ -9,6 +9,7 @@ import {
   type ChatRecordMutationOperation
 } from './ChatRecordMutation'
 import type { ChatRecord } from './types'
+import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import {
   checkpointFileReference,
   checkpointReferenceIsCurrent,
@@ -104,6 +105,9 @@ export interface IncrementalChatAppendOptions {
 }
 
 export interface IncrementalChatJournalOptions {
+  /** Root injects only for exact TASKWRAITH_JOURNAL_FLUSHER=1. */
+  descriptorCache?: IncrementalChatJournalDescriptorCache
+  descriptorDrainSync?: () => void
   /** Opt-in idle compaction only. Strict/bounded/shutdown checkpoints keep their synchronous contract. */
   checkpointPreparation?: CheckpointPreparationPort
   beforeSourceMutation?: (chatId: string) => void
@@ -426,6 +430,10 @@ export function createIncrementalChatJournal(
   /** D1 append: the write is synchronous (ordering + same-process visibility
    * unchanged); only the disk flush leaves the caller's critical path. */
   const appendLineDeferred = (filePath: string, line: string, chatId: string): number => {
+    if (options.descriptorCache) {
+      options.descriptorCache.append(chatId, filePath, line, 'deferred')
+      return Buffer.byteLength(line, 'utf8')
+    }
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
     let entries = pendingDeferredByPath.get(filePath)
@@ -479,6 +487,11 @@ export function createIncrementalChatJournal(
 
   const drainDeferredDurability = (): number => {
     assertWritable()
+    if (options.descriptorCache) {
+      if (!options.descriptorDrainSync) throw new Error('Journal descriptor drain unavailable')
+      options.descriptorDrainSync()
+      return 0
+    }
     let drained = 0
     const paths = new Set([
       ...pendingDeferredByPath.keys(),
@@ -519,6 +532,7 @@ export function createIncrementalChatJournal(
 
   const awaitDeferredDurability = async (chatId: string): Promise<void> => {
     assertChatId(chatId)
+    if (options.descriptorCache) return options.descriptorCache.awaitDurable(chatId)
     const failure = deferredFailureByChat.get(chatId)
     if (failure) throw failure
     const entries = [...(pendingDeferredByPath.get(journalPath(chatId)) ?? [])].filter(
@@ -613,6 +627,7 @@ export function createIncrementalChatJournal(
 
   const recoverTornTail = (chatId: string, parsed: ParsedJournal): void => {
     if (!parsed.torn) return
+    options.descriptorCache?.retireSync([chatId])
     invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     if (parsed.validContent) atomicWrite(journalPath(chatId), parsed.validContent)
@@ -881,6 +896,7 @@ export function createIncrementalChatJournal(
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
     options.afterCheckpointWrite?.(chatId, nextCheckpoint)
+    options.descriptorCache?.retireSync([chatId])
     try {
       fs.unlinkSync(journalPath(chatId))
       fsyncDirectory()
@@ -920,6 +936,7 @@ export function createIncrementalChatJournal(
       record
     }
     const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(nextCheckpoint))
+    options.descriptorCache?.retireSync([chatId])
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
     try {
@@ -967,9 +984,15 @@ export function createIncrementalChatJournal(
       !fsyncEscalatedChatIds.delete(batch.chatId) &&
       pendingDeferredCount < MAX_PENDING_DEFERRED_FSYNCS
     const line = `${JSON.stringify(batch)}\n`
-    const bytes = deferred
-      ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
-      : appendLine(journalPath(batch.chatId), line)
+    let bytes: number
+    if (options.descriptorCache && !deferred) {
+      options.descriptorCache.append(batch.chatId, journalPath(batch.chatId), line, 'immediate')
+      bytes = Buffer.byteLength(line, 'utf8')
+    } else {
+      bytes = deferred
+        ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
+        : appendLine(journalPath(batch.chatId), line)
+    }
     if (!deferred) acknowledgeJournalBarrier(batch.chatId)
     if (deferred) deferredAppends += 1
     appends += 1
@@ -1089,6 +1112,7 @@ export function createIncrementalChatJournal(
       fsyncDirectory()
       checkpointsWritten += 1
       checkpointBytesWritten += prepared.identity.size
+      options.descriptorCache?.retireSync([chatId])
       fs.unlinkSync(journalPath(chatId))
       fsyncDirectory()
       acknowledgeJournalBarrier(chatId)
@@ -1213,6 +1237,7 @@ export function createIncrementalChatJournal(
     assertWritable()
     assertChatId(chatId)
     atomicWrite(tombstonePath(chatId), '')
+    options.descriptorCache?.retireSync([chatId])
     for (const filePath of [journalPath(chatId), checkpointPath(chatId)]) {
       try {
         fs.unlinkSync(filePath)
@@ -1236,6 +1261,7 @@ export function createIncrementalChatJournal(
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
+    options.descriptorCache?.retireSync([chatId])
     for (const filePath of [journalPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
       try {
         fs.unlinkSync(filePath)
@@ -1249,6 +1275,7 @@ export function createIncrementalChatJournal(
 
   const clear = (): void => {
     assertWritable()
+    options.descriptorCache?.retireSync()
     cancelCheckpointPreparations()
     let entries: fs.Dirent[] = []
     try {
