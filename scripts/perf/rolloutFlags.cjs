@@ -4,7 +4,8 @@
  * Programme rollout flags for T2 launches (Independent Threads M1).
  *
  * Every programme cutover ships behind a default-off `TASKWRAITH_*` flag that
- * the app and its Host read as the exact token '1'. The measured child used to
+ * captures explicitly pin to '1' or '0'. Production readers retain their own
+ * admission semantics (including the utility writer). The measured child used to
  * inherit the runner's whole environment, so a flag exported in the operator's
  * shell reached the app and the external Host without appearing in the run's
  * environment record. This module makes the state of every programme flag a
@@ -24,15 +25,18 @@
  * edit here plus its test; unknown names are refused, never passed through.
  */
 
-/** Every reader compares against the exact string '1'; '0' is off for each. */
+/** Capture ON is always '1'; OFF is '0', independent of reader aliases. */
 const ROLLOUT_FLAG_TOKENS = Object.freeze({
   TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_CHECKPOINT_WORKER: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_CHECKPOINT_PUBLICATION: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_CODEX_COHORT_FAIRNESS: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_HOST_QUEUED_START: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_HOST_TXN_PERSIST: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_JOURNAL_FLUSHER: Object.freeze({ on: '1', off: '0' }),
-  TASKWRAITH_RUN_EVENT_FLUSHER: Object.freeze({ on: '1', off: '0' })
+  TASKWRAITH_JOURNAL_ROTATION: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_RUN_EVENT_FLUSHER: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_UTILITY_WRITE: Object.freeze({ on: '1', off: '0' })
 })
 
 const PROGRAMME_ROLLOUT_FLAGS = Object.freeze(Object.keys(ROLLOUT_FLAG_TOKENS).sort())

@@ -23,6 +23,9 @@ const TRANSACTION = 'TASKWRAITH_HOST_TXN_PERSIST'
 const JOURNAL = 'TASKWRAITH_JOURNAL_FLUSHER'
 const RUN_EVENT = 'TASKWRAITH_RUN_EVENT_FLUSHER'
 const CATALOGUE = 'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
+const ROTATION = 'TASKWRAITH_JOURNAL_ROTATION'
+const PUBLICATION = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
+const UTILITY = 'TASKWRAITH_UTILITY_WRITE'
 
 type Spawned = { cmd: string; args: string[]; opts: { env: Record<string, string> } }
 
@@ -51,18 +54,37 @@ afterEach(() => {
 })
 
 describe('programme rollout flags', () => {
-  it.each([CATALOGUE, JOURNAL, RUN_EVENT])(
+  it('records the explicit I3/I4 prerequisite declarations without silently enabling dependencies', () => {
+    const rotation = resolveRolloutFlags({ declared: [ROTATION, JOURNAL] })
+    expect(rotation.values[ROTATION]).toBe('1')
+    expect(rotation.values[JOURNAL]).toBe('1')
+    const publication = resolveRolloutFlags({
+      declared: [PUBLICATION, CHECKPOINT, ROTATION, JOURNAL]
+    })
+    expect(publication.record.declared).toEqual([PUBLICATION, CHECKPOINT, JOURNAL, ROTATION])
+    expect(validateRolloutFlagRecord(publication.record)).toEqual([])
+    const alone = resolveRolloutFlags({ declared: [PUBLICATION] })
+    expect(alone.values[CHECKPOINT]).toBe('0')
+    expect(alone.values[ROTATION]).toBe('0')
+    expect(alone.values[JOURNAL]).toBe('0')
+    // Production owns dependency admission; capture records declarations exactly.
+  })
+
+  it.each([CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY])(
     'pins inherited %s off and enables only its explicit declaration',
     (flag) => {
       vi.stubEnv(CATALOGUE, '1')
       vi.stubEnv(JOURNAL, '1')
       vi.stubEnv(RUN_EVENT, '1')
+      vi.stubEnv(ROTATION, '1')
+      vi.stubEnv(PUBLICATION, '1')
+      vi.stubEnv(UTILITY, 'true')
       for (const declared of [[], [flag]]) {
         const resolved = resolveRolloutFlags({ declared, inheritedEnv: process.env })
         const plan = pinRolloutFlagsOnSpawnPlan(buildElectronSpawnPlan(planBase), resolved)
         const spawned: Spawned[] = []
         spawnExactElectronChild({ spawnPlan: plan, adapters: { spawn: fakeSpawn(spawned) } })
-        for (const name of [CATALOGUE, JOURNAL, RUN_EVENT]) {
+        for (const name of [CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY]) {
           const token = declared.includes(name) ? '1' : '0'
           expect(spawned[0].opts.env[name]).toBe(token)
           expect(plan.shellCommand).toContain(`${name}=${token}`)
@@ -98,15 +120,18 @@ describe('programme rollout flags', () => {
     expect(spawned[0].opts.env[TRANSACTION]).toBe('1')
   })
 
-  it('lists exactly the flags the source reads as the exact token 1', () => {
+  it('lists the capture inventory including rotation/publication prerequisites and utility aliases', () => {
     expect(PROGRAMME_ROLLOUT_FLAGS).toEqual([
       CATALOGUE,
+      PUBLICATION,
       CHECKPOINT,
       FAIRNESS,
       QUEUED,
       TRANSACTION,
       JOURNAL,
-      RUN_EVENT
+      ROTATION,
+      RUN_EVENT,
+      UTILITY
     ])
   })
 
@@ -119,7 +144,10 @@ describe('programme rollout flags', () => {
       [QUEUED]: '0',
       [TRANSACTION]: '0',
       [JOURNAL]: '0',
-      [RUN_EVENT]: '0'
+      [RUN_EVENT]: '0',
+      [ROTATION]: '0',
+      [PUBLICATION]: '0',
+      [UTILITY]: '0'
     })
     expect(resolved.record).toEqual({
       schemaVersion: 1,
@@ -131,7 +159,10 @@ describe('programme rollout flags', () => {
         [QUEUED]: 'off',
         [TRANSACTION]: 'off',
         [JOURNAL]: 'off',
-        [RUN_EVENT]: 'off'
+        [RUN_EVENT]: 'off',
+        [ROTATION]: 'off',
+        [PUBLICATION]: 'off',
+        [UTILITY]: 'off'
       },
       inheritedOverridden: []
     })
@@ -146,7 +177,10 @@ describe('programme rollout flags', () => {
       [QUEUED]: '1',
       [TRANSACTION]: '0',
       [JOURNAL]: '0',
-      [RUN_EVENT]: '0'
+      [RUN_EVENT]: '0',
+      [ROTATION]: '0',
+      [PUBLICATION]: '0',
+      [UTILITY]: '0'
     })
     expect(resolved.record.declared).toEqual([QUEUED])
     expect(resolved.record.effective).toEqual({
@@ -156,7 +190,10 @@ describe('programme rollout flags', () => {
       [QUEUED]: 'on',
       [TRANSACTION]: 'off',
       [JOURNAL]: 'off',
-      [RUN_EVENT]: 'off'
+      [RUN_EVENT]: 'off',
+      [ROTATION]: 'off',
+      [PUBLICATION]: 'off',
+      [UTILITY]: 'off'
     })
   })
 
@@ -174,7 +211,7 @@ describe('programme rollout flags', () => {
   })
 
   it('refuses unknown, duplicate and malformed declarations', () => {
-    expect(() => resolveRolloutFlags({ declared: ['TASKWRAITH_UTILITY_WRITE'] })).toThrow(
+    expect(() => resolveRolloutFlags({ declared: ['TASKWRAITH_UNKNOWN_CAPTURE_FLAG'] })).toThrow(
       /programme rollout flag/
     )
     expect(() => resolveRolloutFlags({ declared: ['HOME'] })).toThrow(/programme rollout flag/)
@@ -195,10 +232,13 @@ describe('spawn plan pinning', () => {
       [QUEUED]: '1',
       [TRANSACTION]: '0',
       [JOURNAL]: '0',
-      [RUN_EVENT]: '0'
+      [RUN_EVENT]: '0',
+      [ROTATION]: '0',
+      [PUBLICATION]: '0',
+      [UTILITY]: '0'
     })
     expect(pinned.shellCommand).toBe(
-      `env ${CATALOGUE}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 ${plan.shellCommand}`
+      `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${UTILITY}=0 ${plan.shellCommand}`
     )
     expect(pinned.argv).toEqual(plan.argv)
     // The unpinned plan is left untouched.
@@ -355,7 +395,10 @@ describe('T2 runner', () => {
           [QUEUED]: 'on',
           [TRANSACTION]: 'off',
           [JOURNAL]: 'off',
-          [RUN_EVENT]: 'off'
+          [RUN_EVENT]: 'off',
+          [ROTATION]: 'off',
+          [PUBLICATION]: 'off',
+          [UTILITY]: 'off'
         },
         inheritedOverridden: [CHECKPOINT]
       })
@@ -363,7 +406,7 @@ describe('T2 runner', () => {
       expect(dry.spawnPlan.env[CHECKPOINT]).toBe('0')
       expect(
         dry.report.launchPlan.shellCommand.startsWith(
-          `env ${CATALOGUE}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 `
+          `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${UTILITY}=0 `
         )
       ).toBe(true)
     } finally {
@@ -373,7 +416,11 @@ describe('T2 runner', () => {
 
   it('refuses an undeclarable flag before doing any work', async () => {
     await expect(
-      runT2BaselineCli(['--workload=dual_run', '--dry-run', '--flag=TASKWRAITH_UTILITY_WRITE'])
+      runT2BaselineCli([
+        '--workload=dual_run',
+        '--dry-run',
+        '--flag=TASKWRAITH_UNKNOWN_CAPTURE_FLAG'
+      ])
     ).rejects.toThrow(/programme rollout flag/)
   })
 
