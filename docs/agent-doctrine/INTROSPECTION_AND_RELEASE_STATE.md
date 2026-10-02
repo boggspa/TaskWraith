@@ -22,29 +22,32 @@ Current MVP boundary (see [`docs/THREAD_INTROSPECTION.md`](../THREAD_INTROSPECTI
 - **Landed:** scheduled daily generation creates read-only proposal packs for
   review (`getIntrospectionSchedule` / `updateIntrospectionSchedule` + headless
   daily runner).
-- **Landed (phase 1 apply):** approved `repo_convention` / `do_not_repeat`
+- **Landed in source (apply):** approved `repo_convention` / `do_not_repeat`
   proposals can be applied to the workspace **RepoConventionIndex** via Settings
-  (`applyMemoryProposal` IPC). Skill patches, preferences, bugs, and other kinds
-  remain blocked; no `.codex/.cursor` skill file writes.
+  (`applyMemoryProposal` IPC). The Skill Patch Manager applies approved
+  `skill_patch` proposals to TaskWraith skill roots with diff review and rollback
+  snapshots. Preferences, bugs, other kinds, and provider instruction-file apply
+  remain intentionally gated; no `.codex/.cursor` skill file writes.
 - **Landed:** MCP agents can use `tw_introspection_run`,
   `tw_introspection_list`, `tw_introspection_read`, and
   `tw_introspection_review` for safe trigger/list/read/review workflows.
   There is intentionally **no MCP apply tool**.
-- **Partially landed:** decay/supersede store helpers exist, and review surfaces
-  can set expiry status/metadata. There is no public supersede caller or
-  automatic due-expiry policy, and apply-layer lifecycle integration remains
-  gated.
-- **Later (gated):** Skill Patch Manager (diff/rollback) and other apply
-  targets.
+- **Source-ahead lifecycle:** Settings exposes an explicit reviewed supersede
+  action for two exact proposed or approved records in the same workspace pack.
+  IPC pack reads and review updates reconcile past-due `proposed` records;
+  expiry leaves approved/applied records untouched. Broader apply-layer lifecycle
+  and MCP supersede/apply integration remain gated.
+- **Later (gated):** other apply targets and provider instruction-file apply.
 - **Operational in dev:** Settings → Automation → Thread introspection → Run
-  introspection (24h) → approve/reject → Apply (conventions only). Skill
-  patches: review-only.
+  introspection (24h) → approve/reject → Apply (conventions and TaskWraith skill
+  patches), plus explicit same-pack workspace supersession.
 - **Daily toggle:** wired for read-only scheduled generation.
 
 Do not claim the full Ryan Brewer loop is complete until the
-**decay/supersede integration, Skill Patch Manager, and skill/instruction apply
-with rollback** ship. Do not edit skills from thread history outside this
-pipeline.
+**broader decay/supersede integration and instruction apply with rollback** ship.
+Landed source behavior alone is not release evidence: retain source-ahead labels
+until the containing tag and matching published artifacts are verified. Do not
+edit skills from thread history outside this pipeline.
 
 ---
 

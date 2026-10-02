@@ -43,8 +43,10 @@ Daily Thread Introspection (scheduled or manual)
 
 ### MVP safety boundary (current)
 
-TaskWraith ships **read-only introspection + reviewable artifacts**, with a
-**narrow phase-1 apply path** for workspace repo conventions only:
+Current source implements **read-only introspection + reviewable artifacts**,
+with reviewed apply to workspace conventions and TaskWraith skill roots.
+The lifecycle updates below are **source-ahead**, not a claim about published
+artifacts:
 
 1. Collect recent run/thread evidence (harvester — **landed**, `0fd22e9a0`).
 2. Classify patterns into proposal candidates (generator — **landed**).
@@ -140,8 +142,8 @@ Each proposal includes:
 - `requiresReview` — derived from kind + confidence (see below)
 - `suggestedApplyTarget` — e.g. `RepoConventionIndex`, `user_rules`, `skill_file`
 - `skillPatchDiff` — only when `kind === 'skill_patch'`
-- `supersedesId` / `supersededById` / `expiresAt` — decay/conflict (store
-  helpers landed; end-to-end lifecycle wiring pending)
+- `supersedesId` / `supersededById` / `expiresAt` — lifecycle links and due time;
+  source-ahead Settings supersession and IPC due-expiry reconciliation are wired
 
 ### Evidence signals (generator)
 
@@ -192,7 +194,7 @@ load chats/events/approvals/feedback for window
 
 Callable from IPC (`run-manual-introspection`) and tests. Scheduled daily
 generation uses the same run service with a scheduled trigger. Apply remains a
-separate explicit action (phase 1: repo conventions only — see
+separate explicit action (conventions and TaskWraith skill patches — see
 [Apply phase 1](#apply-phase-1-repo-conventions-only)).
 
 ## Using Thread Introspection in Settings
@@ -207,8 +209,10 @@ Open **Settings → Automation → Thread introspection**.
    and (for `skill_patch`) a diff preview. Settings can **Approve** or **Reject**;
    the gated `tw_introspection_review` MCP tool can also set review status.
    **Apply** (when shown) writes eligible approved
-   `repo_convention` / `do_not_repeat` lessons to **RepoConventionIndex**;
-   skill patches and other kinds stay review-only in phase 1.
+   `repo_convention` / `do_not_repeat` lessons to **RepoConventionIndex**, or
+   approved `skill_patch` proposals to **TaskWraith skill roots** with rollback
+   snapshots. **Supersede** explicitly reviews two proposed or approved records
+   within the same workspace pack; see [Lifecycle](#decay--supersede-lifecycle).
 3. **Enable daily run** — the Settings toggle enables the landed scheduler and
    schedule IPC. It creates a **read-only** proposal pack each day for review;
    it does **not** auto-apply lessons or edit skills.
@@ -220,7 +224,8 @@ IPC channels (read/review/apply + manual run):
 | `getMemoryProposalPacks(workspaceId?)`                                             | List packs for the review panel                              |
 | `getMemoryProposalPack(id)`                                                        | Fetch one pack                                               |
 | `updateMemoryProposal(packId, proposalId, partial)`                                | Approve/reject/expire; whitelisted fields only               |
-| `applyMemoryProposal(packId, proposalId)`                                          | Phase-1 apply to `RepoConventionIndex` (eligible kinds only) |
+| `applyMemoryProposal(packId, proposalId)`                                          | Reviewed apply to conventions or TaskWraith skill roots |
+| `supersedeMemoryProposal(packId, successorProposalId, predecessorProposalId)` | Explicit same-pack workspace supersession |
 | `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate                                    |
 
 Schedule IPC:
@@ -346,7 +351,7 @@ Commits:
 | Apply UI                                  | **Landed**  | Apply affordance for approved `repo_convention` / `do_not_repeat` / `skill_patch`                                                         |
 | Scheduled daily generation                | **Landed**  | `IntrospectionScheduler.ts` + schedule IPC/toggle                                                                                         |
 | MCP tools                                 | **Landed**  | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool                    |
-| Decay / supersede                         | **Partial** | Store helpers landed; IPC/MCP review can set expiry status/metadata, but no public supersede caller or automatic due-expiry policy exists |
+| Decay / supersede                         | **Source-ahead** | Settings explicitly supersedes proposed/approved records in one workspace pack; IPC reads/review reconcile due proposed records; broader apply/MCP integration remains gated |
 | Apply layer (prefs, bugs, provider hints) | **Pending** | Other kinds remain blocked                                                                                                                |
 | Distillation policy                       | **Pending** | Auto-approve rules per scope/kind                                                                                                         |
 
@@ -364,7 +369,7 @@ provider instruction-file apply, MCP apply, full memory registry UI.
 
 ```text
 Collect → Classify → Persist → Review → Scheduled → Apply → MCP → Decay/supersede
-  ✅        ✅         ✅         ✅        ✅        ✅ conventions+TW skills  ✅  ⚠ store helpers only
+  ✅        ✅         ✅         ✅        ✅        ✅ conventions+TW skills  ✅  Settings supersede + IPC due expiry (source-ahead)
 ```
 
 Scheduled generation creates **reviewable packs only** (no auto-apply). Apply
@@ -383,11 +388,23 @@ helpers:
 - `expireDueMemoryProposals()` marks past-due `proposed` proposals as
   `expired` while leaving approved/applied records untouched.
 
-The helpers themselves are internal/store-level today. Raw IPC review and
-`tw_introspection_review` can directly set `expired` status and `expiresAt`, but
-the Settings review UI exposes only Approve and Reject. There is no public
-caller for `supersedeMemoryProposal()`, no automatic caller
-for `expireDueMemoryProposals()`, and no integrated lifecycle policy yet.
+**Source-ahead Settings integration:** `supersedeMemoryProposal` IPC routes an
+explicit reviewed action through `supersedeReviewedMemoryProposal()`. Both
+exact records must be proposed or approved and in one pack with a workspace
+ID. The review identifies the successor and predecessor before
+confirmation; it does not infer a replacement from title or lesson similarity.
+Applied, expired, rejected, cross-pack and packs without a workspace ID
+are outside this reviewed action. Existing complete links are idempotent;
+conflicting links are refused.
+
+IPC pack list/read and review-update handlers reconcile valid past-due
+`proposed` records before returning or reviewing them. Supersession also
+reconciles its pack before checking eligibility. Expiry leaves approved/applied
+records untouched; this is read/review-triggered reconciliation, not a background expiry
+timer. Raw review IPC and `tw_introspection_review` retain their existing
+expiry metadata surface. There is no MCP supersede or apply tool, and broader
+apply-layer lifecycle policy remains gated. These source changes are not
+labelled shipped until the containing tag and published artifacts are verified.
 
 ## Apply phase 1 (repo conventions only)
 
@@ -465,8 +482,10 @@ Beyond the landed apply surface, approved proposals will route by kind/scope:
 | Provider instruction files           | `.codex` / `.cursor` skills                     | Not planned via this path |
 | Issue tracker / workspace board      | `bug`                                           | Later                     |
 
-Future apply actions should write **audit ledger entries** and wire **supersede**
-through the apply layer (store helpers landed; IPC/MCP/ledger integration pending).
+Future apply actions should write **audit ledger entries** and wire lifecycle
+through the apply layer. Explicit Settings supersession and IPC due-expiry
+reconciliation are source-ahead; MCP apply, provider instruction-file apply and
+broader apply-layer lifecycle integration remain intentionally gated.
 
 ## For agents operating in TaskWraith
 
