@@ -4,6 +4,11 @@ import type { DirectoryLease, MainDurabilityDirectoryLeases } from './MainDurabi
 import type { DurabilityDependency, DurabilityFile } from './MainDurabilityFlusher'
 
 export interface JournalDescriptorFlusher {
+  transferDependencies?(
+    predecessor: DurabilityFile,
+    successor: DurabilityFile,
+    offset: number
+  ): void
   open(dev: number, ino: number, fd: number, durableOffset?: number): DurabilityFile
   noteWrite(
     file: DurabilityFile,
@@ -32,6 +37,8 @@ interface Entry {
 export class IncrementalChatJournalDescriptorCache {
   private creationDebt = new Map<string, string[]>()
   private entries = new Map<string, Entry>()
+  private sealed = new Map<string, Entry>()
+  private rotationFailures = new Map<string, unknown>()
   private directories = new Map<string, { file: DurabilityFile; offset: number }>()
   private directoryLeases = new Map<string, DirectoryLease>()
   private retiring = new Map<string, Promise<void>>()
@@ -42,7 +49,7 @@ export class IncrementalChatJournalDescriptorCache {
     private readonly options: {
       write?: (fd: number, bytes: Buffer) => void
       maxFiles?: number
-      directoryLeases?: MainDurabilityDirectoryLeases
+      directoryLeases?: Pick<MainDurabilityDirectoryLeases, 'acquire'>
     } = {}
   ) {}
 
@@ -52,6 +59,7 @@ export class IncrementalChatJournalDescriptorCache {
     line: string,
     durability: 'deferred' | 'immediate'
   ): void {
+    if (this.rotationFailures.has(chatId)) throw this.rotationFailures.get(chatId)
     if (this.globalRetirement || this.retiring.has(chatId))
       throw new Error('Journal retirement in progress')
     const absolute = path.resolve(filePath)
@@ -108,6 +116,18 @@ export class IncrementalChatJournalDescriptorCache {
       entry.dependencies = dependencies
       this.creationDebt.delete(absolute)
     }
+    const predecessor = this.sealed.get(chatId)
+    if (
+      predecessor &&
+      !entry.dependencies.some((dependency) => dependency.file === predecessor.file)
+    ) {
+      if (!this.flusher.transferDependencies)
+        throw new Error('Journal rotation transfer unavailable')
+      this.flusher.transferDependencies(predecessor.file, entry.file, predecessor.end)
+      // Keep the transferred prerequisite in every later declaration; directory
+      // creates stay flat alongside it. The flusher owns original name debt.
+      entry.dependencies.push({ file: predecessor.file, offset: predecessor.end })
+    }
     let failed = false
     let original: unknown
     try {
@@ -130,17 +150,46 @@ export class IncrementalChatJournalDescriptorCache {
   }
 
   awaitDurable(chatId: string): Promise<void> {
+    if (this.rotationFailures.has(chatId)) return Promise.reject(this.rotationFailures.get(chatId))
     const entry = this.entries.get(chatId)
     if (entry && this.creationDebt.has(entry.path))
       return Promise.reject(new Error('Journal creation dependencies incomplete'))
-    return entry ? this.flusher.awaitDurable(entry.file, entry.end) : Promise.resolve()
+    const target = entry ?? this.sealed.get(chatId)
+    return target ? this.flusher.awaitDurable(target.file, target.end) : Promise.resolve()
+  }
+
+  /** Rename custody without closing, flushing or reusing the predecessor fd. */
+  rotate(chatId: string, sealedPath: string): void {
+    if (!this.flusher.transferDependencies) throw new Error('Journal rotation transfer unavailable')
+    if (this.globalRetirement || this.retiring.has(chatId) || this.sealed.has(chatId))
+      throw new Error('Journal rotation unavailable')
+    const entry = this.entries.get(chatId)
+    if (!entry || this.creationDebt.has(entry.path))
+      throw new Error('Journal source not initialized')
+    const destination = path.resolve(sealedPath)
+    if (fs.existsSync(destination)) throw new Error('Sealed journal already exists')
+    fs.renameSync(entry.path, destination)
+    this.entries.delete(chatId)
+    entry.path = destination
+    this.sealed.set(chatId, entry)
+    // Register after rename; failures retain custody and refuse future writes.
+    try {
+      entry.dependencies.push(this.directoryWrite(path.dirname(destination)))
+      this.flusher.noteWrite(entry.file, entry.end, 'soft', { after: entry.dependencies })
+    } catch (error) {
+      this.rotationFailures.set(chatId, error)
+      throw error
+    }
   }
 
   retire(ids?: readonly string[]): Promise<void> {
     if (this.globalRetirement) return this.globalRetirement
-    const keys = [...new Set(ids ?? [...this.entries.keys(), ...this.retiring.keys()])]
+    const keys = [
+      ...new Set(ids ?? [...this.entries.keys(), ...this.sealed.keys(), ...this.retiring.keys()])
+    ]
     const prior = keys.flatMap((id) => (this.retiring.has(id) ? [this.retiring.get(id)!] : []))
     const files = keys.flatMap((id) => (this.entries.has(id) ? [this.entries.get(id)!.file] : []))
+    files.push(...keys.flatMap((id) => (this.sealed.has(id) ? [this.sealed.get(id)!.file] : [])))
     if (!ids) files.push(...[...this.directories.values()].map((row) => row.file))
     const promise = Promise.all([...prior, this.flusher.forget(files)])
       .then(async () => {
@@ -149,6 +198,8 @@ export class IncrementalChatJournalDescriptorCache {
           this.directoryLeases.clear()
         }
         for (const id of keys) this.entries.delete(id)
+        for (const id of keys) this.sealed.delete(id)
+        for (const id of keys) this.rotationFailures.delete(id)
         if (!ids) this.directories.clear()
       })
       .finally(() => {
@@ -163,8 +214,9 @@ export class IncrementalChatJournalDescriptorCache {
 
   retireSync(ids?: readonly string[]): void {
     if (!this.flusher.forgetSync) throw new Error('Synchronous retirement adapter unavailable')
-    const keys = [...new Set(ids ?? [...this.entries.keys()])]
+    const keys = [...new Set(ids ?? [...this.entries.keys(), ...this.sealed.keys()])]
     const files = keys.flatMap((id) => (this.entries.has(id) ? [this.entries.get(id)!.file] : []))
+    files.push(...keys.flatMap((id) => (this.sealed.has(id) ? [this.sealed.get(id)!.file] : [])))
     if (!ids) files.push(...[...this.directories.values()].map((row) => row.file))
     this.flusher.forgetSync(files)
     if (!ids) {
@@ -172,6 +224,8 @@ export class IncrementalChatJournalDescriptorCache {
       this.directoryLeases.clear()
     }
     for (const id of keys) this.entries.delete(id)
+    for (const id of keys) this.sealed.delete(id)
+    for (const id of keys) this.rotationFailures.delete(id)
     if (!ids) this.directories.clear()
   }
 

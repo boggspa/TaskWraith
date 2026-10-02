@@ -16,6 +16,7 @@ import {
   removePreparedCheckpointFiles,
   type CheckpointPreparationJob,
   type CheckpointPreparationPort,
+  type CheckpointPreparationSource,
   type DeferredCheckpointResult
 } from './CheckpointPreparationProtocol'
 
@@ -83,6 +84,7 @@ export interface IncrementalChatJournalStats {
   checkpointsWritten: number
   /** Checkpoints written from the caller's in-memory head, with no replay. */
   checkpointsFromMemory: number
+  forcedSynchronousCheckpoints: number
   checkpointBytesWritten: number
   replayedBatches: number
   skippedDuplicateBatches: number
@@ -108,6 +110,8 @@ export interface IncrementalChatJournalOptions {
   /** Root injects only for exact TASKWRAITH_JOURNAL_FLUSHER=1. */
   descriptorCache?: IncrementalChatJournalDescriptorCache
   descriptorDrainSync?: () => void
+  /** Explicit opt-in; root requires exact rotation flag 1 and journal flusher. */
+  rotationEnabled?: boolean
   /** Opt-in idle compaction only. Strict/bounded/shutdown checkpoints keep their synchronous contract. */
   checkpointPreparation?: CheckpointPreparationPort
   beforeSourceMutation?: (chatId: string) => void
@@ -136,6 +140,7 @@ export interface IncrementalChatJournalOptions {
 }
 
 export interface IncrementalChatJournal {
+  rotateForPreparation?(chatId: string): CheckpointPreparationSource | null
   initialize(chatId: string, record: ChatRecord): void
   append(batch: ChatRecordMutationBatch, options?: IncrementalChatAppendOptions): void
   replay(chatId: string): IncrementalChatReplayResult
@@ -321,6 +326,7 @@ export function createIncrementalChatJournal(
   let mutationBytesWritten = 0
   let checkpointsWritten = 0
   let checkpointsFromMemory = 0
+  let forcedSynchronousCheckpoints = 0
   let checkpointBytesWritten = 0
   let replayedBatches = 0
   let skippedDuplicateBatches = 0
@@ -920,12 +926,14 @@ export function createIncrementalChatJournal(
     checkpointBytesWritten += bytes
     options.afterCheckpointWrite?.(chatId, nextCheckpoint)
     options.descriptorCache?.retireSync([chatId])
-    try {
-      fs.unlinkSync(journalPath(chatId))
-      fsyncDirectory()
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
+      try {
+        fs.unlinkSync(filePath)
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
+    fsyncDirectory()
     state.headRevision = replayed.revision
     acknowledgeJournalBarrier(chatId)
     state.journalEntries = 0
@@ -978,11 +986,30 @@ export function createIncrementalChatJournal(
     state.lastAppendAtMs = null
   }
 
+  const rotateForPreparation = (chatId: string): CheckpointPreparationSource | null => {
+    assertWritable()
+    assertChatId(chatId)
+    if (!options.rotationEnabled || !options.descriptorCache) return null
+    const state = states.get(chatId)
+    if (!state || state.tombstoned || state.headRevision === null || state.journalEntries === 0)
+      return null
+    if (fs.existsSync(sealedPath(chatId))) return null
+    options.beforeSourceMutation?.(chatId)
+    if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return null
+    const revision = state.headRevision
+    const checkpoint = checkpointFileReference(checkpointPath(chatId))
+    options.descriptorCache.rotate(chatId, sealedPath(chatId))
+    // Existing production worker accepts checkpoint + one immutable journal.
+    // That journal is now sealed at exactly R; streaming goes to another inode.
+    return { chatId, revision, savedAt: new Date(now()).toISOString(), checkpoint,
+      journal: checkpointFileReference(sealedPath(chatId)) }
+  }
+
   const append = (
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
-    invalidatePreparation(batch.chatId)
+    if (!options.rotationEnabled) invalidatePreparation(batch.chatId)
     options.beforeSourceMutation?.(batch.chatId)
     assertWritable()
     assertChatId(batch.chatId)
@@ -1033,7 +1060,14 @@ export function createIncrementalChatJournal(
       state.journalBytes >= maxJournalBytes ||
       (state.dirtySinceMs !== null && now() - state.dirtySinceMs >= maxUncheckpointedMs)
     ) {
-      checkpoint(batch.chatId, 'bounded')
+      if (options.rotationEnabled) {
+        if (fs.existsSync(sealedPath(batch.chatId))) {
+          // Ratified S4: an outstanding sealed segment cannot disable bounds.
+          // The covering checkpoint permits both inode retirements and removal.
+          forcedSynchronousCheckpoints += 1
+          checkpoint(batch.chatId, 'bounded')
+        } else rotateForPreparation(batch.chatId)
+      } else checkpoint(batch.chatId, 'bounded')
     }
   }
 
@@ -1334,6 +1368,7 @@ export function createIncrementalChatJournal(
     mutationBytesWritten,
     checkpointsWritten,
     checkpointsFromMemory,
+    forcedSynchronousCheckpoints,
     checkpointBytesWritten,
     replayedBatches,
     skippedDuplicateBatches,
@@ -1343,6 +1378,7 @@ export function createIncrementalChatJournal(
 
   return {
     initialize,
+    rotateForPreparation,
     append,
     replay,
     pendingReplayState,
