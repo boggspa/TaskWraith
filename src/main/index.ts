@@ -768,6 +768,7 @@ import {
   waitForProviderOperationSettlement
 } from './run/ProviderOperationRegistry'
 import { noteAntigravityLeaseSkipped } from './antigravity/AntigravityRunDiagnostics'
+import { terminateAndJoinMainProviderRun } from './services/MainProviderRunTermination'
 import {
   acquireProviderRunLifecycleOwnership,
   createProviderRunLifecycleOwnershipDependencies,
@@ -35973,51 +35974,20 @@ async function terminateProviderRunForHistory(
       'History deletion proved the delegated provider transport closed.'
     )
   }
-  const session = runManager.get(runId)
-  const adapterOperation = providerAdapterRunsInFlight.get(runId)
-  const transportOperation = providerTransportOperations.get(runId)
-  const operations = [...new Set([adapterOperation, transportOperation].filter(Boolean))] as Array<
-    Promise<void>
-  >
-  if (!session) {
-    if (operations.length > 0) {
-      const joined = await Promise.all(
-        operations.map((operation) => waitForProviderOperationSettlement(operation, 10_000))
-      )
-      return joined.every(Boolean)
-    }
-    // A fresh process has lost the child PID/start-time identity needed to
-    // prove that a CLI/ACP transport died with Electron. Never manufacture a
-    // provider receipt from missing in-memory state; recovery remains fenced
-    // until launch supervision can supply durable parent-death/exit evidence.
-    return false
-  }
-  if (session.provider !== provider) return false
-
-  const stopped = isActiveRunSessionStatus(session.status)
-    ? await terminateExactProviderSession(provider, runId, 'cancelled')
-    : true
-  if (!stopped && isActiveRunSessionStatus(runManager.get(runId)?.status || 'cancelled')) {
-    return false
-  }
-
-  if (operations.length > 0) {
-    let settled = await Promise.all(
-      operations.map((operation) => waitForProviderOperationSettlement(operation, 5_000))
-    )
-    if (!settled.every(Boolean)) {
-      try {
-        session.process?.kill('SIGKILL')
-      } catch {
-        // The first termination may already have reaped the exact child.
-      }
-      settled = await Promise.all(
-        operations.map((operation) => waitForProviderOperationSettlement(operation, 5_000))
-      )
-    }
-    if (!settled.every(Boolean)) return false
-  }
-  return !isActiveRunSessionStatus(runManager.get(runId)?.status || 'cancelled')
+  return terminateAndJoinMainProviderRun(
+    {
+      getSession: (id) => runManager.get(id),
+      getOperations: (id) =>
+        [providerAdapterRunsInFlight.get(id), providerTransportOperations.get(id)].filter(
+          (operation): operation is Promise<void> => operation !== undefined
+        ),
+      isActive: isActiveRunSessionStatus,
+      terminate: (owner, id) => terminateExactProviderSession(owner, id, 'cancelled'),
+      wait: waitForProviderOperationSettlement
+    },
+    provider,
+    runId
+  )
 }
 
 async function containExecutionGraphTerminalJoin(runId: string, reason: string): Promise<void> {
