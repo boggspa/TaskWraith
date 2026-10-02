@@ -22,6 +22,8 @@
  * transactions share, so groups publish in commit order. The index commits
  * before the group's fsync, which follows the lock (RR-7). A feed has no
  * receipt: its group's anchor is released once the group is durable.
+ * Production holds committer mode through publication and durability; model
+ * and refill reads stay outside the gate and the publication lock.
  *
  * Refills (slice 13e). When a change leaves the run window short, the drain
  * absorbs refills into its one transaction: it aborts the prepare, reads the
@@ -35,6 +37,7 @@
  */
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { HostDeltaStore } from './HostDeltaStore'
+import type { HostCommitGate } from './HostCommitGate'
 import { validateHostDomainEffectBatch } from './HostDomainDeltaPublisher'
 import { performance } from 'node:perf_hooks'
 
@@ -55,6 +58,8 @@ export const HOST_PUBLIC_WINDOW_ABSORB_ROUNDS = 8
 export interface HostPublicWindowFeederOptions {
   readonly index: Pick<HostPublicWindowIndex, 'prepare'>
   readonly publicationLock: <T>(work: () => Promise<T> | T) => Promise<T>
+  /** Publication and durability exclude legacy observation windows. */
+  readonly gate?: Pick<HostCommitGate, 'enter'>
   readonly deltas: Pick<
     HostDeltaStore,
     'appendGroup' | 'awaitDurable' | 'getPosition' | 'releaseGroup'
@@ -451,9 +456,7 @@ export class HostPublicWindowFeeder {
       if (changes.length === 0) break
       // Past the bound, publish what the window holds and read the rest later.
       const absorbing = round < HOST_PUBLIC_WINDOW_ABSORB_ROUNDS ? refilled : null
-      const attempt = await this.options.publicationLock(() =>
-        this.publish(commandId, changes, absorbing)
-      )
+      const attempt = await this.publishFenced(commandId, changes, absorbing)
       if (attempt.kind !== 'absorb') {
         published = attempt
         break
@@ -483,17 +486,38 @@ export class HostPublicWindowFeeder {
     }
     // Threads the absorb bound left for later.
     this.refill(published.refill.filter((threadId) => !refilled.has(threadId)))
-    if (published.end === null) return
-    const durable = await this.options.deltas.awaitDurable()
-    if (durable.kind === 'fail-stopped') {
-      this.stopReason = durable.detail
-    } else if (durable.kind === 'reset') {
-      this.counts.resets += 1
+  }
+
+  private async publishFenced(
+    commandId: string,
+    changes: readonly HostPublicWindowChange[],
+    absorbing: ReadonlySet<string> | null
+  ): Promise<Published> {
+    const entered = await this.options.gate?.enter('committer', { label: commandId })
+    if (entered && !entered.ok) {
+      this.stopReason = `commit_gate_${entered.reason}`
+      return { kind: 'unpublished' }
     }
     try {
-      this.options.deltas.releaseGroup(commandId)
-    } catch {
-      // The anchor stays until the next checkpoint; nothing depends on it.
+      const published = await this.options.publicationLock(() =>
+        this.publish(commandId, changes, absorbing)
+      )
+      if (published.kind === 'published' && published.end !== null) {
+        const durable = await this.options.deltas.awaitDurable()
+        if (durable.kind === 'fail-stopped') {
+          this.stopReason = durable.detail
+        } else if (durable.kind === 'reset') {
+          this.counts.resets += 1
+        }
+        try {
+          this.options.deltas.releaseGroup(commandId)
+        } catch {
+          // The anchor stays until the next checkpoint; nothing depends on it.
+        }
+      }
+      return published
+    } finally {
+      if (entered?.ok) entered.lease.release()
     }
   }
 

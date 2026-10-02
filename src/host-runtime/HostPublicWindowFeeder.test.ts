@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import { HOST_DELTA_JOURNAL_FILENAME, HostDeltaStore } from './HostDeltaStore'
+import { createHostCommitGate } from './HostCommitGate'
 import {
   decodeHostProfileThread,
   HOST_PROFILE_CHATS_DIRECTORY,
@@ -108,7 +109,7 @@ interface Harness {
   chatPath(threadId: string): string
 }
 
-function harness(options: { band?: number } = {}): Harness {
+function harness(options: { band?: number; gate?: HostPublicWindowFeederOptions['gate'] } = {}): Harness {
   const profilePath = mkdtempSync(join(tmpdir(), 'host-public-window-feeder-'))
   roots.push(profilePath)
   const dataDir = join(profilePath, 'host-data')
@@ -181,6 +182,7 @@ function harness(options: { band?: number } = {}): Harness {
       }
     },
     publicationLock,
+    gate: options.gate,
     deltas: {
       appendGroup: (input) => {
         events.push(`deltas:appendGroup(${input.commandId})`)
@@ -277,6 +279,30 @@ function harness(options: { band?: number } = {}): Harness {
 }
 
 describe('HostPublicWindowFeeder (M4 slice 13c1)', () => {
+  it('models outside the gate and waits for an observer before publishing', async () => {
+    const gate = createHostCommitGate()
+    const observer = await gate.enter('observer', { label: 'legacy-window' })
+    if (!observer.ok) throw new Error('observer refused')
+    const h = harness({ gate })
+    const threadId = h.seed()
+    h.feeder.mark(threadId, 'record')
+    try {
+      expect(await settledWithin(h.feeder.idle())).toBe('pending')
+      expect(h.modelled).toEqual([threadId])
+      expect(h.journalFeedGroups()).toEqual([])
+      expect(gate.snapshot().waiting).toBe(1)
+      observer.lease.release()
+      await h.feeder.idle()
+      expect(h.journalFeedGroups()).toEqual(['feed:1'])
+      expect(gate.snapshot().modes.committer.entered).toBe(1)
+      expect(gate.snapshot().holders).toEqual([])
+    } finally {
+      observer.lease.release()
+      await h.feeder.close()
+      gate.close()
+    }
+  })
+
   describe('2. a record write lands in the index through one group', () => {
     it('marks, models outside the lock, publishes under it, releases the group once durable', async () => {
       const h = harness()

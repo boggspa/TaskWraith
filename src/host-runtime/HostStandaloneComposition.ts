@@ -659,7 +659,10 @@ export function createHostStandaloneComposition(
             threadId: string,
             kind: HostThreadRecordWrittenKind,
             thread?: HostProfileThread
-          ) => threadRecordTransaction.feeder.mark(threadId, kind, thread),
+          ) => {
+            if (kind === 'deleted') authority.threadRecordDeleted(threadId)
+            return threadRecordTransaction.feeder.mark(threadId, kind, thread)
+          },
           ...(threadRecordTransaction.startSeed
             ? { startPublicWindowSeed: threadRecordTransaction.startSeed }
             : {})
@@ -743,6 +746,7 @@ function createThreadRecordTransaction(
   const feeder = new HostPublicWindowFeeder({
     index,
     publicationLock,
+    gate,
     deltas: runtime.deltaStore,
     model: (threadId) => model({ profilePath: options.profilePath, threadId }),
     now,
@@ -867,6 +871,10 @@ function createThreadRecordTransaction(
     },
     close: async () => {
       ledger.close()
+      // Already marked feeds must drain while the gate still admits them.
+      // Closing the ledger refuses new lane writers; entered transactions
+      // finish below before any runtime store is flushed.
+      await feeder.close()
       gate.close()
       await Promise.all([...inFlight])
       // A seed still reading is dropped with the feeder; its workers go too.

@@ -514,6 +514,48 @@ describe('AppStoreHostAuthority: transactional persist routing (M4 slice 12b)', 
       return executorCalls.filter((cmd) => cmd.name === 'thread.record.delete')
     }
 
+    it('an unlink closes the lane even when the delete subsequently fails', async () => {
+      const fake = laneTransaction()
+      const unlink = deferred()
+      const finish = deferred()
+      const active = open({
+        threadRecordTransaction: fake.port,
+        commandExecutor: async () => {
+          unlink.resolve()
+          await finish.promise
+          // Store notification happens after unlink and before directory fsync.
+          active.threadRecordDeleted(THREAD_ID)
+          active.threadRecordDeleted(THREAD_ID)
+          return { status: 'failed', errorCode: 'thread_record_delete_failed' }
+        }
+      })
+      const removing = active.command(CONTEXT, del('d-unlinked'))
+      await unlink.promise
+      const queued = active.command(
+        CONTEXT,
+        command('thread.record.persist', 'p-behind-unlink', {
+          ...PERSIST_ARGS,
+          expectedRevision: 0
+        })
+      )
+      await waitFor(() => lane().waiting === 1, 'persist behind the delete')
+      finish.resolve()
+      expect(await removing).toMatchObject({
+        ok: true,
+        value: { status: 'failed', errorCode: 'thread_record_delete_failed' }
+      })
+      expect(await queued).toMatchObject({
+        ok: true,
+        value: { status: 'failed', errorCode: HOST_SCOPE_EPOCH_STALE_ERROR_CODE }
+      })
+      expect(lane()).toMatchObject({ deleted: true, owner: null, waiting: 0 })
+      expect(lane().epoch.deleteCounter).toBe(1)
+      expect(await active.command(CONTEXT, persist('p-after-unlink'))).toMatchObject({
+        ok: true,
+        value: { status: 'failed', errorCode: HOST_SCOPE_DELETED_ERROR_CODE }
+      })
+    })
+
     it('a committed delete closes the lane, so a later persist fails thread_record_gone', async () => {
       const fake = laneTransaction()
       const authority = open({ threadRecordTransaction: fake.port })

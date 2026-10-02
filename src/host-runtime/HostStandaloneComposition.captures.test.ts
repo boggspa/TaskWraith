@@ -765,19 +765,20 @@ describe('HostStandaloneComposition: captures read the public window index (M4 s
         expect(composition.getPosition()).toEqual(baseline)
         expect(watch.since(mark)).toEqual([])
 
-        // The pass stamps at the durable head (before the group), reads the
-        // wire (which the index committed before appending), then waits for
-        // durability: it cannot resolve while the fsync is held.
+        // Observer mode waits for the feed's committer through durability,
+        // then stamps and captures the same committed view.
         const pass = composition.reconcileProjection()
         expect(await settledWithin(pass)).toBe('pending')
 
         journalHold.promise = null
         hold.resolve()
         const result = await pass
-        // The group is beyond the stamp, and the capture ahead of the journal
-        // the baseline follows: the diff holds the thread and its run, both
-        // owned, so nothing is published and the baseline advances.
-        expect(result).toEqual({ kind: 'unchanged', position: baseline })
+        // Both owned rows are already durable at the stamp; no drift is
+        // republished, and the reconciler advances through the feed once.
+        expect(result).toEqual({
+          kind: 'unchanged',
+          position: { generation: baseline.generation, cursor: baseline.cursor + group.count }
+        })
         await vi.waitFor(() =>
           expect(composition.getPosition().cursor).toBe(baseline.cursor + group.count)
         )

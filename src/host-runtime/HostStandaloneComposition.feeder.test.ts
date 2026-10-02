@@ -16,7 +16,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { HostDeltaEnvelope } from '../shared/hostProtocol'
+const deleteFsync = vi.hoisted(() => ({ failDirectory: false }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    fsyncSync: (fd: number) => {
+      if (deleteFsync.failDirectory && actual.fstatSync(fd).isDirectory()) {
+        throw new Error('injected delete directory fsync failure')
+      }
+      return actual.fsyncSync(fd)
+    }
+  }
+})
+
+import { HOST_PROTOCOL_VERSION, type HostDeltaEnvelope } from '../shared/hostProtocol'
 import { HOST_DELTA_JOURNAL_FILENAME } from './HostDeltaStore'
 import { HostProfileDomainStore, type HostThreadRecordWrittenKind } from './HostProfileDomainStore'
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
@@ -32,6 +46,7 @@ import {
   type HostThreadRecordCommitPort
 } from './HostThreadRecordTransaction'
 import { HOST_TRANSACTION_LOG_FILENAME } from './HostTransactionLog'
+import { publishHostThreadRecordTransfer } from './HostThreadRecordTransfer'
 
 const NOW_MS = 1_760_000_000_000
 const NOW_ISO = new Date(NOW_MS).toISOString()
@@ -39,6 +54,7 @@ const BOOT_EPOCH = 'd'.repeat(64)
 
 const roots: string[] = []
 afterEach(() => {
+  deleteFsync.failDirectory = false
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true })
 })
 
@@ -177,6 +193,151 @@ function describeDelta(envelope: HostDeltaEnvelope): string {
 }
 
 describe('HostStandaloneComposition: the public window feeder (M4 slice 13c1)', () => {
+  it('a real unlink followed by directory fsync failure refuses queued revision-zero recreation', async () => {
+    if (process.platform === 'win32') return
+    const p = profile()
+    const entered = deferred()
+    const finish = deferred()
+    const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+    const context = {
+      actor,
+      client: { clientId: 'client-1', clientClass: 'desktop' as const, clientVersion: '1.0.0' }
+    }
+    const composition = createHostStandaloneComposition({
+      ...p.base,
+      commandExecutor: async (command) => {
+        entered.resolve()
+        await finish.promise
+        deleteFsync.failDirectory = true
+        try {
+          p.store.deleteThreadRecord({
+            threadId: command.target.threadId as string,
+            expectedRevision: command.arguments.expectedRevision as number
+          })
+          return { status: 'succeeded', resultSummary: 'thread_record_deleted' }
+        } catch {
+          return { status: 'failed', errorCode: 'thread_record_delete_failed' }
+        } finally {
+          deleteFsync.failDirectory = false
+        }
+      },
+      threadRecordTransaction: p.transactionInput()
+    })
+    p.composition.current = composition
+    const record = p.store.createThread({ scope: 'global', title: 'Deleted' })
+    const threadId = record.appChatId
+    const chatPath = join(p.profilePath, 'chats', `${threadId}.json`)
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: p.profilePath,
+      transferId: 'revision-zero-recreate',
+      record
+    })
+    const command = (name: 'thread.record.delete' | 'thread.record.persist', commandId: string) => ({
+      type: 'host.command' as const,
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId,
+      idempotencyKey: `${commandId}-key`,
+      actor,
+      name,
+      target: { threadId },
+      arguments: { ...(name === 'thread.record.persist' ? descriptor : {}), expectedRevision: 0 },
+      issuedAt: NOW_ISO
+    })
+    try {
+      await vi.waitFor(() => expect(p.groupLines('feed:')).toHaveLength(1))
+      const deleting = composition.authority.command(
+        context,
+        command('thread.record.delete', 'delete-fsync')
+      )
+      await entered.promise
+      const queued = composition.authority.command(
+        context,
+        command('thread.record.persist', 'queued-recreate')
+      )
+      // Its durable pending receipt proves admission while delete holds the lane.
+      await vi.waitFor(async () => {
+        expect(
+          await composition.authority.receipt(context, { commandId: 'queued-recreate' })
+        ).toMatchObject({ ok: true, outcome: 'found' })
+      })
+      finish.resolve()
+      expect(await deleting).toMatchObject({
+        ok: true,
+        value: { status: 'failed', errorCode: 'thread_record_delete_failed' }
+      })
+      expect(p.hooked.at(-1)).toEqual({ threadId, kind: 'deleted' })
+      expect(existsSync(chatPath)).toBe(false)
+      expect(await queued).toMatchObject({
+        ok: true,
+        value: { status: 'failed', errorCode: 'thread_record_epoch_stale' }
+      })
+      expect(
+        await composition.authority.command(context, command('thread.record.persist', 'later-recreate'))
+      ).toMatchObject({ ok: true, value: { status: 'failed', errorCode: 'thread_record_gone' } })
+      expect(existsSync(chatPath)).toBe(false)
+      await vi.waitFor(() => expect(p.groupLines('feed:')).toHaveLength(2))
+    } finally {
+      finish.resolve()
+      await composition.shutdown()
+    }
+  })
+
+  it.each(['thread.select', 'thread.record.delete'] as const)(
+    'holds an unrelated feed outside a %s observation window',
+    async (name) => {
+      const p = profile()
+      const entered = deferred()
+      const finish = deferred()
+      const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+      const composition = createHostStandaloneComposition({
+        ...p.base,
+        commandExecutor: async () => {
+          entered.resolve()
+          await finish.promise
+          return { status: 'succeeded', resultSummary: 'legacy' }
+        },
+        threadRecordTransaction: p.transactionInput()
+      })
+      p.composition.current = composition
+      const before = composition.getPosition()
+      const result = composition.authority.command(
+        { actor, client: { clientId: 'client-1', clientClass: 'desktop', clientVersion: '1.0.0' } },
+        {
+          type: 'host.command',
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          commandId: `window-${name}`,
+          idempotencyKey: `window-${name}-key`,
+          actor,
+          name,
+          target: { threadId: 'selected-thread' },
+          arguments: name === 'thread.record.delete' ? { expectedRevision: 0 } : {},
+          issuedAt: NOW_ISO
+        }
+      )
+      try {
+        await entered.promise
+        // Another writer reports its committed file while the command waits.
+        const concurrent = p.store.createThread({ scope: 'global', title: 'Concurrent writer' })
+        p.store.appendTranscript({
+          threadId: concurrent.appChatId,
+          role: 'assistant',
+          content: 'Run-port write outside the observed command'
+        })
+        expect(p.hooked.at(-1)?.kind).toBe('run')
+        await vi.waitFor(() => expect(p.modelled.length).toBeGreaterThan(0))
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        expect(composition.getPosition()).toEqual(before)
+        finish.resolve()
+        expect(await result).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+        await vi.waitFor(() => expect(p.groupLines('feed:')).toHaveLength(1))
+      } finally {
+        finish.resolve()
+        await result
+        await composition.shutdown()
+      }
+    }
+  )
+
   it('flag on: a setup write through the hooked store lands in the deltas as one feed group, released once durable', async () => {
     const p = profile()
     const composition = createHostStandaloneComposition({

@@ -118,7 +118,12 @@ import {
 } from './HostMutationObservationScope'
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
-import { hostThreadScope, type HostScopeEpoch, type HostScopeLedger } from './HostScopeLedger'
+import {
+  hostThreadScope,
+  type HostScopeEpoch,
+  type HostScopeLedger,
+  type HostScopeSlot
+} from './HostScopeLedger'
 import type { HostCommitFence } from './HostCommitFence'
 import type {
   HostThreadRecordTransactionInput,
@@ -535,6 +540,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
+  private readonly deletingRecords = new Map<string, { slot: HostScopeSlot; unlinked: boolean }>()
   private readonly fence: HostCommitFence
   private readonly recordDerived?: AppStoreHostAuthorityRecordDerivedSource
   private readonly domainPublisher: HostDomainDeltaPublisher
@@ -1397,6 +1403,8 @@ export class AppStoreHostAuthority implements HostAuthority {
       return projectFoundReceipt(completed)
     }
     const slot = acquired.slot
+    const deleting = { slot, unlinked: false }
+    this.deletingRecords.set(threadId, deleting)
     try {
       // Lane first, then the projection queue for the delete's legacy window.
       const answer = await this.inProjectionQueue(queued, hostCommand, () =>
@@ -1404,6 +1412,7 @@ export class AppStoreHostAuthority implements HostAuthority {
       )
       const found = this.runtime.receiptStore.getByCommandId(hostCommand.commandId, actor)
       if (
+        !deleting.unlinked &&
         found.kind === 'found' &&
         found.receipt.status === 'succeeded' &&
         found.receipt.resultSummary === 'thread_record_deleted'
@@ -1412,8 +1421,17 @@ export class AppStoreHostAuthority implements HostAuthority {
       }
       return answer
     } finally {
+      this.deletingRecords.delete(threadId)
       slot.release()
     }
+  }
+
+  /** The store reports unlink before directory fsync can fail. */
+  threadRecordDeleted(threadId: string): void {
+    const deleting = this.deletingRecords.get(threadId)
+    if (!deleting || deleting.unlinked) return
+    deleting.slot.deleted()
+    deleting.unlinked = true
   }
 
   private usesQueuedComposerSend(command: HostCommand | undefined): boolean {
