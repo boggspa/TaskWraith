@@ -2559,6 +2559,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       )
 
       const profileDir = path.join(artifactDir, 'profiles')
+      if (typeof options.onVerifiedCaptureSession === 'function') {
+        await options.onVerifiedCaptureSession({
+          serverInstance: report.serverInstance,
+          childPid: childSession.pid,
+          userDataPath: isolationVerification.observedUserDataPath
+        })
+      }
       fs.mkdirSync(profileDir, { recursive: true })
       const mainCpuPath = path.join(profileDir, 'main.cpuprofile')
       const rendererCpuPath = path.join(profileDir, 'renderer.cpuprofile')
@@ -3121,6 +3128,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },
         { log: true }
       )
+      if (typeof options.onCaptureSessionComplete === 'function') {
+        await options.onCaptureSessionComplete({ report })
+      }
     } catch (error) {
       launchError = error instanceof Error ? error : new Error(String(error))
       recordProgressFailure(launchError)
