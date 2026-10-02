@@ -65,6 +65,7 @@ import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
 import { createHostCommitFence } from './HostCommitFence'
 import { createHostCommitGate, type HostCommitGate } from './HostCommitGate'
+import { createHostPublicWindowPerfSections } from './HostPublicWindowPerf'
 import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 import { HostPublicWindowIndex, hostPublicWindowOwnsEffect } from './HostPublicWindowIndex'
 import { createHostScopeLedger } from './HostScopeLedger'
@@ -91,6 +92,7 @@ import {
 import type { HostThreadRecordFileModel, HostThreadRecordModelInput } from './HostThreadRecordModel'
 import { consumeHostCleanExit, recordHostCleanExit } from './HostCleanExit'
 import { HOST_TRANSACTION_LOG_FILENAME, HostTransactionLog } from './HostTransactionLog'
+import { HostTransactionLogMaintenance } from './HostTransactionLogMaintenance'
 import {
   recoverHostTransactions,
   type HostTransactionRecoveryReport
@@ -436,6 +438,11 @@ export function createHostStandaloneComposition(
         bootEpoch
       )
     : null
+  let transactionLogMaintenance: HostTransactionLogMaintenance | null = null
+  hostPerf.registerSections(createHostPublicWindowPerfSections(() => threadRecordTransaction))
+  hostPerf.registerSections({
+    transactionLog: () => transactionLogMaintenance?.snapshot() ?? { available: false }
+  })
   // M4 slice 13a: with the transaction wired, every projection window holds
   // the commit gate's observer mode inside its FIFO turn (lock order: lane,
   // FIFO, gate), so no capture sees a half-published commit.
@@ -464,6 +471,7 @@ export function createHostStandaloneComposition(
       await drainQueuedStartPublication()
       await reconciler?.stop()
       await runProjectionOperation(async () => undefined)
+      await transactionLogMaintenance?.close()
       // Diagnostics stop after the queue drains so the drain's own span is
       // recorded; the transport stops before the meter it reads.
       snapshotFile?.stop()
@@ -613,7 +621,7 @@ export function createHostStandaloneComposition(
     if (!log) return null
     const profilePath = input.threadRecordTransaction?.profilePath ?? input.profilePath
     if (!profilePath) throw new Error('Transaction recovery needs the profile path')
-    return recoverHostTransactions(
+    const report = await recoverHostTransactions(
       {
         receipts: runtime.receiptStore,
         log,
@@ -624,6 +632,23 @@ export function createHostStandaloneComposition(
       // Decision 2: with the index publishing, an unclean exit resets once.
       { reset: threadRecordTransaction && !previousExitClean ? 'always' : 'when-needed' }
     )
+    transactionLogMaintenance = new HostTransactionLogMaintenance({
+      log,
+      receipts: () =>
+        new Map(
+          runtime.receiptStore.list().map((record) => [
+            record.commandId,
+            {
+              status: record.status,
+              recoveryState: record.recoveryState ?? null,
+              commandClass: record.commandClass ?? 'legacy-observed',
+              errorCode: record.errorCode ?? null
+            }
+          ])
+        )
+    })
+    transactionLogMaintenance.start()
+    return report
   }
 
   return {
@@ -730,6 +755,7 @@ function createThreadRecordTransaction(
   port: AppStoreHostAuthorityThreadRecordTransaction
   gate: HostCommitGate
   feeder: HostPublicWindowFeeder
+  index: HostPublicWindowIndex
   startSeed?: () => { readonly seeded: Promise<HostPublicWindowSeedOutcome> }
   recordDerived: AppStoreHostAuthorityRecordDerivedSource
   log: HostTransactionLog
@@ -815,6 +841,7 @@ function createThreadRecordTransaction(
   return {
     gate,
     feeder,
+    index,
     log,
     ...(startSeed ? { startSeed } : {}),
     // Slice 13f2: once switched, snapshots read the five families here.

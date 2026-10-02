@@ -594,7 +594,9 @@ describe('HostStandaloneComposition.recoverTransactions (M4 slice 14b, §24.3)',
         position(built.end)
       )
       const entry = HostTransactionLog.open({ dataDir: p.runtimePath }).get('cmd-d3')
-      expect(entry?.terminal).toMatchObject({ kind: 'published', position: built.end })
+      // Recovery succeeded at the durable group position; maintenance retires
+      // the terminal manifest once that durable receipt is its authority.
+      expect(entry).toBeNull()
     },
     TIMEOUT
   )
@@ -702,7 +704,8 @@ describe('HostStandaloneComposition.recoverTransactions (M4 slice 14b, §24.3)',
         reset!
       )
       const entry = HostTransactionLog.open({ dataDir: p.runtimePath }).get('cmd-d1')
-      expect(entry?.terminal).toMatchObject({ kind: 'published', position: reset! })
+      // The committed inode and succeeded receipt survive terminal compaction.
+      expect(entry).toBeNull()
       expect(identityOf(chatPath(p, 'thread-d1'))).toEqual(built.resulting)
     },
     TIMEOUT
