@@ -211,6 +211,70 @@ function makeDeps(overrides: Partial<RunQueueServiceDeps> = {}): {
 }
 
 describe('RunQueueService', () => {
+  it('preserves normal leasing before shutdown and durable jobs after the fence', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    expect(service.leaseJob()).not.toBeNull()
+    service.beginShutdown()
+    service.beginShutdown()
+    expect(service.leaseJob()).toBeNull()
+    expect(service.leaseQueuedJob()).toBeNull()
+    expect(service.leasePromotedSteerJob({ runId: 'run-1', ownerToken: 'owner' })).toBeNull()
+    expect(service.promoteQueuedJobForSteer({ runId: 'run-1', ownerToken: 'owner' })).toBeNull()
+    expect(service.fallbackPromotedSteerJob({ runId: 'run-1', ownerToken: 'owner', reason: 'retry' })).toBeNull()
+    expect(service.releasePromotedSteerAfterDefiniteNonAdmission({ runId: 'run-1', ownerToken: 'owner', reason: 'retry' })).toBeNull()
+    expect(service.transitionJob('run-1', 'queued')).toBeNull()
+    expect(service.transitionJob('run-1', 'starting')).toBeNull()
+    expect(service.getJobs()[0].runId).toBe('run-1')
+    expect(repository.leaseQueuedRun).toHaveBeenCalledOnce()
+    expect(repository.transitionRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('rejects a request crossing shutdown during normalization before saving', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    const prepare = service.prepareJob.bind(service)
+    vi.spyOn(service, 'prepareJob').mockImplementation((input, options) => {
+      const prepared = prepare(input, options)
+      service.beginShutdown()
+      return prepared
+    })
+    expect(() => service.requestJob({ provider: 'codex', runId: 'new', chatId: 'chat-1', workspaceId: 'workspace-1', workspacePath: '/repo', scope: 'workspace', source: 'manual' }))
+      .toThrow('shutting down')
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+    expect(() => service.requestJob({})).toThrow('shutting down')
+  })
+
+  it('does not lease when a dependency raises shutdown while checking eligibility', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    vi.mocked(deps.canLeaseJob).mockImplementation(() => {
+      service.beginShutdown()
+      return true
+    })
+    expect(service.leaseQueuedJob()).toBeNull()
+    expect(repository.leaseQueuedRun).not.toHaveBeenCalled()
+  })
+
+  it.each(['completed', 'failed', 'cancelled'] as const)('allows existing %s settlements after shutdown', (status) => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    service.beginShutdown()
+    expect(service.transitionJob('run-1', status)?.status).toBe(status)
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledOnce()
+  })
+
+  it('allows terminal session persistence but blocks active session queue updates', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    service.beginShutdown()
+    const session = { runId: 'run-1', provider: 'codex', status: 'running' } as RunSession
+    service.persistSessionQueueState(session)
+    expect(repository.persistSessionQueueState).not.toHaveBeenCalled()
+    service.persistSessionQueueState({ ...session, status: 'completed' })
+    expect(repository.persistSessionQueueState).toHaveBeenCalledOnce()
+  })
+
   it('does not accept solo-steer preparation authority through generic queue creation', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)

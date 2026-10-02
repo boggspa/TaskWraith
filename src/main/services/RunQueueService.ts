@@ -3,7 +3,7 @@ import { normalizeDiscordContextSelection } from '../channels/DiscordContextServ
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import { resolveHostCommandActionId } from '../host/HostCommandIdentity'
 import type { RunQueueJobInput } from '../RunQueue'
-import type { RunSession } from '../RunManager'
+import { isTerminalRunSessionStatus, type RunSession } from '../RunManager'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import type {
   AgenticServiceId,
@@ -270,6 +270,17 @@ const DURABLE_ATTACHMENT_QUARANTINE_REASON =
  * out of the main process handler block.
  */
 export class RunQueueService {
+  private shuttingDown = false
+
+  /** Process-local quit fence; durable queue identities remain untouched. */
+  beginShutdown(): void {
+    this.shuttingDown = true
+  }
+
+  private assertAdmissionOpen(): void {
+    if (this.shuttingDown) throw new Error('Run queue is shutting down')
+  }
+
   private readonly observedEphemeralSoloSteerRows = new Set<string>()
   private readonly observedEphemeralChatIdentities = new Map<
     string,
@@ -326,6 +337,7 @@ export class RunQueueService {
   }
 
   requestJob(input: unknown, options: RunQueuePrepareOptions = {}): RunQueueJob {
+    this.assertAdmissionOpen()
     const prepared = this.prepareJob(input, options)
     const barrier = options.soloSteerTranscriptBarrier
     if (!barrier) {
@@ -335,7 +347,9 @@ export class RunQueueService {
           'Prepared solo steer transcript barrier can only be released through its verified main boundary.'
         )
       }
-      return this.deps.getRunRepository().saveRunQueueJob(prepared)
+      const repository = this.deps.getRunRepository()
+      this.assertAdmissionOpen()
+      return repository.saveRunQueueJob(prepared)
     }
     const ownerToken = optionalString(barrier.ownerToken)
     const queueMessageId = optionalString(barrier.queueMessageId)
@@ -347,7 +361,9 @@ export class RunQueueService {
       throw new Error('Solo steer transcript preparation was not main-authenticatable.')
     }
     const promotedAt = new Date().toISOString()
-    return this.deps.getRunRepository().saveRunQueueJob({
+    const repository = this.deps.getRunRepository()
+    this.assertAdmissionOpen()
+    return repository.saveRunQueueJob({
       ...prepared,
       status: 'steer_promoting',
       promotionOwnerToken: ownerToken,
@@ -382,6 +398,7 @@ export class RunQueueService {
   leaseJob(
     request: { runId?: string; provider?: ProviderId; statusReason?: string } = {}
   ): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const provider = request?.provider ? assertProviderId(request.provider) : undefined
     const runId = optionalString(request?.runId)
     const candidate = runId
@@ -399,7 +416,9 @@ export class RunQueueService {
     if (runId && !this.deps.canLeaseJob(safeCandidate)) {
       return null
     }
-    return this.deps.getRunRepository().leaseQueuedRun({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    return repository.leaseQueuedRun({
       runId: safeCandidate.runId,
       provider: safeCandidate.provider,
       statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
@@ -409,6 +428,7 @@ export class RunQueueService {
   leaseQueuedJob(
     request: { runId?: string; provider?: ProviderId; chatId?: string; statusReason?: string } = {}
   ): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const provider = request?.provider ? assertProviderId(request.provider) : undefined
     const chatId = optionalString(request?.chatId)
     const runId = optionalString(request?.runId)
@@ -430,7 +450,9 @@ export class RunQueueService {
     if (runId && !this.deps.canLeaseJob(safeCandidate)) {
       return null
     }
-    return this.deps.getRunRepository().leaseQueuedRun({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    return repository.leaseQueuedRun({
       runId: safeCandidate.runId,
       provider: safeCandidate.provider,
       statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
@@ -447,12 +469,15 @@ export class RunQueueService {
     queueMessageId?: string
     transitionVersion?: number
   }): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const ownerToken = optionalString(input?.ownerToken)
     if (!ownerToken) return null
     const provider = input?.provider ? assertProviderId(input.provider) : undefined
     const runId = optionalString(input?.runId) || optionalString(input?.jobId)
     if (!runId) return null
-    return this.deps.getRunRepository().promoteQueuedJobForSteer({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    return repository.promoteQueuedJobForSteer({
       runId,
       ownerToken,
       provider,
@@ -468,6 +493,7 @@ export class RunQueueService {
     ownerToken?: string
     statusReason?: string
   }): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const runId = optionalString(input?.runId)
     const ownerToken = optionalString(input?.ownerToken)
     if (!runId || !ownerToken) return null
@@ -480,7 +506,9 @@ export class RunQueueService {
     // never turn it into runnable work, even when the renderer knows the token.
     if (isPreparedSoloSteerTranscriptBarrier(safeCandidate)) return null
     if (!this.deps.canLeaseJob(safeCandidate)) return null
-    return this.deps.getRunRepository().leasePromotedSteerJob({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    return repository.leasePromotedSteerJob({
       runId,
       ownerToken,
       statusReason: optionalString(input?.statusReason)
@@ -493,6 +521,7 @@ export class RunQueueService {
     activeRunId?: string
     strategy?: string
   }): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const runId = optionalString(input?.runId)
     const ownerToken = optionalString(input?.ownerToken)
     const activeRunId = optionalString(input?.activeRunId)
@@ -503,7 +532,9 @@ export class RunQueueService {
     if (candidate.promotionOwnerToken !== ownerToken || candidate.promotionToken !== ownerToken) {
       return null
     }
-    return this.deps.getRunRepository().markPromotedSteerAdmissionPending({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    return repository.markPromotedSteerAdmissionPending({
       runId,
       ownerToken,
       activeRunId,
@@ -523,6 +554,7 @@ export class RunQueueService {
     const fallbackStatus = input?.fallbackStatus
       ? sanitizeRunQueueStatus(input.fallbackStatus, 'queued')
       : undefined
+    if (this.shuttingDown && !isTerminalRunQueueStatus(fallbackStatus ?? 'queued')) return null
     if (!runId || !ownerToken || !reason) return null
     const candidate = this.deps.appStore.getRunQueueJob(runId)
     // Renderer-reachable fallback never clears a write-ahead admission fence.
@@ -546,7 +578,9 @@ export class RunQueueService {
         return null
       }
     }
-    const released = this.deps.getRunRepository().fallbackPromotedSteerJob({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown && !isTerminalRunQueueStatus(fallbackStatus ?? 'queued')) return null
+    const released = repository.fallbackPromotedSteerJob({
       runId,
       ownerToken,
       reason,
@@ -567,6 +601,7 @@ export class RunQueueService {
     ownerToken: string
     reason: string
   }): RunQueueJob | null {
+    if (this.shuttingDown) return null
     const runId = optionalString(input?.runId)
     const ownerToken = optionalString(input?.ownerToken)
     const reason = optionalString(input?.reason)
@@ -581,7 +616,9 @@ export class RunQueueService {
     ) {
       return null
     }
-    const released = this.deps.getRunRepository().releasePromotedSteerAfterDefiniteNonAdmission({
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown) return null
+    const released = repository.releasePromotedSteerAfterDefiniteNonAdmission({
       runId,
       ownerToken,
       reason
@@ -598,6 +635,7 @@ export class RunQueueService {
     partial: Partial<RunQueueJob> = {}
   ): RunQueueJob | null {
     const nextStatus = sanitizeRunQueueStatus(status)
+    if (this.shuttingDown && !isTerminalRunQueueStatus(nextStatus)) return null
     if (nextStatus === 'steer_promoting') return null
     const candidate = this.deps.appStore.getRunQueueJob(runIdOrId)
     if (hasSoloSteerAdmissionFence(candidate) && !isTerminalRunQueueStatus(nextStatus)) {
@@ -611,7 +649,9 @@ export class RunQueueService {
     ) {
       return null
     }
-    const transitioned = this.deps.getRunRepository().transitionRunQueueJob(runIdOrId, nextStatus, {
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown && !isTerminalRunQueueStatus(nextStatus)) return null
+    const transitioned = repository.transitionRunQueueJob(runIdOrId, nextStatus, {
       statusReason: optionalString(partial?.statusReason),
       lastError: optionalString(partial?.lastError)
     })
@@ -626,7 +666,11 @@ export class RunQueueService {
   }
 
   persistSessionQueueState(session: RunSession | undefined): void {
-    this.deps.getRunRepository().persistSessionQueueState(session)
+    const terminal = session && isTerminalRunSessionStatus(session.status)
+    if (this.shuttingDown && !terminal) return
+    const repository = this.deps.getRunRepository()
+    if (this.shuttingDown && !terminal) return
+    repository.persistSessionQueueState(session)
   }
 
   private normalizeJobRequest(
