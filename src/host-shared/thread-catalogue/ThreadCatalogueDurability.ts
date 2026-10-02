@@ -47,7 +47,6 @@ export class ThreadCatalogueDurability<File> implements ThreadCatalogueDeferredD
       beforeRename?.()
       fs.renameSync(temporary, filePath)
       this.visibleWrites++
-      afterRename?.()
       const name = directory.noteMutation()
       this.ports.noteWrite(file, stat.size, 'soft')
       const barrier = Promise.all([
@@ -61,13 +60,16 @@ export class ThreadCatalogueDurability<File> implements ThreadCatalogueDeferredD
       })
       const tracked = barrier
         .catch((error) => {
-          this.failure = error
+          this.failure ??= error
           this.failures++
           throw error
         })
         .finally(() => this.pending.delete(tracked))
       this.pending.add(tracked)
       void tracked.catch(() => {})
+      // Visible bytes own their file and name debt before extensible callbacks.
+      // A callback failure must not let shutdown retire an unflushed head.
+      afterRename?.()
     } catch (error) {
       if (!registered) fs.closeSync(fd)
       this.failure = error

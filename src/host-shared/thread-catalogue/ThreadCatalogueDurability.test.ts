@@ -76,7 +76,7 @@ describe('catalogue atomic visibility and durability', () => {
       )
       expect(fs.readFileSync(target, 'utf8')).toContain('pending')
       expect(fs.fstatSync(opened[0]).ino).toBe(fs.statSync(target).ino)
-      expect(events).toEqual(['before', 'renamed', 'noted'])
+      expect(events).toEqual(['before', 'noted', 'renamed'])
       let durable = false
       const wait = durability.awaitDurable().then(() => {
         durable = true
