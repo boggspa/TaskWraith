@@ -323,7 +323,7 @@ describe('Main durability runtime', () => {
     expect(ports.events.filter((event) => event === 'close')).toHaveLength(2)
     expect(ports.events.at(-1)).toBe('dispose')
   })
-  it.each(['acquire', 'open'] as const)(
+  it.each(['acquire', 'open', 'transferDependencies'] as const)(
     'refuses construction-time %s without leaking resources and permits retry',
     async (operation) => {
       const ports = adapter()
@@ -336,7 +336,13 @@ describe('Main durability runtime', () => {
       expect(() =>
         runtime.attachJournal(({ flusher, directoryLeases }) => {
           if (operation === 'acquire') directoryLeases.acquire(options().runEventsDir)
-          else flusher.open(1, 2, 123)
+          else if (operation === 'open') flusher.open(1, 2, 123)
+          else
+            flusher.transferDependencies(
+              { dev: 1, ino: 2, generation: 1 },
+              { dev: 1, ino: 3, generation: 2 },
+              0
+            )
           throw new Error('constructor failed after allocation')
         })
       ).toThrow('resource-free')

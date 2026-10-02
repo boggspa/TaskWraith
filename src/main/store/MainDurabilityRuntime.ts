@@ -9,7 +9,13 @@ import type { RunEventLedgerAppendOptions } from './RunEventLedgerWriter'
 
 export type JournalDurabilityFlusher = Pick<
   MainDurabilityFlusher,
-  'open' | 'noteWrite' | 'awaitDurable' | 'forget' | 'forgetSync' | 'drainSync'
+  | 'open'
+  | 'noteWrite'
+  | 'awaitDurable'
+  | 'forget'
+  | 'forgetSync'
+  | 'drainSync'
+  | 'transferDependencies'
 >
 
 export interface DurabilityParticipant {
