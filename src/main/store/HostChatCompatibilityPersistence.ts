@@ -48,6 +48,8 @@ export type HostChatCompatibilityStageResult =
   | 'blocked'
 
 export interface HostChatCompatibilityStageOptions {
+  /** Process-local debt only; never part of the persisted input. */
+  readonly detailDependencies?: { awaitDurable(): Promise<void> }
   /**
    * The journal append or detail externalization failed for this save, so
    * the full-record checkpoint is its only durability: a successor carrying
@@ -94,6 +96,8 @@ export interface HostChatCompatibilityPersistenceOptions extends HostPersistence
 }
 
 interface CompatibilityEntry {
+  detailDependencies?: { awaitDurable(): Promise<void> }
+  publication?: Promise<void>
   input: HostThreadRecordPersistInput
   sequence: number
   /** See HostChatCompatibilityStageOptions; sticky until the entry is enqueued. */
@@ -127,6 +131,25 @@ function persistenceRevision(input: HostThreadRecordPersistInput): number {
   const revision = input.record.persistenceRevision
   if (Number.isSafeInteger(revision) && (revision ?? -1) >= 0) return revision!
   return input.expectedRevision
+}
+
+function mergeDetailDebts(
+  prior: CompatibilityEntry['detailDependencies'],
+  next: CompatibilityEntry['detailDependencies']
+): CompatibilityEntry['detailDependencies'] {
+  if (!prior || prior === next) return next ?? prior
+  if (!next) return prior
+  return {
+    awaitDurable: async () => {
+      const results = await Promise.allSettled(
+        [prior, next].map((debt) => Promise.resolve().then(() => debt.awaitDurable()))
+      )
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (failures.length) throw new AggregateError(failures, 'Host detail debts failed')
+    }
+  }
 }
 
 function validateInput(input: HostThreadRecordPersistInput): void {
@@ -242,6 +265,11 @@ export class HostChatCompatibilityPersistence {
       // The same revision is already pending: that entry publishes this
       // save's state, so it inherits the fallback intent.
       if (latest && durabilityFallback) latest.durabilityFallback = true
+      if (latest && options.detailDependencies)
+        latest.detailDependencies = mergeDetailDebts(
+          latest.detailDependencies,
+          options.detailDependencies
+        )
       this.observeStage(input, 'duplicate')
       return 'duplicate'
     }
@@ -258,13 +286,22 @@ export class HostChatCompatibilityPersistence {
           diagnostics: this.diagnostics
         }),
         sequence,
+        detailDependencies: mergeDetailDebts(
+          state.pending.detailDependencies,
+          options.detailDependencies
+        ),
         durabilityFallback: state.pending.durabilityFallback || durabilityFallback
       }
       this.observeStage(state.pending.input, 'replaced', sequence, previousSequence)
       return 'replaced'
     }
 
-    state.pending = { input, sequence, durabilityFallback }
+    state.pending = {
+      input,
+      sequence,
+      durabilityFallback,
+      detailDependencies: options.detailDependencies
+    }
     this.observeStage(input, 'staged', sequence)
     return 'staged'
   }
@@ -308,6 +345,29 @@ export class HostChatCompatibilityPersistence {
     state.pending = null
     state.submitted = entry
     state.materializeAfterSubmitted = false
+    if (entry.detailDependencies) {
+      entry.publication = Promise.resolve()
+        .then(() => entry.detailDependencies!.awaitDurable())
+        .then(() => {
+          if (state.submitted !== entry || state.deleting || state.deleted) {
+            throw new Error('Host detail publication lineage changed before submission')
+          }
+          this.port.enqueue(submission)
+          state.lastMaterializedAtMs = now
+          this.clearIntervalTimer(state)
+          observation?.finish('succeeded')
+        })
+        .catch((error) => {
+          if (state.submitted === entry) {
+            state.submitted = null
+            this.restoreUnconfirmed(state, entry)
+          }
+          observation?.finish('failed')
+          throw error
+        })
+      void entry.publication.catch(() => {})
+      return true
+    }
     try {
       this.port.enqueue(submission)
       // The successful enqueue is the only event that restarts the interval;
@@ -359,6 +419,10 @@ export class HostChatCompatibilityPersistence {
       state.submitted.input = input
       state.submitted.sequence = latestSequence
       state.submitted.durabilityFallback ||= state.pending?.durabilityFallback === true
+      state.submitted.detailDependencies = mergeDetailDebts(
+        state.submitted.detailDependencies,
+        state.pending?.detailDependencies
+      )
       state.pending = null
       state.materializeAfterSubmitted = false
       this.clearIntervalTimer(state)
@@ -369,6 +433,7 @@ export class HostChatCompatibilityPersistence {
     state.pending = {
       input,
       sequence: state.pending.sequence,
+      detailDependencies: state.pending.detailDependencies,
       durabilityFallback: state.pending.durabilityFallback
     }
     this.diagnostics?.event('rebase', 'succeeded', {
@@ -628,7 +693,7 @@ export class HostChatCompatibilityPersistence {
     const submitted = state.submitted
     if (!submitted) return Promise.resolve()
 
-    const settlement = Promise.resolve()
+    const settlement = (submitted.publication ?? Promise.resolve())
       .then(() => this.port.drain(chatId))
       .then(() => {
         if (state.submitted !== submitted) return
@@ -722,7 +787,11 @@ export class HostChatCompatibilityPersistence {
         diagnostics: this.diagnostics
       }),
       sequence: state.pending.sequence,
-      durabilityFallback: state.pending.durabilityFallback || entry.durabilityFallback
+      durabilityFallback: state.pending.durabilityFallback || entry.durabilityFallback,
+      detailDependencies: mergeDetailDebts(
+        entry.detailDependencies,
+        state.pending.detailDependencies
+      )
     }
   }
 
@@ -751,6 +820,11 @@ export class HostChatCompatibilityPersistence {
         if (!state.deleting && !state.deleted) this.materialize(chatId)
       }
       try {
+        await Promise.all(
+          [...this.states.values()].flatMap((state) =>
+            state.submitted?.publication ? [state.submitted.publication] : []
+          )
+        )
         await this.port.drainAll()
         for (const state of this.states.values()) {
           const submitted = state.submitted
