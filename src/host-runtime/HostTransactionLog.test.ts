@@ -639,6 +639,53 @@ describe('HostTransactionLog failure', () => {
 })
 
 describe('HostTransactionLog compaction', () => {
+  it('carries the prepare forward when a terminal arrives during the rewrite', async () => {
+    const dataDir = directory()
+    const io = seams(dataDir)
+    const log = HostTransactionLog.open(io.options)
+    await log.append(prepare('settled'))
+    const held = deferred()
+    io.beforeRename = () => held.promise
+    const compaction = log.compact(() => receipt('succeeded'))
+    await until(() => io.writes.some(({ path }) => path.endsWith('.tmp')), 'temp rewrite')
+    const terminal = log.append(published('settled'))
+    held.resolve()
+    await compaction
+    expect(await terminal).toEqual(DURABLE)
+    const reopened = HostTransactionLog.open({ dataDir })
+    expect(reopened.get('settled')?.prepare).toEqual(prepare('settled'))
+    expect(reopened.get('settled')?.terminal).toEqual(published('settled'))
+  })
+
+  it('pins a prepare whose terminal append is queued behind the compaction', async () => {
+    const dataDir = directory()
+    const log = HostTransactionLog.open({ dataDir })
+    await log.append(prepare('settled'))
+    const terminal = log.append(published('settled'))
+    const compaction = log.compact(() => receipt('succeeded'))
+    expect(await compaction).toMatchObject({ kept: 1, dropped: 0 })
+    expect(await terminal).toEqual(DURABLE)
+    const reopened = HostTransactionLog.open({ dataDir })
+    expect(reopened.get('settled')?.prepare).toEqual(prepare('settled'))
+    expect(reopened.get('settled')?.terminal).toEqual(published('settled'))
+    expect(await log.compact(() => receipt('succeeded'))).toMatchObject({ dropped: 1 })
+  })
+
+  it('fail-stops after rename when directory durability is unknown', async () => {
+    const dataDir = directory()
+    const io = seams(dataDir)
+    const log = HostTransactionLog.open(io.options)
+    await log.append(prepare('done'))
+    await log.append(published('done'))
+    io.beforeFsync = async (path) => {
+      if (path === dataDir) throw new Error('directory fsync lost')
+    }
+    expect(await log.compact(() => receipt('succeeded'))).toMatchObject({ kind: 'failed' })
+    expect(log.getFailure()).toEqual({ detail: 'directory fsync lost' })
+    expect(await log.append(prepare('later'))).toMatchObject({ kind: 'failed' })
+    expect(HostTransactionLog.open({ dataDir }).commandIds()).toEqual([])
+  })
+
   async function seeded(io: Seams) {
     const log = HostTransactionLog.open(io.options)
     for (const record of [

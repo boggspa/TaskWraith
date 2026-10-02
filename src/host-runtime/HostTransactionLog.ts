@@ -97,6 +97,9 @@ export class HostTransactionLog {
   private failure: { detail: string } | null = null
   private conflicts = 0
   private corrupt = 0
+  private readonly appendListeners = new Set<(records: number) => void>()
+  /** Prepares being removed by the active rewrite, until its rename settles. */
+  private compactingPrepares = new Map<string, HostTransactionPrepareRecord>()
 
   private constructor(options: HostTransactionLogOptions) {
     if (!options.dataDir || typeof options.dataDir !== 'string') {
@@ -150,6 +153,15 @@ export class HostTransactionLog {
       this.accepted.set(next.commandId, { prepare: entry.prepare, terminal: next })
     }
     return new Promise((resolve) => {
+      // A terminal can arrive after the rewrite took its snapshot. Carry its
+      // prepare in the same subsequent batch so the new file never gains an
+      // orphan terminal. If the rewrite failed before rename, the repeat is
+      // byte-identical and harmless on reopen.
+      const carry = next.kind !== 'prepare' ? this.compactingPrepares.get(next.commandId) : null
+      if (carry) {
+        this.compactingPrepares.delete(next.commandId)
+        this.queue.push({ record: carry, resolve: () => {} })
+      }
       this.queue.push({ record: next, resolve })
       this.scheduleFlush()
     })
@@ -171,6 +183,12 @@ export class HostTransactionLog {
 
   stats(): { commands: number; conflicts: number; corrupt: number } {
     return { commands: this.durable.size, conflicts: this.conflicts, corrupt: this.corrupt }
+  }
+
+  /** Maintenance notifications carry no records and never delay durability. */
+  subscribeDurableAppends(listener: (records: number) => void): () => void {
+    this.appendListeners.add(listener)
+    return () => this.appendListeners.delete(listener)
   }
 
   /**
@@ -267,6 +285,13 @@ export class HostTransactionLog {
       )
       resolve({ kind: 'durable' })
     }
+    for (const listener of this.appendListeners) {
+      try {
+        listener(batch.length)
+      } catch {
+        // Maintenance must never fail an already durable append.
+      }
+    }
   }
 
   private failStop(detail: string): void {
@@ -283,12 +308,18 @@ export class HostTransactionLog {
     const kept = new Map<string, HostTransactionLogEntry>()
     let dropped = 0
     let keptIndeterminate = 0
+    let renamed = false
     const tmpPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`
     try {
+      const queuedCommands = new Set(this.queue.map(({ record }) => record.commandId))
       // The caller's predicate runs inside the try: a throw fails this
       // compaction and nothing else.
       for (const [commandId, entry] of this.durable) {
-        if (hostTransactionRecordsCompactable(receiptOf(commandId))) {
+        const compactable = hostTransactionRecordsCompactable(receiptOf(commandId))
+        // A queued terminal still needs its prepare in the replacement file.
+        // Its batch can be behind this rewrite even when the receipt settled.
+        if (compactable && !this.inFlight.has(commandId) && !queuedCommands.has(commandId)) {
+          if (entry.prepare) this.compactingPrepares.set(commandId, entry.prepare)
           dropped += 1
           continue
         }
@@ -303,11 +334,19 @@ export class HostTransactionLog {
       await this.write(tmpPath, lines.join(''))
       await this.fsync(tmpPath)
       await this.rename(tmpPath, this.path)
+      renamed = true
       if (process.platform !== 'win32') await this.fsync(this.dataDir)
     } catch (error) {
+      this.compactingPrepares.clear()
       await unlinkAsync(tmpPath).catch(() => {})
-      return { kind: 'failed', detail: error instanceof Error ? error.message : String(error) }
+      const detail = error instanceof Error ? error.message : String(error)
+      // After replacement the old file is gone; directory-fsync failure
+      // cannot promise either file survives a crash. Keep later writes out
+      // until boot reopens the on-disk manifest.
+      if (renamed) this.failStop(detail)
+      return { kind: 'failed', detail }
     }
+    this.compactingPrepares.clear()
     this.fileExists = true
     this.durable = kept
     for (const commandId of [...this.accepted.keys()]) {
