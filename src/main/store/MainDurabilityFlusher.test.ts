@@ -97,6 +97,33 @@ function setup(): { disk: VirtualDisk; flusher: MainDurabilityFlusher } {
 }
 
 describe('MainDurabilityFlusher pure model', () => {
+  it('retries a failed close synchronously and settles overlapping asynchronous retirement', async () => {
+    const { disk, flusher } = setup()
+    const file = flusher.open(1, 1, 10)
+    flusher.noteWrite(file, 1, 'soft')
+    const realClose = disk.close.bind(disk)
+    let attempts = 0
+    disk.close = (fd) => {
+      if (++attempts === 1) throw new Error('first close failed')
+      realClose(fd)
+    }
+    const asynchronous = expect(flusher.forget([file])).rejects.toThrow('first close failed')
+    await asynchronous
+    expect(() => flusher.forgetSync([file])).not.toThrow()
+    await flusher.forget([file])
+    expect(attempts).toBe(2)
+    expect(disk.log.map((row) => row.kind)).toEqual(['close'])
+    await flusher.awaitDurable(file, 1)
+  })
+  it('synchronous deletion joins inflight work, closes, and settles concurrent forget', async () => {
+    const { disk, flusher } = setup()
+    const file = flusher.open(1, 1, 10)
+    flusher.noteWrite(file, 1, 'prompt')
+    const pending = flusher.forget([file])
+    flusher.forgetSync([file])
+    await pending
+    expect(disk.log.map((row) => row.kind)).toEqual(['async', 'close'])
+  })
   it('contains timer hard-bound failures and continues scheduling unaffected files', async () => {
     const { disk, flusher } = setup()
     disk.latency = 6000

@@ -222,6 +222,23 @@ export class MainDurabilityFlusher {
     }
   }
 
+  /** Deletion discards queued bytes; shutdown must drainSync before this call. */
+  forgetSync(identities: readonly DurabilityFile[]): void {
+    const files = identities.map((identity) => this.state(identity))
+    this.syncDepth++
+    try {
+      for (const file of files) file.forgetting = true
+      this.joinFlight()
+      for (const file of files) {
+        if (!file.forgotten) this.finishForget(file)
+        if (file.closeFailed) throw file.error ?? new Error('Descriptor close failed')
+      }
+    } finally {
+      this.syncDepth--
+      this.pump()
+    }
+  }
+
   snapshot(): {
     dirtyFiles: number
     pendingWaiters: number
@@ -344,6 +361,7 @@ export class MainDurabilityFlusher {
   private finishForget(file: FileState): void {
     try {
       this.ports.close(file.fd)
+      file.closeFailed = false
       file.forgotten = true
       file.dependencies.clear()
       file.error = undefined
