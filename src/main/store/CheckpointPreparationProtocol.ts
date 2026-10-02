@@ -128,3 +128,33 @@ export interface CheckpointPreparationPort {
 }
 
 export type DeferredCheckpointResult = 'checkpointed' | 'unchanged' | 'superseded' | 'unavailable'
+
+/** Same-process worker_threads only. Main retains and closes these pinned fds. */
+export interface JournalPublicationReadReference {
+  fd: number
+  identity: CheckpointFileIdentity
+  prefixBytes: number
+  mutablePrefix: boolean
+}
+
+export interface JournalPublicationRequest {
+  chatId: string
+  revision: number
+  generation: number
+  checkpoint: JournalPublicationReadReference
+  sealed: JournalPublicationReadReference | null
+  active: JournalPublicationReadReference | null
+  output: CheckpointFileReference
+  outputDirectory: { path: string; dev: string; ino: string }
+  maxOutputBytes: number
+}
+
+export interface JournalPublicationArtifact {
+  chatId: string
+  revision: number
+  generation: number
+  artifactPath: string
+  sha256: string
+  byteLength: number
+  identity: CheckpointFileIdentity
+}
