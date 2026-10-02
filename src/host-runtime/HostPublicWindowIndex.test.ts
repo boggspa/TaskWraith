@@ -9,6 +9,7 @@ import {
   hostPublicRunWindow,
   HostPublicWindowIndex,
   type HostPublicWindowChange,
+  type HostPublicWindowDeleteChange,
   type HostPublicWindowModelChange,
   type HostPublicWindowPublication,
   type HostPublicWindowWire
@@ -404,7 +405,7 @@ function lives() {
   }
   return {
     id,
-    delete: (slot: string): HostPublicWindowChange => {
+    delete: (slot: string): HostPublicWindowDeleteChange => {
       const threadId = id(slot)
       deaths.set(slot, (deaths.get(slot) ?? 0) + 1)
       return { kind: 'delete', threadId }

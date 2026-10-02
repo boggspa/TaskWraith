@@ -18,13 +18,15 @@ import type { HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HostPublicWindowIndex,
-  type HostPublicWindowChange,
   type HostPublicWindowIgnored,
   type HostPublicWindowModelChange,
   type HostPublicWindowPublication,
   type HostPublicWindowWire
 } from './HostPublicWindowIndex'
-import { HostPublicWindowIndex as ReferenceWindowIndex } from './HostPublicWindowIndex.reference.testutil'
+import {
+  HostPublicWindowIndex as ReferenceWindowIndex,
+  type HostPublicWindowChange
+} from './HostPublicWindowIndex.reference.testutil'
 import {
   modelHostThreadRecordEffects,
   type HostThreadRecordModelled

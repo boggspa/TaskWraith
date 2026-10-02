@@ -16,11 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HostPublicWindowIndex,
-  type HostPublicWindowChange,
   type HostPublicWindowModelChange,
   type HostPublicWindowWire
 } from './HostPublicWindowIndex'
-import { HostPublicWindowIndex as ReferenceWindowIndex } from './HostPublicWindowIndex.reference.testutil'
+import {
+  HostPublicWindowIndex as ReferenceWindowIndex,
+  type HostPublicWindowChange
+} from './HostPublicWindowIndex.reference.testutil'
 import {
   modelHostThreadRecordEffects,
   type HostThreadRecordModelled
