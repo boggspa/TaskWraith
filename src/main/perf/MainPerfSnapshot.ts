@@ -29,6 +29,16 @@ import {
   type HostLoadSampler,
   type HostLoadSnapshot
 } from './HostLoadSample'
+import {
+  createMainWindowPerfProbes,
+  type MainWindowPerfRequest,
+  type MainWindowPerfReceipt
+} from './MainWindowPerfProbes'
+
+export interface MainPerfSnapshotOptions {
+  resetLagWindow?: boolean
+  window?: MainWindowPerfRequest
+}
 
 export interface MainPerfSnapshot {
   capturedAt: string
@@ -36,12 +46,13 @@ export interface MainPerfSnapshot {
   /** Host contention over the same window — is the lag ours, or the machine's? */
   host: HostLoadSnapshot
   sections: Record<string, unknown>
+  window?: MainWindowPerfReceipt
 }
 
 export interface MainPerfInstrumentation {
   start(): void
   stop(): void
-  snapshot(options?: { resetLagWindow?: boolean }): MainPerfSnapshot
+  snapshot(options?: MainPerfSnapshotOptions): MainPerfSnapshot
 }
 
 export interface MainPerfInstrumentationOptions {
@@ -51,6 +62,7 @@ export interface MainPerfInstrumentationOptions {
   /** Injection seam for tests; production reads the real OS counters. */
   hostLoad?: HostLoadSampler
   now?: () => Date
+  windowProbes?: ReturnType<typeof createMainWindowPerfProbes>
 }
 
 export function createMainPerfInstrumentation(
@@ -60,8 +72,13 @@ export function createMainPerfInstrumentation(
   const hostLoad = options.hostLoad ?? createHostLoadSampler()
   const now = options.now ?? (() => new Date())
   const sections = options.sections ?? {}
+  const windowProbes =
+    options.windowProbes ??
+    createMainWindowPerfProbes({
+      readDurability: () => sections.mainDurability?.() ?? null
+    })
 
-  const snapshot = (snapshotOptions?: { resetLagWindow?: boolean }): MainPerfSnapshot => {
+  const snapshot = (snapshotOptions?: MainPerfSnapshotOptions): MainPerfSnapshot => {
     const collected: Record<string, unknown> = {}
     for (const [name, provider] of Object.entries(sections)) {
       try {
@@ -76,13 +93,17 @@ export function createMainPerfInstrumentation(
       // Rates window between calls, so on a fixed poll cadence this covers the
       // same interval as a reset-windowed lag reading.
       host: hostLoad.sample(),
-      sections: collected
+      sections: collected,
+      ...(snapshotOptions?.window ? { window: windowProbes.request(snapshotOptions.window) } : {})
     }
   }
 
   return {
     start: () => meter.start(),
-    stop: () => meter.stop(),
+    stop: () => {
+      meter.stop()
+      windowProbes.stop()
+    },
     snapshot
   }
 }

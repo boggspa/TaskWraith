@@ -11,6 +11,7 @@ import { EnsembleHostAdmissionRuntime } from '../services/EnsembleHostAdmissionR
 import type { EventLoopLagMeter, EventLoopLagSnapshot } from './EventLoopLagMeter'
 import type { HostLoadSampler, HostLoadSnapshot } from './HostLoadSample'
 import * as ts from 'typescript'
+import { createMainWindowPerfProbes } from './MainWindowPerfProbes'
 
 function fakeHostLoad(overrides: Partial<HostLoadSnapshot> = {}): HostLoadSampler {
   const snapshot: HostLoadSnapshot = {
@@ -57,6 +58,36 @@ function fakeMeter(): { meter: EventLoopLagMeter; resets: number[] } {
 }
 
 describe('createMainPerfInstrumentation', () => {
+  it('keeps labelled window lag independent from ordinary snapshot resets', () => {
+    const ordinary = fakeMeter()
+    const isolated = fakeMeter()
+    let finish = () => {}
+    const windowProbes = createMainWindowPerfProbes({
+      createMeter: () => isolated.meter,
+      setTimer: (callback) => {
+        finish = callback
+        return 1
+      },
+      clearTimer: () => {}
+    })
+    const instrumentation = createMainPerfInstrumentation({
+      meter: ordinary.meter,
+      hostLoad: fakeHostLoad(),
+      windowProbes
+    })
+    expect(
+      instrumentation.snapshot({ window: { action: 'begin', id: 'beside_0', durationMs: 100 } })
+        .window?.status
+    ).toBe('started')
+    instrumentation.snapshot({ resetLagWindow: true })
+    expect(isolated.resets).toEqual([])
+    finish()
+    expect(
+      instrumentation.snapshot({ window: { action: 'end', id: 'beside_0' } }).window
+    ).toMatchObject({ status: 'complete', eventLoopLag: { p95Ms: 5 } })
+    expect(isolated.resets).toEqual([0])
+    instrumentation.stop()
+  })
   it('bundles the lag snapshot with every healthy section', () => {
     const { meter } = fakeMeter()
     const instrumentation = createMainPerfInstrumentation({
