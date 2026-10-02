@@ -232,7 +232,10 @@ describe('HostStandaloneComposition: the public window feeder (M4 slice 13c1)', 
       transferId: 'revision-zero-recreate',
       record
     })
-    const command = (name: 'thread.record.delete' | 'thread.record.persist', commandId: string) => ({
+    const command = (
+      name: 'thread.record.delete' | 'thread.record.persist',
+      commandId: string
+    ) => ({
       type: 'host.command' as const,
       protocolVersion: HOST_PROTOCOL_VERSION,
       commandId,
@@ -272,7 +275,10 @@ describe('HostStandaloneComposition: the public window feeder (M4 slice 13c1)', 
         value: { status: 'failed', errorCode: 'thread_record_epoch_stale' }
       })
       expect(
-        await composition.authority.command(context, command('thread.record.persist', 'later-recreate'))
+        await composition.authority.command(
+          context,
+          command('thread.record.persist', 'later-recreate')
+        )
       ).toMatchObject({ ok: true, value: { status: 'failed', errorCode: 'thread_record_gone' } })
       expect(existsSync(chatPath)).toBe(false)
       await vi.waitFor(() => expect(p.groupLines('feed:')).toHaveLength(2))

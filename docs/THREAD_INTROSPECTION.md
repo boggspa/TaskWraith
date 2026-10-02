@@ -219,14 +219,14 @@ Open **Settings → Automation → Thread introspection**.
 
 IPC channels (read/review/apply + manual run):
 
-| Preload API                                                                        | Purpose                                                      |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `getMemoryProposalPacks(workspaceId?)`                                             | List packs for the review panel                              |
-| `getMemoryProposalPack(id)`                                                        | Fetch one pack                                               |
-| `updateMemoryProposal(packId, proposalId, partial)`                                | Approve/reject/expire; whitelisted fields only               |
+| Preload API                                                                        | Purpose                                                 |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `getMemoryProposalPacks(workspaceId?)`                                             | List packs for the review panel                         |
+| `getMemoryProposalPack(id)`                                                        | Fetch one pack                                          |
+| `updateMemoryProposal(packId, proposalId, partial)`                                | Approve/reject/expire; whitelisted fields only          |
 | `applyMemoryProposal(packId, proposalId)`                                          | Reviewed apply to conventions or TaskWraith skill roots |
-| `supersedeMemoryProposal(packId, successorProposalId, predecessorProposalId)` | Explicit same-pack workspace supersession |
-| `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate                                    |
+| `supersedeMemoryProposal(packId, successorProposalId, predecessorProposalId)`      | Explicit same-pack workspace supersession               |
+| `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate                               |
 
 Schedule IPC:
 
@@ -337,23 +337,23 @@ Commits:
 - `673a1eb11` — `tw_introspection_*` MCP tools for run/list/read/review
 - `21e857890` — decay/supersede lifecycle helpers
 
-| Slice                                     | Status      | Notes                                                                                                                                     |
-| ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Domain model + normalization              | **Landed**  | `IntrospectionModel.ts`                                                                                                                   |
-| Pure proposal generator                   | **Landed**  | `IntrospectionProposalGenerator.ts`                                                                                                       |
-| AppStore persistence                      | **Landed**  | `introspection-runs.json`, `memory-proposal-packs.json`                                                                                   |
-| Evidence harvester                        | **Landed**  | `IntrospectionEvidenceHarvester.ts`                                                                                                       |
-| Manual run service                        | **Landed**  | `runManualIntrospection()`                                                                                                                |
-| Proposal Review UI + Settings             | **Landed**  | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel`                                                                          |
-| IPC + preload                             | **Landed**  | `introspectionHandlers.ts` — read/review/apply                                                                                            |
-| Apply layer (conventions)                 | **Landed**  | `IntrospectionApplyService.ts` — `RepoConventionIndex`                                                                                    |
-| Skill Patch Manager                       | **Landed**  | `SkillPatchApply.ts` — TW skill roots + rollback snapshot; no MCP apply                                                                   |
-| Apply UI                                  | **Landed**  | Apply affordance for approved `repo_convention` / `do_not_repeat` / `skill_patch`                                                         |
-| Scheduled daily generation                | **Landed**  | `IntrospectionScheduler.ts` + schedule IPC/toggle                                                                                         |
-| MCP tools                                 | **Landed**  | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool                    |
+| Slice                                     | Status           | Notes                                                                                                                                                                        |
+| ----------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain model + normalization              | **Landed**       | `IntrospectionModel.ts`                                                                                                                                                      |
+| Pure proposal generator                   | **Landed**       | `IntrospectionProposalGenerator.ts`                                                                                                                                          |
+| AppStore persistence                      | **Landed**       | `introspection-runs.json`, `memory-proposal-packs.json`                                                                                                                      |
+| Evidence harvester                        | **Landed**       | `IntrospectionEvidenceHarvester.ts`                                                                                                                                          |
+| Manual run service                        | **Landed**       | `runManualIntrospection()`                                                                                                                                                   |
+| Proposal Review UI + Settings             | **Landed**       | `MemoryProposalReviewPanel` + `ThreadIntrospectionSettingsPanel`                                                                                                             |
+| IPC + preload                             | **Landed**       | `introspectionHandlers.ts` — read/review/apply                                                                                                                               |
+| Apply layer (conventions)                 | **Landed**       | `IntrospectionApplyService.ts` — `RepoConventionIndex`                                                                                                                       |
+| Skill Patch Manager                       | **Landed**       | `SkillPatchApply.ts` — TW skill roots + rollback snapshot; no MCP apply                                                                                                      |
+| Apply UI                                  | **Landed**       | Apply affordance for approved `repo_convention` / `do_not_repeat` / `skill_patch`                                                                                            |
+| Scheduled daily generation                | **Landed**       | `IntrospectionScheduler.ts` + schedule IPC/toggle                                                                                                                            |
+| MCP tools                                 | **Landed**       | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool                                                       |
 | Decay / supersede                         | **Source-ahead** | Settings explicitly supersedes proposed/approved records in one workspace pack; IPC reads/review reconcile due proposed records; broader apply/MCP integration remains gated |
-| Apply layer (prefs, bugs, provider hints) | **Pending** | Other kinds remain blocked                                                                                                                |
-| Distillation policy                       | **Pending** | Auto-approve rules per scope/kind                                                                                                         |
+| Apply layer (prefs, bugs, provider hints) | **Pending**      | Other kinds remain blocked                                                                                                                                                   |
+| Distillation policy                       | **Pending**      | Auto-approve rules per scope/kind                                                                                                                                            |
 
 **Tests:** focused introspection suites are green across handlers, harvester,
 run service, scheduler, apply service, skill patch apply, lifecycle service, MCP

@@ -109,7 +109,9 @@ interface Harness {
   chatPath(threadId: string): string
 }
 
-function harness(options: { band?: number; gate?: HostPublicWindowFeederOptions['gate'] } = {}): Harness {
+function harness(
+  options: { band?: number; gate?: HostPublicWindowFeederOptions['gate'] } = {}
+): Harness {
   const profilePath = mkdtempSync(join(tmpdir(), 'host-public-window-feeder-'))
   roots.push(profilePath)
   const dataDir = join(profilePath, 'host-data')
