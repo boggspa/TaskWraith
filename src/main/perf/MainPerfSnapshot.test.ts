@@ -345,6 +345,8 @@ function evaluateProductionBinding(
   const inertScope = new Proxy({}, { get: () => inert })
 
   const bindings: Record<string, unknown> = {
+    bindMainResidualInstrumentation: (instrumentation: MainPerfInstrumentation) => instrumentation,
+    createMainResidualBoundary: () => ({ begin: () => {}, finish: () => null, cancel: () => {} }),
     createWorkSpanRecorder: (options: Parameters<typeof createWorkSpanRecorder>[0]) => {
       const made = createWorkSpanRecorder(options)
       capturedRecorder ??= made

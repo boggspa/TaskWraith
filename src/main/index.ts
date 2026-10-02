@@ -1080,6 +1080,7 @@ import {
   type MainPerfInstrumentation
 } from './perf/MainPerfSnapshot'
 import { actualMainDurabilityPerf } from './perf/ActualMainDurabilityPerf'
+import { createMainResidualBoundary, bindMainResidualInstrumentation } from './perf/MainResidualInstrumentation'
 import { productionMainPerfClock } from './perf/MainPerfClock'
 import { readProviderRunAuthorityMetadata } from './ProviderRunAuthorityMetadata'
 import { createMainPerfSnapshotHandler } from './ipc/MainPerfSnapshotHandler'
@@ -47422,7 +47423,8 @@ if (isGeminiMcpBridgeProcess) {
     // number every prior multi-ensemble stall diagnosis lacked, and where the
     // ADR's G-lag gate (p95 < 25ms under 30-seat continuous) becomes readable
     // outside a profiling harness.
-    mainPerfInstrumentationRef = createMainPerfInstrumentation({
+    mainPerfInstrumentationRef = bindMainResidualInstrumentation(createMainPerfInstrumentation({
+      windowBoundary: createMainResidualBoundary(AppStore.getMainResidualWindowPort()),
       windowClock: productionMainPerfClock,
       acquireWindowProtection: () => {
         const id = powerSaveBlocker.start('prevent-app-suspension')
@@ -47448,7 +47450,7 @@ if (isGeminiMcpBridgeProcess) {
         persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null,
         workSpans: mainWorkSpanRecorder.section
       }
-    })
+    }), AppStore.getMainResidualWindowPort())
     mainPerfInstrumentationRef.start()
     ipcMain.handle('get-main-perf-snapshot', createMainPerfSnapshotHandler({
       isMainSender: isMainRendererSender,

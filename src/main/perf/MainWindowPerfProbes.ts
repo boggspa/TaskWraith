@@ -14,6 +14,12 @@ export type MainWindowPerfRequest =
   | { action: 'begin'; id: string; durationMs: number }
   | { action: 'end'; id: string }
 
+export interface MainWindowBoundaryPort {
+  begin(id: string, at: number, clock: Omit<MainPerfClock, 'nowMs'>): void
+  finish(id: string, at: number): unknown
+  cancel(): void
+}
+
 export type MainWindowPerfReceipt =
   | {
       status: 'started'
@@ -25,6 +31,7 @@ export type MainWindowPerfReceipt =
     }
   | {
       status: 'complete'
+      residuals?: unknown
       clock: Omit<MainPerfClock, 'nowMs'>
       id: string
       startedAtMs: number
@@ -49,6 +56,7 @@ interface HeldWindow {
 export function createMainWindowPerfProbes(
   options: {
     createMeter?: () => EventLoopLagMeter
+    boundary?: MainWindowBoundaryPort
     nowMs?: () => number
     clock?: MainPerfClock
     setTimer?: (callback: () => void, ms: number) => unknown
@@ -73,6 +81,16 @@ export function createMainWindowPerfProbes(
   const clearTimer =
     options.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>))
   let held: HeldWindow | undefined
+  let boundaryActive = false
+  const cancelBoundary = () => {
+    if (!boundaryActive) return
+    boundaryActive = false
+    try {
+      options.boundary?.cancel()
+    } catch {
+      /* Diagnostic failure only. */
+    }
+  }
 
   const cleanup = (window: HeldWindow) => {
     let clean = true
@@ -106,6 +124,7 @@ export function createMainWindowPerfProbes(
     if (!held) return
     const window = held
     held = undefined
+    cancelBoundary()
     cleanup(window)
   }
   const request = (input: MainWindowPerfRequest): MainWindowPerfReceipt => {
@@ -159,6 +178,12 @@ export function createMainWindowPerfProbes(
       try {
         if (!Number.isFinite(startedAtMs) || startedAtMs < 0 || !Number.isFinite(expectedEndAtMs))
           throw new Error('Invalid clock')
+        try {
+          boundaryActive = true
+          options.boundary?.begin(input.id, startedAtMs, clockIdentity)
+        } catch {
+          cancelBoundary()
+        }
         meter.start()
         if (!gaps.start(startedAtMs)) throw new Error('Gap recorder refused')
         held = window
@@ -169,6 +194,15 @@ export function createMainWindowPerfProbes(
             const endedAtMs = nowMs()
             if (!Number.isFinite(endedAtMs) || endedAtMs < startedAtMs)
               throw new Error('Invalid clock')
+            let residuals: unknown = { intervalCoverage: 'unavailable' }
+            if (boundaryActive) {
+              try {
+                residuals = options.boundary?.finish(window.id, endedAtMs)
+              } catch {
+                cancelBoundary()
+              }
+              boundaryActive = false
+            }
             const eventLoopLag = meter.snapshot()
             const loopGaps = gaps.finish(false, endedAtMs)
             window.receipt = {
@@ -180,9 +214,11 @@ export function createMainWindowPerfProbes(
               expectedEndAtMs,
               eventLoopLag,
               loopGaps,
-              durability: readDurability()
+              durability: readDurability(),
+              residuals
             }
           } catch {
+            cancelBoundary()
             window.receipt = { status: 'unavailable', reason: 'window_measurement_failed' }
           } finally {
             if (!cleanup(window))
@@ -190,6 +226,7 @@ export function createMainWindowPerfProbes(
           }
         }, input.durationMs)
       } catch {
+        cancelBoundary()
         held = undefined
         cleanup(window)
         return { status: 'unavailable', reason: 'window_start_failed' }

@@ -69,7 +69,10 @@ import {
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
-import { CurrentChatAuthorityIndex, type CurrentChatAuthorityMetadata } from './CurrentChatAuthorityMetadata'
+import {
+  CurrentChatAuthorityIndex,
+  type CurrentChatAuthorityMetadata
+} from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
@@ -390,6 +393,9 @@ import { prepareChatForPersistence } from './ChatPersistencePreparation'
 import { createChatDetailDependencyBindings } from './ChatDetailDependencyBindings'
 import { JournalHostReferenceConnector } from './JournalHostReferenceConnector'
 import { journalPreparationEnrollment } from './JournalPreparationEnrollment'
+import { MainDurabilityResiduals } from './MainDurabilityResiduals'
+import { createMainResidualWindows } from './MainResidualWindows'
+import { performance as mainResidualClock } from 'node:perf_hooks'
 import { ToolActivityDetailDurability } from './ToolActivityDetailDurability'
 import {
   ToolActivityDetailBatchWriter,
@@ -617,7 +623,9 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
     hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
       userDataPath,
       appVersion: storeRuntime.appVersion || 'unknown',
-      ...(journalPreparationFlags.publication && journalHostReferenceConnector ? { referenceStaging: journalHostReferenceConnector } : {}),
+      ...(journalPreparationFlags.publication && journalHostReferenceConnector
+        ? { referenceStaging: journalHostReferenceConnector }
+        : {}),
       onPersisted: (input) => acknowledgeHostPersisted(input),
       recoverConflict: (input, error) => AppStore.recoverHostPersistConflict(input, error)
     })
@@ -1109,8 +1117,10 @@ let catalogueSourceWriteGuard: ((chatId: string) => void) | null = null
  */
 let incrementalJournalDurabilityFenced = false
 function incrementalJournalSidebandWritable(): boolean {
-  return !incrementalJournalDurabilityFenced &&
+  return (
+    !incrementalJournalDurabilityFenced &&
     (legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned')
+  )
 }
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
@@ -1119,6 +1129,9 @@ const mainDurabilityRuntime = createMainDurabilityRuntime({
   runArtifactsDir,
   workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js')
 })
+const mainResiduals = new MainDurabilityResiduals(randomUUID(), () => mainResidualClock.now())
+const baselineResidualObserver = mainResiduals.enroll(['baselineVerifies'])
+const mainResidualWindows = createMainResidualWindows(mainResiduals)
 const runEventLedgerWriter = mainDurabilityRuntime.writer
 let mainDetailDurability: ToolActivityDetailDurability | undefined
 mainDurabilityRuntime.attachDetail((ports) => {
@@ -1139,53 +1152,70 @@ mainDurabilityRuntime.attachJournal(({ flusher, directoryLeases }) => {
   incrementalJournalDescriptorCache = cache
   incrementalJournalDescriptorDrainSync = () => flusher.drainSync()
   return {
-    fence: () => { incrementalJournalDurabilityFenced = true },
+    fence: () => {
+      incrementalJournalDurabilityFenced = true
+    },
     drainSync: () => flusher.drainSync(),
     retire: () => cache.retire()
   }
 })
-const journalPreparationFlags = journalPreparationEnrollment(process.env, incrementalJournalDescriptorCache !== undefined)
+const journalPreparationFlags = journalPreparationEnrollment(
+  process.env,
+  incrementalJournalDescriptorCache !== undefined
+)
 const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
   ? new CheckpointPreparationWorker()
   : undefined
-let sharedCheckpointPreparationPort: import('./CheckpointPreparationProtocol').CheckpointPreparationPort | undefined
+let sharedCheckpointPreparationPort:
+  | import('./CheckpointPreparationProtocol').CheckpointPreparationPort
+  | undefined
 const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDir, {
-    rotationEnabled: journalPreparationFlags.rotation,
-    descriptorCache: incrementalJournalDescriptorCache,
-    descriptorDrainSync: incrementalJournalDescriptorDrainSync,
-    checkpointPreparation: checkpointPreparationWorker ? {
-      start: (source) => sharedCheckpointPreparationPort?.start(source) ?? null
-    } : undefined,
-    beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
-    maintenanceScope: 'opened',
-    canWrite: incrementalJournalSidebandWritable,
-    // Read-path torn-tail repair stays strictly legacy-admitted: under Host
-    // ownership a torn legacy-era tail must not self-heal as a side effect
-    // of merely reading a chat (the read-only import invariant), while the
-    // explicit Stage 2 mirror writes above remain permitted.
-    canRepairOnRead: legacyStoreCanWrite
-  })
+  rotationEnabled: journalPreparationFlags.rotation,
+  descriptorCache: incrementalJournalDescriptorCache,
+  descriptorDrainSync: incrementalJournalDescriptorDrainSync,
+  checkpointPreparation: checkpointPreparationWorker
+    ? {
+        start: (source) => sharedCheckpointPreparationPort?.start(source) ?? null
+      }
+    : undefined,
+  beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
+  maintenanceScope: 'opened',
+  canWrite: incrementalJournalSidebandWritable,
+  // Read-path torn-tail repair stays strictly legacy-admitted: under Host
+  // ownership a torn legacy-era tail must not self-heal as a side effect
+  // of merely reading a chat (the read-only import invariant), while the
+  // explicit Stage 2 mirror writes above remain permitted.
+  canRepairOnRead: legacyStoreCanWrite
+})
 const journalHostReferenceConnector = checkpointPreparationWorker
   ? new JournalHostReferenceConnector({
       workerEntryPath: path.join(__dirname, 'journalPublicationPreparationWorker.js'),
       capture: (chatId, revision) => incrementalJournal.captureSource?.(chatId, revision) ?? null,
-      owns: (chatId, revision) => !deletedChatIds.has(chatId) &&
+      owns: (chatId, revision) =>
+        !deletedChatIds.has(chatId) &&
         AppStore.getCurrentChatAuthorityMetadata(chatId)?.persistenceRevision === revision,
       lineage: (chatId, revision) => {
         const current = AppStore.getCurrentChatAuthorityMetadata(chatId)
         if (!current || current.persistenceRevision !== revision) return null
-        return { isCurrent: () => {
-          const next = AppStore.getCurrentChatAuthorityMetadata(chatId)
-          return !deletedChatIds.has(chatId) && next?.workspaceId === current.workspaceId &&
-            next.persistenceRevision === revision
-        } }
+        return {
+          isCurrent: () => {
+            const next = AppStore.getCurrentChatAuthorityMetadata(chatId)
+            return (
+              !deletedChatIds.has(chatId) &&
+              next?.workspaceId === current.workspaceId &&
+              next.persistenceRevision === revision
+            )
+          }
+        }
       }
     })
   : undefined
-sharedCheckpointPreparationPort = checkpointPreparationWorker && journalHostReferenceConnector
-  ? journalHostReferenceConnector.checkpointPort(checkpointPreparationWorker)
-  : undefined
+sharedCheckpointPreparationPort =
+  checkpointPreparationWorker && journalHostReferenceConnector
+    ? journalHostReferenceConnector.checkpointPort(checkpointPreparationWorker)
+    : undefined
 const incrementalChatPersistence = createIncrementalChatPersistence({
+  residualObserver: baselineResidualObserver,
   journal: incrementalJournal,
   canWrite: incrementalJournalSidebandWritable
 })
@@ -4951,6 +4981,9 @@ export interface ChatSaveOptions {
 }
 
 export class AppStore {
+  static getMainResidualWindowPort(): typeof mainResidualWindows {
+    return mainResidualWindows
+  }
   static getMainDurabilitySnapshot(): ReturnType<typeof mainDurabilityRuntime.snapshot> {
     return mainDurabilityRuntime.snapshot()
   }
@@ -6115,8 +6148,8 @@ export class AppStore {
    * files to discover that ~none of them have open runs. Entries tombstone
    * themselves: the save that seals a chat's last run removes it here. */
   private static openRunChatIds = new Set<string>()
-  private static authorityMetadataSources = new CurrentChatAuthorityIndex<ChatRecord>(
-    (chatId) => this.authorityMetadataSource(chatId)
+  private static authorityMetadataSources = new CurrentChatAuthorityIndex<ChatRecord>((chatId) =>
+    this.authorityMetadataSource(chatId)
   )
 
   private static authorityMetadataSource(chatId: string): string {
@@ -8329,8 +8362,16 @@ export class AppStore {
       // merge changed the message array, the supplied authored ops no longer
       // describe it and the mutation must be recomputed from before/after.
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
-      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir,
-        mainDetailDurability ? { owner: mainDetailDurability, onDependency: (dependency) => detailDependencies.collect([dependency]) } : undefined),
+      createDetailBatch: () =>
+        new ToolActivityDetailBatchWriter(
+          runArtifactsDir,
+          mainDetailDurability
+            ? {
+                owner: mainDetailDurability,
+                onDependency: (dependency) => detailDependencies.collect([dependency])
+              }
+            : undefined
+        ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
       persistDetailCheckpoint: (checkpoint) => {
@@ -8403,7 +8444,10 @@ export class AppStore {
         record: normalizedChat,
         expectedRevision
       },
-      { durabilityFallback, ...(detailDependencies.hasDependencies() ? { detailDependencies } : {}) }
+      {
+        durabilityFallback,
+        ...(detailDependencies.hasDependencies() ? { detailDependencies } : {})
+      }
     )
     if (stageResult === 'staged' || stageResult === 'replaced') {
       hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
@@ -8559,8 +8603,16 @@ export class AppStore {
       previous: previousChatForFeedback,
       authoredTranscript: options.authoredTranscript,
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
-      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir,
-        mainDetailDurability ? { owner: mainDetailDurability, onDependency: (dependency) => detailDependencies.collect([dependency]) } : undefined),
+      createDetailBatch: () =>
+        new ToolActivityDetailBatchWriter(
+          runArtifactsDir,
+          mainDetailDurability
+            ? {
+                owner: mainDetailDurability,
+                onDependency: (dependency) => detailDependencies.collect([dependency])
+              }
+            : undefined
+        ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
       persistDetailCheckpoint: (checkpoint) => {

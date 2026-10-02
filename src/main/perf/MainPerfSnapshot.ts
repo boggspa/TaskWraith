@@ -67,6 +67,7 @@ export interface MainPerfInstrumentationOptions {
   windowClock?: MainPerfClock
   windowProbes?: ReturnType<typeof createMainWindowPerfProbes>
   acquireWindowProtection?: () => MainSuspensionProtection
+  windowBoundary?: import('./MainWindowPerfProbes').MainWindowBoundaryPort
 }
 
 export function createMainPerfInstrumentation(
@@ -80,6 +81,7 @@ export function createMainPerfInstrumentation(
     options.windowProbes ??
     createMainWindowPerfProbes({
       clock: options.windowClock,
+      boundary: options.windowBoundary,
       acquireProtection: options.acquireWindowProtection,
       readDurability: () => sections.mainDurability?.() ?? null
     })
