@@ -38,6 +38,7 @@
 
 const { WORK_SPAN_KINDS } = require('./collectors/hostSpans.cjs')
 const { timingsByKind } = require('./collectors/hostRecentSpanWindows.cjs')
+const { awaitWithTimeout } = require('./boundedAwait.cjs')
 
 /** Global the S3a handle installs in main (`perfWorkSpanHandle.ts`); keep in lockstep. */
 const MAIN_WORK_SPANS_GLOBAL = '__TASKWRAITH_PERF_WORK_SPANS__'
@@ -239,6 +240,26 @@ async function runLiveLaneWindows(options) {
   const sleep = options.sleep || defaultSleep
   const hostUnion = options.hostUnion || null
   const onWindow = typeof options.onWindow === 'function' ? options.onWindow : null
+  const probeMain = async (request) => {
+    if (typeof options.readMainPerfWindow !== 'function') {
+      return { status: 'unavailable', reason: 'main_window_probe_absent' }
+    }
+    try {
+      const result = await awaitWithTimeout(
+        Promise.resolve().then(() => options.readMainPerfWindow(request)),
+        options.mainProbeTimeoutMs ?? 5_000,
+        'main window probe'
+      )
+      return isPlainObject(result)
+        ? result
+        : { status: 'unavailable', reason: 'main_probe_invalid' }
+    } catch (error) {
+      return {
+        status: 'unavailable',
+        reason: error?.code === 'CAPTURE_TIMEOUT' ? 'main_unresponsive' : 'main_probe_failed'
+      }
+    }
+  }
 
   const sleepUntil = async (atMs) => {
     const wait = atMs - nowMs()
@@ -301,9 +322,35 @@ async function runLiveLaneWindows(options) {
 
     const reasons = []
     const d1Before = await readD1()
+    const windowId = `light_beside_${repetition}`
+    const mainWindowBegin = await probeMain({ action: 'begin', id: windowId, durationMs: windowMs })
     const startedAtMs = nowMs()
     const endedAtMs = startedAtMs + windowMs
     const light = await lanes.runLight({ untilMs: endedAtMs })
+    const mainWindowEnd =
+      mainWindowBegin.status === 'started'
+        ? await probeMain({ action: 'end', id: windowId })
+        : mainWindowBegin
+    let mainWindow = null
+    if (
+      mainWindowBegin.status === 'started' &&
+      mainWindowBegin.id === windowId &&
+      mainWindowEnd.status === 'complete' &&
+      mainWindowEnd.id === windowId &&
+      finiteNonNegative(mainWindowEnd.startedAtMs) &&
+      finiteNonNegative(mainWindowEnd.endedAtMs) &&
+      mainWindowEnd.endedAtMs - mainWindowEnd.startedAtMs >= windowMs &&
+      isPlainObject(mainWindowEnd.eventLoopLag) &&
+      mainWindowEnd.eventLoopLag.sampling === true &&
+      mainWindowEnd.eventLoopLag.observedForMs > 0 &&
+      ['p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs', 'observedForMs'].every((name) =>
+        finiteNonNegative(mainWindowEnd.eventLoopLag[name])
+      )
+    ) {
+      mainWindow = { ...mainWindowEnd, durabilityBefore: mainWindowBegin.durability ?? null }
+    } else if (typeof options.readMainPerfWindow === 'function') {
+      reasons.push(mainWindowEnd.reason ?? 'main_probe_invalid')
+    }
     const lightDrainedAtMs = Math.max(endedAtMs, light.drainedAtMs ?? endedAtMs)
     const lightSettledAtMs =
       light.drainedAtMs === null ? null : lightDrainedAtMs + lightSettleMarginMs
@@ -452,6 +499,8 @@ async function runLiveLaneWindows(options) {
       activity,
       d1,
       main: mainEvidence,
+      mainWindow,
+      mainWindowCensored: mainWindow === null,
       host: null
     })
     if (onWindow !== null) {

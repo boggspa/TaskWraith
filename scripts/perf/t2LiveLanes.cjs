@@ -94,6 +94,16 @@ async function readMainWorkSpanWindow(session, query, timeoutMs) {
   return reply.result.value === undefined ? null : reply.result.value
 }
 
+/** A bounded preload read: unavailable main evidence never becomes zero lag. */
+async function readMainPerfWindow(page, request, timeoutMs) {
+  const expression = `(async function(){
+    if (!window.api || typeof window.api.getMainPerfSnapshot !== 'function') return null;
+    const snapshot = await window.api.getMainPerfSnapshot({ window: ${JSON.stringify(request)} });
+    return snapshot && snapshot.window ? snapshot.window : null;
+  })()`
+  return awaitWithTimeout(page.evaluate(expression), timeoutMs, 'main window probe')
+}
+
 /** The one model every seat of a chat runs, or null when they differ or none is named. */
 function chatSeatModel(chat) {
   const seats =
@@ -395,6 +405,8 @@ async function runT2LiveLanes(options) {
         readMainWindow: (query) =>
           readMainWorkSpanWindow(mainSession, query, settings.callTimeoutMs),
         readD1Counters: () => readD1Counters(page, { timeoutMs: settings.callTimeoutMs }),
+        readMainPerfWindow: (request) => readMainPerfWindow(page, request, settings.callTimeoutMs),
+        mainProbeTimeoutMs: settings.callTimeoutMs,
         // The daemon keys whole milliseconds; widen a fractional range outward.
         readLaneActivity: (lane, range) =>
           options.readDaemonActivity({
@@ -509,6 +521,7 @@ module.exports = {
   liveLanesTeardownFailures,
   openedChatExpression,
   readMainWorkSpanWindow,
+  readMainPerfWindow,
   runT2LiveLanes,
   withLiveLanesVerdict
 }

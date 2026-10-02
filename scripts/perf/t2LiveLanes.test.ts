@@ -5,6 +5,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 
 type Verdict = { ok: boolean; reasons: string[] }
+function windowProbeFixture(nowMs: () => number) {
+  let startedAtMs = 0
+  let durationMs = 0
+  return (request: { action: string; id: string; durationMs?: number }) => {
+    if (request.action === 'begin') {
+      startedAtMs = nowMs()
+      durationMs = request.durationMs ?? 0
+      return { status: 'started', id: request.id, startedAtMs }
+    }
+    return {
+      status: 'complete',
+      id: request.id,
+      startedAtMs,
+      endedAtMs: startedAtMs + durationMs,
+      eventLoopLag: {
+        sampling: true,
+        observedForMs: durationMs,
+        p50Ms: 1,
+        p95Ms: 3,
+        p99Ms: 5,
+        maxMs: 10,
+        meanMs: 2
+      }
+    }
+  }
+}
 type PhaseResult = {
   schemaVersion: number
   chats: { light: string; heavy: string }
@@ -29,12 +55,14 @@ const {
   liveLaneChatsOf,
   liveLanesTeardownFailures,
   readMainWorkSpanWindow,
+  readMainPerfWindow,
   runT2LiveLanes,
   withLiveLanesVerdict
 } = require('./t2LiveLanes.cjs') as {
   liveLaneChatsOf: (fixture: unknown) => { light: string; heavy: string }
   liveLanesTeardownFailures: (lanes: unknown) => string[]
   readMainWorkSpanWindow: (session: unknown, query: unknown, timeoutMs: number) => Promise<unknown>
+  readMainPerfWindow: (page: unknown, request: unknown, timeoutMs: number) => Promise<unknown>
   runT2LiveLanes: (options: Record<string, unknown>) => Promise<PhaseResult>
   withLiveLanesVerdict: (rounds: unknown, lanes: unknown) => Verdict
 }
@@ -260,8 +288,13 @@ function world(
     heavy: { rounds: heavyRounds.map((round) => ({ ...round })), idle: [], failure: heavyFailure }
   })
   // The page's window: the app's cancel, and the observer global the lanes install.
+  const probeWindow = windowProbeFixture(() => now)
   const pageWindow: Record<string, unknown> = {
     api: {
+      getMainPerfSnapshot: async (options: { window: Parameters<typeof probeWindow>[0] }) => ({
+        window: probeWindow(options.window),
+        sections: {}
+      }),
       cancelEnsembleRound: (chatId: string) => {
         events.push(`cancel:${chatId}`)
         if (options.cancelHangs) return new Promise(() => {})
@@ -863,6 +896,7 @@ function liveApp(options: { dropEndOf?: string[] } = {}) {
       listeners[channel] = listeners[channel].filter((listener) => listener !== callback)
     }
   }
+  const probeWindow = windowProbeFixture(Date.now)
   const window: Record<string, unknown> = {
     api: {
       onChatUpdated: subscribe('delivery'),
@@ -889,7 +923,10 @@ function liveApp(options: { dropEndOf?: string[] } = {}) {
           setTimeout(() => end(chatId, roundId, 'cancelled'), 30)
           setTimeout(() => resolve(true), 10)
         }),
-      getMainPerfSnapshot: async () => ({
+      getMainPerfSnapshot: async (options?: {
+        window?: Parameters<ReturnType<typeof windowProbeFixture>>[0]
+      }) => ({
+        ...(options?.window ? { window: probeWindow(options.window) } : {}),
         sections: {
           incrementalChatPersistence: {
             journal: { deferredAppends },
@@ -1305,6 +1342,53 @@ describe('liveLaneChatsOf', () => {
       lightModel: 'm-light',
       heavyModel: 'm-heavy'
     })
+  })
+})
+
+describe('readMainPerfWindow', () => {
+  it('reads the labelled snapshot receipt and exact durability section through preload', async () => {
+    const requests: unknown[] = []
+    const request = { action: 'begin', id: 'beside_0', durationMs: 120 }
+    const value = await readMainPerfWindow(
+      {
+        evaluate: (expression: string) =>
+          vm.runInNewContext(expression, {
+            window: {
+              api: {
+                getMainPerfSnapshot: async (options: unknown) => {
+                  requests.push(options)
+                  return {
+                    window: {
+                      status: 'started',
+                      id: 'beside_0',
+                      durability: { flags: { child: '0' } }
+                    },
+                    sections: { mainDurability: { flags: { child: '0' } } }
+                  }
+                }
+              }
+            }
+          })
+      },
+      request,
+      100
+    )
+    expect(requests).toEqual([{ window: request }])
+    expect(value).toEqual({
+      status: 'started',
+      id: 'beside_0',
+      durability: { flags: { child: '0' } }
+    })
+  })
+
+  it('bounds a stalled main invocation', async () => {
+    await expect(
+      readMainPerfWindow(
+        { evaluate: () => new Promise(() => {}) },
+        { action: 'end', id: 'beside_0' },
+        1
+      )
+    ).rejects.toMatchObject({ code: 'CAPTURE_TIMEOUT' })
   })
 })
 

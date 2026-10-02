@@ -38,6 +38,7 @@ type WindowRecord = {
     ringRise: Record<string, number> | null
     lanes: Record<string, Record<string, Record<string, number>>>
   } | null
+  mainWindow: Record<string, unknown> | null
   host: Record<string, unknown> | null
 }
 type Result = { windows: WindowRecord[]; verdict: { ok: boolean; reasons: string[] } }
@@ -473,6 +474,62 @@ function run(w: ReturnType<typeof world>, options: Record<string, unknown> = {})
 }
 
 describe('runLiveLaneWindows', () => {
+  it('collects isolated lag and before/after pool observations per labelled window', async () => {
+    const w = world()
+    const requests: Array<{ action: string; id: string }> = []
+    let start = 0
+    const result = await run(w, {
+      windows: 1,
+      readMainPerfWindow: async (request: { action: string; id: string; durationMs?: number }) => {
+        requests.push(request)
+        if (request.action === 'begin') {
+          start = w.nowMs()
+          return { status: 'started', id: request.id, startedAtMs: start, durability: { pool: 1 } }
+        }
+        return {
+          status: 'complete',
+          id: request.id,
+          startedAtMs: start,
+          endedAtMs: start + 120_000,
+          eventLoopLag: {
+            sampling: true,
+            observedForMs: 120_000,
+            p50Ms: 1,
+            p95Ms: 28,
+            p99Ms: 40,
+            maxMs: 50,
+            meanMs: 2
+          },
+          durability: { pool: 3 }
+        }
+      }
+    })
+    expect(requests.map((request) => request.action)).toEqual(['begin', 'end'])
+    expect(result.windows[0].mainWindow).toMatchObject({
+      eventLoopLag: { p95Ms: 28 },
+      durabilityBefore: { pool: 1 },
+      durability: { pool: 3 }
+    })
+    expect(result.windows[0].host).not.toBeNull()
+  })
+
+  it('censors a timed-out main probe and keeps lag unavailable', async () => {
+    const result = await run(world(), {
+      windows: 1,
+      mainProbeTimeoutMs: 1,
+      readMainPerfWindow: () => new Promise(() => {})
+    })
+    expect(result.windows[0].mainWindow).toBeNull()
+    expect(result.windows[0].reasons).toContain('main_unresponsive')
+    expect(result.verdict.ok).toBe(false)
+    expect(result.windows[0].host).not.toBeNull()
+  })
+
+  it('does not accept missing or malformed lag as an observed zero', async () => {
+    const result = await run(world(), { windows: 1, readMainPerfWindow: async () => null })
+    expect(result.windows[0].mainWindow).toBeNull()
+    expect(result.windows[0].reasons).toContain('main_probe_invalid')
+  })
   it('runs three eligible windows with every kind of evidence', async () => {
     const w = world()
     const result = await run(w)
