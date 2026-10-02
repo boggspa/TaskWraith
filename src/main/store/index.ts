@@ -1124,14 +1124,19 @@ function incrementalJournalSidebandWritable(): boolean {
 }
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
+const mainResiduals = new MainDurabilityResiduals(randomUUID(), () => mainResidualClock.now())
+const baselineResidualObserver = mainResiduals.enroll([
+  'baselineVerifies',
+  'preparationRefusals',
+  'strictRunEventFsyncs'
+])
+const mainResidualWindows = createMainResidualWindows(mainResiduals)
 const mainDurabilityRuntime = createMainDurabilityRuntime({
+  residualObserver: baselineResidualObserver,
   runEventsDir,
   runArtifactsDir,
   workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js')
 })
-const mainResiduals = new MainDurabilityResiduals(randomUUID(), () => mainResidualClock.now())
-const baselineResidualObserver = mainResiduals.enroll(['baselineVerifies'])
-const mainResidualWindows = createMainResidualWindows(mainResiduals)
 const runEventLedgerWriter = mainDurabilityRuntime.writer
 let mainDetailDurability: ToolActivityDetailDurability | undefined
 mainDurabilityRuntime.attachDetail((ports) => {
@@ -1189,6 +1194,7 @@ const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDi
 })
 const journalHostReferenceConnector = checkpointPreparationWorker
   ? new JournalHostReferenceConnector({
+      residualObserver: baselineResidualObserver,
       workerEntryPath: path.join(__dirname, 'journalPublicationPreparationWorker.js'),
       capture: (chatId, revision) => incrementalJournal.captureSource?.(chatId, revision) ?? null,
       owns: (chatId, revision) =>
