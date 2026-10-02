@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { DirectoryLease, MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
-import type { DurabilityDependency, DurabilityFile } from './MainDurabilityFlusher'
+import type {
+  DurabilityDependency,
+  DurabilityFile,
+  MainDurabilityFlusher
+} from './MainDurabilityFlusher'
 
 export interface JournalDescriptorFlusher {
   transferDependencies?(
@@ -9,7 +13,7 @@ export interface JournalDescriptorFlusher {
     successor: DurabilityFile,
     offset: number
   ): void
-  open(dev: number, ino: number, fd: number, durableOffset?: number): DurabilityFile
+  open: MainDurabilityFlusher['open']
   noteWrite(
     file: DurabilityFile,
     end: number,
