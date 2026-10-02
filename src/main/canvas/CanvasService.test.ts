@@ -2781,6 +2781,89 @@ describe('CanvasService browser navigation', () => {
   // durable signed-in profile — so an irreversible control needs one human
   // decision even when the tier would otherwise auto-run it.
   describe('consequential-action confirmation', () => {
+    it('quit joins no pending consent and late acceptance produces no outcome or dispatch', async () => {
+      let accept!: (value: boolean) => void
+      let asking!: () => void
+      const requested = new Promise<void>((resolve) => {
+        asking = resolve
+      })
+      fake.targetLabel = 'Delete account'
+      service = serviceWith(() => {
+        asking()
+        return new Promise<boolean>((resolve) => {
+          accept = resolve
+        })
+      })
+      const c = await service.open({ url: 'https://example.com' }, {})
+      const action = service.click(c.canvasId, { kind: 'click', ref: 'e9' }, {})
+      const rejected = expect(action).rejects.toThrow('Canvas is shutting down')
+      await requested
+      expect(
+        store
+          .listEvents(c.canvasId)
+          .filter((event) => event.kind === 'interaction')
+          .map((event) => event.detail?.phase)
+      ).toEqual(['intent'])
+      service.beginShutdown()
+      await service.join()
+      accept(true)
+      await rejected
+      expect(fake.lastAction).toBeUndefined()
+      expect(
+        store
+          .listEvents(c.canvasId)
+          .filter((event) => event.kind === 'interaction')
+          .map((event) => event.detail?.phase)
+      ).toEqual(['intent'])
+      await expect(service.click(c.canvasId, { kind: 'click', ref: 'e9' }, {})).rejects.toThrow(
+        'Canvas is shutting down'
+      )
+    })
+
+    it.each([true, false])(
+      'joins admitted browser action through its outcome (throws=%s)',
+      async (throws) => {
+        let finish!: () => void
+        let dispatched!: () => void
+        const dispatch = new Promise<void>((resolve) => {
+          dispatched = resolve
+        })
+        fake.act = async () => {
+          dispatched()
+          await new Promise<void>((resolve) => {
+            finish = resolve
+          })
+          if (throws) throw new Error('browser dispatch failed')
+          return { ok: true, action: 'click', found: true, executed: true, verified: 'unknown' }
+        }
+        service = serviceWith(async () => true)
+        const c = await service.open({ url: 'https://example.com' }, {})
+        const action = service.click(c.canvasId, { kind: 'click', ref: 'e9' }, {})
+        const settled = throws
+          ? expect(action).rejects.toThrow('browser dispatch failed')
+          : expect(action).resolves.toMatchObject({ executed: true })
+        await dispatch
+        service.beginShutdown()
+        let joined = false
+        const join = service.join().then(() => {
+          expect(
+            store
+              .listEvents(c.canvasId)
+              .filter((event) => event.kind === 'interaction')
+              .map((event) => event.detail?.phase)
+          ).toEqual(['intent', 'outcome'])
+          joined = true
+        })
+        await Promise.resolve()
+        expect(joined).toBe(false)
+        finish()
+        await settled
+        await join
+        service.beginShutdown()
+        await service.join()
+      }
+    )
+
     function serviceWith(
       confirm: CanvasServiceDeps['confirmConsequentialAction'],
       driver: FakeDriver = fake

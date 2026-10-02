@@ -13,7 +13,7 @@
  * never the PNG bytes; network/console record counts, not bodies.
  */
 import { createHash } from 'crypto'
-import type { MainNativeActionGate, MainNativeActionLease } from '../lifecycle/MainNativeActionGate'
+import { MainNativeActionGate, type MainNativeActionLease } from '../lifecycle/MainNativeActionGate'
 import type {
   CanvasActionInput,
   CanvasActionKind,
@@ -457,6 +457,17 @@ export class CanvasService
   private readonly dockTransfers = new Set<string>()
 
   constructor(private readonly deps: CanvasServiceDeps) {}
+
+  private readonly quitActionGate = new MainNativeActionGate()
+
+  /** Quit admission only; independent of history deletion/generation controls. */
+  beginShutdown(): void {
+    this.quitActionGate.beginShutdown()
+  }
+
+  join(): Promise<void> {
+    return this.quitActionGate.join()
+  }
 
   private enqueueHistoryStoreMutation(task: () => void | Promise<void>): Promise<void> {
     const result = this.historyStoreMutationQueue.then(task, task)
@@ -1983,6 +1994,7 @@ export class CanvasService
   ): Promise<CanvasActResult> {
     return this.serializeInteraction(canvasId, async () => {
       // Resolved inside the lock: the canvas may have closed while we queued.
+      if (this.quitActionGate.snapshot().closed) throw new Error('Canvas is shutting down.')
       const session = this.require(canvasId, ctx)
       this.chargeInteraction(session)
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
@@ -1995,11 +2007,14 @@ export class CanvasService
       }
       const native = session.record.driver === 'window'
       let nativeLease: MainNativeActionLease | null = null
+      let quitLease: MainNativeActionLease | null = null
       let nativeIntent = false
       const lifecycle = native
         ? {
             beforeNativeDispatch: () => {
               if (nativeIntent) throw new Error('Native dispatch lifecycle was invoked twice.')
+              quitLease = this.quitActionGate.tryEnter(`canvas:${kind}`)
+              if (!quitLease) throw new Error('Canvas is shutting down.')
               nativeLease = this.deps.nativeActionGate?.tryEnter(`canvas:${kind}`) ?? null
               if (this.deps.nativeActionGate && !nativeLease)
                 throw new Error('Native action admission is closed for shutdown.')
@@ -2026,6 +2041,13 @@ export class CanvasService
           kind === 'wait_for'
             ? { pin: {}, consequential: false }
             : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
+        // Consent waits are never joined. A late decision must neither
+        // dispatch nor append a refusal/outcome after final persistence.
+        if (this.quitActionGate.snapshot().closed) throw new Error('Canvas is shutting down.')
+        if (!native) {
+          quitLease = this.quitActionGate.tryEnter(`canvas:${kind}`)
+          if (!quitLease) throw new Error('Canvas is shutting down.')
+        }
         if (gate.refusal) {
           if (!native)
             this.emit(canvasId, 'interaction', ctx, {
@@ -2186,6 +2208,7 @@ export class CanvasService
       } finally {
         // Covers strict-intent failure, daemon errors and every final outcome audit.
         ;(nativeLease as MainNativeActionLease | null)?.release()
+        ;(quitLease as MainNativeActionLease | null)?.release()
       }
     })
   }
