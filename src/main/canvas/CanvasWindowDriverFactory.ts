@@ -9,6 +9,7 @@
  * renderer.
  */
 import { createHash, randomUUID } from 'node:crypto'
+import type { CanvasNativeActionLifecycle } from './canvasTypes'
 import type { MainNativeActionGate } from '../lifecycle/MainNativeActionGate'
 
 import type {
@@ -1265,18 +1266,24 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
     })
   }
 
-  async click(request: CanvasWindowClickRequest): Promise<CanvasWindowActResult> {
-    return this.performAction('click', request)
+  async click(
+    request: CanvasWindowClickRequest,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasWindowActResult> {
+    return this.performAction('click', request, lifecycle)
   }
 
-  async fill(request: {
-    lease: CanvasWindowLeaseIdentity
-    observationId: string
-    inputEpoch: number
-    ref: string
-    value: string
-  }): Promise<CanvasWindowActResult> {
-    return this.performAction('fill', request)
+  async fill(
+    request: {
+      lease: CanvasWindowLeaseIdentity
+      observationId: string
+      inputEpoch: number
+      ref: string
+      value: string
+    },
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasWindowActResult> {
+    return this.performAction('fill', request, lifecycle)
   }
 
   async release(request: { lease: CanvasWindowLeaseIdentity }): Promise<CanvasWindowReleaseResult> {
@@ -1311,7 +1318,8 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
           inputEpoch: number
           ref: string
           value: string
-        }
+        },
+    lifecycle?: CanvasNativeActionLifecycle
   ): Promise<CanvasWindowActResult> {
     return this.gate.run(async () => {
       const lease = this.nativeActionGate?.tryEnter(`nativeWindow.${verb}`)
@@ -1319,6 +1327,7 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
         factoryError('native-rpc-failed', 'Native action admission is closed for shutdown.')
       }
       try {
+        lifecycle?.beforeNativeDispatch()
         return await this.performAdmittedAction(verb, request)
       } finally {
         lease?.release()

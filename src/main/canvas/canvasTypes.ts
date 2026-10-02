@@ -624,6 +624,11 @@ export interface CanvasNavState {
  * driver; the MCP tools talk to CanvasService. Drivers are injected so the
  * service is unit-testable with a fake (the real `web` driver needs Electron).
  */
+export interface CanvasNativeActionLifecycle {
+  /** Internal callback after consent, immediately before native dispatch. */
+  beforeNativeDispatch(): void
+}
+
 export interface CanvasDriver {
   readonly kind: CanvasDriverKind
   open(input: CanvasOpenInput): Promise<CanvasSessionHandle>
@@ -634,7 +639,7 @@ export interface CanvasDriver {
   console(args: { level?: 'all' | 'warn' | 'error'; lines?: number }): Promise<CanvasConsoleEntry[]>
   resize(viewport: CanvasViewport): Promise<CanvasViewport>
   // P1 interaction + annotation.
-  act(action: CanvasActionInput): Promise<CanvasActResult>
+  act(action: CanvasActionInput, lifecycle?: CanvasNativeActionLifecycle): Promise<CanvasActResult>
   /**
    * Read-only pre-flight: resolve the same target `act` would and report its
    * accessible label plus the surface's current trusted input epoch, WITHOUT

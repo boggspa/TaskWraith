@@ -14,6 +14,7 @@
  * private, exact-run target factory; raw agent-facing canvas_open never can.
  */
 import { createHash } from 'crypto'
+import type { CanvasNativeActionLifecycle } from './canvasTypes'
 import type {
   CanvasActionInput,
   CanvasActRefusalReason,
@@ -154,8 +155,14 @@ export interface CanvasWindowNativeBridge {
   observe(request: CanvasWindowObserveRequest): Promise<CanvasWindowObserveResult>
   capture(request: CanvasWindowLeaseEnvelope): Promise<CanvasWindowCaptureResult>
   inspect(request: CanvasWindowInspectRequest): Promise<CanvasWindowInspectResult>
-  click(request: CanvasWindowClickRequest): Promise<CanvasWindowActResult>
-  fill(request: CanvasWindowFillRequest): Promise<CanvasWindowActResult>
+  click(
+    request: CanvasWindowClickRequest,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasWindowActResult>
+  fill(
+    request: CanvasWindowFillRequest,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasWindowActResult>
   release(request: CanvasWindowLeaseEnvelope): Promise<CanvasWindowReleaseResult>
 }
 
@@ -710,7 +717,10 @@ export class CanvasWindowDriver implements CanvasDriver {
     return this.performAction({ ...action, kind: 'fill' })
   }
 
-  act(action: CanvasActionInput): Promise<CanvasActResult> {
+  act(
+    action: CanvasActionInput,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasActResult> {
     if (action.kind !== 'click' && action.kind !== 'fill') {
       return Promise.resolve({
         ok: false,
@@ -728,15 +738,18 @@ export class CanvasWindowDriver implements CanvasDriver {
     }
     const result =
       action.kind === 'fill'
-        ? this.fill(action as CanvasWindowActionInput)
-        : this.click(action as CanvasWindowActionInput)
+        ? this.performAction({ ...action, kind: 'fill' } as CanvasWindowActionInput, lifecycle)
+        : this.performAction({ ...action, kind: 'click' } as CanvasWindowActionInput, lifecycle)
     // CanvasWindowActionResult is wider only by the Tier-4 confirmation
     // refusal. Integration must add that literal to CanvasActRefusalReason;
     // this isolated adapter intentionally does not edit the shared type.
     return result as Promise<CanvasActResult>
   }
 
-  private async performAction(action: CanvasWindowActionInput): Promise<CanvasWindowActionResult> {
+  private async performAction(
+    action: CanvasWindowActionInput,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasWindowActionResult> {
     return this.enqueue(async () => {
       if (this.pendingAction) {
         if (this.pendingAction.actionId === null) {
@@ -825,7 +838,10 @@ export class CanvasWindowDriver implements CanvasDriver {
       let response: CanvasWindowActResult
       if (action.kind === 'fill') {
         try {
-          response = await this.bridge.fill({ ...request, value: action.value as string })
+          response = await this.bridge.fill(
+            { ...request, value: action.value as string },
+            ...(lifecycle ? [lifecycle] : [])
+          )
         } catch {
           // A bridge/provider error can contain serialized request arguments.
           // Never let fill content escape through an exception or durable log.
@@ -840,7 +856,10 @@ export class CanvasWindowDriver implements CanvasDriver {
         if (!clickReceipt) {
           throw new Error('Native click confirmation was lost before dispatch.')
         }
-        response = await this.bridge.click({ ...request, clickReceipt })
+        response = await this.bridge.click(
+          { ...request, clickReceipt },
+          ...(lifecycle ? [lifecycle] : [])
+        )
       }
 
       assertLeaseEcho(this.lease, response)

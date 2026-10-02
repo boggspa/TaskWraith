@@ -13,6 +13,7 @@
  * never the PNG bytes; network/console record counts, not bodies.
  */
 import { createHash } from 'crypto'
+import type { MainNativeActionGate, MainNativeActionLease } from '../lifecycle/MainNativeActionGate'
 import type {
   CanvasActionInput,
   CanvasActionKind,
@@ -95,6 +96,7 @@ import {
 } from '../../shared/emulatorCanvas'
 
 export interface CanvasServiceDeps {
+  nativeActionGate?: MainNativeActionGate
   createDriver: (
     kind: CanvasDriverKind,
     sessionId: string,
@@ -1991,110 +1993,151 @@ export class CanvasService
         action: kind,
         ...targetAudit
       }
-      if (session.record.driver === 'window') {
-        try {
-          this.emitStrict(canvasId, 'interaction', ctx, intentDetail)
-        } catch {
-          throw new Error(
-            'Native window interaction was blocked because its pre-dispatch audit intent could not be persisted.'
-          )
-        }
-      } else {
+      const native = session.record.driver === 'window'
+      let nativeLease: MainNativeActionLease | null = null
+      let nativeIntent = false
+      const lifecycle = native
+        ? {
+            beforeNativeDispatch: () => {
+              if (nativeIntent) throw new Error('Native dispatch lifecycle was invoked twice.')
+              nativeLease = this.deps.nativeActionGate?.tryEnter(`canvas:${kind}`) ?? null
+              if (this.deps.nativeActionGate && !nativeLease)
+                throw new Error('Native action admission is closed for shutdown.')
+              this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+              try {
+                this.emitStrict(canvasId, 'interaction', ctx, intentDetail)
+              } catch {
+                throw new Error(
+                  'Native window interaction was blocked because its pre-dispatch audit intent could not be persisted.'
+                )
+              }
+              nativeIntent = true
+            }
+          }
+        : undefined
+      if (!native) {
         this.emit(canvasId, 'interaction', ctx, intentDetail)
       }
-      // Consequential-action confirmation (design §7). Runs BEFORE dispatch and
-      // inside the same serialization lock, so a second interaction cannot slip
-      // past while a human is deciding.
-      const gate =
-        kind === 'wait_for'
-          ? { pin: {}, consequential: false }
-          : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
-      if (gate.refusal) {
-        this.emit(canvasId, 'interaction', ctx, {
-          phase: 'outcome',
-          action: kind,
-          ...targetAudit,
-          outcome: 'consequential_confirmation_required',
-          dispatchStatus: 'not_dispatched',
-          verified: 'unknown'
-        })
-        return gate.refusal
-      }
-      let driveAction:
-        | {
-            leaseId: string
-            reportId: string
-            actionId: string
-            independentVerificationRequired: boolean
-          }
-        | undefined
-      if (kind !== 'wait_for' && session.record.driver === 'web' && this.deps.appDriveLeases) {
-        if (!ctx.chatId || !ctx.runId || !ctx.provider) {
-          return {
-            ok: false,
-            action: kind,
-            found: false,
-            executed: false,
-            verified: 'unknown',
-            refusalReason: 'appdrive_binding_mismatch',
-            message: 'App Drive requires exact chat, run, and provider authority.'
-          }
-        }
-        const lease = this.deps.appDriveLeases.acquireAndConsume({
-          surfaceId: canvasId,
-          surfaceKind: 'web',
-          chatId: ctx.chatId,
-          runId: ctx.runId,
-          provider: ctx.provider,
-          ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
-          verb: kind,
-          independentVerificationRequired:
-            args.requireIndependentVerifier === true ||
-            (gate.consequential && Boolean(ctx.participantId))
-        })
-        if (!lease.ok) {
-          const refusalReason =
-            lease.code === 'expired'
-              ? 'appdrive_lease_expired'
-              : lease.code === 'step-budget-exhausted'
-                ? 'appdrive_step_budget_exhausted'
-                : lease.code === 'binding-mismatch'
-                  ? 'appdrive_binding_mismatch'
-                  : lease.code === 'independent-verifier-required'
-                    ? 'appdrive_independent_verifier_required'
-                    : 'appdrive_lease_required'
-          this.emit(canvasId, 'interaction', ctx, {
-            phase: 'outcome',
-            action: kind,
-            ...targetAudit,
-            outcome: refusalReason,
-            executed: false,
-            verified: 'unknown'
-          })
-          return {
-            ok: false,
-            action: kind,
-            found: false,
-            executed: false,
-            verified: 'unknown',
-            refusalReason,
-            message: lease.error
-          }
-        }
-        driveAction = {
-          leaseId: lease.lease.leaseId,
-          reportId: lease.reportId,
-          actionId: lease.actionId,
-          independentVerificationRequired: lease.independentVerificationRequired
-        }
-      }
-      // A synchronous broadcast hook could have begun a clear while the intent
-      // was emitted. Re-check before invoking the driver.
-      this.assertLiveAfterAwait(canvasId, session, ctx, kind)
-      let result: CanvasActResult
       try {
-        result = await session.driver.act({ ...args, ...gate.pin, kind })
-      } catch (error) {
+        // Consequential-action confirmation (design §7). Runs BEFORE dispatch and
+        // inside the same serialization lock, so a second interaction cannot slip
+        // past while a human is deciding.
+        const gate =
+          kind === 'wait_for'
+            ? { pin: {}, consequential: false }
+            : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
+        if (gate.refusal) {
+          if (!native)
+            this.emit(canvasId, 'interaction', ctx, {
+              phase: 'outcome',
+              action: kind,
+              ...targetAudit,
+              outcome: 'consequential_confirmation_required',
+              dispatchStatus: 'not_dispatched',
+              verified: 'unknown'
+            })
+          return gate.refusal
+        }
+        let driveAction:
+          | {
+              leaseId: string
+              reportId: string
+              actionId: string
+              independentVerificationRequired: boolean
+            }
+          | undefined
+        if (kind !== 'wait_for' && session.record.driver === 'web' && this.deps.appDriveLeases) {
+          if (!ctx.chatId || !ctx.runId || !ctx.provider) {
+            return {
+              ok: false,
+              action: kind,
+              found: false,
+              executed: false,
+              verified: 'unknown',
+              refusalReason: 'appdrive_binding_mismatch',
+              message: 'App Drive requires exact chat, run, and provider authority.'
+            }
+          }
+          const lease = this.deps.appDriveLeases.acquireAndConsume({
+            surfaceId: canvasId,
+            surfaceKind: 'web',
+            chatId: ctx.chatId,
+            runId: ctx.runId,
+            provider: ctx.provider,
+            ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
+            verb: kind,
+            independentVerificationRequired:
+              args.requireIndependentVerifier === true ||
+              (gate.consequential && Boolean(ctx.participantId))
+          })
+          if (!lease.ok) {
+            const refusalReason =
+              lease.code === 'expired'
+                ? 'appdrive_lease_expired'
+                : lease.code === 'step-budget-exhausted'
+                  ? 'appdrive_step_budget_exhausted'
+                  : lease.code === 'binding-mismatch'
+                    ? 'appdrive_binding_mismatch'
+                    : lease.code === 'independent-verifier-required'
+                      ? 'appdrive_independent_verifier_required'
+                      : 'appdrive_lease_required'
+            this.emit(canvasId, 'interaction', ctx, {
+              phase: 'outcome',
+              action: kind,
+              ...targetAudit,
+              outcome: refusalReason,
+              executed: false,
+              verified: 'unknown'
+            })
+            return {
+              ok: false,
+              action: kind,
+              found: false,
+              executed: false,
+              verified: 'unknown',
+              refusalReason,
+              message: lease.error
+            }
+          }
+          driveAction = {
+            leaseId: lease.lease.leaseId,
+            reportId: lease.reportId,
+            actionId: lease.actionId,
+            independentVerificationRequired: lease.independentVerificationRequired
+          }
+        }
+        // A synchronous broadcast hook could have begun a clear while the intent
+        // was emitted. Re-check before invoking the driver.
+        this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+        let result: CanvasActResult
+        try {
+          result = await session.driver.act({ ...args, ...gate.pin, kind }, lifecycle)
+        } catch (error) {
+          if (driveAction) {
+            this.deps.appDriveLeases?.completeAction({
+              leaseId: driveAction.leaseId,
+              actionId: driveAction.actionId,
+              actor: {
+                runId: ctx.runId!,
+                provider: ctx.provider!,
+                participantId: ctx.participantId ?? null
+              },
+              executed: null,
+              surfaceVerification: 'unknown',
+              refusalCode: 'driver_error'
+            })
+          }
+          if (!native || nativeIntent)
+            this.emit(canvasId, 'interaction', ctx, {
+              phase: 'outcome',
+              action: kind,
+              ...targetAudit,
+              outcome: 'driver_error',
+              dispatchStatus: 'unknown',
+              verified: 'unknown'
+            })
+          throw error
+        }
         if (driveAction) {
           this.deps.appDriveLeases?.completeAction({
             leaseId: driveAction.leaseId,
@@ -2104,60 +2147,46 @@ export class CanvasService
               provider: ctx.provider!,
               participantId: ctx.participantId ?? null
             },
-            executed: null,
-            surfaceVerification: 'unknown',
-            refusalCode: 'driver_error'
+            executed: result.executed,
+            surfaceVerification: result.verified,
+            ...(result.refusalReason ? { refusalCode: result.refusalReason } : {})
+          })
+          result = {
+            ...result,
+            driveReportId: driveAction.reportId,
+            driveActionId: driveAction.actionId,
+            independentVerificationRequired: driveAction.independentVerificationRequired
+          }
+        }
+        if (
+          (!native || nativeIntent) &&
+          (!result.ok || !result.executed || result.verified !== 'changed')
+        ) {
+          this.emit(canvasId, 'interaction', ctx, {
+            phase: 'outcome',
+            action: kind,
+            ...targetAudit,
+            found: result.found,
+            // Whether the interaction actually landed is the audit-relevant fact —
+            // `found` alone cannot distinguish a dispatch from a refused
+            // precondition.
+            executed: result.executed,
+            verified: result.verified,
+            ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
           })
         }
-        this.emit(canvasId, 'interaction', ctx, {
-          phase: 'outcome',
-          action: kind,
-          ...targetAudit,
-          outcome: 'driver_error',
-          dispatchStatus: 'unknown',
-          verified: 'unknown'
-        })
-        throw error
-      }
-      if (driveAction) {
-        this.deps.appDriveLeases?.completeAction({
-          leaseId: driveAction.leaseId,
-          actionId: driveAction.actionId,
-          actor: {
-            runId: ctx.runId!,
-            provider: ctx.provider!,
-            participantId: ctx.participantId ?? null
-          },
-          executed: result.executed,
-          surfaceVerification: result.verified,
-          ...(result.refusalReason ? { refusalCode: result.refusalReason } : {})
-        })
-        result = {
-          ...result,
-          driveReportId: driveAction.reportId,
-          driveActionId: driveAction.actionId,
-          independentVerificationRequired: driveAction.independentVerificationRequired
+        if (
+          result.refusalReason === 'user_active' ||
+          result.refusalReason === 'stale_input_epoch'
+        ) {
+          this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
         }
+        this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+        return result
+      } finally {
+        // Covers strict-intent failure, daemon errors and every final outcome audit.
+        ;(nativeLease as MainNativeActionLease | null)?.release()
       }
-      if (!result.ok || !result.executed || result.verified !== 'changed') {
-        this.emit(canvasId, 'interaction', ctx, {
-          phase: 'outcome',
-          action: kind,
-          ...targetAudit,
-          found: result.found,
-          // Whether the interaction actually landed is the audit-relevant fact —
-          // `found` alone cannot distinguish a dispatch from a refused
-          // precondition.
-          executed: result.executed,
-          verified: result.verified,
-          ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
-        })
-      }
-      if (result.refusalReason === 'user_active' || result.refusalReason === 'stale_input_epoch') {
-        this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
-      }
-      this.assertLiveAfterAwait(canvasId, session, ctx, kind)
-      return result
     })
   }
 

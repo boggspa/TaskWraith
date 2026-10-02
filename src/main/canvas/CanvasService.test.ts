@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { MainNativeActionGate } from '../lifecycle/MainNativeActionGate'
+import type { CanvasNativeActionLifecycle } from './canvasTypes'
 import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -246,7 +248,11 @@ class FakeDriver implements CanvasDriver {
     label: this.targetLabel,
     inputEpoch: this.targetInputEpoch
   })
-  async act(action: CanvasActionInput): Promise<CanvasActResult> {
+  async act(
+    action: CanvasActionInput,
+    lifecycle?: CanvasNativeActionLifecycle
+  ): Promise<CanvasActResult> {
+    lifecycle?.beforeNativeDispatch()
     this.lastAction = action
     const found = action.ref !== 'missing'
     return {
@@ -1146,10 +1152,110 @@ describe('CanvasService', () => {
       )
     ).rejects.toThrow(/blocked.*pre-dispatch audit intent/)
 
-    expect(act).not.toHaveBeenCalled()
+    expect(act).toHaveBeenCalledTimes(1)
+    expect(fake.lastAction).toBeUndefined()
     expect(JSON.stringify(events)).not.toContain('SECRET-VALUE')
     expect(JSON.stringify(store.listEvents(c.canvasId))).not.toContain('SECRET-VALUE')
   })
+
+  it('late native consent emits no intent or outcome after shutdown', async () => {
+    const gate = new MainNativeActionGate()
+    let accept!: () => void
+    let asking!: () => void
+    const requested = new Promise<void>((resolve) => {
+      asking = resolve
+    })
+    fake.act = async (_action, lifecycle) => {
+      asking()
+      await new Promise<void>((resolve) => {
+        accept = resolve
+      })
+      lifecycle!.beforeNativeDispatch()
+      throw new Error('must not dispatch')
+    }
+    service = new CanvasService({
+      createDriver: () => fake,
+      store,
+      uuid: () => 'native-late',
+      now: () => '2026-06-21T00:00:00.000Z',
+      nativeActionGate: gate
+    })
+    const c = await service.open(
+      { driver: 'window', windowTarget: { leaseId: 'late' } },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+    const action = service.click(
+      c.canvasId,
+      { kind: 'click', ref: 'ax2' },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+    const rejected = expect(action).rejects.toThrow('closed for shutdown')
+    await requested
+    gate.beginShutdown()
+    await gate.join()
+    accept()
+    await rejected
+    expect(store.listEvents(c.canvasId).filter((event) => event.kind === 'interaction')).toEqual([])
+  })
+
+  it.each([true, false])(
+    'holds native admission through final outcome audit (throws=%s)',
+    async (throws) => {
+      const gate = new MainNativeActionGate()
+      let fail!: () => void
+      let dispatched!: () => void
+      const dispatch = new Promise<void>((resolve) => {
+        dispatched = resolve
+      })
+      fake.act = async (_action, lifecycle) => {
+        lifecycle!.beforeNativeDispatch()
+        dispatched()
+        await new Promise<void>((resolve) => {
+          fail = resolve
+        })
+        if (throws) throw new Error('native failure')
+        return { ok: true, action: 'click', found: true, executed: true, verified: 'unknown' }
+      }
+      service = new CanvasService({
+        createDriver: () => fake,
+        store,
+        uuid: () => 'native-held',
+        now: () => '2026-06-21T00:00:00.000Z',
+        nativeActionGate: gate
+      })
+      const append = store.appendEvent.bind(store)
+      const outcome = vi.spyOn(store, 'appendEvent').mockImplementation((event) => {
+        if (event.kind === 'interaction' && event.detail?.phase === 'outcome')
+          expect(gate.snapshot().inFlight).toBe(1)
+        return append(event)
+      })
+      const c = await service.open(
+        { driver: 'window', windowTarget: { leaseId: 'held' } },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+      const action = service.click(
+        c.canvasId,
+        { kind: 'click', ref: 'ax2' },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+      const settled = throws
+        ? expect(action).rejects.toThrow('native failure')
+        : expect(action).resolves.toMatchObject({ executed: true, verified: 'unknown' })
+      await dispatch
+      gate.beginShutdown()
+      let joined = false
+      const join = gate.join().then(() => {
+        joined = true
+      })
+      await Promise.resolve()
+      expect(joined).toBe(false)
+      fail()
+      await settled
+      await join
+      expect(outcome.mock.calls.some(([event]) => event.detail?.phase === 'outcome')).toBe(true)
+      expect(gate.snapshot().inFlight).toBe(0)
+    }
+  )
 
   it('records exact native observation preconditions in the strict intent without the fill value', async () => {
     const c = await service.open(

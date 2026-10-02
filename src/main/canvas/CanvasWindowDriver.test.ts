@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { describe, expect, it, vi } from 'vitest'
+import type { CanvasNativeActionLifecycle } from './canvasTypes'
 import type { CanvasFrame } from './canvasTypes'
 import {
   CanvasWindowDriver,
@@ -401,6 +402,23 @@ describe('CanvasWindowDriver', () => {
         y: 35 / 700
       })
     )
+  })
+
+  it('passes the internal lifecycle separately after click authorization', async () => {
+    const authorize = vi.fn(async () => ({ receipt: 'test-click-receipt' }))
+    const h = await openAndObserve(makeHarness({ clickAuthorization: { authorize } }))
+    const lifecycle: CanvasNativeActionLifecycle = { beforeNativeDispatch: vi.fn() }
+    await h.driver.act(
+      { kind: 'click', ref: 'ax2', expectedObservationId: 'observation-1', expectedInputEpoch: 3 },
+      lifecycle
+    )
+    expect(authorize).toHaveBeenCalledTimes(1)
+    expect(h.bridge.click).toHaveBeenCalledWith(
+      expect.not.objectContaining({ beforeNativeDispatch: expect.anything() }),
+      lifecycle
+    )
+    // Only the factory's serialized native boundary invokes the callback.
+    expect(lifecycle.beforeNativeDispatch).not.toHaveBeenCalled()
   })
 
   it('reports dispatch honestly but never calls it verified until a matching re-observe', async () => {
