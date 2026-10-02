@@ -22,6 +22,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { isSafeChatId } from '../../shared/ChatPath'
+import type { ThreadCatalogueDeferredDurability } from './ThreadCatalogueDurability'
 
 export const THREAD_CATALOGUE_VERSION = 1
 export const THREAD_CATALOGUE_MAX_HEAD_BYTES = 256 * 1024
@@ -66,6 +67,8 @@ export type ThreadCatalogueRead =
   | { status: 'erasing' }
 
 export interface ThreadCatalogueOptions {
+  /** Desktop-only opt-in; composition owns the exact rollout flag and shared pool. */
+  deferredDurability?: ThreadCatalogueDeferredDurability
   profilePath: string
   /** Writer labels are correlation evidence. canWrite supplies existing authority. */
   writer: ThreadCatalogueWriter
@@ -244,6 +247,19 @@ export class ThreadCatalogue {
     }
     const directory = path.dirname(filePath)
     this.ensureDurableDirectory(directory)
+    const publication =
+      this.options.writer === 'desktop' &&
+      (directory === path.join(this.directory, 'desktop') ||
+        directory.startsWith(path.join(this.directory, 'pending', 'desktop') + path.sep))
+    if (publication && this.options.deferredDurability) {
+      this.options.deferredDurability.write(
+        filePath,
+        text,
+        () => this.options.beforeAtomicRename?.(filePath),
+        () => this.options.afterAtomicRename?.(filePath)
+      )
+      return
+    }
     const temporary = `${filePath}.tmp-${randomUUID()}`
     const openTemporary = (): number =>
       this.options.openTemporaryFile?.(temporary) ?? fs.openSync(temporary, 'wx', 0o600)
@@ -507,6 +523,12 @@ export class ThreadCatalogue {
     } catch {
       return false
     }
+  }
+
+  awaitPublicationDurability(): Promise<void> {
+    return this.options.writer === 'desktop'
+      ? (this.options.deferredDurability?.awaitDurable() ?? Promise.resolve())
+      : Promise.resolve()
   }
 
   beginPublication(chatId: string, recoveryToken?: string): ThreadCatalogueTicket {

@@ -9,6 +9,8 @@ import {
 } from '../../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
 import { captureThreadCatalogueWitness } from '../../host-shared/thread-catalogue/ThreadCatalogueWitness'
 import type { ThreadCatalogueProjection } from '../../shared/threadCatalogueTypes'
+import { ThreadCatalogueDurability } from '../../host-shared/thread-catalogue/ThreadCatalogueDurability'
+import { threadCatalogueWriteGate } from '../../host-shared/thread-catalogue/ThreadCatalogueWriteGate'
 
 const profiles = new Set<string>()
 const profile = (): string => {
@@ -53,6 +55,72 @@ afterEach(() => {
 })
 
 describe('ThreadCatalogue source-operation supervision regressions', () => {
+  it.each([false, true])(
+    'keeps Desktop marker-before-source ordering and refuses stale completion (source replaced=%s)',
+    async (replaceSource) => {
+      const profilePath = profile()
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const durability = new ThreadCatalogueDurability<number>({
+        open: (_dev, _ino, fd) => fd,
+        noteWrite: () => {},
+        awaitDurable: () => held,
+        forget: async (files) => {
+          for (const fd of files) fs.closeSync(fd)
+        },
+        acquire: () => ({ noteMutation: () => ({ file: -1, offset: 1 }), release: async () => {} })
+      })
+      const publisher = new ThreadCatalogueSourcePublisher({
+        profilePath,
+        writer: 'desktop',
+        writerId: 'writer',
+        segmented: false,
+        canWrite: () => true,
+        project: () => projection(),
+        deferredDurability: durability,
+        catalogueDeferredDurabilityFlag: '1'
+      })
+      await threadCatalogueWriteGate.admit('chat', async () => {
+        const ticket = publisher.begin('chat')
+        const headPath = join(profilePath, 'thread-catalogue-v1', 'desktop', 'chat.json')
+        expect(JSON.parse(fs.readFileSync(headPath, 'utf8')).phase).toBe('pending')
+        fs.writeFileSync(join(profilePath, 'chats', 'chat.json'), '{}')
+        publisher.finishAfter(ticket, { appChatId: 'chat' }, Promise.resolve())
+        if (replaceSource)
+          fs.writeFileSync(join(profilePath, 'chats', 'chat.json'), '{"changed":true}')
+        await Promise.resolve()
+        expect(JSON.parse(fs.readFileSync(headPath, 'utf8')).phase).toBe('pending')
+        release()
+        await publisher.drain()
+        expect(JSON.parse(fs.readFileSync(headPath, 'utf8')).phase).toBe(
+          replaceSource ? 'repair' : 'durable'
+        )
+      })
+      await durability.retire()
+      await publisher.dispose()
+    }
+  )
+
+  it.each(['0', 'true', undefined])(
+    'does not inject deferred durability for Desktop flag %s',
+    (flag) => {
+      const write = vi.fn()
+      const publisher = new ThreadCatalogueSourcePublisher({
+        profilePath: profile(),
+        writer: 'desktop',
+        writerId: 'writer',
+        segmented: false,
+        canWrite: () => true,
+        catalogueDeferredDurabilityFlag: flag ?? '0',
+        deferredDurability: { write, awaitDurable: async () => {} }
+      })
+      expect(write).not.toHaveBeenCalled()
+      publisher.catalogue.beginPublication('chat')
+      expect(write).not.toHaveBeenCalled()
+    }
+  )
   it('returns the exact source witness captured for an optimistic projection', () => {
     const profilePath = profile()
     fs.writeFileSync(join(profilePath, 'chats', 'chat.json'), '{}', { mode: 0o600 })

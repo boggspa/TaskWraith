@@ -7,6 +7,7 @@ import {
 import { captureThreadCatalogueWitness } from './ThreadCatalogueWitness'
 import type { ThreadCatalogueProjection } from './ThreadCatalogue'
 import { threadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
+import type { ThreadCatalogueDeferredDurability } from './ThreadCatalogueDurability'
 
 export type ThreadCataloguePublication = ThreadCatalogueTicket & { untracked?: true }
 
@@ -35,6 +36,8 @@ export class ThreadCatalogueSourcePublisher<
   constructor(
     private readonly options: {
       repairSource?(chatId: string): Promise<string>
+      deferredDurability?: ThreadCatalogueDeferredDurability
+      catalogueDeferredDurabilityFlag?: string
       project?(record: TRecord): ThreadCatalogueProjection
       profilePath: string
       writer: ThreadCatalogueWriter
@@ -48,6 +51,12 @@ export class ThreadCatalogueSourcePublisher<
   ) {
     this.catalogue = new ThreadCatalogue({
       ...options,
+      deferredDurability:
+        options.writer === 'desktop' &&
+        (options.catalogueDeferredDurabilityFlag ??
+          process.env.TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY) === '1'
+          ? options.deferredDurability
+          : undefined,
       writerLifecycle: (lane, id) =>
         lane === options.writer && id === options.writerId ? 'active' : 'unknown',
       canPublishResolution: () => false,
@@ -255,9 +264,9 @@ export class ThreadCatalogueSourcePublisher<
     } catch (error) {
       captureError = error
     }
-    const completion = durability
+    const completion = Promise.all([durability, this.catalogue.awaitPublicationDurability()])
       .then(
-        () => {
+        async () => {
           if (!captured) {
             this.fail(ticket, 'unchanged')
             this.options.onError?.(captureError)
@@ -278,6 +287,7 @@ export class ThreadCatalogueSourcePublisher<
             )
           )
             this.unknown.add(ticket.chatId)
+          await this.catalogue.awaitPublicationDurability()
           this.options.onChanged?.(ticket.chatId)
         },
         (error) => {
@@ -321,6 +331,7 @@ export class ThreadCatalogueSourcePublisher<
       await new Promise<void>((resolve) => setTimeout(resolve, 10))
     }
     if (!scope) await Promise.all([...this.completions])
+    await this.catalogue.awaitPublicationDurability()
   }
 
   forgetErased(chatId?: string): void {
@@ -366,8 +377,10 @@ export class ThreadCatalogueSourcePublisher<
       const ticket = this.begin(chatId)
       try {
         const record = await write()
+        await this.catalogue.awaitPublicationDurability()
         if (record) this.finish(ticket, record)
         else this.fail(ticket, 'unchanged')
+        await this.catalogue.awaitPublicationDurability()
         return record
       } catch (error) {
         this.fail(ticket)
