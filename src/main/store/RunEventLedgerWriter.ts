@@ -9,6 +9,7 @@ import {
   serializeRunEventRecord
 } from '../RunEventStore'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
+import { runEventLedgerAppendPrefix } from './RunEventLedgerTail'
 import type { RunEventArtifactRef, RunEventInput, RunEventRecord } from './types'
 
 export interface RunEventLedgerWriterOptions {
@@ -47,7 +48,8 @@ export class RunEventLedgerWriter {
     const filePath = path.join(this.options.runEventsDir, safeRunEventFileName(input.runId))
     // Seek a cold ledger's head rather than materializing its potentially large
     // history. Advance the cache only after the write and required barriers.
-    const head = this.heads.get(input.runId) ?? readRunEventLedgerHead(filePath)
+    const cachedHead = this.heads.get(input.runId)
+    const head = cachedHead ?? readRunEventLedgerHead(filePath)
     const sequence = (head?.sequence ?? 0) + 1
     const previousHash = head?.hash || RUN_EVENT_EMPTY_HASH
     const artifacts = options.storeRawEvents
@@ -65,17 +67,34 @@ export class RunEventLedgerWriter {
     if (options.durability === 'strict' && !directoryExisted) {
       fsyncDirectory(path.dirname(directoryPath))
     }
-    const fd = fs.openSync(filePath, 'a')
+    const fd = fs.openSync(filePath, 'a+')
     try {
+      if (!cachedHead) {
+        const size = fs.fstatSync(fd).size
+        const lastByte = Buffer.allocUnsafe(1)
+        if (size > 0 && fs.readSync(fd, lastByte, 0, 1, size - 1) !== 1) {
+          throw new Error('Unable to inspect run-event ledger EOF')
+        }
+        const prefix = runEventLedgerAppendPrefix(size > 0 ? lastByte[0] : undefined)
+        if (prefix) fs.writeSync(fd, prefix)
+      }
       fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
       if (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0) {
         fs.fsyncSync(fd)
       }
+    } catch (error) {
+      // A failed write may have changed EOF; even a complete line missing only
+      // LF must be inspected before the next append and its head re-read.
+      this.heads.delete(input.runId)
+      throw error
     } finally {
       fs.closeSync(fd)
     }
-    if (options.durability === 'strict' && !fileExisted) {
-      fsyncDirectory(directoryPath)
+    try {
+      if (options.durability === 'strict' && !fileExisted) fsyncDirectory(directoryPath)
+    } catch (error) {
+      this.heads.delete(input.runId)
+      throw error
     }
     this.heads.set(input.runId, { sequence: record.sequence, hash: record.hash || previousHash })
     return record

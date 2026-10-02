@@ -156,6 +156,35 @@ describe('RunEventLedgerWriter', () => {
     expect(verifyRunEventHashChain(records('run-write-failure'))).toBe(true)
   })
 
+  it('preserves records and hash chains after a cold torn tail or missing final newline', () => {
+    for (const fragment of ['{"schemaVersion":1,"sequence":2,"runI', '']) {
+      const runId = fragment ? 'run-torn-tail' : 'run-missing-newline'
+      const first = writer.append(input(runId))
+      const ledger = path.join(runEventsDir, `${runId}.jsonl`)
+      if (fragment) fs.appendFileSync(ledger, fragment)
+      else fs.writeFileSync(ledger, fs.readFileSync(ledger, 'utf8').trimEnd())
+      writer.forgetHead(runId)
+      const second = writer.append(input(runId))
+      expect(records(runId)).toEqual([first, second])
+      expect(verifyRunEventHashChain(records(runId))).toBe(true)
+    }
+  })
+
+  it('repairs a partial failed write on the next append in the same process', () => {
+    const runId = 'run-partial-write'
+    const first = writer.append(input(runId))
+    const realWrite = fs.writeFileSync.bind(fs)
+    const write = vi.spyOn(fs, 'writeFileSync').mockImplementationOnce((fd, data) => {
+      realWrite(fd, String(data).slice(0, 40))
+      throw new Error('partial write failure')
+    })
+    expect(() => writer.append(input(runId))).toThrow('partial write failure')
+    write.mockRestore()
+    const second = writer.append(input(runId))
+    expect(records(runId)).toEqual([first, second])
+    expect(verifyRunEventHashChain(records(runId))).toBe(true)
+  })
+
   it('propagates a strict file-fsync failure and closes its open handle', () => {
     writer.append(input('run-fsync-failure'))
     const close = vi.spyOn(fs, 'closeSync')
