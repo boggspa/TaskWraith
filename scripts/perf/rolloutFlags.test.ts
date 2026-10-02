@@ -20,6 +20,8 @@ const QUEUED = 'TASKWRAITH_HOST_QUEUED_START'
 const CHECKPOINT = 'TASKWRAITH_CHECKPOINT_WORKER'
 const FAIRNESS = 'TASKWRAITH_CODEX_COHORT_FAIRNESS'
 const TRANSACTION = 'TASKWRAITH_HOST_TXN_PERSIST'
+const JOURNAL = 'TASKWRAITH_JOURNAL_FLUSHER'
+const RUN_EVENT = 'TASKWRAITH_RUN_EVENT_FLUSHER'
 
 type Spawned = { cmd: string; args: string[]; opts: { env: Record<string, string> } }
 
@@ -48,6 +50,28 @@ afterEach(() => {
 })
 
 describe('programme rollout flags', () => {
+  it.each([JOURNAL, RUN_EVENT])(
+    'pins inherited %s off and enables only its explicit declaration',
+    (flag) => {
+      vi.stubEnv(JOURNAL, '1')
+      vi.stubEnv(RUN_EVENT, '1')
+      for (const declared of [[], [flag]]) {
+        const resolved = resolveRolloutFlags({ declared, inheritedEnv: process.env })
+        const plan = pinRolloutFlagsOnSpawnPlan(buildElectronSpawnPlan(planBase), resolved)
+        const spawned: Spawned[] = []
+        spawnExactElectronChild({ spawnPlan: plan, adapters: { spawn: fakeSpawn(spawned) } })
+        for (const name of [JOURNAL, RUN_EVENT]) {
+          const token = declared.includes(name) ? '1' : '0'
+          expect(spawned[0].opts.env[name]).toBe(token)
+          expect(plan.shellCommand).toContain(`${name}=${token}`)
+          expect(resolved.record.effective[name]).toBe(token === '1' ? 'on' : 'off')
+          if (token === '0') expect(resolved.record.inheritedOverridden).toContain(name)
+        }
+        expect(validateRolloutFlagRecord(resolved.record)).toEqual([])
+      }
+    }
+  )
+
   it('pins an inherited transaction ON off unless explicitly declared, including child merge', () => {
     vi.stubEnv(TRANSACTION, '1')
     const off = resolveRolloutFlags({ inheritedEnv: process.env })
@@ -73,7 +97,14 @@ describe('programme rollout flags', () => {
   })
 
   it('lists exactly the flags the source reads as the exact token 1', () => {
-    expect(PROGRAMME_ROLLOUT_FLAGS).toEqual([CHECKPOINT, FAIRNESS, QUEUED, TRANSACTION])
+    expect(PROGRAMME_ROLLOUT_FLAGS).toEqual([
+      CHECKPOINT,
+      FAIRNESS,
+      QUEUED,
+      TRANSACTION,
+      JOURNAL,
+      RUN_EVENT
+    ])
   })
 
   it('pins every flag off by default and records each as off', () => {
@@ -82,12 +113,21 @@ describe('programme rollout flags', () => {
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '0',
-      [TRANSACTION]: '0'
+      [TRANSACTION]: '0',
+      [JOURNAL]: '0',
+      [RUN_EVENT]: '0'
     })
     expect(resolved.record).toEqual({
       schemaVersion: 1,
       declared: [],
-      effective: { [CHECKPOINT]: 'off', [FAIRNESS]: 'off', [QUEUED]: 'off', [TRANSACTION]: 'off' },
+      effective: {
+        [CHECKPOINT]: 'off',
+        [FAIRNESS]: 'off',
+        [QUEUED]: 'off',
+        [TRANSACTION]: 'off',
+        [JOURNAL]: 'off',
+        [RUN_EVENT]: 'off'
+      },
       inheritedOverridden: []
     })
   })
@@ -98,14 +138,18 @@ describe('programme rollout flags', () => {
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '1',
-      [TRANSACTION]: '0'
+      [TRANSACTION]: '0',
+      [JOURNAL]: '0',
+      [RUN_EVENT]: '0'
     })
     expect(resolved.record.declared).toEqual([QUEUED])
     expect(resolved.record.effective).toEqual({
       [CHECKPOINT]: 'off',
       [FAIRNESS]: 'off',
       [QUEUED]: 'on',
-      [TRANSACTION]: 'off'
+      [TRANSACTION]: 'off',
+      [JOURNAL]: 'off',
+      [RUN_EVENT]: 'off'
     })
   })
 
@@ -141,10 +185,12 @@ describe('spawn plan pinning', () => {
       [CHECKPOINT]: '0',
       [FAIRNESS]: '0',
       [QUEUED]: '1',
-      [TRANSACTION]: '0'
+      [TRANSACTION]: '0',
+      [JOURNAL]: '0',
+      [RUN_EVENT]: '0'
     })
     expect(pinned.shellCommand).toBe(
-      `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${plan.shellCommand}`
+      `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 ${plan.shellCommand}`
     )
     expect(pinned.argv).toEqual(plan.argv)
     // The unpinned plan is left untouched.
@@ -267,14 +313,21 @@ describe('T2 runner', () => {
       expect(dry.report.environment.rolloutFlags).toEqual({
         schemaVersion: 1,
         declared: [QUEUED],
-        effective: { [CHECKPOINT]: 'off', [FAIRNESS]: 'off', [QUEUED]: 'on', [TRANSACTION]: 'off' },
+        effective: {
+          [CHECKPOINT]: 'off',
+          [FAIRNESS]: 'off',
+          [QUEUED]: 'on',
+          [TRANSACTION]: 'off',
+          [JOURNAL]: 'off',
+          [RUN_EVENT]: 'off'
+        },
         inheritedOverridden: [CHECKPOINT]
       })
       expect(dry.spawnPlan.env[QUEUED]).toBe('1')
       expect(dry.spawnPlan.env[CHECKPOINT]).toBe('0')
       expect(
         dry.report.launchPlan.shellCommand.startsWith(
-          `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 `
+          `env ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${RUN_EVENT}=0 `
         )
       ).toBe(true)
     } finally {

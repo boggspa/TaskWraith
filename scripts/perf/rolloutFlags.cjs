@@ -29,7 +29,9 @@ const ROLLOUT_FLAG_TOKENS = Object.freeze({
   TASKWRAITH_CHECKPOINT_WORKER: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_CODEX_COHORT_FAIRNESS: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_HOST_QUEUED_START: Object.freeze({ on: '1', off: '0' }),
-  TASKWRAITH_HOST_TXN_PERSIST: Object.freeze({ on: '1', off: '0' })
+  TASKWRAITH_HOST_TXN_PERSIST: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_JOURNAL_FLUSHER: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_RUN_EVENT_FLUSHER: Object.freeze({ on: '1', off: '0' })
 })
 
 const PROGRAMME_ROLLOUT_FLAGS = Object.freeze(Object.keys(ROLLOUT_FLAG_TOKENS).sort())
