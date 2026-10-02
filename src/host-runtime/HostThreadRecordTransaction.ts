@@ -122,7 +122,8 @@ export interface HostThreadRecordTransactionPorts {
   readonly gate: HostCommitGate
   readonly log: Pick<HostTransactionLog, 'append'>
   readonly index: Pick<HostPublicWindowIndex, 'prepare'>
-  readonly deltas: Pick<HostDeltaStore, 'appendGroup' | 'awaitDurable' | 'getPosition'>
+  readonly deltas: Pick<HostDeltaStore, 'appendGroup' | 'awaitDurable' | 'getPosition'> &
+    Partial<Pick<HostDeltaStore, 'resetGeneration'>>
   readonly receipts: Pick<
     HostCommandReceiptStore,
     'complete' | 'markIndeterminate' | 'demoteTransactionalCommand'
@@ -354,6 +355,8 @@ export class HostThreadRecordTransaction {
     if (step.kind === 'indeterminate') return this.indeterminate(input, ticket, step.reason)
     const published = step.published
     if (published.kind === 'unpublishable') {
+      const recovered = await this.resetCommitted(input, model, published.reason)
+      if (recovered) return this.complete(input, slot, ticket, recovered.position, recovered)
       return this.indeterminate(input, ticket, published.reason)
     }
     if (published.kind === 'fail-stopped') {
@@ -374,6 +377,39 @@ export class HostThreadRecordTransaction {
           : durable.position
     }
     return this.complete(input, slot, ticket, position, published)
+  }
+
+  /** D1 for a known rename: repair the snapshot and reset without replay. */
+  private async resetCommitted(
+    input: HostThreadRecordTransactionInput,
+    model: HostThreadRecordModelled,
+    reason: string
+  ): Promise<{
+    position: HostCursorPosition
+    refill: readonly string[]
+    ignored: readonly HostPublicWindowIgnored[]
+  } | null> {
+    const reset = this.ports.deltas.resetGeneration
+    if (!reset) return null
+    const entered = await this.ports.gate.enter('exclusive', { label: `txn-reset:${input.commandId}` })
+    if (!entered.ok) return null
+    try {
+      return await this.ports.publicationLock(() => {
+        // D1: repair the snapshot source from the known committed model,
+        // then reset. Never replay an effect group or rename the file again.
+        const transaction = this.ports.index.prepare([{ kind: 'model', model }], {
+          generatedAt: iso(this.ports.now())
+        })
+        transaction.commit()
+        const result = reset.call(this.ports.deltas, `transaction committed: ${reason}`)
+        if (result.kind !== 'appended') return null
+        return { position: result.position, refill: transaction.refill, ignored: transaction.ignored }
+      })
+    } catch {
+      return null
+    } finally {
+      entered.lease.release()
+    }
   }
 
   /** The CAS, the rename and the publication; everything that needs the gate. */
@@ -423,7 +459,7 @@ export class HostThreadRecordTransaction {
       }
     }
 
-    // From here the record is committed: publish or indeterminate, never abort.
+    // From here the record is committed: publish or D1 reset, never abort.
     try {
       records.committed(input.threadId, prepared.persistenceRevision, prepared.summary)
     } catch {
