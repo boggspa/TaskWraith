@@ -69,6 +69,50 @@ function finiteNonNegative(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+/** X1b eligibility is separate from the legacy M4 span/Host verdict. */
+function mainLoopGapEvidence(mainWindow) {
+  const gaps = mainWindow?.loopGaps
+  if (!isPlainObject(gaps))
+    return { eligible: false, reasons: ['main_gap_evidence_unavailable'], evidence: null }
+  const valid =
+    gaps.intervalMs === 5 &&
+    gaps.thresholdMs === 25 &&
+    finiteNonNegative(gaps.startedAtMs) &&
+    finiteNonNegative(gaps.endedAtMs) &&
+    gaps.startedAtMs === mainWindow.startedAtMs &&
+    gaps.endedAtMs === mainWindow.endedAtMs &&
+    gaps.observedForMs === gaps.endedAtMs - gaps.startedAtMs &&
+    gaps.observedForMs > 0 &&
+    finiteNonNegative(gaps.blockedMs) &&
+    gaps.blockedMs <= gaps.observedForMs &&
+    gaps.blockedFraction === gaps.blockedMs / gaps.observedForMs &&
+    Array.isArray(gaps.gaps) &&
+    gaps.gaps.length <= 65536 &&
+    gaps.gaps.every(
+      (gap, index, rows) =>
+        isPlainObject(gap) &&
+        finiteNonNegative(gap.expectedAtMs) &&
+        finiteNonNegative(gap.observedAtMs) &&
+        gap.durationMs === gap.observedAtMs - gap.expectedAtMs &&
+        gap.durationMs >= 25 &&
+        gap.expectedAtMs >= gaps.startedAtMs &&
+        gap.observedAtMs <= gaps.endedAtMs &&
+        (index === 0 || gap.expectedAtMs >= rows[index - 1].observedAtMs)
+    ) &&
+    gaps.dropped === 0 &&
+    gaps.censored === false &&
+    Array.isArray(gaps.reasons) &&
+    gaps.reasons.length === 0 &&
+    gaps.suspensionProtection?.type === 'prevent-app-suspension' &&
+    gaps.suspensionProtection.heldThroughout === true &&
+    gaps.gaps.reduce((sum, gap) => sum + gap.durationMs, 0) === gaps.blockedMs
+  return {
+    eligible: valid,
+    reasons: valid ? [] : ['main_gap_evidence_censored_or_invalid'],
+    evidence: gaps
+  }
+}
+
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -501,6 +545,7 @@ async function runLiveLaneWindows(options) {
       main: mainEvidence,
       mainWindow,
       mainWindowCensored: mainWindow === null,
+      mainX1b: mainLoopGapEvidence(mainWindow),
       host: null
     })
     if (onWindow !== null) {
@@ -579,6 +624,7 @@ function liveLaneWindowsVerdict(windows, expected, runReasons = []) {
 }
 
 module.exports = {
+  mainLoopGapEvidence,
   DEFAULT_LIVE_LANE_WINDOW_OPTIONS: DEFAULT_OPTIONS,
   MAIN_WORK_SPANS_GLOBAL,
   heavyIdleWithin,

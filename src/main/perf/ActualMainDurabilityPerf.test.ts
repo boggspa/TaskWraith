@@ -3,6 +3,16 @@ import { actualMainDurabilityPerf } from './ActualMainDurabilityPerf'
 import { createMainDurabilityRuntime } from '../store/MainDurabilityRuntime'
 
 describe('actual main durability performance evidence', () => {
+  it('reports the measured catalogue token without treating other truthy tokens as enabled', () => {
+    expect(
+      actualMainDurabilityPerf(null, { TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: '1' }).flags
+        .TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY
+    ).toEqual({ token: '1', enabled: true })
+    expect(
+      actualMainDurabilityPerf(null, { TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: 'true' }).flags
+        .TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY
+    ).toEqual({ token: 'true', enabled: false })
+  })
   it('reads the installed runtime snapshot without deriving worker counters from legacy mode', async () => {
     const runtime = createMainDurabilityRuntime({
       runEventsDir: '/unused-events',
@@ -22,6 +32,7 @@ describe('actual main durability performance evidence', () => {
       TASKWRAITH_JOURNAL_FLUSHER: '1'
     })
     expect(result.flags).toEqual({
+      TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY: { token: null, enabled: false },
       TASKWRAITH_RUN_EVENT_FLUSHER: { token: 'true', enabled: false },
       TASKWRAITH_JOURNAL_FLUSHER: { token: '1', enabled: true }
     })

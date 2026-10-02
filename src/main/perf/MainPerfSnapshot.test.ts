@@ -58,6 +58,31 @@ function fakeMeter(): { meter: EventLoopLagMeter; resets: number[] } {
 }
 
 describe('createMainPerfInstrumentation', () => {
+  it('acquires suspension protection only for a labelled window and releases it on shutdown', () => {
+    const release = vi.fn()
+    const acquireWindowProtection = vi.fn(() => ({ held: () => true, release }))
+    const instrumentation = createMainPerfInstrumentation({ acquireWindowProtection })
+    instrumentation.snapshot()
+    expect(acquireWindowProtection).not.toHaveBeenCalled()
+    instrumentation.snapshot({ window: { action: 'begin', id: 'protected', durationMs: 100 } })
+    expect(acquireWindowProtection).toHaveBeenCalledOnce()
+    instrumentation.stop()
+    expect(release).toHaveBeenCalledOnce()
+  })
+  it('releases window resources even if the ordinary meter throws on shutdown', () => {
+    const release = vi.fn()
+    const ordinary = fakeMeter().meter
+    ordinary.stop = () => {
+      throw new Error('stop')
+    }
+    const instrumentation = createMainPerfInstrumentation({
+      meter: ordinary,
+      acquireWindowProtection: () => ({ held: () => true, release })
+    })
+    instrumentation.snapshot({ window: { action: 'begin', id: 'stop_fault', durationMs: 100 } })
+    expect(() => instrumentation.stop()).toThrow('stop')
+    expect(release).toHaveBeenCalledOnce()
+  })
   it('keeps labelled window lag independent from ordinary snapshot resets', () => {
     const ordinary = fakeMeter()
     const isolated = fakeMeter()

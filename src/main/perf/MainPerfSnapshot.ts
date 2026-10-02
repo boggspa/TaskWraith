@@ -34,6 +34,7 @@ import {
   type MainWindowPerfRequest,
   type MainWindowPerfReceipt
 } from './MainWindowPerfProbes'
+import type { MainSuspensionProtection } from './MainLoopGapRecorder'
 
 export interface MainPerfSnapshotOptions {
   resetLagWindow?: boolean
@@ -63,6 +64,7 @@ export interface MainPerfInstrumentationOptions {
   hostLoad?: HostLoadSampler
   now?: () => Date
   windowProbes?: ReturnType<typeof createMainWindowPerfProbes>
+  acquireWindowProtection?: () => MainSuspensionProtection
 }
 
 export function createMainPerfInstrumentation(
@@ -75,6 +77,7 @@ export function createMainPerfInstrumentation(
   const windowProbes =
     options.windowProbes ??
     createMainWindowPerfProbes({
+      acquireProtection: options.acquireWindowProtection,
       readDurability: () => sections.mainDurability?.() ?? null
     })
 
@@ -101,8 +104,11 @@ export function createMainPerfInstrumentation(
   return {
     start: () => meter.start(),
     stop: () => {
-      meter.stop()
-      windowProbes.stop()
+      try {
+        meter.stop()
+      } finally {
+        windowProbes.stop()
+      }
     },
     snapshot
   }

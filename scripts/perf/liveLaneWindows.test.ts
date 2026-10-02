@@ -50,6 +50,11 @@ const windowsModule = require('./liveLaneWindows.cjs') as {
   mainWorkSpanWindowExpression: (query: unknown) => string
   pageTimings: (values: unknown[]) => Record<string, number> | null
   parseMainWorkSpanWindow: (text: unknown) => { ok: boolean; reason?: string; window?: unknown }
+  mainLoopGapEvidence: (window: unknown) => {
+    eligible: boolean
+    reasons: string[]
+    evidence: unknown
+  }
   runLiveLaneWindows: (options: Record<string, unknown>) => Promise<Result>
 }
 const { scriptedActivity } = require('./scriptedOllamaDaemon.cjs') as {
@@ -474,6 +479,43 @@ function run(w: ReturnType<typeof world>, options: Record<string, unknown> = {})
 }
 
 describe('runLiveLaneWindows', () => {
+  it('never qualifies X1b without complete protected timestamped gaps', () => {
+    const gap = { expectedAtMs: 105, observedAtMs: 135, durationMs: 30 }
+    const window = {
+      startedAtMs: 100,
+      endedAtMs: 200,
+      loopGaps: {
+        intervalMs: 5,
+        thresholdMs: 25,
+        startedAtMs: 100,
+        endedAtMs: 200,
+        observedForMs: 100,
+        gaps: [gap],
+        blockedMs: 30,
+        blockedFraction: 0.3,
+        dropped: 0,
+        censored: false,
+        reasons: [],
+        suspensionProtection: { type: 'prevent-app-suspension', heldThroughout: true }
+      }
+    }
+    expect(windowsModule.mainLoopGapEvidence(window).eligible).toBe(true)
+    expect(windowsModule.mainLoopGapEvidence(null).eligible).toBe(false)
+    for (const change of [
+      { dropped: 1 },
+      { censored: true },
+      { blockedMs: 0 },
+      { suspensionProtection: { type: 'prevent-app-suspension', heldThroughout: false } },
+      { gaps: [{ ...gap, expectedAtMs: 106 }] }
+    ]) {
+      expect(
+        windowsModule.mainLoopGapEvidence({
+          ...window,
+          loopGaps: { ...window.loopGaps, ...change }
+        }).eligible
+      ).toBe(false)
+    }
+  })
   it('collects isolated lag and before/after pool observations per labelled window', async () => {
     const w = world()
     const requests: Array<{ action: string; id: string }> = []

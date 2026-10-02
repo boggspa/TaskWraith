@@ -6,10 +6,11 @@ export function actualMainDurabilityPerf(
   env: Readonly<Record<string, string | undefined>> = process.env
 ) {
   const flags = Object.fromEntries(
-    ['TASKWRAITH_RUN_EVENT_FLUSHER', 'TASKWRAITH_JOURNAL_FLUSHER'].map((name) => [
-      name,
-      { token: env[name] ?? null, enabled: env[name] === '1' }
-    ])
+    [
+      'TASKWRAITH_RUN_EVENT_FLUSHER',
+      'TASKWRAITH_JOURNAL_FLUSHER',
+      'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
+    ].map((name) => [name, { token: env[name] ?? null, enabled: env[name] === '1' }])
   )
   return {
     schemaVersion: 1,
