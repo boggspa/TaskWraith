@@ -2915,6 +2915,8 @@ const api = {
     ipcRenderer.invoke('update-memory-proposal', { packId, proposalId, partial }),
   applyMemoryProposal: (packId: string, proposalId: string) =>
     ipcRenderer.invoke('apply-memory-proposal', { packId, proposalId }),
+  supersedeMemoryProposal: (packId: string, successorProposalId: string, predecessorProposalId: string) =>
+    ipcRenderer.invoke('supersede-memory-proposal', { packId, successorProposalId, predecessorProposalId }),
   runManualIntrospection: (input: {
     windowStart: string
     windowEnd: string

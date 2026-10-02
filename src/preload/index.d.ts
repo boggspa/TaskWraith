@@ -3061,6 +3061,16 @@ declare global {
       }) => Promise<void>
       getMemoryProposalPacks: (workspaceId?: string | null) => Promise<MemoryProposalPack[]>
       getMemoryProposalPack: (packId: string) => Promise<MemoryProposalPack | null>
+      supersedeMemoryProposal: (
+        packId: string,
+        successorProposalId: string,
+        predecessorProposalId: string
+      ) => Promise<{
+        ok: boolean
+        blocked?: string
+        predecessorPack?: MemoryProposalPack
+        successorPack?: MemoryProposalPack
+      }>
       updateMemoryProposal: (
         packId: string,
         proposalId: string,

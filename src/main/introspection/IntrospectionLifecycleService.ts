@@ -19,6 +19,8 @@ export type SupersedeMemoryProposalBlockReason =
   | 'predecessor_not_eligible'
   | 'successor_not_eligible'
   | 'patch_failed'
+  | 'workspace_required'
+  | 'proposal_link_conflict'
 
 export interface SupersedeMemoryProposalResult {
   ok: boolean
@@ -58,6 +60,59 @@ export interface SupersedeMemoryProposalInput {
 export interface ExpireDueMemoryProposalsInput {
   workspaceId?: string
   packId?: string
+}
+
+export interface ReviewedSupersedeMemoryProposalInput {
+  packId: string
+  successorProposalId: string
+  predecessorProposalId: string
+}
+
+/** Explicit Settings review action. Both exact records must belong to one workspace pack. */
+export function supersedeReviewedMemoryProposal(
+  deps: IntrospectionLifecycleServiceDeps,
+  input: ReviewedSupersedeMemoryProposalInput
+): SupersedeMemoryProposalResult {
+  const pack = deps.store.getMemoryProposalPack(input.packId)
+  if (!pack) return { ok: false, blocked: 'successor_pack_not_found' }
+  if (!pack.workspaceId?.trim()) return { ok: false, blocked: 'workspace_required' }
+  const nowIso = deps.now()
+  const nowMs = Date.parse(nowIso)
+  const hasDueProposal = pack.proposals.some(
+    (item) =>
+      item.status === 'proposed' &&
+      item.expiresAt &&
+      Number.isFinite(Date.parse(item.expiresAt)) &&
+      Date.parse(item.expiresAt) <= nowMs
+  )
+  const expiry = expireDueMemoryProposals({ ...deps, now: () => nowIso }, { packId: pack.id })
+  if (hasDueProposal && expiry.expiredCount === 0) return { ok: false, blocked: 'patch_failed' }
+  const current = deps.store.getMemoryProposalPack(pack.id)
+  const successor = current?.proposals.find((item) => item.id === input.successorProposalId)
+  const predecessor = current?.proposals.find((item) => item.id === input.predecessorProposalId)
+  if (!successor) return { ok: false, blocked: 'successor_not_found' }
+  if (!predecessor) return { ok: false, blocked: 'predecessor_not_found' }
+  if (successor.id === predecessor.id) return { ok: false, blocked: 'same_proposal' }
+  if (isSupersedeLinkComplete({ predecessor, successor })) {
+    return { ok: true, predecessorPack: current!, successorPack: current! }
+  }
+  if (
+    successor.supersedesId ||
+    successor.supersededById ||
+    predecessor.supersedesId ||
+    predecessor.supersededById
+  ) {
+    return { ok: false, blocked: 'proposal_link_conflict' }
+  }
+  // Constrain the existing helper's lookup to the reviewed pack, including duplicate legacy IDs.
+  return supersedeMemoryProposal(
+    { ...deps, store: { ...deps.store, getMemoryProposalPacks: () => [current!] } },
+    {
+      successorPackId: pack.id,
+      successorProposalId: successor.id,
+      predecessorProposalId: predecessor.id
+    }
+  )
 }
 
 function locateProposal(

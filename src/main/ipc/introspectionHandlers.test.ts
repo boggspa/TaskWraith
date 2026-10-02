@@ -57,6 +57,7 @@ function sampleRun(id = 'run-1'): IntrospectionRunRecord {
 
 function createDeps() {
   return {
+    supersedeMemoryProposal: vi.fn(() => ({ ok: false, blocked: 'predecessor_not_found' as const })),
     expireDueMemoryProposals: vi.fn(),
     getMemoryProposalPacks: vi.fn((workspaceId?: string) => [samplePack(workspaceId || 'all')]),
     getMemoryProposalPack: vi.fn((id: string) => (id === 'pack-1' ? samplePack(id) : null)),
@@ -88,6 +89,15 @@ function createDeps() {
 }
 
 describe('registerIntrospectionHandlers', () => {
+  it('passes only explicit scoped IDs to reviewed supersede and returns the main receipt', () => {
+    const deps = createDeps()
+    registerIntrospectionHandlers(deps)
+    expect(handlerFor('supersede-memory-proposal')({}, { packId: ' p ', successorProposalId: ' new ', predecessorProposalId: ' old ', status: 'approved' })).toEqual({ ok: false, blocked: 'predecessor_not_found' })
+    expect(deps.supersedeMemoryProposal).toHaveBeenCalledWith({ packId: 'p', successorProposalId: 'new', predecessorProposalId: 'old' })
+    expect(() => handlerFor('supersede-memory-proposal')({}, { packId: 'p' })).toThrow('are required')
+    expect(deps.supersedeMemoryProposal).toHaveBeenCalledTimes(1)
+  })
+
   it('reconciles scoped expiry before returning list and individual pack reads', () => {
     const deps = createDeps()
     registerIntrospectionHandlers(deps)

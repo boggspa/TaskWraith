@@ -6,7 +6,7 @@ import type {
   MemoryProposalStatus
 } from '../store/types'
 import type { ApplyMemoryProposalResult } from '../introspection/IntrospectionApplyService'
-import type { ExpireDueMemoryProposalsInput } from '../introspection/IntrospectionLifecycleService'
+import type { ExpireDueMemoryProposalsInput, ReviewedSupersedeMemoryProposalInput, SupersedeMemoryProposalResult } from '../introspection/IntrospectionLifecycleService'
 import type {
   RunManualIntrospectionInput,
   RunManualIntrospectionResult
@@ -15,6 +15,7 @@ import type {
 const REVIEWABLE_STATUSES = new Set<MemoryProposalStatus>(['approved', 'rejected', 'expired'])
 
 export interface IntrospectionHandlersDeps {
+  supersedeMemoryProposal: (input: ReviewedSupersedeMemoryProposalInput) => SupersedeMemoryProposalResult
   expireDueMemoryProposals: (input: ExpireDueMemoryProposalsInput) => void
   getMemoryProposalPacks: (workspaceId?: string) => MemoryProposalPack[]
   getMemoryProposalPack: (id: string) => MemoryProposalPack | null
@@ -150,6 +151,15 @@ function sanitizeRunManualIntrospectionInput(input: unknown): RunManualIntrospec
 }
 
 export function registerIntrospectionHandlers(deps: IntrospectionHandlersDeps): void {
+  ipcMain.handle('supersede-memory-proposal', (_, input: ReviewedSupersedeMemoryProposalInput) => {
+    const packId = text(input?.packId, 120)
+    const successorProposalId = text(input?.successorProposalId, 120)
+    const predecessorProposalId = text(input?.predecessorProposalId, 120)
+    if (!packId || !successorProposalId || !predecessorProposalId) {
+      throw new Error('packId, successorProposalId and predecessorProposalId are required.')
+    }
+    return deps.supersedeMemoryProposal({ packId, successorProposalId, predecessorProposalId })
+  })
   ipcMain.handle('get-memory-proposal-packs', (_, workspaceId?: string | null) => {
     const scoped = optionalText(workspaceId, 120)
     deps.expireDueMemoryProposals({ workspaceId: scoped })

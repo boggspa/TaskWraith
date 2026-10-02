@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   expireDueMemoryProposals,
+  supersedeReviewedMemoryProposal,
   supersedeMemoryProposal,
   type MemoryProposalPatch
 } from './IntrospectionLifecycleService'
@@ -82,6 +83,57 @@ function makeStore(seedPacks: MemoryProposalPack[]) {
 }
 
 describe('IntrospectionLifecycleService', () => {
+  it.each(['old', 'new'])('blocks supersede when expiry persistence fails for %s', (dueId) => {
+    const store = makeStore([pack('p', ['old', 'new'].map((id) => proposal(id, id === dueId ? { expiresAt: NOW } : {})))])
+    store.applyMemoryProposalPatches.mockReturnValueOnce(null)
+    expect(supersedeReviewedMemoryProposal({ store, now: () => NOW }, { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' })).toEqual({ ok: false, blocked: 'patch_failed' })
+    expect(store.applyMemoryProposalPatches).toHaveBeenCalledTimes(1)
+    expect(store.getMemoryProposalPack('p')?.proposals.every((item) => item.status === 'proposed')).toBe(true)
+  })
+  it('explicit reviewed supersede preserves successor approval and predecessor evidence', () => {
+    const old = proposal('old', { status: 'approved', reviewNote: 'Human approved' })
+    const store = makeStore([pack('p', [old, proposal('new')])])
+    const input = { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' }
+    const result = supersedeReviewedMemoryProposal({ store, now: () => NOW }, input)
+    expect(result.ok).toBe(true)
+    expect(result.predecessorPack?.proposals[0]).toMatchObject({ status: 'superseded', reviewNote: 'Human approved', supersededById: 'new' })
+    expect(result.successorPack?.proposals[1]).toMatchObject({ status: 'proposed', supersedesId: 'old' })
+    expect(supersedeReviewedMemoryProposal({ store, now: () => NOW }, input).ok).toBe(true)
+    expect(store.applyMemoryProposalPatches).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects cross-pack IDs and packs without workspace identity', () => {
+    const store = makeStore([pack('p', [proposal('new')]), pack('q', [proposal('old')])])
+    const input = { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' }
+    expect(supersedeReviewedMemoryProposal({ store, now: () => NOW }, input).blocked).toBe('predecessor_not_found')
+    const globalStore = makeStore([pack('p', [proposal('new'), proposal('old')], { workspaceId: undefined })])
+    expect(supersedeReviewedMemoryProposal({ store: globalStore, now: () => NOW }, input).blocked).toBe('workspace_required')
+    expect(store.applyMemoryProposalPatches).not.toHaveBeenCalled()
+    expect(globalStore.applyMemoryProposalPatches).not.toHaveBeenCalled()
+  })
+
+  it.each(['applied', 'rejected', 'expired'] as const)('protects %s predecessor history', (status) => {
+    const store = makeStore([pack('p', [proposal('old', { status }), proposal('new')])])
+    expect(supersedeReviewedMemoryProposal({ store, now: () => NOW }, { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' }).ok).toBe(false)
+    expect(store.applyMemoryProposalPatches).not.toHaveBeenCalled()
+  })
+
+  it('rejects chains and cycles rather than overwriting reciprocal history', () => {
+    const store = makeStore([pack('p', [proposal('old', { supersedesId: 'new' }), proposal('new')])])
+    expect(supersedeReviewedMemoryProposal({ store, now: () => NOW }, { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' }).blocked).toBe('proposal_link_conflict')
+    expect(store.applyMemoryProposalPatches).not.toHaveBeenCalled()
+  })
+
+  it('rechecks due expiry before supersede and propagates atomic failure', () => {
+    const input = { packId: 'p', predecessorProposalId: 'old', successorProposalId: 'new' }
+    const stale = makeStore([pack('p', [proposal('old', { expiresAt: NOW }), proposal('new')])])
+    expect(supersedeReviewedMemoryProposal({ store: stale, now: () => NOW }, input).ok).toBe(false)
+    expect(stale.getMemoryProposalPack('p')?.proposals[0]?.status).toBe('expired')
+    const failed = makeStore([pack('p', [proposal('old'), proposal('new')])])
+    failed.applyMemoryProposalPatches.mockReturnValueOnce(null)
+    expect(supersedeReviewedMemoryProposal({ store: failed, now: () => NOW }, input).blocked).toBe('patch_failed')
+  })
+
   it('ignores an invalid clock without reading or patching records', () => {
     const store = makeStore([pack('due', [proposal('due', { expiresAt: NOW })])])
     expect(expireDueMemoryProposals({ store, now: () => 'invalid' })).toEqual({
