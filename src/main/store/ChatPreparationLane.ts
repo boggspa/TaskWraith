@@ -1,5 +1,6 @@
 import type { JournalSourceCapture } from './JournalSourceCapture'
 import type { CheckpointPreparationJob } from './CheckpointPreparationProtocol'
+import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 
 export type ChatPreparationTicket = Pick<
   JournalSourceCapture,
@@ -34,6 +35,11 @@ export type ChatPreparationJobCustody = Pick<CheckpointPreparationJob, 'cancel' 
  * Cancellation keeps the slot until finishCancellation confirms that fence.
  */
 export class ChatPreparationLane {
+  constructor(private readonly residualObserver?: ResidualObserver) {}
+  private refuse(): void {
+    this.refusals++
+    observeResidual(this.residualObserver, 'preparationRefusals')
+  }
   private waiting = new Map<string, Entry>()
   private active: Entry | null = null
   private cancelling = false
@@ -77,7 +83,7 @@ export class ChatPreparationLane {
       return previous.id
     }
     if (this.waiting.size >= 128) {
-      this.refusals++
+      this.refuse()
       throw new Error('Preparation admission saturated')
     }
     const entry = { id: this.nextId++, ticket, deadline: now + 300, attempt: 0 }
@@ -91,7 +97,7 @@ export class ChatPreparationLane {
     if (this.active && !this.cancelling && now >= this.active.deadline) {
       this.cancelling = true
       this.timeouts++
-      this.refusals++
+      this.refuse()
       commands.push(
         { type: 'cancel', id: this.active.id, reason: 'deadline' },
         { type: 'refused', id: this.active.id, reason: 'deadline' }
@@ -101,7 +107,7 @@ export class ChatPreparationLane {
       if (now >= entry.deadline) {
         this.waiting.delete(chatId)
         this.timeouts++
-        this.refusals++
+        this.refuse()
         commands.push({ type: 'refused', id: entry.id, reason: 'deadline' })
       }
     }
@@ -125,15 +131,15 @@ export class ChatPreparationLane {
     const commands: ChatPreparationCommand[] = [{ type: 'release', id }]
     if (now >= entry.deadline) {
       this.timeouts++
-      this.refusals++
+      this.refuse()
       commands.push({ type: 'refused', id, reason: 'deadline' })
     } else if (success) commands.push({ type: 'ready', id })
     else if (entry.attempt >= 3) {
-      this.refusals++
+      this.refuse()
       commands.push({ type: 'refused', id, reason: 'attempts' })
     } else if (!this.waiting.has(entry.ticket.chatId)) {
       if (this.waiting.size >= 128) {
-        this.refusals++
+        this.refuse()
         commands.push({ type: 'refused', id, reason: 'saturated' })
       } else {
         this.retries++

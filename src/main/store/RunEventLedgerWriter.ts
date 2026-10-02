@@ -14,8 +14,10 @@ import { RunEventLedgerDescriptorCache } from './RunEventLedgerDescriptorCache'
 import type { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import type { RunEventArtifactRef, RunEventInput, RunEventRecord } from './types'
+import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 
 export interface RunEventLedgerWriterOptions {
+  residualObserver?: ResidualObserver
   runEventsDir: string
   runArtifactsDir: string
   durabilityFlusher?: MainDurabilityFlusher
@@ -127,6 +129,8 @@ export class RunEventLedgerWriter {
       }
       fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
       if (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0) {
+        if (options.durability === 'strict')
+          observeResidual(this.options.residualObserver, 'strictRunEventFsyncs')
         fs.fsyncSync(fd)
       }
     } catch (error) {
