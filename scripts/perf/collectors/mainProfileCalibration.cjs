@@ -11,7 +11,10 @@ async function captureProfileMarker(session, options) {
   if (!Number.isFinite(durationMs) || durationMs < 2 || durationMs > 50)
     throw new Error('invalid marker duration')
   const source = `(function(){
-    const { performance } = require('node:perf_hooks');
+    if (typeof process.getBuiltinModule !== 'function') return { refused: 'builtin_clock_getter_unavailable' };
+    const builtin = process.getBuiltinModule('perf_hooks');
+    const performance = builtin && builtin.performance;
+    if (!performance || typeof performance.now !== 'function' || !Number.isFinite(performance.timeOrigin)) return { refused: 'builtin_performance_clock_unavailable' };
     const beforeMs = performance.now();
     (function ${tag}(){ while (performance.now() - beforeMs < ${durationMs}) {} })();
     const afterMs = performance.now();
@@ -27,8 +30,21 @@ async function captureProfileMarker(session, options) {
     options.timeoutMs ?? 1000,
     'profile calibration marker'
   )
-  if (result?.exceptionDetails || !result?.result?.value)
-    throw new Error('marker evaluation unsupported')
+  if (result?.exceptionDetails || !result?.result?.value || result.result.value.refused) {
+    const reason =
+      result?.result?.value?.refused ??
+      (result?.exceptionDetails ? 'inspector_evaluation_exception' : 'marker_result_missing')
+    const detail =
+      result?.exceptionDetails?.exception?.description ?? result?.exceptionDetails?.text
+    const error = new Error(
+      `marker evaluation unsupported: ${reason}${typeof detail === 'string' ? ': ' + detail : ''}`
+    )
+    error.code = 'PROFILE_MARKER_REFUSED'
+    error.reason = reason
+    error.exceptionDetails = result?.exceptionDetails ?? null
+    error.source = source
+    throw error
+  }
   return {
     ...result.result.value,
     source,

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
+import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
@@ -39,6 +40,52 @@ function fixture() {
   return { profile, markers }
 }
 describe('measured profile calibration', () => {
+  it('reads the real builtin clock in an inspector context without ambient require', async () => {
+    const marker = await captureProfileMarker(
+      {
+        post: async (_method: string, params: { expression: string }) => ({
+          result: {
+            value: vm.runInNewContext(params.expression, {
+              process: {
+                pid: process.pid,
+                getBuiltinModule: (name: string) =>
+                  name === 'perf_hooks' ? require('node:perf_hooks') : undefined
+              }
+            })
+          }
+        })
+      },
+      { windowId: 'no-require', durationMs: 2 }
+    )
+    expect(marker.clockId).toBe('node.performance.now')
+    expect(marker.pid).toBe(process.pid)
+    expect(marker.afterMs).toBeGreaterThan(marker.beforeMs)
+    expect(marker.source).not.toContain("require('node:perf_hooks')")
+  })
+
+  it('retains explicit builtin refusals and inspector exception details', async () => {
+    await expect(
+      captureProfileMarker(
+        {
+          post: async (_method: string, params: { expression: string }) => ({
+            result: { value: vm.runInNewContext(params.expression, { process: { pid: 42 } }) }
+          })
+        },
+        { windowId: 'missing' }
+      )
+    ).rejects.toMatchObject({
+      code: 'PROFILE_MARKER_REFUSED',
+      reason: 'builtin_clock_getter_unavailable',
+      exceptionDetails: null
+    })
+    const exceptionDetails = {
+      text: 'Uncaught',
+      exception: { description: 'ReferenceError: process missing' }
+    }
+    await expect(
+      captureProfileMarker({ post: async () => ({ exceptionDetails }) }, { windowId: 'exception' })
+    ).rejects.toMatchObject({ reason: 'inspector_evaluation_exception', exceptionDetails })
+  })
   it('refuses hostile options and calibration shapes without throwing', () => {
     const f = fixture()
     expect(calibrateMainProfile(f.profile, f.markers, null).qualified).toBe(false)
