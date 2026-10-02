@@ -8,10 +8,16 @@ import {
 import { compactChatForPersist } from './ChatCompaction'
 import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import type { ChatRecord, ToolActivity, ToolActivityDetailRef } from './types'
+import {
+  flushToolDetailDependencies,
+  type ToolDetailDependency
+} from './ToolActivityDetailDurability'
 
 export interface ChatPersistenceDetailBatch<TCheckpoint> {
   stage(runId: string, activity: ToolActivity): ToolActivityDetailRef | null
   commit(): readonly TCheckpoint[]
+  /** Side-channel dependencies, deliberately absent from checkpoint DTOs. */
+  dependencies?(): readonly ToolDetailDependency[]
 }
 
 export interface ChatPersistencePreparationResult {
@@ -75,6 +81,7 @@ export function prepareChatForPersistence<TCheckpoint>(input: {
   createDetailBatch: () => ChatPersistenceDetailBatch<TCheckpoint>
   readArchivedDetail: (ref: ToolActivityDetailRef) => ToolActivity | null
   persistDetailCheckpoint: (checkpoint: TCheckpoint) => void
+  onDetailDependencies?: (dependencies: readonly ToolDetailDependency[]) => void
   maxTerminalRunsPerPass: number
 }): ChatPersistencePreparationResult {
   let externalizedChat = input.chat
@@ -93,6 +100,19 @@ export function prepareChatForPersistence<TCheckpoint>(input: {
       }
     )
     const checkpoints = detailBatch.commit()
+    const dependencies = detailBatch.dependencies?.() ?? []
+    try {
+      input.onDetailDependencies?.(dependencies)
+    } catch (error) {
+      try {
+        flushToolDetailDependencies(dependencies)
+      } catch (debt) {
+        throw new AggregateError([error, debt], 'Detail binding failed with pending durability')
+      }
+      throw error
+    }
+    // Existing checkpoint receipts are strict: detail must precede acknowledgement.
+    if (checkpoints.length > 0) flushToolDetailDependencies(dependencies)
     for (const checkpoint of checkpoints) input.persistDetailCheckpoint(checkpoint)
     externalizedChat = externalization.chat
     externalizedActivitiesById = externalization.strippedActivitiesById

@@ -3,6 +3,11 @@ import fs from 'fs'
 import path from 'path'
 import { safeRunEventFileName } from '../RunEventStore'
 import type { HydratedToolActivityDetail, ToolActivity, ToolActivityDetailRef } from './types'
+import { flushToolDetailDependencies } from './ToolActivityDetailDurability'
+import type {
+  ToolActivityDetailDurability,
+  ToolDetailDependency
+} from './ToolActivityDetailDurability'
 
 export const TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME = 'tool-activity-details.jsonl'
 export const MAX_TOOL_ACTIVITY_DETAIL_BYTES = 32 * 1024 * 1024
@@ -88,8 +93,19 @@ function fsyncDirectory(directory: string): void {
 /** One-save append coordinator: stage refs first, fsync each run once. */
 export class ToolActivityDetailBatchWriter {
   private readonly batches = new Map<string, PendingRunBatch>()
+  private readonly pendingDependencies: ToolDetailDependency[] = []
 
-  constructor(private readonly runArtifactsDir: string) {}
+  constructor(
+    private readonly runArtifactsDir: string,
+    private readonly deferred?: {
+      owner: ToolActivityDetailDurability
+      onDependency(dependency: ToolDetailDependency): void
+    }
+  ) {}
+
+  dependencies(): readonly ToolDetailDependency[] {
+    return [...this.pendingDependencies]
+  }
 
   stage(runId: string, activity: ToolActivity): ToolActivityDetailRef | null {
     if (!runId || !activity?.id) return null
@@ -133,7 +149,7 @@ export class ToolActivityDetailBatchWriter {
     const checkpoints: ToolActivityDetailCheckpoint[] = []
     for (const batch of this.batches.values()) {
       if (batch.chunks.length === 0) continue
-      fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
+      if (!this.deferred) fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
       let currentSize = 0
       try {
         currentSize = fs.statSync(batch.filePath).size
@@ -144,15 +160,33 @@ export class ToolActivityDetailBatchWriter {
         throw new Error(`Tool detail artifact changed while staging run ${batch.runId}`)
       }
       const segment = Buffer.concat(batch.chunks)
-      const fileExisted = currentSize > 0
-      const fd = fs.openSync(batch.filePath, 'a')
-      try {
-        fs.writeFileSync(fd, segment)
-        fs.fsyncSync(fd)
-      } finally {
-        fs.closeSync(fd)
+      if (this.deferred) {
+        const dependency = this.deferred.owner.append(batch.filePath, segment, batch.initialSize)
+        this.pendingDependencies.push(dependency)
+        try {
+          this.deferred.onDependency(dependency)
+        } catch (error) {
+          try {
+            flushToolDetailDependencies(this.pendingDependencies)
+          } catch (debt) {
+            throw new AggregateError(
+              [error, debt],
+              'Detail callback failed with pending durability'
+            )
+          }
+          throw error
+        }
+      } else {
+        const fileExisted = currentSize > 0
+        const fd = fs.openSync(batch.filePath, 'a')
+        try {
+          fs.writeFileSync(fd, segment)
+          fs.fsyncSync(fd)
+        } finally {
+          fs.closeSync(fd)
+        }
+        if (!fileExisted) fsyncDirectory(path.dirname(batch.filePath))
       }
-      if (!fileExisted) fsyncDirectory(path.dirname(batch.filePath))
       checkpoints.push({
         runId: batch.runId,
         relativePath: batch.relativePath,
