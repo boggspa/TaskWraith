@@ -23,10 +23,11 @@ import { ANTIGRAVITY_AGY_STATIC_MODEL_IDS as STATIC_AGY_MODEL_IDS } from '../../
  * install with the official binary present" — deliberately, because a silent
  * disappearance is worse than an offer row that fails loudly at dispatch.
  *
- * Ids are the offerable Gemini rows from the verbatim `agy models` catalogue,
- * refreshed 2026-09-02 after Gemini 3.8 Flash became live. Floor labels equal
- * ids deliberately: the shared picker grouping derives the same family label
- * and effort ladder that the richer live labels produce.
+ * Ids are the offerable rows from the verbatim `agy models` catalogue,
+ * refreshed 2026-09-02 after Gemini 3.8 Flash became live and 2026-10-03 when
+ * Claude Opus/Sonnet 5.5 (Low/Medium/High) replaced the Claude 4.x rows.
+ * Floor labels equal ids deliberately: the shared picker grouping derives the
+ * same family label and effort ladder that the richer live labels produce.
  *
  * Live discovery always wins: these are returned only when it yields nothing. A
  * stale id fails at dispatch with agy's own model error rather than silently

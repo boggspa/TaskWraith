@@ -22,10 +22,12 @@ export const ANTIGRAVITY_AGY_STATIC_MODEL_IDS = [
   'flash-3.7',
   'flash-3.6',
   'flash-3.5',
-  'claude-opus-4-6',
-  'claude-opus-4-8',
-  'claude-sonnet-4-6',
-  'claude-sonnet-4-5',
+  'claude-opus-5-5-high',
+  'claude-opus-5-5-medium',
+  'claude-opus-5-5-low',
+  'claude-sonnet-5-5-high',
+  'claude-sonnet-5-5-medium',
+  'claude-sonnet-5-5-low',
   'gpt-oss-120b-medium'
 ] as const
 

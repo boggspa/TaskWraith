@@ -39,14 +39,15 @@ describe('readHostStandaloneAntigravityInventory', () => {
 
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
-    expect(rows).toHaveLength(26)
+    expect(rows).toHaveLength(28)
     expect(rows.map((row) => row.modelId)).toEqual(
       expect.arrayContaining([
         'gemini-3.8-flash-high',
         'gemini-3.8-flash-medium',
         'gemini-3.8-flash-low',
         'gemini-3.7-flash-high',
-        'claude-opus-4-6',
+        'claude-opus-5-5-high',
+        'claude-sonnet-5-5-low',
         `${ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX}gemini-3.6-flash`,
         `${ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX}gemini-3.1-flash-lite`
       ])

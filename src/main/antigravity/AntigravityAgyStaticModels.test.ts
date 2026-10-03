@@ -16,9 +16,20 @@ describe('antigravityAgyStaticModels', () => {
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.7-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.6-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.1-pro-low')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-opus-4-6')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-opus-4-8')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-sonnet-4-5')
+    for (const family of ['claude-opus-5-5', 'claude-sonnet-5-5']) {
+      for (const effort of ['high', 'medium', 'low']) {
+        expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain(`${family}-${effort}`)
+      }
+    }
+    // Claude 5.5 replaced the 4.x rows in the live agy catalogue (2026-10-03).
+    for (const retired of [
+      'claude-opus-4-6',
+      'claude-opus-4-8',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5'
+    ]) {
+      expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain(retired)
+    }
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gpt-oss-120b-medium')
     expect(antigravityAgyStaticModels().length).toBe(ANTIGRAVITY_AGY_STATIC_MODEL_IDS.length)
   })
