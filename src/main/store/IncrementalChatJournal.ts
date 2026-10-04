@@ -5,6 +5,7 @@ import { isThreadLogBatch } from '../../host-shared/thread-log/ThreadLogBatch'
 import type { ChatRecord } from './types'
 import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
+import type { NoteThreadDurabilityDebt } from './ThreadDurabilityDebt'
 import { repairSegmentTornTail } from './IncrementalChatJournalTailRepair'
 import {
   checkpointFileReference,
@@ -90,6 +91,8 @@ export interface IncrementalChatJournalStats {
   deferredFsyncFailures: number
   /** Immediate appends whose line was written and whose sync then failed. */
   immediateFsyncFailures: number
+  /** Appends written with no sync and noted as owed; see `noteDurabilityDebt`. */
+  unsyncedAppends: number
   drainedDeferredFsyncs: number
   mutationBytesWritten: number
   checkpointsWritten: number
@@ -153,6 +156,19 @@ export interface IncrementalChatJournalOptions {
    * written where no reader will reach it. Reads still change no byte.
    */
   repairTornTailBeforeAppend?: boolean
+  /**
+   * Explicit opt-in; the root does not set it. With it an append only writes.
+   * The journal issues no sync for the line, schedules none and never falls
+   * back to one, whatever durability the caller asked for. It tells this
+   * callback what the disk is owed instead: the segment's bytes, and the
+   * directory whenever a segment is created there, renamed by a rotation or
+   * removed by a compaction. Whoever needs a line to be on the disk waits on
+   * the thread's own barrier: `awaitDeferredDurability` and
+   * `drainDeferredDurability` have nothing to wait for, because nothing was
+   * issued here. Writing a checkpoint, the re-anchor, torn-tail repair and
+   * erasure keep every sync they have.
+   */
+  noteDurabilityDebt?: NoteThreadDurabilityDebt
   now?: () => number
   maxJournalBytes?: number
   maxJournalEntries?: number
@@ -358,11 +374,13 @@ export function createIncrementalChatJournal(
   }
   const scheduleFsync =
     options.scheduleFsync ?? ((fd, done) => fs.fsync(fd, (error) => done(error)))
+  const noteDebt = options.noteDurabilityDebt
   let writeSequence = 0
   let appends = 0
   let deferredAppends = 0
   let deferredFsyncFailures = 0
   let immediateFsyncFailures = 0
+  let unsyncedAppends = 0
   let drainedDeferredFsyncs = 0
   let mutationBytesWritten = 0
   let checkpointsWritten = 0
@@ -583,6 +601,38 @@ export function createIncrementalChatJournal(
       }
       void error
     }
+    return bytes
+  }
+
+  /**
+   * Write the line and leave the disk owed for it: no sync is issued here, now
+   * or later. The directory is owed too when this line made the segment.
+   */
+  const appendLineUnsynced = (
+    filePath: string,
+    line: string,
+    chatId: string,
+    note: NoteThreadDurabilityDebt
+  ): number => {
+    if (options.descriptorCache) {
+      options.descriptorCache.append(chatId, filePath, line, {
+        owed: (directory) => note(chatId, { directory })
+      })
+      note(chatId, { file: filePath, owner: 'journal' })
+      return Buffer.byteLength(line, 'utf8')
+    }
+    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    const fd = fs.openSync(filePath, 'a', 0o600)
+    let created: boolean
+    let bytes: number
+    try {
+      created = createdByThisAppend(fd)
+      bytes = writeLine(fd, line)
+    } finally {
+      fs.closeSync(fd)
+    }
+    if (created) note(chatId, { directory: baseDir })
+    note(chatId, { file: filePath, owner: 'journal' })
     return bytes
   }
 
@@ -1079,7 +1129,10 @@ export function createIncrementalChatJournal(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }
-    fsyncDirectory()
+    // The checkpoint above is on the disk and holds every line just removed.
+    // A removal the disk never hears of brings back lines replay passes over.
+    if (noteDebt) noteDebt(chatId, { directory: baseDir })
+    else fsyncDirectory()
     state.headRevision = replayed.revision
     acknowledgeJournalBarrier(chatId)
     state.journalEntries = 0
@@ -1257,7 +1310,18 @@ export function createIncrementalChatJournal(
     if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return null
     const revision = state.headRevision
     const checkpoint = checkpointFileReference(checkpointPath(chatId))
-    options.descriptorCache.rotate(chatId, sealedPath(chatId))
+    if (noteDebt) {
+      options.descriptorCache.rotate(chatId, sealedPath(chatId), {
+        owed: (directory) => noteDebt(chatId, { directory })
+      })
+      // The bytes the active segment was owed for now sit under this name,
+      // and a barrier already running may reach the old name only after this.
+      noteDebt(chatId, {
+        file: sealedPath(chatId),
+        owner: 'journal',
+        renamedFrom: journalPath(chatId)
+      })
+    } else options.descriptorCache.rotate(chatId, sealedPath(chatId))
     // Existing production worker accepts checkpoint + one immutable journal.
     // That journal is now sealed at exactly R; streaming goes to another inode.
     const source = {
@@ -1303,8 +1367,11 @@ export function createIncrementalChatJournal(
     }
     // A deferred request escalates to sync for exactly one append after a
     // failed deferred flush (re-establishing durable ground before deferring
-    // again), and whenever the pending set is saturated (backpressure).
+    // again), and whenever the pending set is saturated (backpressure). A
+    // journal that leaves syncing to the thread barrier defers nothing: no
+    // flush is ever pending for it, so there is nothing to saturate or fail.
     const deferred =
+      !noteDebt &&
       appendOptions?.durability === 'deferred' &&
       !fsyncEscalatedChatIds.delete(batch.chatId) &&
       pendingDeferredCount < MAX_PENDING_DEFERRED_FSYNCS
@@ -1313,7 +1380,10 @@ export function createIncrementalChatJournal(
     if (options.repairTornTailBeforeAppend) suspectTailPaths.add(journalPath(batch.chatId))
     let bytes: number
     let syncFailure: NodeJS.ErrnoException | null = null
-    if (options.descriptorCache && !deferred) {
+    if (noteDebt) {
+      bytes = appendLineUnsynced(journalPath(batch.chatId), line, batch.chatId, noteDebt)
+      unsyncedAppends += 1
+    } else if (options.descriptorCache && !deferred) {
       if (appendOptions?.durability !== 'deferred')
         observeResidual(options.residualObserver, 'd2d3Durability')
       options.descriptorCache.append(batch.chatId, journalPath(batch.chatId), line, 'immediate')
@@ -1515,6 +1585,7 @@ export function createIncrementalChatJournal(
         options.descriptorCache!.retireSealedSync(chatId)
         fs.unlinkSync(sealedPath(chatId))
         options.descriptorCache!.completeSealedUnlink(chatId)
+        noteDebt?.(chatId, { directory: baseDir })
         preparationEpochs.set(chatId, epoch + 1)
         captureEpochs.set(chatId, (captureEpochs.get(chatId) ?? 0) + 1)
         rotatedSources.delete(chatId)
@@ -1532,7 +1603,9 @@ export function createIncrementalChatJournal(
       checkpointBytesWritten += prepared.identity.size
       options.descriptorCache?.retireSync([chatId])
       fs.unlinkSync(journalPath(chatId))
-      fsyncDirectory()
+      // As in `checkpoint`: the adopted checkpoint is on the disk already.
+      if (noteDebt) noteDebt(chatId, { directory: baseDir })
+      else fsyncDirectory()
       acknowledgeJournalBarrier(chatId)
       state.journalEntries = 0
       state.journalBytes = 0
@@ -1739,6 +1812,7 @@ export function createIncrementalChatJournal(
     deferredAppends,
     deferredFsyncFailures,
     immediateFsyncFailures,
+    unsyncedAppends,
     drainedDeferredFsyncs,
     mutationBytesWritten,
     checkpointsWritten,

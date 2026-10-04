@@ -26,6 +26,16 @@ export interface JournalDescriptorFlusher {
   forgetSync?(files: readonly DurabilityFile[]): void
 }
 
+/**
+ * How a caller that keeps its own account of what the disk is owed asks for a
+ * write or a rotation. The flusher is told nothing and syncs none of it; each
+ * directory in which a name changed is handed to `owed` instead of being
+ * registered as a directory write.
+ */
+export interface JournalDescriptorUnsynced {
+  owed(directory: string): void
+}
+
 interface Entry {
   retired?: boolean
   path: string
@@ -62,8 +72,9 @@ export class IncrementalChatJournalDescriptorCache {
     chatId: string,
     filePath: string,
     line: string,
-    durability: 'deferred' | 'immediate'
+    durability: 'deferred' | 'immediate' | JournalDescriptorUnsynced
   ): void {
+    const unsynced = typeof durability === 'object' ? durability : undefined
     if (this.rotationFailures.has(chatId)) throw this.rotationFailures.get(chatId)
     if (this.globalRetirement || this.retiring.has(chatId))
       throw new Error('Journal retirement in progress')
@@ -115,13 +126,19 @@ export class IncrementalChatJournalDescriptorCache {
     }
     const debt = this.creationDebt.get(absolute)
     if (debt) {
-      // Publish the complete flat set atomically. A throw leaves initialization
-      // fenced and all name debt available for the next attempt.
-      const dependencies = debt.map((directory) => this.directoryWrite(directory))
-      entry.dependencies = dependencies
+      if (unsynced) {
+        for (const directory of debt) unsynced.owed(directory)
+      } else {
+        // Publish the complete flat set atomically. A throw leaves initialization
+        // fenced and all name debt available for the next attempt.
+        const dependencies = debt.map((directory) => this.directoryWrite(directory))
+        entry.dependencies = dependencies
+      }
       this.creationDebt.delete(absolute)
     }
-    const predecessor = this.sealed.get(chatId)
+    // An unsynced line has no place in the flusher's graph, so nothing is
+    // carried over to it from the segment sealed before it.
+    const predecessor = unsynced ? undefined : this.sealed.get(chatId)
     if (
       predecessor &&
       !entry.dependencies.some((dependency) => dependency.file === predecessor.file)
@@ -142,6 +159,10 @@ export class IncrementalChatJournalDescriptorCache {
     } catch (error) {
       failed = true
       original = error
+    }
+    if (unsynced) {
+      if (failed) throw original
+      return
     }
     try {
       entry.end = fs.fstatSync(entry.fd).size
@@ -164,7 +185,7 @@ export class IncrementalChatJournalDescriptorCache {
   }
 
   /** Rename custody without closing, flushing or reusing the predecessor fd. */
-  rotate(chatId: string, sealedPath: string): void {
+  rotate(chatId: string, sealedPath: string, unsynced?: JournalDescriptorUnsynced): void {
     if (!this.flusher.transferDependencies) throw new Error('Journal rotation transfer unavailable')
     if (this.globalRetirement || this.retiring.has(chatId) || this.sealed.has(chatId))
       throw new Error('Journal rotation unavailable')
@@ -177,6 +198,10 @@ export class IncrementalChatJournalDescriptorCache {
     this.entries.delete(chatId)
     entry.path = destination
     this.sealed.set(chatId, entry)
+    if (unsynced) {
+      unsynced.owed(path.dirname(destination))
+      return
+    }
     // Register after rename; failures retain custody and refuse future writes.
     try {
       entry.dependencies.push(this.directoryWrite(path.dirname(destination)))
