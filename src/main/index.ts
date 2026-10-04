@@ -1396,7 +1396,7 @@ import {
 import { settleClaudeSdkTerminal } from './providers/ClaudeSdkRunLifecycle'
 import type { ClaudeContextPreference } from './providers/ClaudeContextPreference'
 import { ProviderContextDiagnostics } from './providers/ProviderContextDiagnostics'
-import { forEachCooperative } from './providers/CooperativeStreamPump'
+import { createOrderedStreamPump } from './providers/CooperativeStreamPump'
 import { formatProviderContextPolicy } from '../shared/providerContextPolicy'
 import {
   buildBridgeApnsPusherFromSettings,
@@ -21608,13 +21608,13 @@ async function runCliProviderProcess(
   child.stdin?.on('error', () => {
     /* child exited before draining stdin; close/error listeners settle the run */
   })
-  child.stdout?.on('data', (chunk) => {
-    const text = chunk.toString()
-    providerStdoutBytes += text.length
-    stdoutBuffer += text
-    const lines = stdoutBuffer.split(/\r?\n/)
-    stdoutBuffer = lines.pop() || ''
-    forEachCooperative(lines, (line) => {
+  // One ordered queue for this child's stdout. A turn that outruns the G-lag
+  // budget defers its remainder; chunks that arrive meanwhile wait behind it
+  // rather than overtaking, and `close` flushes before it reads `state`.
+  const stdoutLinePump = createOrderedStreamPump<string>({
+    label: provider,
+    source: child.stdout,
+    visit: (line) => {
       const trimmed = line.trim()
       if (!trimmed) return
       try {
@@ -21622,7 +21622,15 @@ async function runCliProviderProcess(
       } catch {
         emitPlainAssistantContent(line + '\n')
       }
-    })
+    }
+  })
+  child.stdout?.on('data', (chunk) => {
+    const text = chunk.toString()
+    providerStdoutBytes += text.length
+    stdoutBuffer += text
+    const lines = stdoutBuffer.split(/\r?\n/)
+    stdoutBuffer = lines.pop() || ''
+    stdoutLinePump.pushAll(lines)
   })
 
   let providerSetupFailed = false
@@ -21760,6 +21768,10 @@ async function runCliProviderProcess(
   })
 
   child.on('close', async (code) => {
+    // Everything the child wrote is handled before this handler reads `state`
+    // or awaits: the exit code, the trailing line and the terminal projection
+    // below all assume no stdout line is still waiting behind them.
+    stdoutLinePump.flush()
     let boundWorkspaceLockAdmission: WorkspaceLockProviderAdmission | null = null
     try {
       boundWorkspaceLockAdmission = await workspaceLockBinding
