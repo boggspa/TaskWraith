@@ -36,6 +36,7 @@ const ROLLOUT_FLAG_TOKENS = Object.freeze({
   TASKWRAITH_JOURNAL_FLUSHER: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_JOURNAL_ROTATION: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_RUN_EVENT_FLUSHER: Object.freeze({ on: '1', off: '0' }),
+  TASKWRAITH_THREAD_LOG_AUTHORITY: Object.freeze({ on: '1', off: '0' }),
   TASKWRAITH_UTILITY_WRITE: Object.freeze({ on: '1', off: '0' })
 })
 

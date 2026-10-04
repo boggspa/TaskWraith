@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  isThreadLogAuthorityEnabled,
+  THREAD_LOG_AUTHORITY_ENV
+} from '../../src/host-shared/thread-log/ThreadLogAuthoritySwitch'
+
 const require = createRequire(import.meta.url)
 const {
   PROGRAMME_ROLLOUT_FLAGS,
@@ -26,6 +31,7 @@ const CATALOGUE = 'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
 const ROTATION = 'TASKWRAITH_JOURNAL_ROTATION'
 const PUBLICATION = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
 const UTILITY = 'TASKWRAITH_UTILITY_WRITE'
+const AUTHORITY = 'TASKWRAITH_THREAD_LOG_AUTHORITY'
 
 type Spawned = { cmd: string; args: string[]; opts: { env: Record<string, string> } }
 
@@ -70,7 +76,7 @@ describe('programme rollout flags', () => {
     // Production owns dependency admission; capture records declarations exactly.
   })
 
-  it.each([CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY])(
+  it.each([CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY, AUTHORITY])(
     'pins inherited %s off and enables only its explicit declaration',
     (flag) => {
       vi.stubEnv(CATALOGUE, '1')
@@ -79,12 +85,21 @@ describe('programme rollout flags', () => {
       vi.stubEnv(ROTATION, '1')
       vi.stubEnv(PUBLICATION, '1')
       vi.stubEnv(UTILITY, 'true')
+      vi.stubEnv(AUTHORITY, '1')
       for (const declared of [[], [flag]]) {
         const resolved = resolveRolloutFlags({ declared, inheritedEnv: process.env })
         const plan = pinRolloutFlagsOnSpawnPlan(buildElectronSpawnPlan(planBase), resolved)
         const spawned: Spawned[] = []
         spawnExactElectronChild({ spawnPlan: plan, adapters: { spawn: fakeSpawn(spawned) } })
-        for (const name of [CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY]) {
+        for (const name of [
+          CATALOGUE,
+          JOURNAL,
+          RUN_EVENT,
+          ROTATION,
+          PUBLICATION,
+          UTILITY,
+          AUTHORITY
+        ]) {
           const token = declared.includes(name) ? '1' : '0'
           expect(spawned[0].opts.env[name]).toBe(token)
           expect(plan.shellCommand).toContain(`${name}=${token}`)
@@ -131,7 +146,19 @@ describe('programme rollout flags', () => {
       JOURNAL,
       ROTATION,
       RUN_EVENT,
+      AUTHORITY,
       UTILITY
+    ])
+  })
+
+  it('pins thread log authority with the tokens its reader takes for on and off', () => {
+    expect(THREAD_LOG_AUTHORITY_ENV).toBe(AUTHORITY)
+    const on = resolveRolloutFlags({ declared: [AUTHORITY] })
+    expect(isThreadLogAuthorityEnabled(on.values)).toBe(true)
+    expect(isThreadLogAuthorityEnabled(resolveRolloutFlags().values)).toBe(false)
+    // It stands alone: declaring it turns no other switch on with it.
+    expect(Object.entries(on.values).filter(([, value]) => value !== '0')).toEqual([
+      [AUTHORITY, '1']
     ])
   })
 
@@ -147,7 +174,8 @@ describe('programme rollout flags', () => {
       [RUN_EVENT]: '0',
       [ROTATION]: '0',
       [PUBLICATION]: '0',
-      [UTILITY]: '0'
+      [UTILITY]: '0',
+      [AUTHORITY]: '0'
     })
     expect(resolved.record).toEqual({
       schemaVersion: 1,
@@ -162,7 +190,8 @@ describe('programme rollout flags', () => {
         [RUN_EVENT]: 'off',
         [ROTATION]: 'off',
         [PUBLICATION]: 'off',
-        [UTILITY]: 'off'
+        [UTILITY]: 'off',
+        [AUTHORITY]: 'off'
       },
       inheritedOverridden: []
     })
@@ -180,7 +209,8 @@ describe('programme rollout flags', () => {
       [RUN_EVENT]: '0',
       [ROTATION]: '0',
       [PUBLICATION]: '0',
-      [UTILITY]: '0'
+      [UTILITY]: '0',
+      [AUTHORITY]: '0'
     })
     expect(resolved.record.declared).toEqual([QUEUED])
     expect(resolved.record.effective).toEqual({
@@ -193,7 +223,8 @@ describe('programme rollout flags', () => {
       [RUN_EVENT]: 'off',
       [ROTATION]: 'off',
       [PUBLICATION]: 'off',
-      [UTILITY]: 'off'
+      [UTILITY]: 'off',
+      [AUTHORITY]: 'off'
     })
   })
 
@@ -235,10 +266,11 @@ describe('spawn plan pinning', () => {
       [RUN_EVENT]: '0',
       [ROTATION]: '0',
       [PUBLICATION]: '0',
-      [UTILITY]: '0'
+      [UTILITY]: '0',
+      [AUTHORITY]: '0'
     })
     expect(pinned.shellCommand).toBe(
-      `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${UTILITY}=0 ${plan.shellCommand}`
+      `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${AUTHORITY}=0 ${UTILITY}=0 ${plan.shellCommand}`
     )
     expect(pinned.argv).toEqual(plan.argv)
     // The unpinned plan is left untouched.
@@ -398,7 +430,8 @@ describe('T2 runner', () => {
           [RUN_EVENT]: 'off',
           [ROTATION]: 'off',
           [PUBLICATION]: 'off',
-          [UTILITY]: 'off'
+          [UTILITY]: 'off',
+          [AUTHORITY]: 'off'
         },
         inheritedOverridden: [CHECKPOINT]
       })
@@ -406,7 +439,7 @@ describe('T2 runner', () => {
       expect(dry.spawnPlan.env[CHECKPOINT]).toBe('0')
       expect(
         dry.report.launchPlan.shellCommand.startsWith(
-          `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${UTILITY}=0 `
+          `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${AUTHORITY}=0 ${UTILITY}=0 `
         )
       ).toBe(true)
     } finally {
