@@ -28,6 +28,7 @@ import {
 import { isCodexAppServerThreadId } from './CodexSessionIdentity'
 import { providerRuntimeVersion } from '../shared/providerContextPolicy'
 import { waitForProviderOperationSettlement } from './run/ProviderOperationRegistry'
+import { createOrderedStreamPump, type OrderedStreamPump } from './providers/CooperativeStreamPump'
 export { isCodexAppServerThreadId }
 export {
   CodexAppServerRequestTimeoutError,
@@ -624,6 +625,7 @@ export class CodexAppServerClient {
   } | null = null
   private workspaceLockOwnerId: string | null = null
   private stdoutReader: ReadlineInterface | null = null
+  private stdoutLinePump: OrderedStreamPump<string> | null = null
   private nextId = 1
   private pending = new Map<JsonRpcId, PendingRequest>()
   private startPromise: Promise<void> | null = null
@@ -969,6 +971,10 @@ export class CodexAppServerClient {
   }
 
   dispose() {
+    // Lines already read off the pipe were, before pacing, handled on arrival
+    // and so always ahead of a stop. Keep that: answer them, then tear down.
+    this.stdoutLinePump?.flush()
+    this.stdoutLinePump = null
     this.startPromise = null
     this.initializeResult = null
     // This is only a daemon-lifetime cache. A restart must revalidate disk
@@ -1074,7 +1080,16 @@ export class CodexAppServerClient {
 
     const stdoutReader = createInterface({ input: proc.stdout })
     this.stdoutReader = stdoutReader
-    stdoutReader.on('line', (line) => this.handleLine(line))
+    // Every Codex thread's answers and notifications share this one pipe. Lines
+    // are handled in arrival order in budgeted turns, so a burst from one
+    // thread cannot hold the main loop, and nothing overtakes a deferred line.
+    const stdoutLinePump = createOrderedStreamPump<string>({
+      label: 'codex',
+      source: proc.stdout,
+      visit: (line) => this.handleLine(line)
+    })
+    this.stdoutLinePump = stdoutLinePump
+    stdoutReader.on('line', (line) => stdoutLinePump.push(line))
     let resolveProcessClosed!: () => void
     const processClosed = new Promise<void>((resolve) => {
       resolveProcessClosed = resolve
@@ -1090,6 +1105,10 @@ export class CodexAppServerClient {
     })
 
     proc.on('close', (code) => {
+      // Lines the app-server already wrote may answer the very requests this
+      // handler is about to reject; handle them before giving up on anything.
+      stdoutLinePump.flush()
+      if (this.stdoutLinePump === stdoutLinePump) this.stdoutLinePump = null
       this.stderrHandler?.(
         `Codex app-server exited with code ${typeof code === 'number' ? code : 'unknown'}.`
       )
@@ -1110,6 +1129,7 @@ export class CodexAppServerClient {
     })
 
     proc.on('error', (error) => {
+      stdoutLinePump.flush()
       const isCurrentProcess = this.proc === proc
       if (isCurrentProcess) this.proc = null
       if (isCurrentProcess) void this.releaseCredentialLease()

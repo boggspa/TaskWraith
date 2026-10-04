@@ -35560,8 +35560,13 @@ async function runCodexExecFallback(
   codexExecProcess = child
   runManager.attachProcess(route.appRunId!, child)
 
+  const stdoutChunkPump = createOrderedStreamPump<string>({
+    label: 'codex-exec',
+    source: child.stdout,
+    visit: (text) => emitCodexExecStdout(codexExecStdoutSanitizer.push(text))
+  })
   child.stdout?.on('data', (data) => {
-    emitCodexExecStdout(codexExecStdoutSanitizer.push(data.toString()))
+    stdoutChunkPump.push(data.toString())
   })
 
   let execConfigErrorSurfaced = false
@@ -35578,6 +35583,9 @@ async function runCodexExecFallback(
   })
 
   child.on('close', (code) => {
+    // The terminal projection flushes the sanitizer's held tail; every chunk
+    // still waiting has to reach the sanitizer before that.
+    stdoutChunkPump.flush()
     terminalCode = code
     transportClose.markTransportClosed()
   })

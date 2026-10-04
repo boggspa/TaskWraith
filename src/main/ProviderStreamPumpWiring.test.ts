@@ -71,4 +71,27 @@ describe('provider stdout reaches its handler through one ordered pump', () => {
     // assistant text) and then awaits; the flush has to precede all of it.
     expect(firstStatementText(listener(runner, 'child', 'close'))).toBe(`${pump.name}.flush()`)
   })
+
+  // This one forwards whole chunks: a per-run sanitizer holds the partial line
+  // and the terminal path flushes it, so the pump has to be emptied into the
+  // sanitizer before that flush or the run's last output is lost behind it.
+  it('Codex exec fallback: the stdout listener only queues, and close flushes first', () => {
+    const runner = probe.fn('runCodexExecFallback')
+    const pump = onlyPump(runner)
+    expect(probe.propText(pump.call, 0, 'label')).toBe("'codex-exec'")
+    expect(probe.propText(pump.call, 0, 'source')).toBe('child.stdout')
+    expect(probe.propText(pump.call, 0, 'visit')).toBe(
+      '(text) => emitCodexExecStdout(codexExecStdoutSanitizer.push(text))'
+    )
+
+    // `push` is also the sanitizer's verb: a listener that still fed the
+    // sanitizer itself would show up here as a second call.
+    const onData = listener(runner, 'child.stdout', 'data')
+    expect(probe.callsTo(onData, 'push').map((call) => probe.text(call))).toEqual([
+      `${pump.name}.push(data.toString())`
+    ])
+    expect(probe.callsTo(onData, 'emitCodexExecStdout')).toHaveLength(0)
+
+    expect(firstStatementText(listener(runner, 'child', 'close'))).toBe(`${pump.name}.flush()`)
+  })
 })
