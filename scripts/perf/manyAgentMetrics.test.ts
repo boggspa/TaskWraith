@@ -191,6 +191,45 @@ describe('one thread’s measures', () => {
     })
   })
 
+  it('counts a round that ran in the window and ended any other way after it', () => {
+    const thread = (place: number, ...rounds: Array<ReturnType<typeof round>>) => ({
+      chatId: `chat-${place}`,
+      model: `m:${place}`,
+      failure: null,
+      rounds
+    })
+    const { threads, overall } = summarise({
+      threads: [
+        // Running through the whole window, failed once it had closed.
+        thread(1, round('r', 9_000, 9_050, 40, 21_000, 'failed')),
+        // Sent in the window, cancelled as it closed.
+        thread(2, round('r', 12_000, 12_050, 40, 20_000, 'cancelled')),
+        // Over before the window began, or sent as it closed: not this window's.
+        thread(3, round('r', 9_000, 9_050, 40, 9_999, 'failed')),
+        thread(4, round('r', 20_000, 20_050, 40, 21_000, 'failed')),
+        // Failed on the window's first millisecond.
+        thread(5, round('r', 9_000, 9_050, 40, 10_000, 'failed')),
+        // Completed after the window: no round of it, and nothing against it.
+        thread(6, round('r', 12_000, 12_050, 40, 21_000))
+      ],
+      turns: []
+    })
+    expect(threads.map((entry) => entry.rounds.endedOther)).toEqual([
+      { failed: 1 },
+      { cancelled: 1 },
+      {},
+      {},
+      { failed: 1 },
+      {}
+    ])
+    expect(overall.rounds).toMatchObject({
+      sent: 2,
+      completed: 0,
+      endedOther: { failed: 2, cancelled: 1 },
+      unended: 0
+    })
+  })
+
   it('times send to accepted as the page measured it, for rounds sent in the window', () => {
     const { threads } = summarise()
     expect(threads[0].sendToAcceptedMs).toEqual({

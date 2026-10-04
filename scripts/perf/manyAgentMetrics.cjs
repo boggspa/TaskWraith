@@ -10,8 +10,10 @@
  * round's.
  *
  * Per thread and over all threads:
- * - rounds sent in the window, rounds seen to end in it (completed, or by
- *   how else they ended), and rounds never seen to end;
+ * - rounds sent in the window, rounds completed in it, and of the rounds
+ *   that ran at some moment of it, those that ended any other way (whenever
+ *   they did: the runner follows a round to its end) and those never seen to
+ *   end;
  * - send to accepted, as the page measured the call;
  * - accepted to the round's first model turn starting, by the daemon's
  *   clock against the runner's (a turn can begin before the runner hears the
@@ -145,11 +147,17 @@ function measureThread(thread, turns, window) {
     } else countInto(measures.turns.notDone, turn.outcome)
   }
   for (const [index, round] of thread.rounds.entries()) {
-    if (inWindow(round.endedAtMs)) {
-      if (round.status === 'completed') measures.rounds.completed += 1
-      else countInto(measures.rounds.endedOther, String(round.status))
+    // A round that ran at some moment of the window is the window's: one
+    // that failed after the window closed still carried its load.
+    const ranInWindow =
+      round.sentAtMs < window.endedAtMs &&
+      (round.endedAtMs === null || round.endedAtMs >= window.startedAtMs)
+    if (ranInWindow) {
+      if (round.endedAtMs === null) measures.rounds.unended += 1
+      else if (round.status !== 'completed') {
+        countInto(measures.rounds.endedOther, String(round.status))
+      } else if (inWindow(round.endedAtMs)) measures.rounds.completed += 1
     }
-    if (round.endedAtMs === null && round.sentAtMs < window.endedAtMs) measures.rounds.unended += 1
     if (!inWindow(round.sentAtMs)) continue
     measures.rounds.sent += 1
     measures.sendToAccepted.push(round.pageMs)
