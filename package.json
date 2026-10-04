@@ -47,7 +47,7 @@
     "test:identity-handoff": "vitest run src/main/AppDistributionIdentity.test.ts src/main/IdentityHandoffBootstrap.test.ts src/main/IdentityHandoffService.test.ts src/main/UpdateArchitecture.test.ts src/main/UpdateService.test.ts src/renderer/src/components/ChangelogSheet.test.tsx src/renderer/src/hooks/useChangelog.test.ts build/identity-handoff-payload.test.ts scripts/identity-handoff-manifest.test.ts scripts/run-identity-handoff-build.test.ts scripts/finalize-mac-release-artifacts.test.ts scripts/validate-linux-update-feed.test.ts scripts/validate-mac-update-feed.test.ts scripts/validate-win-update-feed.test.ts scripts/write-win-update-feeds.test.ts scripts/smoke-packaged-electron.test.ts",
     "generate:cursor-runtime-qualifications": "node scripts/verify-cursor-runtime-qualification-projection.cjs --write",
     "generate:ollama-tools-md": "UPDATE_TOOLS_MD=1 vitest run src/main/ollama/OllamaToolsDoc.test.ts",
-    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:node": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck:tui": "tsc --noEmit -p src/tui/tsconfig.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:tui && npm run typecheck:host",
