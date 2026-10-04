@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createRequire } from 'node:module'
@@ -261,6 +262,7 @@ type LanesCall = {
     stop: () => { samples: Array<Record<string, unknown>> }
   }
   onWindow: (window: { repetition: number; reasons: string[] }) => void
+  onCalibrationMarker: (marker: Record<string, unknown>) => void
 }
 
 describe('runT2Baseline --live-lanes launch wiring', () => {
@@ -305,7 +307,11 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
    * rounds and the lanes phase are the seams under test; the daemon's
    * activity route is a real loopback server.
    */
-  async function launchLanes(smokeOk: boolean, extraArgs: string[] = []) {
+  async function launchLanes(
+    smokeOk: boolean,
+    extraArgs: string[] = [],
+    measured?: (input: LanesCall, artifacts: string) => Record<string, unknown>
+  ) {
     const daemonBaseUrl = await activityDaemon()
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -470,7 +476,8 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
             kept: summary.samples,
             activity,
             teardown: { light: 'not_running', heavy: 'failed', observer: 'uninstalled' },
-            verdict: { ok: false, reasons: ['window 0: d1_no_deferred_append'] }
+            verdict: { ok: false, reasons: ['window 0: d1_no_deferred_append'] },
+            ...(measured ? measured(input, artifacts) : {})
           }
         },
         terminateOptions: {
@@ -561,6 +568,164 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     ])
   })
 
+  // A 150 ms main profile whose window is performance.now 30..130 ms: 30 ms
+  // idle, 20 ms in a run-event sync, 50 ms streaming.
+  function measuredWindow(input: LanesCall, artifacts: string) {
+    const frame = (functionName: string, url: string) => ({
+      functionName,
+      url,
+      lineNumber: 50,
+      columnNumber: 0
+    })
+    const bundle = 'file:///virtual-build/out/main/index-AbCd1234.js'
+    const profile = {
+      nodes: [
+        { id: 1, callFrame: frame('(root)', ''), children: [2, 3, 4, 5, 8] },
+        { id: 2, callFrame: frame('start', 'taskwraith-calibration-start.js') },
+        { id: 3, callFrame: frame('end', 'taskwraith-calibration-end.js') },
+        { id: 4, callFrame: frame('(idle)', '') },
+        { id: 5, callFrame: frame('appendRunEvent', bundle), children: [6] },
+        { id: 6, callFrame: frame('fsyncSync', 'node:fs'), children: [7] },
+        { id: 7, callFrame: frame('fsync', '') },
+        { id: 8, callFrame: frame('streamTurn', bundle) }
+      ],
+      samples: [2, 2, 4, 4, 7, 8, 3, 3],
+      timeDeltas: [11_000, 6_000, 13_000, 30_000, 20_000, 50_000, 11_000, 6_000],
+      startTime: 1_000_000,
+      endTime: 1_150_000
+    }
+    writeFileSync(path.join(artifacts, 'profiles', 'main.cpuprofile'), JSON.stringify(profile))
+    const identity = 'main:42:performance.timeOrigin:5000'
+    for (const [tag, beforeMs, afterMs] of [
+      ['start', 10, 18],
+      ['end', 140, 148]
+    ] as const) {
+      const source = `source of ${tag}`
+      input.onCalibrationMarker({
+        tag,
+        beforeMs,
+        afterMs,
+        pid: 42,
+        timeOrigin: 5000,
+        identity,
+        clockId: 'node.performance.now',
+        windowId: 'light_beside_0',
+        source,
+        sourceSha256: createHash('sha256').update(source).digest('hex')
+      })
+    }
+    return {
+      windows: [
+        {
+          role: 'light-beside',
+          repetition: 0,
+          startedAtMs: 1_000_000,
+          endedAtMs: 1_120_000,
+          laneSettledAtMs: { light: 1_165_000, heavy: 1_150_000 },
+          reasons: [],
+          light: { rounds: 0, roundStartPage: null },
+          d1: { deferredAppends: 3, normalSaves: 2 },
+          main: {
+            lanes: { light: {}, heavy: { checkpoint_prepare: { count: 1, bytes: 1_200_000 } } }
+          },
+          mainWindow: {
+            id: 'light_beside_0',
+            startedAtMs: 30,
+            endedAtMs: 130,
+            clock: {
+              clockId: 'node.performance.now',
+              identity,
+              provenance: 'node-performance-now'
+            },
+            eventLoopLag: { p50Ms: 2, p95Ms: 12, p99Ms: 20, maxMs: 40, meanMs: 3 }
+          },
+          mainWindowCensored: false
+        }
+      ]
+    }
+  }
+
+  it('reports the main-thread shares and the phase exits of the windows it measured', async () => {
+    const baselinePath = path.join(mkdtempSync(path.join(tmpdir(), 'perf-t2-base-')), 'report.json')
+    temporaryPaths.push(path.dirname(baselinePath))
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({
+        environment: { workload: 'light_beside_large_live' },
+        liveRounds: {
+          lanes: {
+            windows: [
+              {
+                reasons: [],
+                startedAtMs: 0,
+                endedAtMs: 120_000,
+                main: { lanes: { heavy: { checkpoint_prepare: { bytes: 2_400_000_000 } } } }
+              }
+            ]
+          }
+        }
+      })
+    )
+    const { result, error } = await launchLanes(
+      true,
+      [`--phase-baseline=${baselinePath}`, `--phase-baseline=${baselinePath}`],
+      measuredWindow
+    )
+    expect(error).toBeNull()
+    const report = (result as { report: Record<string, any> }).report
+    expect(report.mainThreadShares).toMatchObject({
+      frameMatching: 'bundled_base_names_and_class_lines',
+      // The fake launch has no build on disk to check the names against.
+      build: { scripts: 0, unavailable: 'build_scripts_unreadable' },
+      windows: [
+        {
+          id: 'light_beside_0',
+          repetition: 0,
+          measured: true,
+          clock: { basis: 'markers' },
+          shares: { idle: 0.3, busy: 0.7, sync: 0.2 },
+          syncOwners: { runEvents: 0.2 }
+        }
+      ]
+    })
+    const { exits, phases, baseline, workload } = report.phaseExits
+    expect(workload).toBe('light_beside_large_live')
+    expect(
+      Object.fromEntries(Object.entries(exits).map(([id, exit]: any) => [id, exit.verdict]))
+    ).toEqual({
+      mainThreadSyncs: 'fail',
+      threadStoreSyncs: 'fail',
+      mainWholeThreadReads: 'not_measured',
+      mainThreadBusy: 'fail',
+      heavyThreadBytes: 'not_measured',
+      mainLoopDelayP95: 'pass'
+    })
+    expect(exits.mainWholeThreadReads.reasons).toEqual(['window 0: build_names_unverified'])
+    // 1.2 MB in 120 s against the baseline's 2.4 GB: a two-thousandth.
+    expect(baseline).toEqual({
+      given: true,
+      usable: true,
+      // The option was given twice: both reports are read.
+      reports: 2,
+      windows: 2,
+      heavyThreadBytesPerSecond: 20_000_000
+    })
+    expect(exits.heavyThreadBytes.windows[0]).toMatchObject({
+      value: 0.0005,
+      reasons: ['bytes_by_file_family_not_counted']
+    })
+    expect(phases.phase1.verdict).toBe('fail')
+    expect(phases.phase2.verdict).toBe('pass')
+  })
+
+  it('reports no phase exits for a run whose lanes never started', async () => {
+    const { result, error } = await launchLanes(false)
+    expect(error).toBeNull()
+    const report = (result as { report: Record<string, any> }).report
+    expect(report).not.toHaveProperty('phaseExits')
+    expect(report).not.toHaveProperty('mainThreadShares')
+  })
+
   it('gives every live round the timeout the operator asked for', async () => {
     const { error, roundCalls } = await launchLanes(true, ['--live-round-timeout-ms=600000'])
     expect(error).toBeNull()
@@ -575,6 +740,33 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     expect(error).toBeNull()
     expect(roundCalls).toHaveLength(3)
     expect(roundCalls.map((round) => round.timeoutMs)).toEqual([undefined, undefined, undefined])
+  })
+})
+
+describe('runT2Baseline --phase-baseline refusals', () => {
+  const refusal = (args: string[]) =>
+    runT2BaselineCli(['--workload=light_beside_large_live', '--dry-run', ...args], {}).then(
+      () => null,
+      (error: unknown) => (error as Error).message
+    )
+
+  it('refuses a baseline with no live lanes to judge against it', async () => {
+    expect(await refusal(['--phase-baseline=/nowhere/report.json'])).toBe(
+      'phase baseline requires --live-lanes'
+    )
+  })
+
+  it('refuses a baseline it cannot use before anything is launched', async () => {
+    expect(await refusal(['--live-lanes', '--phase-baseline=/nowhere/report.json'])).toBe(
+      'phase baseline unusable: baseline_report_unreadable'
+    )
+    const directory = mkdtempSync(path.join(tmpdir(), 'perf-t2-base-'))
+    temporaryPaths.push(directory)
+    const other = path.join(directory, 'report.json')
+    writeFileSync(other, JSON.stringify({ environment: { workload: 'light_beside_large' } }))
+    expect(await refusal(['--live-lanes', `--phase-baseline=${other}`])).toBe(
+      'phase baseline unusable: baseline_workload_differs'
+    )
   })
 })
 

@@ -33,8 +33,8 @@
  * the calibration markers captured around it (`mainProfileCalibration.cjs`).
  * A capture older than the markers timed its windows on the wall clock; its
  * profile is placed by taking its end as the moment the runner asked for the
- * stop plus a nominal lag, and each share is then also reported across the
- * lag's bounds so a reader sees how far the estimate could move it.
+ * stop plus a nominal lag, and each share and sync owner is then also reported
+ * across the lag's bounds so a reader sees how far the estimate could move it.
  */
 
 const fs = require('node:fs')
@@ -514,6 +514,16 @@ function describeInterval(interval, build) {
   }
 }
 
+/** The least and most each share is across placements of one window; null stays null. */
+function boundsAcross(candidates) {
+  const bounds = {}
+  for (const name of Object.keys(candidates[0])) {
+    const values = candidates.map((candidate) => candidate[name])
+    bounds[name] = values.includes(null) ? null : [Math.min(...values), Math.max(...values)]
+  }
+  return bounds
+}
+
 function measureWindow(window, context) {
   const head = {
     id: isPlainObject(window) && typeof window.id === 'string' ? window.id : null,
@@ -575,12 +585,7 @@ function measureWindow(window, context) {
   const covered = (candidate) => candidate.sums.total >= windowMs * 1000 * MIN_WINDOW_COVERAGE
   if (![interval, ...atBounds].every(covered)) return unmeasured('profile_does_not_cover_window')
   const described = describeInterval(interval, build)
-  const candidates = [described.shares, ...atBounds.map((bound) => sharesOf(bound, build))]
-  const shareBounds = {}
-  for (const name of Object.keys(described.shares)) {
-    const values = candidates.map((shares) => shares[name])
-    shareBounds[name] = values.includes(null) ? null : [Math.min(...values), Math.max(...values)]
-  }
+  const candidates = [described, ...atBounds.map((bound) => describeInterval(bound, build))]
   return {
     ...head,
     measured: true,
@@ -591,7 +596,11 @@ function measureWindow(window, context) {
     },
     windowMs: round(windowMs, 3),
     ...described,
-    shareBounds
+    shareBounds: boundsAcross(candidates.map((candidate) => candidate.shares)),
+    syncOwnerBounds:
+      described.syncOwners === null
+        ? null
+        : boundsAcross(candidates.map((candidate) => candidate.syncOwners))
   }
 }
 

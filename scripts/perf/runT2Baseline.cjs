@@ -86,6 +86,7 @@ const {
   retainFrozenSourceBinding
 } = require('./collectors/m5X2Artifacts.cjs')
 const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cjs')
+const { collectPhaseExits, readPhaseBaselineFiles } = require('./phaseExits.cjs')
 const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 const {
   parseCellName,
@@ -1512,6 +1513,11 @@ function parseArgs(argv) {
     else if (arg === '--live-lanes') {
       out.liveRounds = true
       out.liveLanes = true
+    } else if (arg.startsWith('--phase-baseline=')) {
+      out.phaseBaselines = [
+        ...(Array.isArray(out.phaseBaselines) ? out.phaseBaselines : []),
+        arg.slice('--phase-baseline='.length)
+      ]
     } else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
     else if (arg.startsWith('--out-dir=')) out.outDir = arg.slice('--out-dir='.length)
@@ -1637,6 +1643,9 @@ Options:
   --live-round-timeout-ms=<ms>    How long each warm-up and smoke round may take to settle,
                                   30000..3600000 (default 180000). A heavy chat's first round can
                                   need more (requires --live-rounds or --live-lanes)
+  --phase-baseline=<report.json>  A baseline capture's perf-t2-report.json for the phase exits'
+                                  bytes comparison; repeat for several (requires --live-lanes).
+                                  Without one that exit is reported not_measured
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1675,6 +1684,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       )
     if (!args.liveRounds)
       throw new Error('live round timeout requires --live-rounds or --live-lanes')
+  }
+  if (args.phaseBaselines !== undefined) {
+    // Read now: a baseline that cannot serve should cost no capture.
+    if (!args.liveLanes) throw new Error('phase baseline requires --live-lanes')
+    const baseline = readPhaseBaselineFiles(args.phaseBaselines, args.workload)
+    if (baseline.usable !== true) throw new Error(`phase baseline unusable: ${baseline.reason}`)
   }
   if (args.help) {
     printHelp()
@@ -3223,6 +3238,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           calibrationArtifactPath: path.join(artifactDir, 'main-profile-calibration.json'),
           sourceBinding: custody.qualified ? custody.binding : undefined
         })
+        // Where the main thread's time went in each window, and the phase
+        // exits judged from it and from what the windows already record.
+        Object.assign(
+          report,
+          collectPhaseExits({
+            report,
+            profilePath: mainCpuPath,
+            calibrationMarkers,
+            baselineReportPaths: args.phaseBaselines
+          })
+        )
       }
       if (typeof options.onCaptureSessionComplete === 'function') {
         await options.onCaptureSessionComplete({ report })

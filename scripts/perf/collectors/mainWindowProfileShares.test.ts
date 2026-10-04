@@ -602,6 +602,52 @@ describe('the profile clock', () => {
     expect(window.shareBounds.sync).toEqual([0.2, 0.2])
   })
 
+  it('carries each sync owner across the bounds of the estimate too', () => {
+    // Profile 49..99 ms: the window opens 4 ms before the catalogue sync ends.
+    // With no lag it sits 5 ms later and misses that sync and 1 ms of the
+    // journal's; with 10 ms of lag it sits 5 ms earlier and holds all 8 ms.
+    const legacy = { id: 'light_beside_0', repetition: 0, startedAtMs: 9049, endedAtMs: 9099 }
+    const estimated = {
+      capture: { stopRequestedAtMs: 9145 },
+      estimate: { lagMs: 5, lagBoundsMs: [0, 10] }
+    }
+    const [window] = measure({ windows: [legacy], markers: [], ...estimated }).windows
+    expect(window.syncOwners).toMatchObject({ cataloguePublication: 0.08, journal: 0.08 })
+    expect(window.syncOwnerBounds).toEqual({
+      toolDetail: [0.04, 0.04],
+      cataloguePublication: [0, 0.16],
+      journal: [0.06, 0.08],
+      runEvents: [0.06, 0.06],
+      runQueue: [0.02, 0.02],
+      other: [0.04, 0.04]
+    })
+    // An owner the build cannot vouch for has no bounds either.
+    const renamed = buildScripts(
+      BUNDLE_LINES.map((line) => line.replace('appendRunEvent', 'appendEvent'))
+    )
+    const [unowned] = measure({
+      windows: [legacy],
+      markers: [],
+      buildScripts: renamed,
+      ...estimated
+    }).windows
+    expect(unowned.syncOwners).toBeNull()
+    expect(unowned.syncOwnerBounds).toBeNull()
+    // Nor has a share the build could not vouch for.
+    const [unbuilt] = measure({
+      windows: [legacy],
+      markers: [],
+      buildScripts: null,
+      ...estimated
+    }).windows
+    expect(unbuilt.shares.flusherBookkeeping).toBeNull()
+    expect(unbuilt.shareBounds.flusherBookkeeping).toBeNull()
+    // At 10 ms of lag the window opens 1 ms before the collector finishes.
+    expect(unbuilt.shareBounds.garbageCollection).toEqual([0, 0.02])
+    // A window placed by its markers has no estimate to bound.
+    expect(measure().windows[0]).not.toHaveProperty('syncOwnerBounds')
+  })
+
   it('does not measure a legacy window without the time the profile was stopped', () => {
     const legacy = { id: 'light_beside_0', repetition: 0, startedAtMs: 9030, endedAtMs: 9130 }
     const [window] = measure({ windows: [legacy], markers: [] }).windows

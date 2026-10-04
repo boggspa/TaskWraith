@@ -42,6 +42,35 @@ const PERF_GATE_THRESHOLDS = Object.freeze({
 })
 
 /**
+ * The rewrite's phase exits, judged per measured live window on the baseline
+ * workload (`phaseExits.cjs`). A share is a fraction of the main thread's
+ * time inside the window.
+ */
+const PHASE_EXIT_THRESHOLDS = Object.freeze({
+  /**
+   * "No sync on the main thread." Not zero: the profile is sampled about
+   * every 2 ms, so one stray sync would fail a phase. A thousandth of a
+   * 120 s window is 120 ms, about ten syncs at the 10 to 14 ms each holds the
+   * thread on the reference machine. The smallest store that syncs per save
+   * or per event costs over ten times that (run events, 1.3%); all of them
+   * together cost 23 to 25%.
+   */
+  maxMainSyncShare: 0.001,
+  /**
+   * "No whole-thread reads on the main thread." The same thousandth: about
+   * four reads at the 30 ms one holds the thread on average there (a read of
+   * the 31 MiB record takes up to 90 ms), against 24 to 26% today.
+   */
+  maxMainWholeThreadReadShare: 0.001,
+  /** The main thread is busy for less than this share of the window. */
+  maxMainBusyShare: 0.25,
+  /** Bytes written for the heavy thread, as a fraction of the baseline's. */
+  maxHeavyThreadBytesOfBaseline: 0.01,
+  /** Main-loop delay p95 stays under this (ms): the gate above, per window. */
+  maxMainLoopDelayP95Ms: PERF_GATE_THRESHOLDS.maxEventLoopLagP95Ms
+})
+
+/**
  * PROPOSED, UNRATIFIED cross-thread bounds: no gate consumes these before
  * Boss ratification at M1 exit. The seven acceptance rows have eight fields
  * because the async-writer row specifies both byte capacity and fallbacks.
@@ -87,5 +116,6 @@ module.exports = {
   BYTES_20_GIB,
   MIN_PROFILE_BYTES,
   PERF_GATE_THRESHOLDS,
+  PHASE_EXIT_THRESHOLDS,
   PROPOSED_CROSS_THREAD_BOUNDS
 }

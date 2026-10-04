@@ -2,7 +2,11 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { PERF_GATE_THRESHOLDS, PROPOSED_CROSS_THREAD_BOUNDS } = require('./perfGateThresholds.cjs')
+const {
+  PERF_GATE_THRESHOLDS,
+  PHASE_EXIT_THRESHOLDS,
+  PROPOSED_CROSS_THREAD_BOUNDS
+} = require('./perfGateThresholds.cjs')
 
 const canonicalBounds = {
   roundStartDeltaMs: 250,
@@ -57,5 +61,24 @@ describe('proposed cross-thread bounds', () => {
       expect(Reflect.set(PROPOSED_CROSS_THREAD_BOUNDS, key, 'changed')).toBe(false)
       expect(JSON.parse(JSON.stringify(PROPOSED_CROSS_THREAD_BOUNDS))).not.toHaveProperty(key)
     }
+  })
+})
+
+describe('phase exit thresholds', () => {
+  it('names the limit of every phase exit once, frozen', () => {
+    expect(Object.isFrozen(PHASE_EXIT_THRESHOLDS)).toBe(true)
+    expect(PHASE_EXIT_THRESHOLDS).toEqual({
+      maxMainSyncShare: 0.001,
+      maxMainWholeThreadReadShare: 0.001,
+      maxMainBusyShare: 0.25,
+      maxHeavyThreadBytesOfBaseline: 0.01,
+      maxMainLoopDelayP95Ms: 25
+    })
+  })
+
+  it('holds phase 2 to the main-loop delay the programme already gates on', () => {
+    expect(PHASE_EXIT_THRESHOLDS.maxMainLoopDelayP95Ms).toBe(
+      PERF_GATE_THRESHOLDS.maxEventLoopLagP95Ms
+    )
   })
 })
