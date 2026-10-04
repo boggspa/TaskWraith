@@ -1,13 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import {
-  applyChatRecordMutations,
-  CHAT_RECORD_MUTATION_FORMAT,
-  CHAT_RECORD_MUTATION_OPERATION_TYPES,
-  CHAT_RECORD_MUTATION_VERSION,
-  type ChatRecordMutationBatch,
-  type ChatRecordMutationOperation
-} from './ChatRecordMutation'
+import { applyChatRecordMutations, type ChatRecordMutationBatch } from './ChatRecordMutation'
+import { isThreadLogBatch } from '../../host-shared/thread-log/ThreadLogBatch'
 import type { ChatRecord } from './types'
 import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
@@ -261,7 +255,6 @@ const DEFAULT_MAX_JOURNAL_READ_BYTES = 256 * 1024 * 1024
  *  spare while never touching the megabytes of transcript that follow. */
 const CHECKPOINT_HEADER_PROBE_BYTES = 4096
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
-const MUTATION_OPERATION_TYPES = new Set(Object.keys(CHAT_RECORD_MUTATION_OPERATION_TYPES))
 const CHECKPOINT_REASONS = new Set<IncrementalChatCheckpointReason>([
   'initial',
   'terminal',
@@ -284,28 +277,12 @@ function recordRevision(record: ChatRecord): number {
   return nonNegativeInteger(record.persistenceRevision) ? record.persistenceRevision : 0
 }
 
+/** The check itself lives in host-shared, where the Host can reach it. */
 export function validMutationBatch(
   value: unknown,
   chatId: string
 ): value is ChatRecordMutationBatch {
-  if (!value || typeof value !== 'object') return false
-  const batch = value as Partial<ChatRecordMutationBatch>
-  return (
-    batch.format === CHAT_RECORD_MUTATION_FORMAT &&
-    batch.version === CHAT_RECORD_MUTATION_VERSION &&
-    batch.chatId === chatId &&
-    nonNegativeInteger(batch.baseRevision) &&
-    nonNegativeInteger(batch.revision) &&
-    batch.revision > batch.baseRevision &&
-    typeof batch.savedAt === 'string' &&
-    Array.isArray(batch.operations) &&
-    batch.operations.every(
-      (operation) =>
-        !!operation &&
-        typeof operation === 'object' &&
-        MUTATION_OPERATION_TYPES.has((operation as ChatRecordMutationOperation).type)
-    )
-  )
+  return isThreadLogBatch(value, chatId)
 }
 
 export function validCheckpoint(

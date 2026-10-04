@@ -11,104 +11,33 @@ import {
   buildChatTranscriptOps,
   type ChatUpdateTranscriptOp
 } from '../../shared/chatUpdateTransport'
+import {
+  applyThreadLogBatch,
+  applyThreadLogBatches,
+  THREAD_LOG_PROTECTED_RECORD_FIELDS
+} from '../../host-shared/thread-log/ThreadLogApply'
+import {
+  THREAD_LOG_BATCH_FORMAT,
+  THREAD_LOG_BATCH_VERSION,
+  THREAD_LOG_OPERATION_TYPES,
+  type ThreadLogBatch,
+  type ThreadLogOperation
+} from '../../host-shared/thread-log/ThreadLogBatch'
 
-export const CHAT_RECORD_MUTATION_FORMAT = 'taskwraith-chat-mutation' as const
-export const CHAT_RECORD_MUTATION_VERSION = 1 as const
+// The batch format and the code that applies it live in host-shared so the
+// Host can read a thread's log. These are the same names with the same types.
+export const CHAT_RECORD_MUTATION_FORMAT = THREAD_LOG_BATCH_FORMAT
+export const CHAT_RECORD_MUTATION_VERSION = THREAD_LOG_BATCH_VERSION
 
-export type ChatRecordMutationOperation =
-  | {
-      type: 'record_patch'
-      set: Record<string, unknown>
-      clear: string[]
-    }
-  | {
-      type: 'messages_splice'
-      index: number
-      deleteCount: number
-      messages: ChatMessage[]
-    }
-  | {
-      type: 'message_content_append'
-      messageId: string
-      content: string
-    }
-  | {
-      type: 'message_put'
-      messageId: string
-      message: ChatMessage
-    }
-  | {
-      type: 'message_patch'
-      messageId: string
-      set: Record<string, unknown>
-      clear: string[]
-    }
-  | {
-      type: 'tool_activities_presence'
-      messageId: string
-      present: boolean
-    }
-  | {
-      type: 'tool_activities_splice'
-      messageId: string
-      index: number
-      deleteCount: number
-      activities: ToolActivity[]
-    }
-  | {
-      type: 'tool_activity_put'
-      messageId: string
-      activityId: string
-      activity: ToolActivity
-    }
-  | {
-      type: 'runs_splice'
-      index: number
-      deleteCount: number
-      runs: ChatRun[]
-    }
-  | {
-      type: 'run_put'
-      runId: string
-      run: ChatRun
-    }
-  | {
-      type: 'ensemble_patch'
-      set: Record<string, unknown>
-      clear: string[]
-    }
-  | {
-      type: 'ensemble_participant_patch'
-      participantId: string
-      set: Record<string, unknown>
-      clear: string[]
-    }
+export type ChatRecordMutationOperation = ThreadLogOperation<ChatMessage, ChatRun, ToolActivity>
 
 /** Exhaustive journal vocabulary; adding an operation must update its admission too. */
-export const CHAT_RECORD_MUTATION_OPERATION_TYPES = {
-  record_patch: true,
-  messages_splice: true,
-  message_content_append: true,
-  message_put: true,
-  message_patch: true,
-  tool_activities_presence: true,
-  tool_activities_splice: true,
-  tool_activity_put: true,
-  runs_splice: true,
-  run_put: true,
-  ensemble_patch: true,
-  ensemble_participant_patch: true
-} satisfies Record<ChatRecordMutationOperation['type'], true>
+export const CHAT_RECORD_MUTATION_OPERATION_TYPES = THREAD_LOG_OPERATION_TYPES satisfies Record<
+  ChatRecordMutationOperation['type'],
+  true
+>
 
-export interface ChatRecordMutationBatch {
-  format: typeof CHAT_RECORD_MUTATION_FORMAT
-  version: typeof CHAT_RECORD_MUTATION_VERSION
-  chatId: string
-  baseRevision: number
-  revision: number
-  savedAt: string
-  operations: ChatRecordMutationOperation[]
-}
+export type ChatRecordMutationBatch = ThreadLogBatch<ChatRecordMutationOperation>
 
 /** One producer derivation yields both the durable mutation and renderer operations. */
 export interface DerivedChatRecordMutation {
@@ -153,7 +82,7 @@ interface ObjectPatch {
   clear: string[]
 }
 
-const TOP_LEVEL_EXCLUDES = new Set(['appChatId', 'messages', 'runs', 'persistenceRevision'])
+const TOP_LEVEL_EXCLUDES = THREAD_LOG_PROTECTED_RECORD_FIELDS
 const AUTHORED_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'ensemble'])
 const ENSEMBLE_PARTICIPANT_EXCLUDES = new Set(['participants'])
 const REBASE_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'title', 'threadTitle'])
@@ -535,35 +464,6 @@ export function deriveChatRecordMutation(
   return deriveChatRecordMutationWithProjection(before, after, options).batch
 }
 
-function assertSpliceBounds(
-  length: number,
-  index: number,
-  deleteCount: number,
-  label: string
-): void {
-  if (
-    !Number.isSafeInteger(index) ||
-    !Number.isSafeInteger(deleteCount) ||
-    index < 0 ||
-    deleteCount < 0 ||
-    index > length ||
-    index + deleteCount > length
-  ) {
-    throw new Error(`${label} splice is out of bounds`)
-  }
-}
-
-function findMessage(record: ChatRecord, messageId: string): ChatMessage {
-  const message = record.messages.find((candidate) => candidate.id === messageId)
-  if (!message) throw new Error(`Chat mutation message ${messageId} is missing`)
-  return message
-}
-
-function applyPatch(target: Record<string, unknown>, patch: ObjectPatch): void {
-  for (const [key, value] of Object.entries(patch.set)) target[key] = jsonClone(value)
-  for (const key of patch.clear) delete target[key]
-}
-
 function recordsById<T>(
   items: readonly T[],
   idOf: (item: T) => string,
@@ -773,185 +673,18 @@ export function applyChatRecordMutation(
   source: ChatRecord,
   batch: ChatRecordMutationBatch
 ): ChatRecord {
-  assertMutationSource(source, batch)
-  return applyChatRecordMutations(source, [batch])
+  return applyThreadLogBatch(source, batch)
 }
 
 /**
- * Replay a revision chain on one private copy. Cloning the complete transcript
- * for every streamed append makes a journal read grow with history × updates.
- * Only the final record escapes; a rejected operation cannot mutate the caller
- * or expose a partly applied chain. Operation payloads are still copied below.
+ * Replay a revision chain on one private copy; only the final record escapes.
+ * A rejected operation cannot mutate the caller or expose a partly applied chain.
  */
 export function applyChatRecordMutations(
   source: ChatRecord,
   batches: readonly ChatRecordMutationBatch[]
 ): ChatRecord {
-  const record = jsonClone(source)
-  for (const batch of batches) {
-    assertMutationSource(record, batch)
-    applyChatRecordMutationInPlace(record, batch)
-  }
-  return record
-}
-
-function assertMutationSource(source: ChatRecord, batch: ChatRecordMutationBatch): void {
-  if (
-    batch.format !== CHAT_RECORD_MUTATION_FORMAT ||
-    batch.version !== CHAT_RECORD_MUTATION_VERSION
-  ) {
-    throw new Error('Unsupported chat mutation format')
-  }
-  if (source.appChatId !== batch.chatId) {
-    throw new Error(`Chat mutation target mismatch: ${source.appChatId} != ${batch.chatId}`)
-  }
-  const sourceRevision = persistenceRevision(source)
-  if (sourceRevision !== batch.baseRevision || batch.revision <= batch.baseRevision) {
-    throw new Error(
-      `Chat mutation revision mismatch for ${batch.chatId}: ` +
-        `record ${sourceRevision}, batch ${batch.baseRevision} -> ${batch.revision}`
-    )
-  }
-}
-
-/** The record is owned exclusively by applyChatRecordMutations. */
-function applyChatRecordMutationInPlace(record: ChatRecord, batch: ChatRecordMutationBatch): void {
-  for (const operation of batch.operations) {
-    switch (operation.type) {
-      case 'record_patch': {
-        for (const protectedKey of TOP_LEVEL_EXCLUDES) {
-          if (
-            Object.prototype.hasOwnProperty.call(operation.set, protectedKey) ||
-            operation.clear.includes(protectedKey)
-          ) {
-            throw new Error(`Chat mutation cannot patch protected field ${protectedKey}`)
-          }
-        }
-        applyPatch(record as unknown as Record<string, unknown>, operation)
-        break
-      }
-      case 'messages_splice':
-        assertSpliceBounds(
-          record.messages.length,
-          operation.index,
-          operation.deleteCount,
-          'messages'
-        )
-        record.messages.splice(
-          operation.index,
-          operation.deleteCount,
-          ...operation.messages.map((message) => jsonClone(message))
-        )
-        break
-      case 'message_content_append': {
-        const message = findMessage(record, operation.messageId)
-        message.content += operation.content
-        break
-      }
-      case 'message_put': {
-        const index = record.messages.findIndex((candidate) => candidate.id === operation.messageId)
-        if (index < 0 || operation.message.id !== operation.messageId) {
-          throw new Error(`Chat mutation message ${operation.messageId} is missing`)
-        }
-        record.messages[index] = jsonClone(operation.message)
-        break
-      }
-      case 'message_patch': {
-        const message = findMessage(record, operation.messageId)
-        if (
-          Object.prototype.hasOwnProperty.call(operation.set, 'id') ||
-          Object.prototype.hasOwnProperty.call(operation.set, 'toolActivities') ||
-          operation.clear.includes('id') ||
-          operation.clear.includes('toolActivities')
-        ) {
-          throw new Error('Message patch cannot replace identity or toolActivities')
-        }
-        applyPatch(message as unknown as Record<string, unknown>, operation)
-        break
-      }
-      case 'tool_activities_presence': {
-        const message = findMessage(record, operation.messageId)
-        if (operation.present) {
-          if (!Array.isArray(message.toolActivities)) message.toolActivities = []
-        } else {
-          delete message.toolActivities
-        }
-        break
-      }
-      case 'tool_activities_splice': {
-        const message = findMessage(record, operation.messageId)
-        const activities = message.toolActivities ?? []
-        assertSpliceBounds(
-          activities.length,
-          operation.index,
-          operation.deleteCount,
-          'toolActivities'
-        )
-        activities.splice(
-          operation.index,
-          operation.deleteCount,
-          ...operation.activities.map((activity) => jsonClone(activity))
-        )
-        message.toolActivities = activities
-        break
-      }
-      case 'tool_activity_put': {
-        const message = findMessage(record, operation.messageId)
-        const activities = message.toolActivities ?? []
-        const index = activities.findIndex((activity) => activity.id === operation.activityId)
-        if (index < 0) throw new Error(`Tool activity ${operation.activityId} is missing`)
-        activities[index] = jsonClone(operation.activity)
-        message.toolActivities = activities
-        break
-      }
-      case 'runs_splice':
-        assertSpliceBounds(record.runs.length, operation.index, operation.deleteCount, 'runs')
-        record.runs.splice(
-          operation.index,
-          operation.deleteCount,
-          ...operation.runs.map((run) => jsonClone(run))
-        )
-        break
-      case 'run_put': {
-        const index = record.runs.findIndex((run) => run.runId === operation.runId)
-        if (index < 0) throw new Error(`Chat run ${operation.runId} is missing`)
-        record.runs[index] = jsonClone(operation.run)
-        break
-      }
-      case 'ensemble_patch': {
-        if (!record.ensemble) throw new Error('Chat mutation ensemble is missing')
-        if (
-          Object.prototype.hasOwnProperty.call(operation.set, 'participants') ||
-          operation.clear.includes('participants')
-        ) {
-          throw new Error('Ensemble patch cannot replace participants')
-        }
-        applyPatch(record.ensemble as unknown as Record<string, unknown>, operation)
-        break
-      }
-      case 'ensemble_participant_patch': {
-        const seats = record.ensemble?.participants
-        const index = seats?.findIndex((seat) => seat.id === operation.participantId) ?? -1
-        if (!seats || index < 0) {
-          throw new Error(`Chat ensemble participant ${operation.participantId} is missing`)
-        }
-        if (
-          Object.prototype.hasOwnProperty.call(operation.set, 'id') ||
-          operation.clear.includes('id')
-        ) {
-          throw new Error('Ensemble participant patch cannot replace identity')
-        }
-        applyPatch(seats[index] as unknown as Record<string, unknown>, operation)
-        break
-      }
-      default: {
-        const unsupported: never = operation
-        throw new Error(`Unsupported chat mutation operation: ${String(unsupported)}`)
-      }
-    }
-  }
-
-  record.persistenceRevision = batch.revision
+  return applyThreadLogBatches(source, batches)
 }
 
 export function estimateChatRecordMutationBytes(batch: ChatRecordMutationBatch): number {

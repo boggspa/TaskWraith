@@ -1,0 +1,3307 @@
+{
+  "capturedFrom": {
+    "commit": "336111d03de231abb022fa200cadb7ea349b7d20",
+    "src/main/store/ChatRecordMutation.ts": "ab84df6c5cb7ddbb99051193dcef6ece2f71e443",
+    "src/main/store/IncrementalChatJournal.ts": "f65fde4f41d7e40caf1039c79224e10544e95009"
+  },
+  "apply": {
+    "record_patch sets nested values and clears a field": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Renamed",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": true,
+        "providerMetadata": {
+          "nested": {
+            "kept": false
+          }
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "messages_splice inserts in the middle": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m1b",
+            "role": "assistant",
+            "content": "inserted € 😀",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "messages_splice replaces a range": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m4",
+            "role": "assistant",
+            "content": "replacement",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m5",
+            "role": "user",
+            "content": "follow-up",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "messages_splice appends at the end": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m4",
+            "role": "user",
+            "content": "tail",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "messages_splice removes every row": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "message_content_append extends streamed text": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer, then more café 日本",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "message_put replaces one row whole": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "rewritten",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": []
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "message_patch sets and clears fields, content included": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "edited",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ],
+            "metadata": {
+              "kind": "subThreadReturn"
+            }
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activities_presence adds an empty list": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": []
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activities_presence keeps an existing list": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activities_presence removes the list": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1"
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activities_splice replaces within an existing list": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a3",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "new"
+              },
+              {
+                "id": "a4",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "newer"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activities_splice creates the list on a row without one": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": [
+              {
+                "id": "a9",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "first"
+              }
+            ]
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "tool_activity_put replaces one activity": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "finished"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "runs_splice inserts and removes": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r2",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "queued"
+          },
+          {
+            "runId": "r3",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "queued"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "run_put replaces one run": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "ensemble_patch sets and clears chrome": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxContinuationHops": 12,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ],
+          "orchestrationMode": "parallel"
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "ensemble_participant_patch sets and clears a seat field": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Reviewer",
+              "order": 2,
+              "linkedProviderSessionId": "session-2"
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "several operations apply in the order written": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 11,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "edited question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m4",
+            "role": "assistant",
+            "content": "streaming on",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": [
+              {
+                "id": "b1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "finished"
+              }
+            ],
+            "runId": "r1"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r2",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": false,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": false,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "a batch with no operations only advances the revision": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "a record with no revision is treated as revision zero": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "From zero",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        },
+        "persistenceRevision": 1
+      },
+      "inputsUnchanged": true
+    },
+    "rejects an unknown batch format": {
+      "threw": {
+        "name": "Error",
+        "message": "Unsupported chat mutation format"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects an unknown batch version": {
+      "threw": {
+        "name": "Error",
+        "message": "Unsupported chat mutation format"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a batch for another chat": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation target mismatch: chat-golden != other-chat"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a base revision behind the record": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 10, batch 9 -> 11"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a base revision ahead of the record": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 10, batch 11 -> 12"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a revision that does not advance": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 10, batch 10 -> 10"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a base revision against a record whose revision is not a safe integer": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 0, batch 10 -> 11"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch setting the protected field appChatId": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field appChatId"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch clearing the protected field appChatId": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field appChatId"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch setting the protected field messages": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field messages"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch clearing the protected field messages": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field messages"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch setting the protected field runs": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field runs"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch clearing the protected field runs": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field runs"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch setting the protected field persistenceRevision": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field persistenceRevision"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects record_patch clearing the protected field persistenceRevision": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation cannot patch protected field persistenceRevision"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects messages_splice starting past the end": {
+      "threw": {
+        "name": "Error",
+        "message": "messages splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects messages_splice deleting past the end": {
+      "threw": {
+        "name": "Error",
+        "message": "messages splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects messages_splice with a negative index": {
+      "threw": {
+        "name": "Error",
+        "message": "messages splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects messages_splice with a fractional count": {
+      "threw": {
+        "name": "Error",
+        "message": "messages splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects messages_splice with no bounds at all": {
+      "threw": {
+        "name": "Error",
+        "message": "messages splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_content_append to a missing row": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_put for a missing row": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_put whose row carries another id": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message m2 is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_patch on a missing row": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_patch setting the id": {
+      "threw": {
+        "name": "Error",
+        "message": "Message patch cannot replace identity or toolActivities"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_patch setting toolActivities": {
+      "threw": {
+        "name": "Error",
+        "message": "Message patch cannot replace identity or toolActivities"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_patch clearing the id": {
+      "threw": {
+        "name": "Error",
+        "message": "Message patch cannot replace identity or toolActivities"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects message_patch clearing toolActivities": {
+      "threw": {
+        "name": "Error",
+        "message": "Message patch cannot replace identity or toolActivities"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects tool_activities_presence on a missing row": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects tool_activities_splice past the end": {
+      "threw": {
+        "name": "Error",
+        "message": "toolActivities splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects tool_activities_splice on a missing row": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects tool_activity_put for a missing activity": {
+      "threw": {
+        "name": "Error",
+        "message": "Tool activity absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects tool_activity_put on a row with no activities": {
+      "threw": {
+        "name": "Error",
+        "message": "Tool activity a1 is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects runs_splice past the end": {
+      "threw": {
+        "name": "Error",
+        "message": "runs splice is out of bounds"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects run_put for a missing run": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat run absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_patch on a record with no ensemble": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation ensemble is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_patch setting the roster": {
+      "threw": {
+        "name": "Error",
+        "message": "Ensemble patch cannot replace participants"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_patch clearing the roster": {
+      "threw": {
+        "name": "Error",
+        "message": "Ensemble patch cannot replace participants"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_participant_patch for a missing seat": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat ensemble participant absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_participant_patch on a record with no ensemble": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat ensemble participant s1 is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_participant_patch setting the seat id": {
+      "threw": {
+        "name": "Error",
+        "message": "Ensemble participant patch cannot replace identity"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects ensemble_participant_patch clearing the seat id": {
+      "threw": {
+        "name": "Error",
+        "message": "Ensemble participant patch cannot replace identity"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects an operation type outside the vocabulary": {
+      "threw": {
+        "name": "Error",
+        "message": "Unsupported chat mutation operation: [object Object]"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a later operation after earlier ones already applied": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation message absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: record_patch with no set": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: record_patch with no clear": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: messages_splice with no messages": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: message_content_append with no content": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answerundefined",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: message_put with no message": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: message_patch with no clear": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: tool_activities_presence with no flag": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1"
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: tool_activities_splice with no activities": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: tool_activity_put with no activity": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              null,
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: runs_splice with no runs": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: run_put with no run": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 11,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          null
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: ensemble_patch with a null set": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: ensemble_participant_patch with no clear": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: a null operation": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "malformed: operations that are not a list": {
+      "threw": {
+        "name": "TypeError",
+        "message": null
+      },
+      "inputsUnchanged": true
+    },
+    "an empty chain returns a copy of the record": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 10,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "a chain applies each batch on the revision the last one produced": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Golden chat",
+        "createdAt": 1,
+        "updatedAt": 10,
+        "archived": false,
+        "workspaceId": "workspace-1",
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 15,
+        "messages": [
+          {
+            "id": "m1",
+            "role": "user",
+            "content": "first question",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m2",
+            "role": "assistant",
+            "content": "partial answer one two",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "runId": "r1",
+            "toolActivities": [
+              {
+                "id": "a1",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "started"
+              },
+              {
+                "id": "a2",
+                "toolName": "exec_command",
+                "displayName": "Run command",
+                "category": "shell",
+                "status": "success",
+                "parameters": {
+                  "command": "npm test",
+                  "cwd": "/workspace"
+                },
+                "resultSummary": "queued"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "role": "tool",
+            "content": "",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r0",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r1",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 6,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 1",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Seat 2",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a chain with a gap between two batches": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 11, batch 12 -> 13"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a chain that repeats a batch": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation revision mismatch for chat-golden: record 11, batch 10 -> 11"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a chain whose second batch has a refused operation": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat run absent is missing"
+      },
+      "inputsUnchanged": true
+    },
+    "rejects a chain whose second batch is for another chat": {
+      "threw": {
+        "name": "Error",
+        "message": "Chat mutation target mismatch: chat-golden != other-chat"
+      },
+      "inputsUnchanged": true
+    },
+    "seeded chain 20261004: 120 batches over all twelve operations": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Title 129",
+        "createdAt": 1,
+        "updatedAt": 459663,
+        "archived": false,
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 254,
+        "messages": [
+          {
+            "id": "m-20261004-45",
+            "role": "assistant",
+            "content": "put 44",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-20261004-46",
+            "role": "assistant",
+            "content": "put 5",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": []
+          },
+          {
+            "id": "m-20261004-57",
+            "role": "assistant",
+            "content": "patched 63 +76 +36 +32",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": []
+          },
+          {
+            "id": "m-20261004-60",
+            "role": "assistant",
+            "content": "put 19",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-20261004-61",
+            "role": "assistant",
+            "content": "put 29",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r-20261004-28",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r-20261004-67",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          },
+          {
+            "runId": "r-20261004-25",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "error"
+          },
+          {
+            "runId": "r-20261004-3",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r-20261004-31",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "error"
+          },
+          {
+            "runId": "r-20261004-12",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "error"
+          },
+          {
+            "runId": "r-20261004-59",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 9,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Role 17",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": false,
+              "role": "Role 41",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    },
+    "seeded chain 7: 60 batches over all twelve operations": {
+      "returned": {
+        "appChatId": "chat-golden",
+        "title": "Title 526",
+        "createdAt": 1,
+        "updatedAt": 376761,
+        "archived": false,
+        "providerMetadata": {
+          "nested": {
+            "kept": true
+          },
+          "list": [1, 2, 3]
+        },
+        "persistenceRevision": 133,
+        "messages": [
+          {
+            "id": "m-7-19",
+            "role": "assistant",
+            "content": "m-7-19.",
+            "timestamp": "2026-10-04T00:00:00.000Z",
+            "toolActivities": []
+          },
+          {
+            "id": "m-7-8",
+            "role": "assistant",
+            "content": "put 41",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-7-25",
+            "role": "assistant",
+            "content": "patched 19",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-7-27",
+            "role": "assistant",
+            "content": "m-7-27",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-7-31",
+            "role": "assistant",
+            "content": "m-7-31",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          },
+          {
+            "id": "m-7-28",
+            "role": "assistant",
+            "content": "put 57",
+            "timestamp": "2026-10-04T00:00:00.000Z"
+          }
+        ],
+        "runs": [
+          {
+            "runId": "r-7-18",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r-7-29",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          },
+          {
+            "runId": "r-7-12",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "success"
+          },
+          {
+            "runId": "r-7-14",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "error"
+          },
+          {
+            "runId": "r-7-23",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "error"
+          },
+          {
+            "runId": "r-7-30",
+            "startedAt": "2026-10-04T00:00:00.000Z",
+            "status": "running"
+          }
+        ],
+        "ensemble": {
+          "enabled": true,
+          "maxParticipants": 2,
+          "maxContinuationHops": 16,
+          "participants": [
+            {
+              "id": "s1",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Role 6",
+              "order": 1,
+              "instructions": ""
+            },
+            {
+              "id": "s2",
+              "provider": "codex",
+              "enabled": true,
+              "role": "Role 37",
+              "order": 2,
+              "instructions": ""
+            }
+          ]
+        }
+      },
+      "inputsUnchanged": true
+    }
+  },
+  "validation": {
+    "a batch holding only a record_patch operation": true,
+    "a batch holding only a messages_splice operation": true,
+    "a batch holding only a message_content_append operation": true,
+    "a batch holding only a message_put operation": true,
+    "a batch holding only a message_patch operation": true,
+    "a batch holding only a tool_activities_presence operation": true,
+    "a batch holding only a tool_activities_splice operation": true,
+    "a batch holding only a tool_activity_put operation": true,
+    "a batch holding only a runs_splice operation": true,
+    "a batch holding only a run_put operation": true,
+    "a batch holding only a ensemble_patch operation": true,
+    "a batch holding only a ensemble_participant_patch operation": true,
+    "a batch holding all twelve operation types": true,
+    "a batch with no operations": true,
+    "a batch with extra fields": true,
+    "a batch based on revision zero": true,
+    "a batch that skips revisions": true,
+    "a batch with an empty savedAt": true,
+    "a batch read for another chat": false,
+    "a batch naming another chat": false,
+    "a batch with no chat id": false,
+    "null": false,
+    "undefined": false,
+    "a string": false,
+    "a number": false,
+    "an array": false,
+    "an empty object": false,
+    "another format": false,
+    "no format": false,
+    "another version": false,
+    "a version given as text": false,
+    "a negative base revision": false,
+    "a fractional base revision": false,
+    "a base revision given as text": false,
+    "a base revision that is not a number": false,
+    "no base revision": false,
+    "a revision equal to its base": false,
+    "a revision behind its base": false,
+    "a fractional revision": false,
+    "a revision past the safe integers": false,
+    "an infinite revision": false,
+    "no revision": false,
+    "no savedAt": false,
+    "a numeric savedAt": false,
+    "no operations": false,
+    "operations given as an object": false,
+    "operations given as text": false,
+    "a null operation": false,
+    "a text operation": false,
+    "an operation with no type": false,
+    "an operation type outside the vocabulary": false,
+    "an operation type differing only in case": false,
+    "an operation typed constructor": false,
+    "an operation typed toString": false,
+    "an operation typed hasOwnProperty": false,
+    "an operation typed __proto__": false,
+    "one unknown operation among known ones": false
+  }
+}
