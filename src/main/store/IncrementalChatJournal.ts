@@ -11,6 +11,7 @@ import {
 import type { ChatRecord } from './types'
 import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
+import { repairSegmentTornTail } from './IncrementalChatJournalTailRepair'
 import {
   checkpointFileReference,
   checkpointReferenceIsCurrent,
@@ -103,6 +104,11 @@ export interface IncrementalChatJournalStats {
   replayedBatches: number
   skippedDuplicateBatches: number
   tornTailsRecovered: number
+  /** Torn fragments cut in place before an append; see `repairTornTailBeforeAppend`. */
+  tornTailsTruncated: number
+  tornTailBytesTruncated: number
+  /** Appends refused because the active segment holds an invalid complete line. */
+  corruptSegmentRejects: number
   tombstoneRejects: number
 }
 
@@ -142,6 +148,15 @@ export interface IncrementalChatJournalOptions {
    * — the Host-owned read-only import invariant pins every profile byte.
    */
   canRepairOnRead?: () => boolean
+  /**
+   * Explicit opt-in; the root does not set it. Where reads may not repair, a
+   * torn tail stays on disk, the next batch is written straight after the
+   * fragment, and that batch and every later one are unreadable. With this on,
+   * an append to a segment last read as torn first cuts the fragment in place,
+   * and an append after an invalid complete line is refused rather than
+   * written where no reader will reach it. Reads still change no byte.
+   */
+  repairTornTailBeforeAppend?: boolean
   now?: () => number
   maxJournalBytes?: number
   maxJournalEntries?: number
@@ -377,7 +392,12 @@ export function createIncrementalChatJournal(
   let replayedBatches = 0
   let skippedDuplicateBatches = 0
   let tornTailsRecovered = 0
+  let tornTailsTruncated = 0
+  let tornTailBytesTruncated = 0
+  let corruptSegmentRejects = 0
   let tombstoneRejects = 0
+  /** Segments whose tail the writer must inspect before its next append lands. */
+  const suspectTailPaths = new Set<string>()
 
   /** Unsettled deferred flushes, by journal file. An entry's fd is closed by
    * its own completion callback exactly once; draining marks entries settled
@@ -710,6 +730,10 @@ export function createIncrementalChatJournal(
     if (canRepair()) {
       recoverTornTail(chatId, sealed, sealedPath(chatId))
       recoverTornTail(chatId, active)
+    } else if (options.repairTornTailBeforeAppend) {
+      // A read only remembers what it saw; the next append does the repair.
+      if (sealed.torn) suspectTailPaths.add(sealedPath(chatId))
+      if (active.torn) suspectTailPaths.add(journalPath(chatId))
     }
     return {
       batches: [...sealed.batches, ...active.batches],
@@ -717,6 +741,44 @@ export function createIncrementalChatJournal(
       torn: sealed.torn || active.torn,
       validContent: ''
     }
+  }
+
+  const replayableLine = (chatId: string, line: Buffer): boolean => {
+    // The parser skips an empty line, so it is not damage.
+    if (line.length === 0) return true
+    try {
+      return validMutationBatch(JSON.parse(line.toString('utf8')), chatId)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Cut the torn fragment off each suspect segment of one chat, each file on
+   * its own and in place: a torn sealed tail is never carried into the active
+   * segment. False means the active segment is damaged and must not grow.
+   */
+  const repairSuspectTails = (chatId: string, state: RuntimeState): boolean => {
+    for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
+      if (!suspectTailPaths.has(filePath)) continue
+      const repair = repairSegmentTornTail(filePath, {
+        maxBytes: maxJournalReadBytes,
+        isValidLine: (line) => replayableLine(chatId, line),
+        beforeSourceMutation: () => options.beforeSourceMutation?.(chatId),
+        retireDescriptor: () => {
+          invalidatePreparation(chatId)
+          options.descriptorCache?.retireSync([chatId])
+        }
+      })
+      // Nothing is appended to a sealed segment, so damage there poisons nothing.
+      if (repair.status === 'corrupt' && filePath === journalPath(chatId)) return false
+      suspectTailPaths.delete(filePath)
+      if (repair.status !== 'repaired') continue
+      tornTailsTruncated += 1
+      tornTailBytesTruncated += repair.removedBytes
+      state.journalBytes = Math.max(0, state.journalBytes - repair.removedBytes)
+    }
+    return true
   }
 
   const validateRevisionChain = (
@@ -1161,6 +1223,8 @@ export function createIncrementalChatJournal(
     if (!state || state.tombstoned || state.headRevision === null || state.journalEntries === 0)
       return null
     if (fs.existsSync(sealedPath(chatId))) return null
+    // A tail known to be torn is repaired by the next append, never sealed as it is.
+    if (suspectTailPaths.has(journalPath(chatId))) return null
     options.beforeSourceMutation?.(chatId)
     if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return null
     const revision = state.headRevision
@@ -1203,6 +1267,12 @@ export function createIncrementalChatJournal(
           `${state.headRevision} != ${batch.baseRevision}`
       )
     }
+    if (suspectTailPaths.size > 0 && !repairSuspectTails(batch.chatId, state)) {
+      corruptSegmentRejects += 1
+      throw new Error(
+        `Incremental chat journal for ${batch.chatId} is damaged; refusing to append after it`
+      )
+    }
     // A deferred request escalates to sync for exactly one append after a
     // failed deferred flush (re-establishing durable ground before deferring
     // again), and whenever the pending set is saturated (backpressure).
@@ -1211,6 +1281,8 @@ export function createIncrementalChatJournal(
       !fsyncEscalatedChatIds.delete(batch.chatId) &&
       pendingDeferredCount < MAX_PENDING_DEFERRED_FSYNCS
     const line = `${JSON.stringify(batch)}\n`
+    // A write that throws part-way leaves a fragment only this mark remembers.
+    if (options.repairTornTailBeforeAppend) suspectTailPaths.add(journalPath(batch.chatId))
     let bytes: number
     if (options.descriptorCache && !deferred) {
       if (appendOptions?.durability !== 'deferred')
@@ -1222,6 +1294,7 @@ export function createIncrementalChatJournal(
         ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
         : appendLine(journalPath(batch.chatId), line, appendOptions?.durability !== 'deferred')
     }
+    if (options.repairTornTailBeforeAppend) suspectTailPaths.delete(journalPath(batch.chatId))
     if (!deferred) acknowledgeJournalBarrier(batch.chatId)
     if (deferred) deferredAppends += 1
     appends += 1
@@ -1629,6 +1702,9 @@ export function createIncrementalChatJournal(
     replayedBatches,
     skippedDuplicateBatches,
     tornTailsRecovered,
+    tornTailsTruncated,
+    tornTailBytesTruncated,
+    corruptSegmentRejects,
     tombstoneRejects
   })
 
