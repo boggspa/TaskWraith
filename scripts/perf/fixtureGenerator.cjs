@@ -77,6 +77,16 @@ const LIVE_ROUND_SEAT = Object.freeze({ provider: 'ollama', model: 'scripted-lla
  * daemon keeps turns per tag, so each lane's model work is told apart.
  */
 const LIVE_LANE_MODELS = Object.freeze(['scripted-llama:latest', 'scripted-llama:heavy'])
+/**
+ * The many-agent live workload: `threads` Ensemble threads of `seats` seats,
+ * every seat a live agent on the scripted model. The default asks for 200
+ * agents, the top of the routine load. `seatMode` says whether a thread's
+ * seats take turns (fan-out off) or run in parallel lanes (fan-out on).
+ */
+const MANY_AGENTS_DEFAULT = Object.freeze({ threads: 20, seats: 10, seatMode: 'serial' })
+/** A thread holds at most fifty participants (`MAX_ENSEMBLE_PARTICIPANTS`). */
+const MANY_AGENTS_LIMITS = Object.freeze({ maxThreads: 200, maxSeats: 50 })
+const MANY_AGENTS_SEAT_MODES = Object.freeze(['serial', 'parallel'])
 
 const TOOL_NAMES = Object.freeze([
   'read_file',
@@ -309,10 +319,19 @@ function deriveToolByteBudgets(toolCount, toolSerializedTargetBytes) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'|'many_agents_live'} options.workload
+ * @param {number} [options.threads] — many_agents_live only
+ * @param {number} [options.seats] — many_agents_live only
+ * @param {'serial'|'parallel'} [options.seatMode] — many_agents_live only
  */
 function resolveWorkloadShape(options) {
   const workload = options.workload
+  if (
+    workload !== 'many_agents_live' &&
+    [options.threads, options.seats, options.seatMode].some((value) => value !== undefined)
+  ) {
+    throw new Error('threads, seats and seatMode apply to many_agents_live only')
+  }
   switch (workload) {
     case '30seat': {
       const seatCount = 30
@@ -510,11 +529,61 @@ function resolveWorkloadShape(options) {
         liveSeats: Object.freeze({ ...LIVE_ROUND_SEAT, chatModels: LIVE_LANE_MODELS })
       }
     }
+    case 'many_agents_live': {
+      const { threads, seats, seatMode } = { ...MANY_AGENTS_DEFAULT, ...definedOnly(options) }
+      const { maxThreads, maxSeats } = MANY_AGENTS_LIMITS
+      if (!Number.isSafeInteger(threads) || threads < 1 || threads > maxThreads) {
+        throw new Error(`threads must be a whole number from 1 to ${maxThreads}`)
+      }
+      if (!Number.isSafeInteger(seats) || seats < 1 || seats > maxSeats) {
+        throw new Error(`seats must be a whole number from 1 to ${maxSeats}`)
+      }
+      if (!MANY_AGENTS_SEAT_MODES.includes(seatMode)) {
+        throw new Error('seatMode must be serial or parallel')
+      }
+      // The app refuses fan-out on a thread with fewer than two seats.
+      if (seatMode === 'parallel' && seats < 2) {
+        throw new Error('parallel seats need at least two seats in a thread')
+      }
+      // Light history, so what a run measures is the agents: an opening
+      // prompt and two earlier turns a seat, in well under 256 KiB a thread.
+      const turnsPerSeat = 2
+      return {
+        workload,
+        seatCount: seats,
+        chatCount: threads,
+        turnsPerSeat,
+        toolsPerAssistant: 1,
+        dualConcurrentRuns: false,
+        messageTarget: threads * (1 + seats * turnsPerSeat),
+        toolActivityTarget: threads * seats * turnsPerSeat,
+        chatSerializedTargetBytes: 96 * 1024,
+        toolSerializedTargetBytes: 64 * 1024,
+        soakTurns: 0,
+        messageTargetHint: threads * (1 + seats * turnsPerSeat),
+        // Each thread's seats run a tag of the thread's own, so the daemon
+        // tells one thread's model turns from another's.
+        liveSeats: Object.freeze({
+          ...LIVE_ROUND_SEAT,
+          chatModels: Object.freeze(
+            Array.from({ length: threads }, (_, index) => `scripted-llama:t${pad(index + 1, 3)}`)
+          )
+        }),
+        manyAgents: Object.freeze({ threads, seats, seatMode, agents: threads * seats })
+      }
+    }
     default: {
       const err = new Error(`Unknown workload: ${workload}`)
       throw err
     }
   }
+}
+
+/** The shape options a caller gave, without the ones left undefined. */
+function definedOnly({ threads, seats, seatMode }) {
+  return Object.fromEntries(
+    Object.entries({ threads, seats, seatMode }).filter(([, value]) => value !== undefined)
+  )
 }
 
 /**
@@ -696,7 +765,10 @@ function buildReplaySchedule(fixture) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'|'many_agents_live'} options.workload
+ * @param {number} [options.threads] — many_agents_live: how many threads
+ * @param {number} [options.seats] — many_agents_live: seats in each thread
+ * @param {'serial'|'parallel'} [options.seatMode] — many_agents_live: seats in turn or in parallel lanes
  * @param {number} [options.seed=42]
  * @param {number} [options.baseTimestamp]
  * @param {boolean} [options.includeHotRaw=true]
@@ -707,7 +779,12 @@ function buildReplaySchedule(fixture) {
  */
 function generatePerfFixture(options) {
   const seed = options.seed == null ? 42 : options.seed
-  const shape = resolveWorkloadShape({ workload: options.workload })
+  const shape = resolveWorkloadShape({
+    workload: options.workload,
+    threads: options.threads,
+    seats: options.seats,
+    seatMode: options.seatMode
+  })
   const scaleDown = options.scaleDown && options.scaleDown > 1 ? options.scaleDown : 1
   const scaledShape = { ...shape }
   if (scaleDown > 1) {
@@ -782,7 +859,9 @@ function generatePerfFixture(options) {
       model: scaledShape.liveSeats?.model ?? `${provider}-perf-model`,
       role: i === 0 ? 'Boss' : i === 1 ? 'Captain' : `Seat${i + 1}`,
       order: i,
-      enabled: true
+      enabled: true,
+      // A round fans out at its start only to seats staged as Scout.
+      ...(scaledShape.manyAgents?.seatMode === 'parallel' ? { stageRole: 'scout' } : {})
     })
   }
 
@@ -958,6 +1037,9 @@ function generatePerfFixture(options) {
       ensemble: {
         enabled: true,
         orchestrationMode: 'continuous',
+        ...(scaledShape.manyAgents
+          ? { fanoutPolicy: scaledShape.manyAgents.seatMode === 'parallel' ? 'all' : 'off' }
+          : {}),
         participants: chatParticipants,
         activeRound: {
           roundId: currentRoundId,
@@ -1127,6 +1209,8 @@ module.exports = {
   createPrng,
   LIVE_LANE_MODELS,
   LIVE_ROUND_SEAT,
+  MANY_AGENTS_DEFAULT,
+  MANY_AGENTS_LIMITS,
   resolveWorkloadShape,
   buildSyntheticRunHistory,
   deriveToolByteBudgets,
