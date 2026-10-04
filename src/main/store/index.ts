@@ -9882,6 +9882,9 @@ export class AppStore {
       removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
       incrementalChatPersistence.cancelCheckpointPreparations()
       for (const chatId of intent.chatIds) journalHostReferenceConnector?.cancelChat(chatId)
+      // Every cached descriptor goes first, the directory's included: one left
+      // open keeps an unlinked segment alive and writable.
+      incrementalJournalDescriptorCache?.retireSync()
       removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
       // Stage 3: the segmented store is a durable transcript copy; a global
       // clear must retire it (and its in-memory baselines) with the rest.
