@@ -1396,7 +1396,10 @@ import {
 import { settleClaudeSdkTerminal } from './providers/ClaudeSdkRunLifecycle'
 import type { ClaudeContextPreference } from './providers/ClaudeContextPreference'
 import { ProviderContextDiagnostics } from './providers/ProviderContextDiagnostics'
-import { createOrderedStreamPump } from './providers/CooperativeStreamPump'
+import {
+  createOrderedStreamPump,
+  orderedStreamPumpCounters
+} from './providers/CooperativeStreamPump'
 import { formatProviderContextPolicy } from '../shared/providerContextPolicy'
 import {
   buildBridgeApnsPusherFromSettings,
@@ -47468,7 +47471,11 @@ if (isGeminiMcpBridgeProcess) {
         transcriptVisibility: () => transcriptVisibilityLatency.snapshot(),
         transcriptTail: () => transcriptTailBroadcaster.counterSnapshot(),
         persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null,
-        workSpans: mainWorkSpanRecorder.section
+        workSpans: mainWorkSpanRecorder.section,
+        // Agent stdout intake per provider: how much queued, how often a turn
+        // ran out of budget, how deep the backlog got, and how often a stream
+        // had to be paused. Lag with none of these moving is not agent output.
+        providerOutputIntake: () => orderedStreamPumpCounters()
       }
     }), AppStore.getMainResidualWindowPort())
     mainPerfInstrumentationRef.start()

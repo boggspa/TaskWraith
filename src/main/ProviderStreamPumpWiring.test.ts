@@ -95,3 +95,25 @@ describe('provider stdout reaches its handler through one ordered pump', () => {
     expect(firstStatementText(listener(runner, 'child', 'close'))).toBe(`${pump.name}.flush()`)
   })
 })
+
+describe('the pump counters are readable from the running app', () => {
+  it('publishes them as a section of the main perf snapshot', () => {
+    const instrumentation = probe.callsTo(probe.source, 'createMainPerfInstrumentation')
+    expect(instrumentation).toHaveLength(1)
+    const options = instrumentation[0].arguments[0]
+    if (!options || !ts.isObjectLiteralExpression(options)) {
+      throw new Error('createMainPerfInstrumentation(…) is not called with an options literal')
+    }
+    const sections = options.properties.find(
+      (property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) && probe.text(property.name) === 'sections'
+    )?.initializer
+    if (!sections || !ts.isObjectLiteralExpression(sections)) {
+      throw new Error('createMainPerfInstrumentation(…) takes no `sections` literal')
+    }
+
+    // A function, not a value: a section is read on every poll, and a value
+    // would freeze the counters at whatever they were when the app booted.
+    expect(probe.propOf(sections, 'providerOutputIntake')).toBe('() => orderedStreamPumpCounters()')
+  })
+})
