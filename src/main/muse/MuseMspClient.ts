@@ -29,6 +29,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto'
 
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
 import type { ContextCompactionSignal } from '../../shared/contextCompaction'
+import { createOrderedStreamPump } from '../providers/CooperativeStreamPump'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { createMuseAnnounceSteerGate, MUSE_ANNOUNCE_STEER_TEXT } from './MuseAnnounceSteer'
 import {
@@ -1266,10 +1267,19 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     endProcess()
   }
 
+  // Lines are handled in arrival order in budgeted turns: a burst from the
+  // session host cannot hold the main loop, and nothing overtakes a deferred line.
+  const inboundLinePump = createOrderedStreamPump<string>({
+    label: 'muse',
+    source: { pause: () => child.stdout?.pause?.(), resume: () => child.stdout?.resume?.() },
+    visit: (line) => {
+      for (const frame of decodeMuseMspFrames(`${line}\n`).frames) handleFrame(frame)
+    }
+  })
   child.stdout?.on('data', (chunk) => {
-    const decoded = decodeMuseMspFrames(carry + chunk.toString())
-    carry = decoded.rest
-    for (const frame of decoded.frames) handleFrame(frame)
+    const lines = (carry + chunk.toString()).split('\n')
+    carry = lines.pop() ?? ''
+    inboundLinePump.pushAll(lines)
   })
   child.stderr?.on('data', () => {
     /* muse writes its banner to stderr; nothing here is user-facing */
@@ -1280,6 +1290,9 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   })
   let terminalCloseDelivered = false
   child.on('close', (code: number | null) => {
+    // Everything the host wrote is handled before the turn is closed: an answer
+    // or the turn's terminal may still be waiting behind a deferred line.
+    inboundLinePump.flush()
     if (terminalCloseDelivered) return
     terminalCloseDelivered = true
     closed = true
