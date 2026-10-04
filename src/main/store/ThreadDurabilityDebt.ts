@@ -20,6 +20,13 @@
  * to sync. What is noted while a barrier runs is never taken by that barrier:
  * a sync already asked for may have begun before the later write.
  *
+ * One thing noted while a barrier runs does change what it pays. Files are
+ * synced by name, and a sync that was asked for may reach the name only after
+ * the file has been renamed, and find nothing there, or a newer file. So a
+ * writer that renames a file with unsynced bytes says where it came from, and
+ * a barrier that was asked for the old name and is still syncing files syncs
+ * the new name too before it settles.
+ *
  * Threads do not wait for each other here. A barrier hands all its files to
  * the port at once, and how many syncs run together is the port's decision.
  *
@@ -47,8 +54,11 @@ export type ThreadDurabilityFileOwner = Exclude<ThreadDurabilityOwner, 'director
 
 /** One thing a write left owing. */
 export type ThreadDurabilityDebtNote =
-  /** A file whose bytes were written and not synced. */
-  | { file: string; owner: ThreadDurabilityFileOwner }
+  /**
+   * A file whose bytes were written and not synced. `renamedFrom` is the name
+   * those bytes were under until now, when the file has just been renamed.
+   */
+  | { file: string; owner: ThreadDurabilityFileOwner; renamedFrom?: string }
   /** A directory in which a name was created, renamed or removed. */
   | { directory: string }
 
@@ -86,6 +96,8 @@ export interface ThreadDurabilityDebtSnapshot {
     shared: number
     /** Barriers that went to the port. */
     rounds: number
+    /** Files a running barrier took on because they were renamed under it. */
+    renamedUnderway: number
     /** Of those, the ones in which a sync failed. */
     failed: number
     /** From each call to `barrier` to its settling, summed and at its longest. */
@@ -120,6 +132,12 @@ interface ThreadState {
   running: Promise<void> | null
   /** The one barrier that follows it, for whoever needs more than it took. */
   next: Promise<void> | null
+  /**
+   * Set while the running barrier is still syncing files: every name it has
+   * been asked for, and the names it has yet to be asked for because a file
+   * it was asked for was renamed.
+   */
+  syncing: { asked: Set<string>; renamed: Map<string, ThreadDurabilityFileOwner> } | null
 }
 
 export function createThreadDurabilityDebt(
@@ -136,6 +154,7 @@ export function createThreadDurabilityDebt(
     idle: 0,
     shared: 0,
     rounds: 0,
+    renamedUnderway: 0,
     failed: 0,
     waitMsTotal: 0,
     longestWaitMs: 0
@@ -147,12 +166,24 @@ export function createThreadDurabilityDebt(
   const note: NoteThreadDurabilityDebt = (chatId, debt) => {
     let state = threads.get(chatId)
     if (!state) {
-      state = { files: new Map(), directories: new Set(), running: null, next: null }
+      state = {
+        files: new Map(),
+        directories: new Set(),
+        running: null,
+        next: null,
+        syncing: null
+      }
       threads.set(chatId, state)
     }
     if ('file' in debt) {
       owners[debt.owner].noted += 1
       state.files.set(debt.file, debt.owner)
+      const { syncing } = state
+      if (debt.renamedFrom !== undefined && syncing?.asked.has(debt.renamedFrom)) {
+        syncing.asked.add(debt.file)
+        syncing.renamed.set(debt.file, debt.owner)
+        barriers.renamedUnderway += 1
+      }
     } else {
       owners.directory.noted += 1
       state.directories.add(debt.directory)
@@ -182,19 +213,34 @@ export function createThreadDurabilityDebt(
   ): Promise<void> => {
     const failures: unknown[] = []
     const unpaidFiles = new Map<string, ThreadDurabilityFileOwner>()
-    const fileOutcomes = await syncAll(files.keys(), (path) => port.syncFile(path))
+    const syncing = {
+      asked: new Set(files.keys()),
+      renamed: new Map<string, ThreadDurabilityFileOwner>()
+    }
+    state.syncing = syncing
     let index = 0
-    for (const [path, owner] of files) {
-      const outcome = fileOutcomes[index]
-      index += 1
-      if (outcome.status === 'fulfilled') {
-        owners[owner][outcome.value === 'missing' ? 'missing' : 'synced'] += 1
-      } else {
-        owners[owner].failed += 1
-        unpaidFiles.set(path, owner)
-        failures.push(outcome.reason)
+    // The files owed when the barrier began, then any of them renamed since.
+    // A file renamed under a barrier that has already failed waits for the
+    // next one, where the note that named it has put it.
+    for (let asked = files; asked.size > 0 && failures.length === 0; asked = syncing.renamed) {
+      syncing.renamed = new Map()
+      const outcomes = await syncAll(asked.keys(), (path) => port.syncFile(path))
+      index = 0
+      for (const [path, owner] of asked) {
+        const outcome = outcomes[index]
+        index += 1
+        if (outcome.status === 'fulfilled') {
+          owners[owner][outcome.value === 'missing' ? 'missing' : 'synced'] += 1
+        } else {
+          owners[owner].failed += 1
+          unpaidFiles.set(path, owner)
+          failures.push(outcome.reason)
+        }
       }
     }
+    // From here every sync this barrier asked for has run, each before any
+    // rename still to come.
+    state.syncing = null
 
     let unpaidDirectories = directories
     if (failures.length === 0) {
