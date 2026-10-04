@@ -461,20 +461,41 @@ export function createIncrementalChatJournal(
   // here": re-fsyncing the directory for a leftover empty file is harmless.
   const createdByThisAppend = (fd: number): boolean => fs.fstatSync(fd).size === 0
 
+  /**
+   * Put the whole line in the file, or throw. One write call may take only
+   * part of what it is given without failing; a line left short there would
+   * count as appended and take every later line with it on the next load.
+   */
+  const writeLine = (fd: number, line: string): number => {
+    const bytes = Buffer.from(line, 'utf8')
+    let written = 0
+    while (written < bytes.length) {
+      const count = fs.writeSync(fd, bytes, written, bytes.length - written)
+      if (count <= 0) {
+        throw new Error(
+          `Incremental chat journal wrote ${written} of ${bytes.length} bytes of a line`
+        )
+      }
+      written += count
+    }
+    return bytes.length
+  }
+
   const appendLine = (filePath: string, line: string, explicitImmediate = false): number => {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created = false
+    let bytes: number
     try {
       created = createdByThisAppend(fd)
-      fs.writeSync(fd, line)
+      bytes = writeLine(fd, line)
       if (explicitImmediate) observeResidual(options.residualObserver, 'd2d3Durability')
       fs.fsyncSync(fd)
     } finally {
       fs.closeSync(fd)
     }
     if (created) fsyncDirectory()
-    return Buffer.byteLength(line, 'utf8')
+    return bytes
   }
 
   /** D1 append: the write is synchronous (ordering + same-process visibility
@@ -486,6 +507,21 @@ export function createIncrementalChatJournal(
     }
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
+    let created: boolean
+    let bytes: number
+    try {
+      created = createdByThisAppend(fd)
+      bytes = writeLine(fd, line)
+    } catch (error) {
+      // The line is not in the file, or not all of it: the append has failed.
+      // Only a failure to schedule the flush, below, is made good in line.
+      try {
+        fs.closeSync(fd)
+      } catch {
+        /* the write failure is the one to report */
+      }
+      throw error
+    }
     let entries = pendingDeferredByPath.get(filePath)
     if (!entries) {
       entries = new Set()
@@ -493,8 +529,6 @@ export function createIncrementalChatJournal(
     }
     const entry: PendingDeferredFsync = { fd, settled: false, waiters: [] }
     try {
-      const created = createdByThisAppend(fd)
-      fs.writeSync(fd, line)
       // Only the file's flush is deferred. Its name is made durable here, once
       // per file, so no later barrier on this path can outrun it.
       if (created) fsyncDirectory()
@@ -532,7 +566,7 @@ export function createIncrementalChatJournal(
       }
       void error
     }
-    return Buffer.byteLength(line, 'utf8')
+    return bytes
   }
 
   const drainDeferredDurability = (): number => {
