@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 const geminiApiSource = readFileSync(new URL('./GeminiApiProvider.ts', import.meta.url), 'utf8')
+const mainProviderRunTerminationSource = readFileSync(
+  new URL('./services/MainProviderRunTermination.ts', import.meta.url),
+  'utf8'
+)
 
 function between(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -625,13 +629,19 @@ describe('one-shot provider transport history join', () => {
       'async function containExecutionGraphTerminalJoin'
     )
 
-    expect(termination).toContain('providerAdapterRunsInFlight.get(runId)')
-    expect(termination).toContain('providerTransportOperations.get(runId)')
-    expect(termination).toContain("terminateExactProviderSession(provider, runId, 'cancelled')")
-    expect(termination).toContain('waitForProviderOperationSettlement(operation, 5_000)')
-    expect(termination).toContain("session.process?.kill('SIGKILL')")
-    expect(termination).toContain('if (!settled.every(Boolean)) return false')
-    expect(termination).toContain(
+    // History deletion hands both in-flight registries and the exact-session
+    // terminator to the shared join; the bounded waits live in that module.
+    expect(termination).toContain('return terminateAndJoinMainProviderRun(')
+    expect(termination).toContain('providerAdapterRunsInFlight.get(id)')
+    expect(termination).toContain('providerTransportOperations.get(id)')
+    expect(termination).toContain("terminateExactProviderSession(owner, id, 'cancelled')")
+    expect(termination).toContain('wait: waitForProviderOperationSettlement')
+
+    expect(mainProviderRunTerminationSource).toContain('ports.wait(operation, timeout)')
+    expect(mainProviderRunTerminationSource).toContain('let settled = await join(5_000)')
+    expect(mainProviderRunTerminationSource).toContain("session.process?.kill('SIGKILL')")
+    expect(mainProviderRunTerminationSource).toContain('if (!settled.every(Boolean)) return false')
+    expect(mainProviderRunTerminationSource).toContain(
       '// A fresh process has lost the child PID/start-time identity needed to'
     )
   })

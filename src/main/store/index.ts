@@ -1175,7 +1175,7 @@ const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
   : undefined
 let sharedCheckpointPreparationPort:
   | import('./CheckpointPreparationProtocol').CheckpointPreparationPort
-  | undefined
+  | undefined = undefined
 const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDir, {
   residualObserver: baselineResidualObserver,
   rotationEnabled: journalPreparationFlags.rotation,

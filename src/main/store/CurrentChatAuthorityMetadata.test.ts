@@ -84,6 +84,8 @@ describe('current chat authority metadata', () => {
       fs.writeFileSync(`${chatPath}.replacement`, replacement)
       fs.utimesSync(`${chatPath}.replacement`, stat.atime, stat.mtime)
       fs.renameSync(`${chatPath}.replacement`, chatPath)
+      // @portability-ok: the replacement existed beside the original before the
+      // rename-over, so the two inodes can never be equal on any filesystem.
       expect(fs.statSync(chatPath).ino).not.toBe(stat.ino)
       expect(AppStore.getCurrentChatAuthorityMetadata(chatId)?.workspaceId).toBe('workspace-b')
     } finally {

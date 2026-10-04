@@ -63,9 +63,15 @@ describe('Host compatibility checkpoint wiring in store/index.ts', () => {
     )
     const journal = store.callsTo(store.source, 'createIncrementalChatJournal')
     expect(journal).toHaveLength(1)
+    // The journal gets a preparation port only under the worker flag. The port
+    // forwards to the shared Host-reference lane, which is itself bound only
+    // when that same worker was constructed.
     expect(store.propText(journal[0], 1, 'checkpointPreparation')).toBe(
-      'checkpointPreparationWorker'
+      'checkpointPreparationWorker ? { start: (source) => sharedCheckpointPreparationPort?.start(source) ?? null } : undefined'
     )
+    expect(store.assignmentsTo(store.source, 'sharedCheckpointPreparationPort')).toEqual([
+      'checkpointPreparationWorker && journalHostReferenceConnector ? journalHostReferenceConnector.checkpointPort(checkpointPreparationWorker) : undefined'
+    ])
   })
 
   it('retires worker custody before Host-owned direct erasure and shutdown drains', () => {

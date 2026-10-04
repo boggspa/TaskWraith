@@ -191,7 +191,7 @@ async function prepare(root, repo = path.resolve(__dirname, '..')) {
   const snapshot = path.join(root, 'source-snapshot')
   fs.mkdirSync(snapshot)
   const sourceSha256 = {}
-  for (const [name, file] of Object.entries(sourcePaths)) {
+  for (const file of Object.values(sourcePaths)) {
     const bytes = fs.readFileSync(path.join(repo, file))
     sourceSha256[file] = createHash('sha256').update(bytes).digest('hex')
     fs.writeFileSync(path.join(snapshot, path.basename(file)), bytes, { mode: 0o400 })

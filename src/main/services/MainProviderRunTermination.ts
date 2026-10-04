@@ -22,6 +22,10 @@ export async function terminateAndJoinMainProviderRun<Provider>(
   const operations = [...new Set(ports.getOperations(runId))]
   const join = (timeout: number): Promise<boolean[]> =>
     Promise.all(operations.map((operation) => ports.wait(operation, timeout)))
+  // A fresh process has lost the child PID/start-time identity needed to
+  // prove that a CLI/ACP transport died with Electron. Never manufacture a
+  // provider receipt from missing in-memory state; recovery remains fenced
+  // until launch supervision can supply durable parent-death/exit evidence.
   if (!session) return operations.length > 0 && (await join(10_000)).every(Boolean)
   if (session.provider !== provider) return false
   const active = (): boolean => ports.isActive(ports.getSession(runId)?.status ?? 'cancelled')

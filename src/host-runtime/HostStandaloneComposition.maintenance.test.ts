@@ -44,6 +44,9 @@ describe('composition production transaction manifest maintenance', () => {
     const original = HostTransactionLog.prototype.compact
     const flush = vi.spyOn(HostRuntimeBootstrap.prototype, 'flush')
     let live: HostTransactionLog | undefined
+    const captureLive = (log: HostTransactionLog): void => {
+      live = log
+    }
     let hold: Promise<void> | undefined
     let release: (() => void) | undefined
     let unsubscribeCalled = false
@@ -60,7 +63,7 @@ describe('composition production transaction manifest maintenance', () => {
     const compact = vi
       .spyOn(HostTransactionLog.prototype, 'compact')
       .mockImplementation(async function (this: HostTransactionLog, receipts) {
-        live = this
+        captureLive(this)
         if (hold) await hold
         return original.call(this, receipts)
       })
