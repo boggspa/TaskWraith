@@ -2872,7 +2872,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-29","kind":"addition","title":"New Additions","body":"Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-10-04","kind":"addition","title":"New Additions","body":"Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"claude","label":"Claude","models":[
               {"name":"Sonnet 5.5","blurb":"Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."},
               {"name":"Opus 5.5","blurb":"Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."},
@@ -2926,6 +2926,9 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Ministral 3 (3B)","blurb":"Ministral 3 (3B) is the compact variant for lighter tasks and lower cost."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
+              {"name":"Clef & Clef Flash","blurb":"Cloudflare's multimodal decision models, 27B and 9B — a state and typed questions in, choices out.","accentProvider":"cloudflare"},
+              {"name":"Tev1 (0.8B & 4B)","blurb":"Together AI's fast decision models for classification — typed choices, not prose.","accentProvider":"together"},
+              {"name":"Nimble (9B)","blurb":"Bespoke Labs' 9B decision model for fast, typed classification.","accentProvider":"bespoke"},
               {"name":"DeepSeek V4.1 Flash (Cloud)","blurb":"DeepSeek's 763B MoE on Ollama Cloud — 1M context, vision and tools, Low/High/Max thinking.","accentProvider":"deepseek"},
               {"name":"GLM 5.2 (Cloud)","blurb":"Z.ai's 1M-context flagship on Ollama Cloud — signed in, no local VRAM required.","accentProvider":"zai"},
               {"name":"MiniMax M3 (Cloud)","blurb":"MiniMax M3 on Ollama Cloud — a 1M context window for long-horizon agentic work.","accentProvider":"minimax"},
@@ -2939,6 +2942,9 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
             ]},
             {"provider":"pi","label":"Pi","models":[
+              {"name":"Pareto 26.10 Preview (OpenRouter)","blurb":"Unbiased's next Pareto in preview — 1M context with vision, no effort axis, $0.80/$3.20 per Mtok.","accentProvider":"unbiased"},
+              {"name":"Ling 3.1 Flash (OpenRouter Free)","blurb":"inclusionAI's 560B hybrid-reasoning MoE (25B active) — 262K, reasoning on or off, free.","accentProvider":"inclusionai"},
+              {"name":"Apodex 1.1 Mini (OpenRouter Free)","blurb":"Apodex's reasoning-first research and forecasting model — 262K, reasoning on or off, free.","accentProvider":"apodex"},
               {"name":"Space Bunny Alpha (OpenRouter Free)","blurb":"A free stealth preview from an anonymous lab — 1M context, vision, and always-on Low-to-Max reasoning.","accentProvider":"stealth"},
               {"name":"Pareto (OpenRouter)","blurb":"Unbiased's multimodal frontier composite — 262K with vision, no effort axis, $2.50/$7.50 per Mtok.","accentProvider":"unbiased"},
               {"name":"Jev 1.13 (OpenRouter)","blurb":"TypeSafe's first System One structured decision model — 32K, typed choices not prose. Coming soon.","accentProvider":"typesafe"},

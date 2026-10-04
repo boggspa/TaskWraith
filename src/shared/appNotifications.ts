@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-29'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-04'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,7 +162,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -403,6 +403,26 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Ollama',
         models: [
           {
+            // The 2026-10-04 local decision models lead the group. Each blurb says
+            // what they are: classifiers that return typed choices, not chat or
+            // coding models.
+            name: 'Clef & Clef Flash',
+            blurb:
+              "Cloudflare's multimodal decision models, 27B and 9B — a state and typed questions in, choices out.",
+            accentProvider: 'cloudflare'
+          },
+          {
+            name: 'Tev1 (0.8B & 4B)',
+            blurb:
+              "Together AI's fast decision models for classification — typed choices, not prose.",
+            accentProvider: 'together'
+          },
+          {
+            name: 'Nimble (9B)',
+            blurb: "Bespoke Labs' 9B decision model for fast, typed classification.",
+            accentProvider: 'bespoke'
+          },
+          {
             name: 'DeepSeek V4.1 Flash (Cloud)',
             blurb:
               "DeepSeek's 763B MoE on Ollama Cloud — 1M context, vision and tools, Low/High/Max thinking.",
@@ -472,8 +492,28 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Pi',
         models: [
           {
-            // Leads the group: the newest story on this lineup (released
-            // 2026-09-23). `stealth` is the gold override for OpenRouter's
+            // The 2026-10-01/02 OpenRouter routes lead the group. Pareto 26.10
+            // Preview shares the stable route's `unbiased` accent; inclusionAI and
+            // Apodex wear their own minted overrides (PI_UPSTREAM_BRANDS).
+            name: 'Pareto 26.10 Preview (OpenRouter)',
+            blurb:
+              "Unbiased's next Pareto in preview — 1M context with vision, no effort axis, $0.80/$3.20 per Mtok.",
+            accentProvider: 'unbiased'
+          },
+          {
+            name: 'Ling 3.1 Flash (OpenRouter Free)',
+            blurb:
+              "inclusionAI's 560B hybrid-reasoning MoE (25B active) — 262K, reasoning on or off, free.",
+            accentProvider: 'inclusionai'
+          },
+          {
+            name: 'Apodex 1.1 Mini (OpenRouter Free)',
+            blurb:
+              "Apodex's reasoning-first research and forecasting model — 262K, reasoning on or off, free.",
+            accentProvider: 'apodex'
+          },
+          {
+            // Released 2026-09-23, and the lead of the previous lineup. `stealth` is the gold override for OpenRouter's
             // anonymous namespace — see PI_UPSTREAM_BRANDS. The blurb says
             // "always-on" on purpose: every other reasoning row in this Pi
             // group can be switched Off, and this route has no Off to offer.

@@ -467,6 +467,9 @@ describe('buildRemoteFirstLaunchState', () => {
     ])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'Clef & Clef Flash',
+      'Tev1 (0.8B & 4B)',
+      'Nimble (9B)',
       'DeepSeek V4.1 Flash (Cloud)',
       'GLM 5.2 (Cloud)',
       'MiniMax M3 (Cloud)',
@@ -480,6 +483,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'cloudflare',
+      'together',
+      'bespoke',
       'deepseek',
       'zai',
       'minimax',
@@ -500,6 +506,9 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Pareto 26.10 Preview (OpenRouter)',
+      'Ling 3.1 Flash (OpenRouter Free)',
+      'Apodex 1.1 Mini (OpenRouter Free)',
       'Space Bunny Alpha (OpenRouter Free)',
       'Pareto (OpenRouter)',
       'Jev 1.13 (OpenRouter)',
@@ -525,6 +534,9 @@ describe('buildRemoteFirstLaunchState', () => {
       // The projection iOS actually receives must carry the brand overrides
       // too, or the rows arrive with no accent on the phone while the desktop
       // card shows the stealth gold, the vermilion and the magenta.
+      'unbiased',
+      'inclusionai',
+      'apodex',
       'stealth',
       'unbiased',
       'typesafe',

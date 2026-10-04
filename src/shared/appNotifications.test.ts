@@ -295,6 +295,9 @@ describe('notification registry', () => {
     // Signed-in Cloud rows lead, then the newest curated local tags. Each
     // spoofs its upstream brand hue whichever source serves it.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'Clef & Clef Flash',
+      'Tev1 (0.8B & 4B)',
+      'Nimble (9B)',
       'DeepSeek V4.1 Flash (Cloud)',
       'GLM 5.2 (Cloud)',
       'MiniMax M3 (Cloud)',
@@ -308,6 +311,9 @@ describe('notification registry', () => {
       'Rnj-1'
     ])
     expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'cloudflare',
+      'together',
+      'bespoke',
       'deepseek',
       'zai',
       'minimax',
@@ -322,9 +328,11 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
-      // Space Bunny Alpha leads: it is the newest story on the card (released
-      // 2026-09-23). Pareto and Jev (2026-09-17) follow, Jev announced ahead of
-      // its OpenRouter launch.
+      // The 2026-10-01/02 OpenRouter routes lead, then Space Bunny Alpha
+      // (2026-09-23), then Pareto and Jev (2026-09-17).
+      'Pareto 26.10 Preview (OpenRouter)',
+      'Ling 3.1 Flash (OpenRouter Free)',
+      'Apodex 1.1 Mini (OpenRouter Free)',
       'Space Bunny Alpha (OpenRouter Free)',
       'Pareto (OpenRouter)',
       'Jev 1.13 (OpenRouter)',
@@ -352,6 +360,11 @@ describe('notification registry', () => {
       // `stealth` is the override for OpenRouter's anonymous namespace. Without
       // it the row falls back to the generic OpenRouter red, which a stealth
       // preview must not wear — OpenRouter is not this model's developer.
+      // Ahead of it: the Pareto preview reuses `unbiased`, while inclusionAI
+      // and Apodex each wear an override minted on 2026-10-04.
+      'unbiased',
+      'inclusionai',
+      'apodex',
       'stealth',
       // Both 2026-09-17 routes wear their own brand override — see
       // PI_UPSTREAM_BRANDS. Unbiased carries a burnt vermilion (its own red is
