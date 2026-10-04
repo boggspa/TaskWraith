@@ -750,10 +750,22 @@ const hostPersistShadowChatIds = new Set<string>()
  * The outcome is a pure function of the file and the shadow's revision and
  * transcript, so while all four are unchanged the answer is still "not
  * caught up" and the read is skipped. Any Host landing changes the stat.
+ *
+ * `onDiskRevision` is the revision that read found in the file, or null when
+ * the file could not be parsed. While agents stream, the shadow moves several
+ * times a second and the file does not, so keying the skip on the shadow alone
+ * still parsed the whole file once per save. An unchanged file that was behind
+ * the shadow by revision is behind every later shadow too.
  */
 const hostShadowReconcileMissByChatId = new Map<
   string,
-  { mtimeMs: number; size: number; revision: number; messageCount: number }
+  {
+    mtimeMs: number
+    size: number
+    revision: number
+    messageCount: number
+    onDiskRevision: number | null
+  }
 >()
 
 /**
@@ -6244,23 +6256,31 @@ export class AppStore {
           const shadowRevision = chatPersistenceRevision(cached.record)
           const shadowMessageCount = cached.record.messages?.length ?? 0
           const miss = hostShadowReconcileMissByChatId.get(chatId)
+          const fileUnchangedSinceMiss =
+            miss !== undefined && miss.mtimeMs === stat.mtimeMs && miss.size === stat.size
           const unchangedSinceMiss =
-            miss !== undefined &&
-            miss.mtimeMs === stat.mtimeMs &&
-            miss.size === stat.size &&
-            miss.revision === shadowRevision &&
-            miss.messageCount === shadowMessageCount
+            fileUnchangedSinceMiss &&
+            ((miss.revision === shadowRevision && miss.messageCount === shadowMessageCount) ||
+              (miss.onDiskRevision !== null && miss.onDiskRevision < shadowRevision))
           const onDiskRaw = unchangedSinceMiss ? null : readJson<ChatRecord | null>(chatPath, null)
+          let onDisk: ChatRecord | null = null
           if (!unchangedSinceMiss) {
-            hostShadowReconcileMissByChatId.set(chatId, {
+            const reconciled = {
               mtimeMs: stat.mtimeMs,
               size: stat.size,
               revision: shadowRevision,
-              messageCount: shadowMessageCount
-            })
+              messageCount: shadowMessageCount,
+              onDiskRevision: null as number | null
+            }
+            // Recorded before the record is normalized, so a file that cannot
+            // be normalized is still not parsed again while nothing changes.
+            hostShadowReconcileMissByChatId.set(chatId, reconciled)
+            if (onDiskRaw) {
+              onDisk = this.normalizeChatRecord(onDiskRaw)
+              reconciled.onDiskRevision = chatPersistenceRevision(onDisk)
+            }
           }
-          if (onDiskRaw) {
-            const onDisk = this.normalizeChatRecord(onDiskRaw)
+          if (onDisk) {
             if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
               // Revision alone is not coverage: a Host-lineage record that
               // landed through the stale-save truncation hole can outrank the

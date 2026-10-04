@@ -470,6 +470,133 @@ describe('HostEnsemblePersistWiring', () => {
     utimesSync(chatPath, later, later)
     expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
   })
+
+  /** Pads the titles of two records so both serialize to the same byte length. */
+  function serializedToSameSize(
+    first: Record<string, unknown>,
+    second: Record<string, unknown>
+  ): [string, string] {
+    const pad = (record: Record<string, unknown>, spaces: number): string =>
+      JSON.stringify({ ...record, title: `${String(record.title)}${' '.repeat(spaces)}` })
+    const gap = Buffer.byteLength(pad(first, 0)) - Buffer.byteLength(pad(second, 0))
+    return [pad(first, Math.max(0, -gap)), pad(second, Math.max(0, gap))]
+  }
+
+  it('does not re-read an unchanged record file after the shadow moves further ahead of it', async () => {
+    const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-shadow-reread-advancing'
+    const chatsDir = join(profilePath, 'chats')
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
+    const [stale, caughtUp] = serializedToSameSize(
+      { ...base, title: 'Stale', persistenceRevision: 0 },
+      { ...base, title: 'Landed', persistenceRevision: 99, updatedAt: 3000 }
+    )
+    writeFileSync(chatPath, stale)
+    chmodSync(chatPath, 0o600)
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+    utimesSync(chatPath, pinned, pinned)
+    AppStore.saveChat({ ...base, title: 'Shadow' } as never)
+    // This read parses the file once and finds it behind the shadow.
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+    // Same size, same mtime, caught-up content: only a re-read could see it.
+    writeFileSync(chatPath, caughtUp)
+    utimesSync(chatPath, pinned, pinned)
+    // The shadow moves on, as it does several times a second while agents
+    // stream. The file was behind the older shadow and has not changed, so it
+    // is behind this one too, and parsing it again could only repeat that.
+    AppStore.saveChat({ ...AppStore.getChat(chatId)!, title: 'Shadow, later' } as never)
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow, later')
+
+    const later = new Date(pinned.getTime() + 5000)
+    utimesSync(chatPath, later, later)
+    expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
+  })
+
+  it.each([
+    ['well ahead of', 97],
+    ['level with', 0]
+  ])(
+    're-reads an unchanged record file that was refused for missing rows once the shadow changes (file %s the new shadow)',
+    async (_position, ahead) => {
+      const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+      const chatId = 'chat-shadow-reread-coverage'
+      const chatsDir = join(profilePath, 'chats')
+      const chatPath = join(chatsDir, `${chatId}.json`)
+      mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+      const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
+      const prompt = (base.messages as unknown[])[0]
+      const reply = {
+        id: 'assistant-reply-1',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-08-27T00:00:01.000Z'
+      }
+      AppStore.saveChat({ ...base, title: 'Shadow', messages: [prompt, reply] } as never)
+      const nextShadowRevision = (AppStore.getChat(chatId)?.persistenceRevision ?? 0) + 1
+      // The Host lands a record that is not behind the shadow by revision but
+      // lacks a row the shadow carries: refused for coverage, not for revision.
+      const landedRevision = nextShadowRevision + ahead
+      const [uncovering, covering] = serializedToSameSize(
+        { ...base, title: 'Regressed', persistenceRevision: landedRevision, messages: [prompt] },
+        {
+          ...base,
+          title: 'Landed',
+          persistenceRevision: landedRevision,
+          messages: [prompt, reply]
+        }
+      )
+      writeFileSync(chatPath, uncovering)
+      chmodSync(chatPath, 0o600)
+      const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+      utimesSync(chatPath, pinned, pinned)
+      expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+      // Same size and mtime again, now covering every row the shadow has.
+      writeFileSync(chatPath, covering)
+      utimesSync(chatPath, pinned, pinned)
+      expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+      // The file was not behind by revision, so nothing rules out that it now
+      // covers a changed shadow: the next read after a change must look again.
+      AppStore.saveChat({ ...AppStore.getChat(chatId)!, title: 'Shadow, later' } as never)
+      expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
+      expect(AppStore.getChat(chatId)?.persistenceRevision).toBe(landedRevision)
+    }
+  )
+
+  it('re-reads a record file it could not parse once the shadow changes', async () => {
+    const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-shadow-reread-unparsed'
+    const chatsDir = join(profilePath, 'chats')
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
+    const landed = JSON.stringify({
+      ...base,
+      title: 'Landed',
+      persistenceRevision: 99,
+      updatedAt: 3000
+    })
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+    AppStore.saveChat({ ...base, title: 'Shadow' } as never)
+    // A file caught mid-write: nothing is learned about its revision.
+    writeFileSync(chatPath, '{'.padEnd(Buffer.byteLength(landed), ' '))
+    chmodSync(chatPath, 0o600)
+    utimesSync(chatPath, pinned, pinned)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    writeFileSync(chatPath, landed)
+    utimesSync(chatPath, pinned, pinned)
+    AppStore.saveChat({ ...AppStore.getChat(chatId)!, title: 'Shadow, later' } as never)
+    expect(AppStore.getChat(chatId)?.title).toBe('Landed')
+  })
   it.each(['acknowledged', 'host_unavailable', 'revision_conflict'] as const)(
     'waits for the only durable Host copy after journal failure: %s',
     async (outcome) => {
