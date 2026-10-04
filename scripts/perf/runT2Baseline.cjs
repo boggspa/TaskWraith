@@ -1677,7 +1677,10 @@ Options:
   --live-round-timeout-ms=<ms>    How long each warm-up and smoke round may take to settle,
                                   30000..3600000 (default 180000). A heavy chat's first round can
                                   need more (requires --live-rounds or --live-lanes). With
-                                  --live-agents it also bounds each thread's rounds
+                                  --live-agents it also bounds each thread's rounds and the
+                                  wait for every thread's first round to end (600000 each
+                                  unless given): a round is several model turns a seat, so
+                                  raise it for a large shape
   --phase-baseline=<report.json>  A baseline capture's perf-t2-report.json for the phase exits'
                                   bytes comparison; repeat for several (requires --live-lanes).
                                   Without one that exit is reported not_measured
@@ -2897,8 +2900,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               nowMs: replayNowMs,
               createHostSampler: createUnionHostSampler,
               ...(args.agentWindowMs !== undefined ? { windowMs: args.agentWindowMs } : {}),
+              // The operator's bound on a round is also the bound on the
+              // wait for every thread's first round to end: with many
+              // threads at once that wait is the longest of the phase.
               ...(args.liveRoundTimeoutMs !== undefined
-                ? { laneOptions: { roundTimeoutMs: args.liveRoundTimeoutMs } }
+                ? {
+                    leadInTimeoutMs: args.liveRoundTimeoutMs,
+                    laneOptions: { roundTimeoutMs: args.liveRoundTimeoutMs }
+                  }
                 : {}),
               onWindow: (window) =>
                 updateProgress(

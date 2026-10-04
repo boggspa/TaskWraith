@@ -59,8 +59,10 @@ const { readMainPerfWindow, readMainWorkSpanWindow } = require('./t2LiveLanes.cj
 
 const DEFAULT_OPTIONS = Object.freeze({
   windowMs: 120_000,
-  // A first round of ten seats one after another is about 20 s; behind a
-  // full pool it is longer.
+  // Every thread's first round must end before the window. A round is
+  // several model turns a seat and the app's own time per turn grows with
+  // the threads running, so a large shape needs longer: the runner raises
+  // this with the operator's bound on a round.
   leadInTimeoutMs: 600_000,
   leadInPollMs: 500,
   settleMarginMs: 30_000,

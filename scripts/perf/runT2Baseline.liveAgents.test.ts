@@ -138,6 +138,7 @@ type AgentsCall = {
   seatMode: string
   configuredTurnMs: number
   windowMs?: number
+  leadInTimeoutMs?: number
   laneOptions?: Record<string, unknown>
   readDaemonTurns: (range: { fromMs: number; toMs: number }) => Promise<unknown>
   nowMs: unknown
@@ -412,7 +413,9 @@ describe('runT2Baseline --live-agents launch wiring', () => {
     // The scripted model's own pace: 64 chunks 25 ms apart.
     expect(call.configuredTurnMs).toBe(1_600)
     expect(typeof call.nowMs).toBe('function')
+    // The phase keeps its own bounds unless the operator names one.
     expect(call).not.toHaveProperty('laneOptions')
+    expect(call).not.toHaveProperty('leadInTimeoutMs')
     // Main's reads go to main's inspector, page calls to the renderer.
     const probes = socketSends.filter((send) => send.expression?.endsWith(' probe'))
     expect(probes).toEqual([
@@ -505,11 +508,13 @@ describe('runT2Baseline --live-agents launch wiring', () => {
   it('gives every thread’s rounds the timeout the operator asked for', async () => {
     const { error, agentsCalls, roundCalls } = await launchAgents(true, [
       ...SMALL,
-      '--live-round-timeout-ms=600000'
+      '--live-round-timeout-ms=900000'
     ])
     expect(error).toBeNull()
-    expect(agentsCalls[0].laneOptions).toEqual({ roundTimeoutMs: 600_000 })
-    expect(roundCalls.map((round) => round.timeoutMs)).toEqual([600_000, 600_000])
+    expect(agentsCalls[0].laneOptions).toEqual({ roundTimeoutMs: 900_000 })
+    // The wait for every thread's first round to end is a round long.
+    expect(agentsCalls[0].leadInTimeoutMs).toBe(900_000)
+    expect(roundCalls.map((round) => round.timeoutMs)).toEqual([900_000, 900_000])
   })
 
   it('smokes the first thread only when the phase is not asked for', async () => {
