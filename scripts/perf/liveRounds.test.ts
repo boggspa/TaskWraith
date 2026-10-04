@@ -28,6 +28,12 @@ const live = require('./liveRounds.cjs') as {
     baseUrl: string,
     options: unknown
   ) => Promise<{ started: number; done: number; busyMs: number; maxQuietMs: number }>
+  readScriptedDaemonTurns: (
+    baseUrl: string,
+    options: unknown
+  ) => Promise<
+    Array<{ model: string; startedAtMs: number; endedAtMs: number | null; outcome: string }>
+  >
   roundStateExpression: (chatId: string) => string
   runLiveSmokeRound: (options: Record<string, unknown>) => Promise<Record<string, unknown>>
   runLiveRoundSequence: (options: Record<string, unknown>) => Promise<{
@@ -247,7 +253,10 @@ describe('the daemon activity read', () => {
         ...RANGE,
         fetch: answer(404, { error: 'unknown model' }).fetch
       })
-    ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE', message: /HTTP 404/ })
+    ).rejects.toMatchObject({
+      code: 'T2_LIVE_DAEMON_STATE',
+      message: expect.stringMatching(/HTTP 404/)
+    })
     await expect(
       live.readScriptedDaemonActivity('http://127.0.0.1:1', {
         ...RANGE,
@@ -268,6 +277,158 @@ describe('the daemon activity read', () => {
       })
     await expect(
       live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: hanging,
+        timeoutMs: 20
+      })
+    ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE' })
+  })
+})
+
+describe('the daemon turns read', () => {
+  const RANGE = { fromMs: 1_000, toMs: 61_000 }
+  const TURNS = [
+    { model: 'scripted-llama:t001', startedAtMs: 900, endedAtMs: 2_500, outcome: 'done' },
+    { model: 'scripted-llama:t002', startedAtMs: 1_200, endedAtMs: 1_300, outcome: 'aborted' },
+    {
+      model: 'scripted-llama:t001',
+      startedAtMs: 2_600,
+      endedAtMs: 2_600,
+      outcome: 'fault-omit-done'
+    },
+    { model: 'scripted-llama:t002', startedAtMs: 60_999, endedAtMs: null, outcome: 'streaming' }
+  ]
+  const answer = (status: number, body: unknown) => {
+    const calls: Array<{ url: string; init: { signal?: AbortSignal } }> = []
+    return {
+      calls,
+      fetch: async (url: string, init: { signal?: AbortSignal }) => {
+        calls.push({ url, init })
+        return { ok: status === 200, status, json: async () => body }
+      }
+    }
+  }
+
+  it('reads every tag’s turns over a range from a running daemon', async () => {
+    const daemon = createScriptedOllamaDaemon({
+      seed: 1,
+      models: [{ name: 'scripted-llama:latest' }, { name: 'scripted-llama:t001' }]
+    })
+    const { baseUrl } = await daemon.listen()
+    try {
+      await expect(live.readScriptedDaemonTurns(baseUrl, RANGE)).resolves.toEqual([])
+    } finally {
+      await daemon.close()
+    }
+  })
+
+  it('asks for the range, with a bound, and returns each turn as its tag and times', async () => {
+    const fake = answer(200, { ...RANGE, turns: TURNS.map((turn) => ({ ...turn, extra: 1 })) })
+    await expect(
+      live.readScriptedDaemonTurns('http://127.0.0.1:43998', { ...RANGE, fetch: fake.fetch })
+    ).resolves.toEqual(TURNS)
+    expect(fake.calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:43998/_scripted/turns?from=1000&to=61000'
+    ])
+    expect(fake.calls[0].init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('refuses a bad address or range before asking', async () => {
+    const fake = answer(200, { ...RANGE, turns: [] })
+    const read = (baseUrl: string, extra: Record<string, unknown>) =>
+      live.readScriptedDaemonTurns(baseUrl, { ...RANGE, ...extra, fetch: fake.fetch })
+    await expect(read('http://localhost:1', {})).rejects.toThrow(/loopback base URL/)
+    for (const extra of [
+      { fromMs: 1.5 },
+      { fromMs: -1 },
+      { toMs: '61000' },
+      { toMs: RANGE.fromMs },
+      { toMs: RANGE.fromMs - 1 }
+    ]) {
+      await expect(read('http://127.0.0.1:1', extra)).rejects.toThrow(/range of whole/)
+    }
+    await expect(live.readScriptedDaemonTurns('http://127.0.0.1:1', null)).rejects.toThrow(
+      /range of whole/
+    )
+    expect(fake.calls).toEqual([])
+  })
+
+  it('fails loudly on an answer that is not the turns of this range', async () => {
+    const [first, second] = TURNS
+    const bodies = [
+      { ...RANGE, fromMs: RANGE.fromMs + 1, turns: [] },
+      { ...RANGE, toMs: RANGE.toMs + 1, turns: [] },
+      { ...RANGE },
+      { ...RANGE, turns: {} },
+      { ...RANGE, turns: [null] },
+      { ...RANGE, turns: [{ ...first, model: 7 }] },
+      { ...RANGE, turns: [{ ...first, startedAtMs: '900' }] },
+      { ...RANGE, turns: [{ ...first, startedAtMs: -1 }] },
+      // A turn that began at or after the range's end was not in it.
+      { ...RANGE, turns: [{ ...first, startedAtMs: RANGE.toMs, endedAtMs: RANGE.toMs }] },
+      // Nor was one that had ended before the range began.
+      { ...RANGE, turns: [{ ...first, startedAtMs: 100, endedAtMs: RANGE.fromMs - 1 }] },
+      // No turn ends before it starts.
+      { ...RANGE, turns: [{ ...first, startedAtMs: 2_000, endedAtMs: 1_999 }] },
+      { ...RANGE, turns: [{ ...first, endedAtMs: 2_500.5 }] },
+      { ...RANGE, turns: [{ ...first, outcome: 'finished' }] },
+      // A turn still streaming has no end, and an ended one is not streaming.
+      { ...RANGE, turns: [{ ...first, outcome: 'streaming' }] },
+      { ...RANGE, turns: [{ ...first, endedAtMs: null }] },
+      // Start order is what the daemon answers in.
+      { ...RANGE, turns: [second, first] },
+      null
+    ]
+    for (const body of bodies) {
+      await expect(
+        live.readScriptedDaemonTurns('http://127.0.0.1:1', {
+          ...RANGE,
+          fetch: answer(200, body).fetch
+        })
+      ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE' })
+    }
+    // At the limits a turn is in the range: ended on its first millisecond,
+    // begun on its last, and two that began together.
+    const edges = [
+      { ...first, startedAtMs: 0, endedAtMs: RANGE.fromMs },
+      { ...second, startedAtMs: RANGE.toMs - 1, endedAtMs: RANGE.toMs - 1 },
+      { ...first, startedAtMs: RANGE.toMs - 1, endedAtMs: RANGE.toMs + 5 }
+    ]
+    await expect(
+      live.readScriptedDaemonTurns('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: answer(200, { ...RANGE, turns: edges }).fetch
+      })
+    ).resolves.toEqual(edges)
+    await expect(
+      live.readScriptedDaemonTurns('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: answer(400, { error: 'to must not be in the future' }).fetch
+      })
+    ).rejects.toMatchObject({
+      code: 'T2_LIVE_DAEMON_STATE',
+      message: expect.stringMatching(/HTTP 400/)
+    })
+    await expect(
+      live.readScriptedDaemonTurns('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: async () => {
+          throw new Error('connect ECONNREFUSED')
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'T2_LIVE_DAEMON_STATE',
+      message: expect.stringMatching(/ECONNREFUSED/)
+    })
+  })
+
+  it('gives up on a daemon that never answers', async () => {
+    const hanging = (_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason))
+      })
+    await expect(
+      live.readScriptedDaemonTurns('http://127.0.0.1:1', {
         ...RANGE,
         fetch: hanging,
         timeoutMs: 20

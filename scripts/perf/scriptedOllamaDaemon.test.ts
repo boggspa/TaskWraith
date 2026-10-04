@@ -22,6 +22,12 @@ const daemonModule = require('./scriptedOllamaDaemon.cjs') as {
     toMs: number,
     nowMs: number
   ) => Record<string, unknown>
+  scriptedTurnsIn: (
+    turns: Array<Record<string, unknown>>,
+    fromMs: number,
+    toMs: number
+  ) => Array<Record<string, unknown>>
+  scriptedTurnPaceMs: (shape?: Record<string, unknown>) => number
   scriptedTurnChunks: (options: {
     seed: number
     model: string
@@ -336,6 +342,105 @@ describe('scripted Ollama daemon activity per tag', () => {
       expect(await status(query)).toBe(400)
     }
     expect(daemon.requestCounts()).toEqual({ 'POST /api/chat': 1 })
+  })
+})
+
+describe('scripted Ollama daemon turns across tags', () => {
+  const turn = (
+    model: string,
+    startedAtMs: number,
+    endedAtMs: number | null,
+    outcome = 'done'
+  ) => ({
+    model,
+    turnIndex: 0,
+    chunks: 13,
+    contentBytes: 416,
+    sha256: 'not sent',
+    startedAtMs,
+    endedAtMs,
+    outcome
+  })
+
+  it('lists every tag’s turns that were streaming inside the range, in start order', () => {
+    const turns = [
+      turn('b:latest', 3_000, null, 'streaming'),
+      turn('a:latest', 500, 999),
+      turn('a:latest', 900, 1_000),
+      turn('b:latest', 1_200, 2_800),
+      turn('a:latest', 2_000, 2_000, 'aborted'),
+      turn('a:latest', 3_999, 4_500),
+      turn('b:latest', 4_000, 4_100)
+    ]
+    // Ended before the range, or began at its end or later: not in it.
+    expect(daemonModule.scriptedTurnsIn(turns, 1_000, 4_000)).toEqual([
+      { model: 'a:latest', startedAtMs: 900, endedAtMs: 1_000, outcome: 'done' },
+      { model: 'b:latest', startedAtMs: 1_200, endedAtMs: 2_800, outcome: 'done' },
+      { model: 'a:latest', startedAtMs: 2_000, endedAtMs: 2_000, outcome: 'aborted' },
+      { model: 'b:latest', startedAtMs: 3_000, endedAtMs: null, outcome: 'streaming' },
+      { model: 'a:latest', startedAtMs: 3_999, endedAtMs: 4_500, outcome: 'done' }
+    ])
+    expect(daemonModule.scriptedTurnsIn([], 1_000, 4_000)).toEqual([])
+  })
+
+  it('answers the harness over its own route, uncounted, and refuses a bad query', async () => {
+    const { daemon, baseUrl } = await openDaemon({
+      models: [{ name: MODEL }, { name: 'scripted-llama:t001' }]
+    })
+    const fromMs = Date.now() - 1_000
+    for (const model of [MODEL, 'scripted-llama:t001']) {
+      await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ model, stream: true })
+      }).then((response) => response.text())
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const toMs = Date.now()
+    const answer = await fetch(`${baseUrl}/_scripted/turns?from=${fromMs}&to=${toMs}`)
+    expect(answer.status).toBe(200)
+    const body = (await answer.json()) as { turns: Array<Record<string, unknown>> }
+    expect(body).toMatchObject({ fromMs, toMs })
+    expect(body.turns.map((entry) => [entry.model, entry.outcome])).toEqual([
+      [MODEL, 'done'],
+      ['scripted-llama:t001', 'done']
+    ])
+    // What was streamed stays with the daemon: a turn travels as its times.
+    expect(Object.keys(body.turns[0]).sort()).toEqual([
+      'endedAtMs',
+      'model',
+      'outcome',
+      'startedAtMs'
+    ])
+    // A range that begins after both turns had ended has neither.
+    const later = await fetch(`${baseUrl}/_scripted/turns?from=${toMs - 2}&to=${toMs}`)
+    expect(await later.json()).toEqual({ fromMs: toMs - 2, toMs, turns: [] })
+    const status = async (query: string) =>
+      (await fetch(`${baseUrl}/_scripted/turns?${query}`)).status
+    for (const query of [
+      'from=1',
+      'to=2',
+      'from=2&to=2',
+      'from=3&to=2',
+      'from=-1&to=2',
+      'from=1.5&to=2',
+      // A range that has not closed yet is still gaining turns.
+      `from=1&to=${Date.now() + 60_000}`
+    ]) {
+      expect(await status(query)).toBe(400)
+    }
+    expect(daemon.requestCounts()).toEqual({ 'POST /api/chat': 2 })
+  })
+})
+
+describe('the scripted model’s own pace', () => {
+  it('is a turn’s chunks times the wait after each, by default 1.6 s', () => {
+    expect(daemonModule.scriptedTurnPaceMs()).toBe(1_600)
+    expect(daemonModule.scriptedTurnPaceMs({ chunksPerTurn: 100, chunkIntervalMs: 10 })).toBe(1_000)
+    expect(daemonModule.scriptedTurnPaceMs({ chunkIntervalMs: 40 })).toBe(2_560)
+  })
+
+  it('refuses a shape the daemon would refuse', () => {
+    expect(() => daemonModule.scriptedTurnPaceMs({ chunksPerTurn: 0 })).toThrow(/chunksPerTurn/)
   })
 })
 

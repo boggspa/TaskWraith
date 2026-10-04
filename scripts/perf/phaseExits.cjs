@@ -39,9 +39,7 @@ const path = require('node:path')
 const { PHASE_EXIT_THRESHOLDS } = require('./perfGateThresholds.cjs')
 const {
   mainWindowProfileSharesForCapture,
-  mainWindowsOfReport,
-  measureMainWindowProfileShares,
-  readBuildScripts
+  mainWindowProfileSharesForReport
 } = require('./collectors/mainWindowProfileShares.cjs')
 
 const SCHEMA_VERSION = 1
@@ -464,19 +462,12 @@ function collectPhaseExits({
 }) {
   let mainThreadShares = null
   try {
-    const profile = readJsonFile(fsApi, profilePath)
-    const readable = isPlainObject(profile)
-    const build = readable ? readBuildScripts(profile, fsApi) : {}
-    mainThreadShares = {
-      ...measureMainWindowProfileShares({
-        profile,
-        windows: mainWindowsOfReport(report),
-        markers: calibrationMarkers,
-        buildScripts: build.scripts ?? null,
-        buildScriptsUnavailable: build.unavailable
-      }),
-      ...(readable ? {} : { unavailable: 'cpu_profile_unreadable' })
-    }
+    mainThreadShares = mainWindowProfileSharesForReport({
+      report,
+      profilePath,
+      calibrationMarkers,
+      fsApi
+    })
     return {
       mainThreadShares,
       phaseExits: judgeReport(report, mainThreadShares, baselineReportPaths, fsApi)

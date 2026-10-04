@@ -57,6 +57,7 @@ const {
   neutralizeOllamaEnvironmentOnSpawnPlan,
   readScriptedDaemonActivity,
   readScriptedDaemonState,
+  readScriptedDaemonTurns,
   runLiveRoundSequence,
   startScriptedDaemonChild,
   t2RunOk,
@@ -86,6 +87,7 @@ const {
   retainFrozenSourceBinding
 } = require('./collectors/m5X2Artifacts.cjs')
 const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cjs')
+const { mainWindowProfileSharesForReport } = require('./collectors/mainWindowProfileShares.cjs')
 const { collectPhaseExits, readPhaseBaselineFiles } = require('./phaseExits.cjs')
 const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 const {
@@ -108,6 +110,13 @@ const {
   runT2LiveLanes,
   withLiveLanesVerdict
 } = require('./t2LiveLanes.cjs')
+const {
+  manyAgentChatsOf,
+  manyAgentsTeardownFailures,
+  runT2ManyAgents,
+  withManyAgentsVerdict
+} = require('./t2ManyAgents.cjs')
+const { scriptedTurnPaceMs } = require('./scriptedOllamaDaemon.cjs')
 const { awaitWithTimeout } = require('./boundedAwait.cjs')
 const {
   runDeterministicReplay,
@@ -122,6 +131,10 @@ const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
 const DEFAULT_REPLAY_STALL_TIMEOUT_MS = 5 * 60 * 1000
 const MIN_LIVE_ROUND_TIMEOUT_MS = 30_000
 const MAX_LIVE_ROUND_TIMEOUT_MS = 60 * 60 * 1000
+// Main's own window probe holds a window for at most ten minutes.
+const MIN_AGENT_WINDOW_MS = 5_000
+const MAX_AGENT_WINDOW_MS = 600_000
+const AGENT_SHAPE_ARGS = Object.freeze(['agentThreads', 'agentSeats', 'agentMode', 'agentWindowMs'])
 const DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL = 100
 const DEFAULT_REPLAY_PROGRESS_INTERVAL_MS = 10 * 1000
 const DEFAULT_WINDOWED_RATE_WINDOW_MS = PERF_GATE_THRESHOLDS.windowedRateWindowMs
@@ -1488,7 +1501,8 @@ function parseArgs(argv) {
     windowedReplay: false,
     pairedRuns: false,
     liveRounds: false,
-    liveLanes: false
+    liveLanes: false,
+    liveAgents: false
   }
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
@@ -1513,6 +1527,16 @@ function parseArgs(argv) {
     else if (arg === '--live-lanes') {
       out.liveRounds = true
       out.liveLanes = true
+    } else if (arg === '--live-agents') {
+      out.liveRounds = true
+      out.liveAgents = true
+    } else if (arg.startsWith('--agent-threads=')) out.agentThreads = Number(arg.split('=')[1])
+    else if (arg.startsWith('--agent-seats=')) out.agentSeats = Number(arg.split('=')[1])
+    else if (arg.startsWith('--agent-mode=')) out.agentMode = arg.slice('--agent-mode='.length)
+    else if (arg.startsWith('--agent-window-ms=')) {
+      // An empty value is not a window of no length.
+      const value = arg.slice('--agent-window-ms='.length)
+      out.agentWindowMs = value === '' ? Number.NaN : Number(value)
     } else if (arg.startsWith('--phase-baseline=')) {
       out.phaseBaselines = [
         ...(Array.isArray(out.phaseBaselines) ? out.phaseBaselines : []),
@@ -1640,9 +1664,20 @@ Options:
                                   settled: a round kept streaming on the heavy chat, light rounds
                                   beside it (3 x 120 s, every third cancelled), main, D1 and Host
                                   span evidence per window (implies --live-rounds; ≥9 min)
+  --live-agents                   --live-rounds on the many-agent workload (many_agents_live), then
+                                  a round started on every thread at once and kept running through
+                                  one measured window: per thread and overall, send to accepted,
+                                  accepted to first model turn, turn spacing against the model's
+                                  pace, rounds completed, agents running at once against those
+                                  asked for, and waiting behind the app's own limits by cause
+  --agent-threads=<n>             Threads, 1..200 (default 20; requires --live-agents)
+  --agent-seats=<n>               Seats in each thread, 1..50 (default 10: 200 agents)
+  --agent-mode=serial|parallel    A thread's seats one after another (default), or together
+  --agent-window-ms=<ms>          The measured window, 5000..600000 (default 120000)
   --live-round-timeout-ms=<ms>    How long each warm-up and smoke round may take to settle,
                                   30000..3600000 (default 180000). A heavy chat's first round can
-                                  need more (requires --live-rounds or --live-lanes)
+                                  need more (requires --live-rounds or --live-lanes). With
+                                  --live-agents it also bounds each thread's rounds
   --phase-baseline=<report.json>  A baseline capture's perf-t2-report.json for the phase exits'
                                   bytes comparison; repeat for several (requires --live-lanes).
                                   Without one that exit is reported not_measured
@@ -1684,6 +1719,22 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       )
     if (!args.liveRounds)
       throw new Error('live round timeout requires --live-rounds or --live-lanes')
+  }
+  if (args.liveAgents && args.liveLanes) {
+    throw new Error('--live-agents and --live-lanes drive different workloads; pass one')
+  }
+  if (!args.liveAgents && AGENT_SHAPE_ARGS.some((name) => args[name] !== undefined)) {
+    throw new Error('agent options require --live-agents')
+  }
+  if (
+    args.agentWindowMs !== undefined &&
+    (!Number.isSafeInteger(args.agentWindowMs) ||
+      args.agentWindowMs < MIN_AGENT_WINDOW_MS ||
+      args.agentWindowMs > MAX_AGENT_WINDOW_MS)
+  ) {
+    throw new Error(
+      `agent window must be a whole number of milliseconds from ${MIN_AGENT_WINDOW_MS} to ${MAX_AGENT_WINDOW_MS}`
+    )
   }
   if (args.phaseBaselines !== undefined) {
     // Read now: a baseline that cannot serve should cost no capture.
@@ -1895,7 +1946,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     workload,
     seed,
     lean: Boolean(args.lean),
-    scaleDown
+    scaleDown,
+    threads: args.agentThreads,
+    seats: args.agentSeats,
+    seatMode: args.agentMode
   })
 
   // M1 live driver (S6): a live-round workload is driven by real rounds, never
@@ -1915,6 +1969,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   if (args.liveRounds) {
     liveSeatsOf(generatedFixture)
     if (args.liveLanes) liveLaneChatsOf(generatedFixture)
+    if (args.liveAgents) manyAgentChatsOf(generatedFixture)
     if (args.windowedReplay || args.pairedRuns || args.maxReplayEvents != null || args.role) {
       const liveErr = new Error(
         'Refusing --live-rounds with --windowed-replay, --paired-runs, --max-replay-events or --role: live windows arrive with the live lanes driver'
@@ -2724,6 +2779,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         pollIntervalMs: options.hostWindowPollIntervalMs,
         timers: options.hostWindowSamplerTimers
       })
+      // A live phase's sampler: reads carry the Host's recent-span tail and
+      // each accepted read is handed to the phase's union as it arrives.
+      const createUnionHostSampler = (union) =>
+        createT2HostWindowSampler({
+          ...hostWindowSamplerOptions(),
+          recentSpanUnion: union
+        })
       if (args.liveRounds) {
         // M1 live driver (S6 smoke increment): an unmeasured warm-up round (a
         // model's first use writes settings), then one smoke round on the
@@ -2734,7 +2796,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         const readDaemonState =
           options.liveDaemonState || (() => readScriptedDaemonState(liveDaemon.baseUrl))
         const { rounds, heavyWarmups, verdict } = await runLiveRoundSequence({
-          heavyChatIds: fixture.chats.slice(1).map((chat) => chat.appChatId),
+          // Every chat after the first is warmed up one at a time, as a heavy
+          // chat's first save must be. A many-agent fixture's threads are all
+          // light, and a round on each in turn would be most of the run.
+          heavyChatIds: fixture.shape.manyAgents
+            ? []
+            : fixture.chats.slice(1).map((chat) => chat.appChatId),
           ...(options.liveSmokeRound ? { runRound: options.liveSmokeRound } : {}),
           roundOptions: {
             page,
@@ -2780,11 +2847,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
                 options.liveDaemonActivity ||
                 ((query) => readScriptedDaemonActivity(liveDaemon.baseUrl, query)),
               nowMs: replayNowMs,
-              createHostSampler: (union) =>
-                createT2HostWindowSampler({
-                  ...hostWindowSamplerOptions(),
-                  recentSpanUnion: union
-                }),
+              createHostSampler: createUnionHostSampler,
               // A window's reasons as it closes: the Host fold, after the
               // last window, may still censor it.
               onWindow: (window) =>
@@ -2806,6 +2869,51 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             ...report.liveRounds,
             lanes,
             verdict: withLiveLanesVerdict(verdict, lanes)
+          }
+        }
+        if (args.liveAgents) {
+          // The many-agent window, started only once the warm-up and the
+          // smoke settled: a round on every thread at once, each thread's
+          // turns told apart by its own scripted tag. Its verdict joins the
+          // smoke's, so a window that is not evidence makes the run's result
+          // not ok.
+          let agents = null
+          if (verdict.ok) {
+            setCapturePhase('live_agents', {}, { log: true })
+            const plan = manyAgentChatsOf(fixture)
+            agents = await (options.runManyAgents || runT2ManyAgents)({
+              page,
+              mainSession: mainInspector,
+              onCalibrationMarker: (marker) => calibrationMarkers.push(marker),
+              onCalibrationFailure: (reason) => calibrationFailures.push(reason),
+              threads: plan.threads,
+              seats: plan.seats,
+              seatMode: plan.seatMode,
+              // The pace the daemon was configured with, to set the turns against.
+              configuredTurnMs: scriptedTurnPaceMs(
+                buildScriptedDaemonConfig(fixture, { seed }).shape
+              ),
+              readDaemonTurns: (range) => readScriptedDaemonTurns(liveDaemon.baseUrl, range),
+              nowMs: replayNowMs,
+              createHostSampler: createUnionHostSampler,
+              ...(args.agentWindowMs !== undefined ? { windowMs: args.agentWindowMs } : {}),
+              ...(args.liveRoundTimeoutMs !== undefined
+                ? { laneOptions: { roundTimeoutMs: args.liveRoundTimeoutMs } }
+                : {}),
+              onWindow: (window) =>
+                updateProgress(
+                  { liveAgentsWindow: { repetition: window.repetition, reasons: window.reasons } },
+                  { log: true }
+                )
+            })
+            for (const error of manyAgentsTeardownFailures(agents)) {
+              cleanupFailures.push({ phase: 'liveAgents.teardown', error })
+            }
+          }
+          report.liveRounds = {
+            ...report.liveRounds,
+            agents,
+            verdict: withManyAgentsVerdict(verdict, agents)
           }
         }
       } else if (args.windowedReplay) {
@@ -3249,6 +3357,31 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             baselineReportPaths: args.phaseBaselines
           })
         )
+      }
+      if (report.liveRounds?.agents) {
+        // Where the main thread's time went in the many-agent window. The
+        // markers are kept beside the profile so the capture can be measured
+        // again from disk. A capture keeps its report whatever happens here.
+        try {
+          fs.writeFileSync(
+            path.join(artifactDir, 'main-profile-calibration.json'),
+            JSON.stringify(
+              { calibration: { markers: calibrationMarkers }, failures: calibrationFailures },
+              null,
+              2
+            ) + '\n'
+          )
+          report.mainThreadShares = mainWindowProfileSharesForReport({
+            report,
+            profilePath: mainCpuPath,
+            calibrationMarkers
+          })
+        } catch (error) {
+          report.mainThreadShares = {
+            unavailable: 'evaluation_failed',
+            error: error instanceof Error ? error.message : String(error)
+          }
+        }
       }
       if (typeof options.onCaptureSessionComplete === 'function') {
         await options.onCaptureSessionComplete({ report })

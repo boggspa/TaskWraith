@@ -6,7 +6,8 @@ const require = createRequire(import.meta.url)
 const {
   ESTIMATED_PROFILE_END,
   measureMainWindowProfileShares,
-  mainWindowProfileSharesForCapture
+  mainWindowProfileSharesForCapture,
+  mainWindowProfileSharesForReport
 } = require('./mainWindowProfileShares.cjs')
 
 type Frame = { name: string; url?: string; line?: number; column?: number }
@@ -800,6 +801,103 @@ describe('reading a capture from disk', () => {
       clock: { basis: 'estimated_profile_end', assumedLagMs: 5 }
     })
     expect(result.windows[0].shares.sync).toBe(0.2)
+  })
+
+  // A many-agent capture keeps its one window where a live-lane capture keeps its three.
+  const agentsReport = {
+    captureDeadline: report.captureDeadline,
+    liveRounds: {
+      agents: {
+        windows: [
+          {
+            repetition: 0,
+            mainWindow: {
+              id: WINDOW.id,
+              startedAtMs: WINDOW.startedAtMs,
+              endedAtMs: WINDOW.endedAtMs,
+              clock: WINDOW.clock
+            }
+          }
+        ]
+      }
+    }
+  }
+
+  it('measures a many-agent capture’s window as it does a live-lane capture’s', () => {
+    const result = mainWindowProfileSharesForCapture('/capture', {
+      fs: fakeFs(
+        { ...files(), '/capture/perf-t2-report.json': JSON.stringify(agentsReport) },
+        directories
+      )
+    })
+    expect(result.windows).toHaveLength(1)
+    expect(result.windows[0]).toMatchObject({
+      id: WINDOW.id,
+      repetition: 0,
+      measured: true,
+      clock: { basis: 'markers' }
+    })
+    expect(result.windows[0].shares.flusherBookkeeping).toBe(0.08)
+  })
+
+  it('has no window for a report with neither kind of live window', () => {
+    for (const liveRounds of [undefined, {}, { lanes: null, agents: null }, { agents: {} }]) {
+      const result = mainWindowProfileSharesForCapture('/capture', {
+        fs: fakeFs(
+          {
+            ...files(),
+            '/capture/perf-t2-report.json': JSON.stringify({ ...report, liveRounds })
+          },
+          directories
+        )
+      })
+      expect(result.windows).toEqual([])
+      expect(result).not.toHaveProperty('unavailable')
+    }
+  })
+
+  it('measures a report still in memory from the profile file and the markers it is given', () => {
+    const fromReport = mainWindowProfileSharesForReport({
+      report: agentsReport,
+      profilePath: '/capture/profiles/main.cpuprofile',
+      calibrationMarkers: MARKERS,
+      fsApi: fakeFs(files(), directories)
+    })
+    const fromCapture = mainWindowProfileSharesForCapture('/capture', {
+      fs: fakeFs(
+        { ...files(), '/capture/perf-t2-report.json': JSON.stringify(agentsReport) },
+        directories
+      )
+    })
+    expect(fromReport).toEqual(fromCapture)
+    expect(fromReport.build).toMatchObject({ scripts: 2, missingNames: [] })
+    expect(fromReport.windows[0].shares.flusherBookkeeping).toBe(0.08)
+    // Without the markers the window cannot be placed.
+    const unplaced = mainWindowProfileSharesForReport({
+      report: agentsReport,
+      profilePath: '/capture/profiles/main.cpuprofile',
+      calibrationMarkers: [],
+      fsApi: fakeFs(files(), directories)
+    })
+    expect(unplaced.windows[0].measured).toBe(false)
+  })
+
+  it('names a profile file it cannot read, and measures no window from it', () => {
+    for (const content of [undefined, '{not json', '[]']) {
+      const withProfile = files() as Record<string, string>
+      if (content === undefined) delete withProfile['/capture/profiles/main.cpuprofile']
+      else withProfile['/capture/profiles/main.cpuprofile'] = content
+      const result = mainWindowProfileSharesForReport({
+        report: agentsReport,
+        profilePath: '/capture/profiles/main.cpuprofile',
+        calibrationMarkers: MARKERS,
+        fsApi: fakeFs(withProfile, directories)
+      })
+      expect(result.unavailable).toBe('cpu_profile_unreadable')
+      expect(result.build).toEqual({ scripts: 0, unavailable: 'build_scripts_not_given' })
+      expect(result.windows).toHaveLength(1)
+      expect(result.windows[0].measured).toBe(false)
+    }
   })
 
   it('reports an unreadable report instead of throwing', () => {

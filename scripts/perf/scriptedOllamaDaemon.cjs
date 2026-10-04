@@ -17,8 +17,9 @@
  * - Records every streamed turn (tag, index, chunk count, bytes, SHA-256 of
  *   the streamed content, outcome) so a report can name exactly what the app
  *   received. Request bodies are never retained. `GET /_scripted/state` gives
- *   the harness live counts, and `GET /_scripted/activity` one tag's turns
- *   over a time range; neither is an Ollama route and neither is counted.
+ *   the harness live counts, `GET /_scripted/activity` one tag's turns over
+ *   a time range, and `GET /_scripted/turns` every tag's turns in a range,
+ *   each as its times; none is an Ollama route and none is counted.
  *
  * Run as a child process with `--config=<json> --ready-file=<json>`; it
  * writes `{ pid, port, baseUrl }` to the ready file once listening, and on
@@ -143,6 +144,31 @@ function scriptedActivity(turns, model, fromMs, toMs, nowMs) {
   }
   maxQuietMs = Math.max(maxQuietMs, toMs - cursor)
   return { model, fromMs, toMs, started, done, busyMs, maxQuietMs }
+}
+
+/**
+ * Every tag's turns that were streaming at some moment of [fromMs, toMs), in
+ * start order: each as its tag, when it began and ended (null while it
+ * streams) and how it ended. What was streamed stays with the daemon.
+ */
+function scriptedTurnsIn(turns, fromMs, toMs) {
+  return turns
+    .filter(
+      (turn) => turn.startedAtMs < toMs && (turn.endedAtMs === null || turn.endedAtMs >= fromMs)
+    )
+    .map(({ model, startedAtMs, endedAtMs, outcome }) => ({
+      model,
+      startedAtMs,
+      endedAtMs,
+      outcome
+    }))
+    .sort((left, right) => left.startedAtMs - right.startedAtMs)
+}
+
+/** How long one scripted turn streams at a shape: its chunks, each followed by the wait. */
+function scriptedTurnPaceMs(shape) {
+  const resolved = resolveShape(shape)
+  return resolved.chunksPerTurn * resolved.chunkIntervalMs
 }
 
 /** A millisecond query parameter: digits only, or null. */
@@ -421,6 +447,16 @@ function createScriptedOllamaDaemon(options) {
       if (toMs > nowMs) return sendJson(response, 400, { error: 'to must not be in the future' })
       return sendJson(response, 200, scriptedActivity(turns, model, fromMs, toMs, nowMs))
     }
+    if (route === 'GET /_scripted/turns') {
+      const fromMs = msParam(url, 'from')
+      const toMs = msParam(url, 'to')
+      if (fromMs === null || toMs === null || toMs <= fromMs) {
+        return sendJson(response, 400, { error: 'from and to must be milliseconds, from < to' })
+      }
+      // A range still open is still gaining turns.
+      if (toMs > now()) return sendJson(response, 400, { error: 'to must not be in the future' })
+      return sendJson(response, 200, { fromMs, toMs, turns: scriptedTurnsIn(turns, fromMs, toMs) })
+    }
     count(route)
     switch (route) {
       case 'GET /api/version':
@@ -599,5 +635,7 @@ module.exports = {
   createScriptedOllamaDaemon,
   scriptedActivity,
   scriptedTurnChunks,
+  scriptedTurnPaceMs,
+  scriptedTurnsIn,
   summary
 }

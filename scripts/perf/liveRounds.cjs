@@ -339,6 +339,73 @@ async function readScriptedDaemonActivity(baseUrl, options) {
   }
 }
 
+const TURN_OUTCOMES = Object.freeze(['streaming', 'done', 'aborted', 'fault-omit-done'])
+
+/** One turn of the daemon's answer, or null when it is not a turn of the range. */
+function scriptedTurnOf(value, fromMs, toMs) {
+  if (!isPlainObject(value)) return null
+  const { model, startedAtMs, endedAtMs, outcome } = value
+  if (typeof model !== 'string' || !TURN_OUTCOMES.includes(outcome)) return null
+  if (!Number.isSafeInteger(startedAtMs) || startedAtMs < 0 || startedAtMs >= toMs) return null
+  // Only a turn still streaming has no end.
+  if ((endedAtMs === null) !== (outcome === 'streaming')) return null
+  if (endedAtMs !== null) {
+    if (!Number.isSafeInteger(endedAtMs) || endedAtMs < startedAtMs || endedAtMs < fromMs) {
+      return null
+    }
+  }
+  return { model, startedAtMs, endedAtMs, outcome }
+}
+
+/**
+ * Every scripted tag's turns that were streaming at some moment of
+ * [fromMs, toMs), in start order, from the daemon's harness-only route: each
+ * as its tag, when it began and ended, and how. Read with a bound.
+ */
+async function readScriptedDaemonTurns(baseUrl, options) {
+  if (typeof baseUrl !== 'string' || !LOOPBACK_BASE_URL.test(baseUrl)) {
+    throw new Error('readScriptedDaemonTurns needs the daemon loopback base URL')
+  }
+  const { fromMs, toMs } = isPlainObject(options) ? options : {}
+  if (
+    !Number.isSafeInteger(fromMs) ||
+    !Number.isSafeInteger(toMs) ||
+    fromMs < 0 ||
+    toMs <= fromMs
+  ) {
+    throw new Error('readScriptedDaemonTurns needs a range of whole milliseconds')
+  }
+  const fetchImpl = options.fetch || fetch
+  let response = null
+  let body = null
+  try {
+    response = await fetchImpl(`${baseUrl}/_scripted/turns?from=${fromMs}&to=${toMs}`, {
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_STATE_TIMEOUT_MS)
+    })
+    body = response.ok ? await response.json() : null
+  } catch (error) {
+    throw liveError(
+      `scripted Ollama daemon turns read failed: ${String(error?.message || error)}`,
+      'T2_LIVE_DAEMON_STATE'
+    )
+  }
+  const turns =
+    isPlainObject(body) && body.fromMs === fromMs && body.toMs === toMs && Array.isArray(body.turns)
+      ? body.turns.map((turn) => scriptedTurnOf(turn, fromMs, toMs))
+      : null
+  if (
+    !turns ||
+    turns.includes(null) ||
+    turns.some((turn, index) => index > 0 && turn.startedAtMs < turns[index - 1].startedAtMs)
+  ) {
+    throw liveError(
+      `scripted Ollama daemon turns read failed (HTTP ${response.status})`,
+      'T2_LIVE_DAEMON_STATE'
+    )
+  }
+  return turns
+}
+
 /**
  * Operator variables the app reads that would take a live round off the
  * scripted daemon: a Cloud key sends the Host's catalog refresh to
@@ -660,6 +727,7 @@ module.exports = {
   readD1Counters,
   readScriptedDaemonActivity,
   readScriptedDaemonState,
+  readScriptedDaemonTurns,
   roundStateExpression,
   runLiveRoundSequence,
   runLiveSmokeRound,

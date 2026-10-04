@@ -643,10 +643,17 @@ function measureMainWindowProfileShares(input) {
   }
 }
 
-/** Each live-lane window's receipt from main, as `measureMainWindowProfileShares` takes it. */
+/**
+ * Each live window's receipt from main, as `measureMainWindowProfileShares`
+ * takes it: a live-lane capture's windows, or a many-agent capture's (a run
+ * drives one workload or the other).
+ */
 function mainWindowsOfReport(report) {
-  const lanes = isPlainObject(report.liveRounds) ? report.liveRounds.lanes : null
-  const windows = isPlainObject(lanes) && Array.isArray(lanes.windows) ? lanes.windows : []
+  const live = isPlainObject(report.liveRounds) ? report.liveRounds : {}
+  const phase = [live.lanes, live.agents].find(
+    (candidate) => isPlainObject(candidate) && Array.isArray(candidate.windows)
+  )
+  const windows = phase ? phase.windows : []
   return windows.map((window) => {
     const receipt = isPlainObject(window.mainWindow) ? window.mainWindow : {}
     return {
@@ -728,10 +735,43 @@ function mainWindowProfileSharesForCapture(captureDir, options = {}) {
   })
 }
 
+/**
+ * The shares of a report the runner still holds: the profile is read from
+ * the file it was written to, and the markers are the ones the runner kept
+ * as the windows ran. A profile that cannot be read is named, and no window
+ * is measured from it.
+ *
+ * @param {{
+ *   report: object, profilePath: string, calibrationMarkers?: object[],
+ *   fsApi?: { readFileSync: Function, readdirSync: Function }
+ * }} input
+ */
+function mainWindowProfileSharesForReport({ report, profilePath, calibrationMarkers, fsApi = fs }) {
+  let profile = null
+  try {
+    profile = JSON.parse(String(fsApi.readFileSync(profilePath, 'utf8')))
+  } catch {
+    profile = null
+  }
+  const readable = isPlainObject(profile)
+  const build = readable ? readBuildScripts(profile, fsApi) : {}
+  return {
+    ...measureMainWindowProfileShares({
+      profile,
+      windows: mainWindowsOfReport(report),
+      markers: calibrationMarkers,
+      buildScripts: build.scripts ?? null,
+      buildScriptsUnavailable: build.unavailable
+    }),
+    ...(readable ? {} : { unavailable: 'cpu_profile_unreadable' })
+  }
+}
+
 module.exports = {
   ESTIMATED_PROFILE_END,
   mainWindowsOfReport,
   mainWindowProfileSharesForCapture,
+  mainWindowProfileSharesForReport,
   measureMainWindowProfileShares,
   readBuildScripts
 }
