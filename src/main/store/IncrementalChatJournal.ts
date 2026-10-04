@@ -88,6 +88,8 @@ export interface IncrementalChatJournalStats {
   appends: number
   deferredAppends: number
   deferredFsyncFailures: number
+  /** Immediate appends whose line was written and whose sync then failed. */
+  immediateFsyncFailures: number
   drainedDeferredFsyncs: number
   mutationBytesWritten: number
   checkpointsWritten: number
@@ -360,6 +362,7 @@ export function createIncrementalChatJournal(
   let appends = 0
   let deferredAppends = 0
   let deferredFsyncFailures = 0
+  let immediateFsyncFailures = 0
   let drainedDeferredFsyncs = 0
   let mutationBytesWritten = 0
   let checkpointsWritten = 0
@@ -481,21 +484,35 @@ export function createIncrementalChatJournal(
     return bytes.length
   }
 
-  const appendLine = (filePath: string, line: string, explicitImmediate = false): number => {
+  /**
+   * Write the line and sync it. A sync that fails after the whole line was
+   * written is handed back, not thrown: the line is in the file either way,
+   * and the caller has to account for it before it reports the failure.
+   */
+  const appendLine = (
+    filePath: string,
+    line: string,
+    explicitImmediate = false
+  ): { bytes: number; syncFailure: NodeJS.ErrnoException | null } => {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created = false
     let bytes: number
+    let syncFailure: NodeJS.ErrnoException | null = null
     try {
       created = createdByThisAppend(fd)
       bytes = writeLine(fd, line)
       if (explicitImmediate) observeResidual(options.residualObserver, 'd2d3Durability')
-      fs.fsyncSync(fd)
+      try {
+        fs.fsyncSync(fd)
+      } catch (error) {
+        syncFailure = error as NodeJS.ErrnoException
+      }
     } finally {
       fs.closeSync(fd)
     }
     if (created) fsyncDirectory()
-    return bytes
+    return { bytes, syncFailure }
   }
 
   /** D1 append: the write is synchronous (ordering + same-process visibility
@@ -1295,18 +1312,25 @@ export function createIncrementalChatJournal(
     // A write that throws part-way leaves a fragment only this mark remembers.
     if (options.repairTornTailBeforeAppend) suspectTailPaths.add(journalPath(batch.chatId))
     let bytes: number
+    let syncFailure: NodeJS.ErrnoException | null = null
     if (options.descriptorCache && !deferred) {
       if (appendOptions?.durability !== 'deferred')
         observeResidual(options.residualObserver, 'd2d3Durability')
       options.descriptorCache.append(batch.chatId, journalPath(batch.chatId), line, 'immediate')
       bytes = Buffer.byteLength(line, 'utf8')
+    } else if (deferred) {
+      bytes = appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
     } else {
-      bytes = deferred
-        ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
-        : appendLine(journalPath(batch.chatId), line, appendOptions?.durability !== 'deferred')
+      const written = appendLine(
+        journalPath(batch.chatId),
+        line,
+        appendOptions?.durability !== 'deferred'
+      )
+      bytes = written.bytes
+      syncFailure = written.syncFailure
     }
     if (options.repairTornTailBeforeAppend) suspectTailPaths.delete(journalPath(batch.chatId))
-    if (!deferred) acknowledgeJournalBarrier(batch.chatId)
+    if (!deferred && !syncFailure) acknowledgeJournalBarrier(batch.chatId)
     if (deferred) deferredAppends += 1
     appends += 1
     mutationBytesWritten += bytes
@@ -1315,6 +1339,16 @@ export function createIncrementalChatJournal(
     state.journalBytes += bytes
     state.dirtySinceMs ??= now()
     state.lastAppendAtMs = now()
+    if (syncFailure) {
+      // The line is in the file, so the head has moved with it: a second line
+      // at this revision would be passed over as a duplicate on every later
+      // load. What failed is the promise that the line is on the disk. The
+      // caller is told, and the chat owes a flush until a sync pays it.
+      immediateFsyncFailures += 1
+      deferredFailureByChat.set(batch.chatId, syncFailure)
+      fsyncEscalatedChatIds.add(batch.chatId)
+      throw syncFailure
+    }
 
     if (
       state.journalEntries >= maxJournalEntries ||
@@ -1704,6 +1738,7 @@ export function createIncrementalChatJournal(
     appends,
     deferredAppends,
     deferredFsyncFailures,
+    immediateFsyncFailures,
     drainedDeferredFsyncs,
     mutationBytesWritten,
     checkpointsWritten,

@@ -1,7 +1,8 @@
 /**
  * The journal's head has to say what the file says. An append whose line did
  * not reach the file whole has failed, whichever of the two write paths it
- * took, and must leave the head where it was.
+ * took, and must leave the head where it was. An append whose line is in the
+ * file has happened, whatever the sync after it said, and the head must move.
  */
 import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
@@ -15,6 +16,7 @@ import {
   type IncrementalChatJournal,
   type IncrementalChatJournalOptions
 } from './IncrementalChatJournal'
+import { createIncrementalChatPersistence } from './IncrementalChatPersistence'
 import type { ChatRecord } from './types'
 
 function chat(revision = 1, content = 'initial'): ChatRecord {
@@ -44,6 +46,10 @@ const lineOf = (batch: ChatRecordMutationBatch): Buffer => Buffer.from(`${JSON.s
 
 function diskFull(): NodeJS.ErrnoException {
   return Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+}
+
+function ioError(): NodeJS.ErrnoException {
+  return Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' })
 }
 
 /** The bytes one `writeSync` call was asked to write, whichever way it was called. */
@@ -244,5 +250,183 @@ describe('journal append when the write itself goes wrong', () => {
     expect(journal.stats()).toMatchObject({ appends: 1, deferredAppends: 1 })
     await expect(journal.awaitDeferredDurability!('chat-1')).resolves.toBeUndefined()
     expect(replayed()).toMatchObject({ record: second, revision: 2, appliedBatches: 1 })
+  })
+})
+
+describe('journal append whose line is written but whose sync fails', () => {
+  let baseDir: string
+  let activePath: string
+  let scheduled: Array<(error?: NodeJS.ErrnoException | null) => void>
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-append-unsynced-'))
+    activePath = path.join(baseDir, 'chat-1.mutations.jsonl')
+    scheduled = []
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    syncBuiltinESMExports()
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  const writer = (): IncrementalChatJournal =>
+    createIncrementalChatJournal(baseDir, {
+      scheduleFsync: (_fd, done) => {
+        scheduled.push(done)
+      }
+    })
+  const replayed = (): ReturnType<IncrementalChatJournal['replay']> =>
+    createIncrementalChatJournal(baseDir, { canWrite: () => false }).replay('chat-1')
+  const nextSyncFails = (): void => {
+    vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => {
+      throw ioError()
+    })
+    syncBuiltinESMExports()
+  }
+
+  const first = chat()
+  const second = advance(first, 'second')
+  const third = advance(second, 'third')
+  const retried = advance(first, 'second, in other words')
+  const secondBatch = deriveChatRecordMutation(first, second)
+  const thirdBatch = deriveChatRecordMutation(second, third)
+  const retriedBatch = deriveChatRecordMutation(first, retried)
+
+  /** A journal whose append of the second batch has just failed at the sync. */
+  const afterFailedSync = (): IncrementalChatJournal => {
+    const journal = writer()
+    journal.initialize('chat-1', first)
+    nextSyncFails()
+    expect(() => journal.append(secondBatch)).toThrow('EIO')
+    return journal
+  }
+
+  it('tells the caller the sync failed, and counts the line it wrote', () => {
+    const journal = writer()
+    journal.initialize('chat-1', first)
+    nextSyncFails()
+
+    let thrown: unknown
+    try {
+      journal.append(secondBatch)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toMatchObject({ code: 'EIO' })
+    expect(fs.readFileSync(activePath)).toEqual(lineOf(secondBatch))
+    expect(journal.stats()).toMatchObject({
+      appends: 1,
+      immediateFsyncFailures: 1,
+      mutationBytesWritten: lineOf(secondBatch).length
+    })
+  })
+
+  it('moves the head with the line, so the next batch continues from it', () => {
+    const journal = afterFailedSync()
+
+    journal.append(thirdBatch)
+
+    expect(fs.readFileSync(activePath)).toEqual(
+      Buffer.concat([lineOf(secondBatch), lineOf(thirdBatch)])
+    )
+    expect(replayed()).toMatchObject({ record: third, revision: 3, appliedBatches: 2 })
+  })
+
+  it('never lets a second line at the same revision in behind it', () => {
+    const journal = afterFailedSync()
+
+    // Behind the first line this one would be skipped as a duplicate on every
+    // later load, and the thread would come back as the save that failed.
+    expect(() => journal.append(retriedBatch)).toThrow(/revision mismatch for chat-1: 2 != 1/)
+
+    expect(fs.readFileSync(activePath)).toEqual(lineOf(secondBatch))
+    expect(replayed()).toMatchObject({ record: second, revision: 2, appliedBatches: 1 })
+  })
+
+  it('keeps the failure for whoever waits on the chat, and syncs the next append in line', async () => {
+    const journal = afterFailedSync()
+    await expect(journal.awaitDeferredDurability!('chat-1')).rejects.toMatchObject({ code: 'EIO' })
+
+    journal.append(thirdBatch, { durability: 'deferred' })
+
+    // Not left to a scheduled flush: this sync is what makes both lines safe.
+    expect(scheduled).toHaveLength(0)
+    expect(journal.stats()).toMatchObject({ appends: 2, deferredAppends: 0 })
+    await expect(journal.awaitDeferredDurability!('chat-1')).resolves.toBeUndefined()
+  })
+
+  it('does not tell a waiter on an earlier line that it is safe', async () => {
+    const journal = writer()
+    journal.initialize('chat-1', first)
+    journal.append(secondBatch, { durability: 'deferred' })
+    expect(scheduled).toHaveLength(1)
+    let outcome = 'waiting'
+    const waiting = journal.awaitDeferredDurability!('chat-1').then(
+      () => {
+        outcome = 'safe'
+      },
+      () => {
+        outcome = 'failed'
+      }
+    )
+    nextSyncFails()
+
+    expect(() => journal.append(thirdBatch)).toThrow('EIO')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(outcome).toBe('waiting')
+
+    // Its own flush, when that lands, is what settles it.
+    scheduled[0](null)
+    await waiting
+    expect(outcome).toBe('safe')
+  })
+
+  it('lets a drain pay the flush the failed sync left owing', async () => {
+    const journal = afterFailedSync()
+    vi.restoreAllMocks()
+    const synced: number[] = []
+    const realSync = fs.fsyncSync
+    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
+      synced.push(fd)
+      realSync(fd)
+    })
+    syncBuiltinESMExports()
+
+    journal.drainDeferredDurability()
+
+    expect(synced).toHaveLength(1)
+    await expect(journal.awaitDeferredDurability!('chat-1')).resolves.toBeUndefined()
+  })
+
+  describe('through the persistence coordinator', () => {
+    const quiet = { error: (): void => {}, warn: (): void => {} }
+
+    it('carries on from the written line without a new checkpoint when the store moved on', () => {
+      const journal = writer()
+      const persistence = createIncrementalChatPersistence({ journal, logger: quiet })
+      persistence.persist(null, first, 'normal')
+      nextSyncFails()
+      expect(() => persistence.persist(first, second, 'approval')).toThrow('EIO')
+      const checkpoints = journal.stats().checkpointsWritten
+
+      persistence.persist(second, third, 'approval')
+
+      expect(journal.stats().checkpointsWritten).toBe(checkpoints)
+      expect(replayed()).toMatchObject({ record: third, revision: 3, appliedBatches: 2 })
+    })
+
+    it('replaces the line when the save is made again from the same base', () => {
+      const journal = writer()
+      const persistence = createIncrementalChatPersistence({ journal, logger: quiet })
+      persistence.persist(null, first, 'normal')
+      nextSyncFails()
+      expect(() => persistence.persist(first, second, 'approval')).toThrow('EIO')
+
+      persistence.persist(first, retried, 'approval')
+
+      expect(replayed()).toMatchObject({ record: retried, revision: 2, appliedBatches: 1 })
+    })
   })
 })
