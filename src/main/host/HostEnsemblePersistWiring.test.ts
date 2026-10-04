@@ -527,7 +527,7 @@ describe('HostEnsemblePersistWiring', () => {
       const chatPath = join(chatsDir, `${chatId}.json`)
       mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
       const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
-      const prompt = (base.messages as unknown[])[0]
+      const prompt = (ensembleChatRecord(chatId).messages as unknown[])[0]
       const reply = {
         id: 'assistant-reply-1',
         role: 'assistant',
