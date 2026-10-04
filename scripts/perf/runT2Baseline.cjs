@@ -119,6 +119,8 @@ const { buildT2SmokePlan, summarizeT2SmokePlan } = require('./t2SmokePlan.cjs')
 const { PERF_GATE_THRESHOLDS } = require('./perfGateThresholds.cjs')
 
 const DEFAULT_REPLAY_STALL_TIMEOUT_MS = 5 * 60 * 1000
+const MIN_LIVE_ROUND_TIMEOUT_MS = 30_000
+const MAX_LIVE_ROUND_TIMEOUT_MS = 60 * 60 * 1000
 const DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL = 100
 const DEFAULT_REPLAY_PROGRESS_INTERVAL_MS = 10 * 1000
 const DEFAULT_WINDOWED_RATE_WINDOW_MS = PERF_GATE_THRESHOLDS.windowedRateWindowMs
@@ -1505,6 +1507,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--live-repetitions=')) out.liveRepetitions = Number(arg.split('=')[1])
     else if (arg.startsWith('--live-repetition-index='))
       out.liveRepetitionIndex = Number(arg.split('=')[1])
+    else if (arg.startsWith('--live-round-timeout-ms='))
+      out.liveRoundTimeoutMs = Number(arg.split('=')[1])
     else if (arg === '--live-lanes') {
       out.liveRounds = true
       out.liveLanes = true
@@ -1630,6 +1634,9 @@ Options:
                                   settled: a round kept streaming on the heavy chat, light rounds
                                   beside it (3 x 120 s, every third cancelled), main, D1 and Host
                                   span evidence per window (implies --live-rounds; ≥9 min)
+  --live-round-timeout-ms=<ms>    How long each warm-up and smoke round may take to settle,
+                                  30000..3600000 (default 180000). A heavy chat's first round can
+                                  need more (requires --live-rounds or --live-lanes)
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1657,6 +1664,18 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     !args.liveLanes
   )
     throw new Error('live repetition controls require --live-lanes')
+  if (args.liveRoundTimeoutMs !== undefined) {
+    if (
+      !Number.isSafeInteger(args.liveRoundTimeoutMs) ||
+      args.liveRoundTimeoutMs < MIN_LIVE_ROUND_TIMEOUT_MS ||
+      args.liveRoundTimeoutMs > MAX_LIVE_ROUND_TIMEOUT_MS
+    )
+      throw new Error(
+        `live round timeout must be a whole number of milliseconds from ${MIN_LIVE_ROUND_TIMEOUT_MS} to ${MAX_LIVE_ROUND_TIMEOUT_MS}`
+      )
+    if (!args.liveRounds)
+      throw new Error('live round timeout requires --live-rounds or --live-lanes')
+  }
   if (args.help) {
     printHelp()
     return { ok: true, helped: true }
@@ -2707,7 +2726,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             chatId: fixture.chats[0].appChatId,
             readDaemonState,
             nowMs: replayNowMs,
-            callTimeoutMs: replayStallTimeoutMs
+            callTimeoutMs: replayStallTimeoutMs,
+            // Unset, the round driver's own default applies. A heavy chat's
+            // warm-up round can outlast it, and an unsettled warm-up ends the
+            // capture before any window is measured.
+            ...(args.liveRoundTimeoutMs !== undefined ? { timeoutMs: args.liveRoundTimeoutMs } : {})
           },
           onRound: (purpose, round) =>
             updateProgress(

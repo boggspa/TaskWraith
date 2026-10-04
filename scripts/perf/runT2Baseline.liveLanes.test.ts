@@ -305,7 +305,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
    * rounds and the lanes phase are the seams under test; the daemon's
    * activity route is a real loopback server.
    */
-  async function launchLanes(smokeOk: boolean) {
+  async function launchLanes(smokeOk: boolean, extraArgs: string[] = []) {
     const daemonBaseUrl = await activityDaemon()
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -315,6 +315,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     temporaryPaths.push(artifacts)
     const lanesCalls: LanesCall[] = []
     const snapshotReads: Array<Record<string, unknown>> = []
+    const roundCalls: Array<{ prompt: string; timeoutMs: number | undefined }> = []
     socketSends.length = 0
     const outcome = await runT2BaselineCli(
       [
@@ -329,7 +330,8 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
         `--home=${home}`,
         `--artifact-dir=${artifacts}`,
         '--port=9415',
-        '--inspect-port=9815'
+        '--inspect-port=9815',
+        ...extraArgs
       ],
       {
         repoRoot,
@@ -408,19 +410,26 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
           observedUserDataRealpath: expected.userDataRealpath,
           expression: 'isolation probe (fake)'
         }),
-        liveSmokeRound: async (round: { prompt: string; previousRoundId: string | null }) => ({
-          outcome: 'settled',
-          status: 'started',
-          roundId: round.previousRoundId === null ? 'round-warmup' : 'round-smoke',
-          roundStatus: 'completed',
-          turnsFinished: 4,
-          d1: {
-            delta:
-              smokeOk || round.prompt.startsWith('M5 heavy warm-up')
-                ? { deferredAppends: 3, normalSaves: 2 }
-                : { deferredAppends: 0, normalSaves: 0 }
+        liveSmokeRound: async (round: {
+          prompt: string
+          previousRoundId: string | null
+          timeoutMs?: number
+        }) => {
+          roundCalls.push({ prompt: round.prompt, timeoutMs: round.timeoutMs })
+          return {
+            outcome: 'settled',
+            status: 'started',
+            roundId: round.previousRoundId === null ? 'round-warmup' : 'round-smoke',
+            roundStatus: 'completed',
+            turnsFinished: 4,
+            d1: {
+              delta:
+                smokeOk || round.prompt.startsWith('M5 heavy warm-up')
+                  ? { deferredAppends: 3, normalSaves: 2 }
+                  : { deferredAppends: 0, normalSaves: 0 }
+            }
           }
-        }),
+        },
         hostWelcomeProbe: async () => ({
           ok: true,
           expectedIdentity: { instanceId: 'host-1', generation: 1, pid: 4242 }
@@ -474,7 +483,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
       (result) => ({ result: result as Record<string, unknown>, error: null }),
       (error: unknown) => ({ result: null, error: error as Error })
     )
-    return { ...outcome, lanesCalls, snapshotReads, artifacts }
+    return { ...outcome, lanesCalls, snapshotReads, roundCalls, artifacts }
   }
 
   it('runs the lanes once the smoke settled, on the fixture’s two chats', async () => {
@@ -550,5 +559,43 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
       'smoke: no normal-boundary save',
       'lanes: not run'
     ])
+  })
+
+  it('gives every live round the timeout the operator asked for', async () => {
+    const { error, roundCalls } = await launchLanes(true, ['--live-round-timeout-ms=600000'])
+    expect(error).toBeNull()
+    // The heavy warm-up, the warm-up and the smoke all wait on the same clock.
+    expect(roundCalls).toHaveLength(3)
+    expect(roundCalls[0].prompt.startsWith('M5 heavy warm-up')).toBe(true)
+    expect(roundCalls.map((round) => round.timeoutMs)).toEqual([600_000, 600_000, 600_000])
+  })
+
+  it('leaves the round timeout to the driver when the operator gives none', async () => {
+    const { error, roundCalls } = await launchLanes(true)
+    expect(error).toBeNull()
+    expect(roundCalls).toHaveLength(3)
+    expect(roundCalls.map((round) => round.timeoutMs)).toEqual([undefined, undefined, undefined])
+  })
+})
+
+describe('runT2Baseline --live-round-timeout-ms refusals', () => {
+  const refusal = (args: string[]) =>
+    runT2BaselineCli(['--workload=light_beside_large_live', ...args], {}).then(
+      () => null,
+      (error: unknown) => (error as Error).message
+    )
+
+  it('refuses a timeout that is not a whole number of milliseconds in range', async () => {
+    for (const value of ['abc', '1.5', '29999', '3600001', '']) {
+      expect(await refusal(['--live-lanes', `--live-round-timeout-ms=${value}`])).toBe(
+        'live round timeout must be a whole number of milliseconds from 30000 to 3600000'
+      )
+    }
+  })
+
+  it('refuses a timeout with no live rounds to apply it to', async () => {
+    expect(await refusal(['--live-round-timeout-ms=600000'])).toBe(
+      'live round timeout requires --live-rounds or --live-lanes'
+    )
   })
 })
