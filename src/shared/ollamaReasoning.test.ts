@@ -45,6 +45,19 @@ describe('resolveOllamaReasoningSupport', () => {
     ]) {
       expect(resolveOllamaReasoningSupport({ modelId }).kind, modelId).toBe('unsupported')
     }
+    // The 2026-10 decision models: each registry config lists `decision` (and
+    // `vision` on Clef) with no `thinking`, so none gets a reasoning control.
+    for (const modelId of [
+      'tev1:0.8b',
+      'tev1:4b',
+      'tev1:latest',
+      'nimble:9b',
+      'clef-flash:9b',
+      'clef:27b',
+      'clef:27b-q8_0'
+    ]) {
+      expect(resolveOllamaReasoningSupport({ modelId }).kind, modelId).toBe('unsupported')
+    }
     // The thinking sibling of the instruct variant keeps its control.
     expect(resolveOllamaReasoningSupport({ modelId: 'ornith:9b' }).kind).toBe('toggle')
   })

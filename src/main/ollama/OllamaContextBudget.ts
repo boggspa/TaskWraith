@@ -182,6 +182,8 @@ export function resolveOllamaContextBudget(
     case 'deepseek_r1_8b':
     case 'rnj_1_8b':
     case 'granite4_2_8b':
+    case 'nimble_9b':
+    case 'clef_flash_9b':
       return midCodingBudget(trimmedModelId, measured)
     case 'qwen3_6_35b':
     case 'qwen3_8_27b':
@@ -190,6 +192,7 @@ export function resolveOllamaContextBudget(
     case 'laguna_xs_2_1':
     case 'granite4_1_30b':
     case 'granite4_2_30b':
+    case 'clef_27b':
     case 'nemotron3_33b':
     case 'nemotron3_5_lightning_30b':
     case 'devstral_small_2_24b':
@@ -203,6 +206,8 @@ export function resolveOllamaContextBudget(
     case 'granite4_3b':
     case 'granite4_1_3b':
     case 'granite4_2_3b':
+    case 'tev1_0_8b':
+    case 'tev1_4b':
     case 'nemotron3_nano_4b':
     case 'ministral_3_3b':
     case 'deepseek_r1_1_5b':

@@ -30,6 +30,23 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     needles: ['qwen3', 'qwen 3', 'qwen'],
     fallbackModelLabel: 'Qwen 3 (4B Param)'
   },
+  // Bespoke Labs, Cloudflare and Together AI publish the 2026-10 decision
+  // models. Each needle is the whole model family name, so `clef` covers both
+  // Clef and Clef Flash.
+  {
+    id: 'bespoke',
+    providerLabel: 'Bespoke Labs',
+    providerClass: 'bespoke',
+    needles: ['nimble'],
+    fallbackModelLabel: 'Nimble (9B Param)'
+  },
+  {
+    id: 'cloudflare',
+    providerLabel: 'Cloudflare',
+    providerClass: 'cloudflare',
+    needles: ['clef'],
+    fallbackModelLabel: 'Clef (27B Param)'
+  },
   {
     id: 'cohere',
     providerLabel: 'Cohere',
@@ -138,6 +155,13 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerClass: 'poolside',
     needles: ['laguna-xs-2.1', 'laguna xs 2.1', 'laguna'],
     fallbackModelLabel: 'Laguna XS 2.1 (33B-A3B Q8)'
+  },
+  {
+    id: 'together',
+    providerLabel: 'Together AI',
+    providerClass: 'together',
+    needles: ['tev1'],
+    fallbackModelLabel: 'Tev1 (4B Param)'
   },
   {
     id: 'zai',

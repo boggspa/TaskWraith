@@ -689,6 +689,21 @@
   color: var(--provider-essential-color);
 }
 
+.settings-model-comparison-dot.provider-bespoke,
+.settings-model-comparison-fill.provider-bespoke {
+  color: var(--provider-bespoke-color);
+}
+
+.settings-model-comparison-dot.provider-cloudflare,
+.settings-model-comparison-fill.provider-cloudflare {
+  color: var(--provider-cloudflare-color);
+}
+
+.settings-model-comparison-dot.provider-together,
+.settings-model-comparison-fill.provider-together {
+  color: var(--provider-together-color);
+}
+
 .settings-model-comparison-dot.provider-nvidia,
 .settings-model-comparison-fill.provider-nvidia {
   color: var(--provider-nvidia-color);
@@ -4543,6 +4558,15 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-essential {
   --run-card-provider-tint: var(--provider-essential-color);
 }
+.run-card-provider.provider-bespoke {
+  --run-card-provider-tint: var(--provider-bespoke-color);
+}
+.run-card-provider.provider-cloudflare {
+  --run-card-provider-tint: var(--provider-cloudflare-color);
+}
+.run-card-provider.provider-together {
+  --run-card-provider-tint: var(--provider-together-color);
+}
 .run-card-provider.provider-deepseek {
   --run-card-provider-tint: var(--provider-deepseek-color);
 }
@@ -4575,6 +4599,9 @@ input:disabled, select:disabled, textarea:disabled {
     .provider-meta,
     .provider-cohere,
     .provider-essential,
+    .provider-bespoke,
+    .provider-cloudflare,
+    .provider-together,
     .provider-deepseek,
     .provider-zai,
     .provider-minimax,
@@ -4598,6 +4625,9 @@ input:disabled, select:disabled, textarea:disabled {
     .provider-meta,
     .provider-cohere,
     .provider-essential,
+    .provider-bespoke,
+    .provider-cloudflare,
+    .provider-together,
     .provider-deepseek,
     .provider-zai,
     .provider-minimax,

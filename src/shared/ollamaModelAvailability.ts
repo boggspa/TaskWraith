@@ -71,7 +71,11 @@ const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 
 const OLLAMA_MODEL_ALIAS_GROUPS: readonly (readonly string[])[] = [
   ['mistral-medium-3.5', 'mistral-medium-3.5:latest', 'mistral-medium-3.5:128b'],
-  ['granite4.2', 'granite4.2:latest', 'granite4.2:8b']
+  ['granite4.2', 'granite4.2:latest', 'granite4.2:8b'],
+  ['tev1', 'tev1:latest', 'tev1:4b'],
+  ['nimble', 'nimble:latest', 'nimble:9b'],
+  ['clef-flash', 'clef-flash:latest', 'clef-flash:9b'],
+  ['clef', 'clef:latest', 'clef:27b']
 ]
 
 /**

@@ -748,6 +748,36 @@ const OLLAMA_DEFAULT_MODEL_ROWS = [
     description: 'IBM Granite 4.2 30B via Ollama · 131k context · tools/thinking'
   },
   {
+    id: 'tev1:0.8b',
+    label: 'Tev1 (0.8B Param)',
+    description:
+      'Together AI Tev1 0.8B via Ollama · 262k context · decision model (typed choices, not prose)'
+  },
+  {
+    id: 'tev1:4b',
+    label: 'Tev1 (4B Param)',
+    description:
+      'Together AI Tev1 4B via Ollama · 262k context · decision model (typed choices, not prose)'
+  },
+  {
+    id: 'nimble:9b',
+    label: 'Nimble (9B Param)',
+    description:
+      'Bespoke Labs Nimble 9B via Ollama · 262k context · decision model (typed choices, not prose)'
+  },
+  {
+    id: 'clef-flash:9b',
+    label: 'Clef Flash (9B Param)',
+    description:
+      'Cloudflare Clef Flash 9B via Ollama · 262k context · vision · decision model (typed choices, not prose)'
+  },
+  {
+    id: 'clef:27b',
+    label: 'Clef (27B Param)',
+    description:
+      'Cloudflare Clef 27B via Ollama · 262k context · vision · decision model (typed choices, not prose)'
+  },
+  {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
     description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'

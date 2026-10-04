@@ -26,6 +26,11 @@ export type OllamaModelFamily =
   | 'granite4_2_3b'
   | 'granite4_2_8b'
   | 'granite4_2_30b'
+  | 'tev1_0_8b'
+  | 'tev1_4b'
+  | 'nimble_9b'
+  | 'clef_flash_9b'
+  | 'clef_27b'
   | 'nemotron3_nano_4b'
   | 'nemotron3_33b'
   | 'nemotron3_5_lightning_30b'
@@ -137,6 +142,42 @@ export function resolveOllamaModelFamily(
   }
   if (key === 'granite4.2:30b' || key.startsWith('granite4.2:30b-')) {
     return 'granite4_2_30b'
+  }
+  // The 2026-10 decision models. Every one is a Qwen 3.5 fine-tune whose GGUF
+  // reports family `qwen35`, so without these arms the metadata fallback below
+  // files them under the Qwen 3.5 coding profiles.
+  if (key === 'tev1:0.8b' || key.startsWith('tev1:0.8b-')) return 'tev1_0_8b'
+  if (
+    key === 'tev1' ||
+    key === 'tev1:latest' ||
+    key === 'tev1:4b' ||
+    key.startsWith('tev1:4b-')
+  ) {
+    return 'tev1_4b'
+  }
+  if (
+    key === 'nimble' ||
+    key === 'nimble:latest' ||
+    key === 'nimble:9b' ||
+    key.startsWith('nimble:9b-')
+  ) {
+    return 'nimble_9b'
+  }
+  if (
+    key === 'clef-flash' ||
+    key === 'clef-flash:latest' ||
+    key === 'clef-flash:9b' ||
+    key.startsWith('clef-flash:9b-')
+  ) {
+    return 'clef_flash_9b'
+  }
+  if (
+    key === 'clef' ||
+    key === 'clef:latest' ||
+    key === 'clef:27b' ||
+    key.startsWith('clef:27b-')
+  ) {
+    return 'clef_27b'
   }
   if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
     return 'nemotron3_nano_4b'
@@ -368,6 +409,26 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('granite4.2:latest')
     aliases.add('granite4.2:8b')
   }
+  if (lower === 'tev1' || lower === 'tev1:latest' || lower === 'tev1:4b') {
+    aliases.add('tev1')
+    aliases.add('tev1:latest')
+    aliases.add('tev1:4b')
+  }
+  if (lower === 'nimble' || lower === 'nimble:latest' || lower === 'nimble:9b') {
+    aliases.add('nimble')
+    aliases.add('nimble:latest')
+    aliases.add('nimble:9b')
+  }
+  if (lower === 'clef-flash' || lower === 'clef-flash:latest' || lower === 'clef-flash:9b') {
+    aliases.add('clef-flash')
+    aliases.add('clef-flash:latest')
+    aliases.add('clef-flash:9b')
+  }
+  if (lower === 'clef' || lower === 'clef:latest' || lower === 'clef:27b') {
+    aliases.add('clef')
+    aliases.add('clef:latest')
+    aliases.add('clef:27b')
+  }
   return [...aliases]
 }
 
@@ -452,6 +513,16 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a flagship multimodal local model for instruction following, reasoning, coding, and native tool use.`,
         delegateHint:
           'Use its 262K context for grounded implementation work and make verification gaps explicit before landing consequential changes.'
+      }
+    case 'tev1_0_8b':
+    case 'tev1_4b':
+    case 'nimble_9b':
+    case 'clef_flash_9b':
+    case 'clef_27b':
+      return {
+        guidance: `${modelLabel} is a decision model: it turns a state and a schema of typed questions into one choice per question, not free-form prose or tool calls.`,
+        delegateHint:
+          'Use it for classification and routing decisions with an explicit list of options; choose a general local model for chat, edits, or tool-driven work.'
       }
     case 'granite4_2_3b':
     case 'granite4_2_8b':
@@ -688,6 +759,16 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 3
     case 'granite4_1_30b':
       return 30
+    case 'tev1_0_8b':
+      return 0.8
+    case 'tev1_4b':
+      return 4
+    case 'nimble_9b':
+      return 9
+    case 'clef_flash_9b':
+      return 9
+    case 'clef_27b':
+      return 27
     case 'granite4_2_3b':
       return 3
     case 'granite4_2_8b':

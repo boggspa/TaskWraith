@@ -144,13 +144,31 @@ struct OllamaDisplayBrandTests {
         #expect(OllamaDisplayBrands.resolve(modelId: "qwen")?.modelLabel == "Qwen 3 (4B Param)")
     }
 
+    @Test("brands the 2026-10 decision models by their publishers")
+    func decisionModelBrands() {
+        // Mirrors OLLAMA_DISPLAY_BRANDS in src/shared/ollamaBrandTable.ts. One
+        // `clef` needle covers both Clef sizes; the labels must still differ.
+        let expected: [(id: String, brand: String, label: String)] = [
+            (id: "tev1:0.8b", brand: "together", label: "Tev1 (0.8B Param)"),
+            (id: "tev1:4b", brand: "together", label: "Tev1 (4B Param)"),
+            (id: "nimble:9b", brand: "bespoke", label: "Nimble (9B Param)"),
+            (id: "clef-flash:9b", brand: "cloudflare", label: "Clef Flash (9B Param)"),
+            (id: "clef:27b", brand: "cloudflare", label: "Clef (27B Param)"),
+        ]
+        for entry in expected {
+            let resolved = OllamaDisplayBrands.resolve(modelId: entry.id)
+            #expect(resolved?.providerClass == entry.brand, "brand for \(entry.id)")
+            #expect(resolved?.modelLabel == entry.label, "label for \(entry.id)")
+        }
+    }
+
     @Test("keeps the provider picker order explicit")
     func explicitOrder() {
         #expect(
             OllamaDisplayBrands.all.map(\.id) == [
-                "alibaba", "cohere", "deepseek", "deep-reinforce", "essential", "google", "ibm",
-                "kimi", "liquid", "meta", "minimax", "mistral", "nvidia", "openai", "openbmb",
-                "poolside", "zai",
+                "alibaba", "bespoke", "cloudflare", "cohere", "deepseek", "deep-reinforce",
+                "essential", "google", "ibm", "kimi", "liquid", "meta", "minimax", "mistral",
+                "nvidia", "openai", "openbmb", "poolside", "together", "zai",
             ])
     }
 

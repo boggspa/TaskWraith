@@ -9343,6 +9343,18 @@
   --composer-ollama-brand-color: var(--provider-essential-color);
 }
 
+.composer-combined-picker-provider-row[data-ollama-provider-class="bespoke"] {
+  --composer-ollama-brand-color: var(--provider-bespoke-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="cloudflare"] {
+  --composer-ollama-brand-color: var(--provider-cloudflare-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="together"] {
+  --composer-ollama-brand-color: var(--provider-together-color);
+}
+
 .composer-combined-picker-provider-row[data-ollama-provider-class="meta"] {
   --composer-ollama-brand-color: var(--provider-meta-color);
 }

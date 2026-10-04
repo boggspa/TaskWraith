@@ -295,6 +295,31 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'granite4.2:30b' || id.startsWith('granite4.2:30b-')) {
       return 'Granite 4.2 (30B Param)'
     }
+    if (id === 'tev1:0.8b' || id.startsWith('tev1:0.8b-')) {
+      return 'Tev1 (0.8B Param)'
+    }
+    if (id === 'tev1' || id === 'tev1:latest' || id === 'tev1:4b' || id.startsWith('tev1:4b-')) {
+      return 'Tev1 (4B Param)'
+    }
+    if (
+      id === 'nimble' ||
+      id === 'nimble:latest' ||
+      id === 'nimble:9b' ||
+      id.startsWith('nimble:9b-')
+    ) {
+      return 'Nimble (9B Param)'
+    }
+    if (
+      id === 'clef-flash' ||
+      id === 'clef-flash:latest' ||
+      id === 'clef-flash:9b' ||
+      id.startsWith('clef-flash:9b-')
+    ) {
+      return 'Clef Flash (9B Param)'
+    }
+    if (id === 'clef' || id === 'clef:latest' || id === 'clef:27b' || id.startsWith('clef:27b-')) {
+      return 'Clef (27B Param)'
+    }
     if (id === 'nemotron-3-nano:4b' || id.startsWith('nemotron-3-nano:4b-')) {
       return 'Nemotron 3 Nano (4B Param)'
     }

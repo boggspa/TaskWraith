@@ -154,6 +154,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'granite4.2:3b', label: 'Granite 4.2 (3B Param)', command: 'ollama run granite4.2:3b' },
   { id: 'granite4.2:8b', label: 'Granite 4.2 (8B Param)', command: 'ollama run granite4.2:8b' },
   { id: 'granite4.2:30b', label: 'Granite 4.2 (30B Param)', command: 'ollama run granite4.2:30b' },
+  { id: 'tev1:0.8b', label: 'Tev1 (0.8B Param)', command: 'ollama run tev1:0.8b' },
+  { id: 'tev1:4b', label: 'Tev1 (4B Param)', command: 'ollama run tev1:4b' },
+  { id: 'nimble:9b', label: 'Nimble (9B Param)', command: 'ollama run nimble:9b' },
+  { id: 'clef-flash:9b', label: 'Clef Flash (9B Param)', command: 'ollama run clef-flash:9b' },
+  { id: 'clef:27b', label: 'Clef (27B Param)', command: 'ollama run clef:27b' },
   {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',

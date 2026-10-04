@@ -3118,6 +3118,15 @@
 .welcome-usage-model-dot.provider-essential,
 .welcome-usage-model-meter-fill.provider-essential,
 .welcome-usage-bar-segment.provider-essential { color: var(--provider-essential-color); }
+.welcome-usage-model-dot.provider-bespoke,
+.welcome-usage-model-meter-fill.provider-bespoke,
+.welcome-usage-bar-segment.provider-bespoke { color: var(--provider-bespoke-color); }
+.welcome-usage-model-dot.provider-cloudflare,
+.welcome-usage-model-meter-fill.provider-cloudflare,
+.welcome-usage-bar-segment.provider-cloudflare { color: var(--provider-cloudflare-color); }
+.welcome-usage-model-dot.provider-together,
+.welcome-usage-model-meter-fill.provider-together,
+.welcome-usage-bar-segment.provider-together { color: var(--provider-together-color); }
 .welcome-usage-model-dot.provider-nvidia,
 .welcome-usage-model-meter-fill.provider-nvidia,
 .welcome-usage-bar-segment.provider-nvidia { color: var(--provider-nvidia-color); }
@@ -13813,6 +13822,9 @@ button.diff-file-row {
 .activity-yield-target.provider-meta { --provider-tint: var(--provider-meta-color); }
 .activity-yield-target.provider-cohere { --provider-tint: var(--provider-cohere-color); }
 .activity-yield-target.provider-essential { --provider-tint: var(--provider-essential-color); }
+.activity-yield-target.provider-bespoke { --provider-tint: var(--provider-bespoke-color); }
+.activity-yield-target.provider-cloudflare { --provider-tint: var(--provider-cloudflare-color); }
+.activity-yield-target.provider-together { --provider-tint: var(--provider-together-color); }
 .activity-yield-target.provider-nvidia { --provider-tint: var(--provider-nvidia-color); }
 .activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
 .activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
@@ -15065,6 +15077,15 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-essential {
   color: var(--provider-essential-color, #8462ca);
+}
+.notification-newadditions-model.provider-bespoke {
+  color: var(--provider-bespoke-color, #9d5cb0);
+}
+.notification-newadditions-model.provider-cloudflare {
+  color: var(--provider-cloudflare-color, #9c6b34);
+}
+.notification-newadditions-model.provider-together {
+  color: var(--provider-together-color, #6d6fb1);
 }
 .notification-newadditions-model.provider-poolside {
   color: var(--provider-poolside-color, #0c8194);

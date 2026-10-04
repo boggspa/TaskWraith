@@ -370,6 +370,11 @@ describe('Ollama provider model defaults', () => {
       'granite4.2:3b',
       'granite4.2:8b',
       'granite4.2:30b',
+      'tev1:0.8b',
+      'tev1:4b',
+      'nimble:9b',
+      'clef-flash:9b',
+      'clef:27b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
@@ -398,7 +403,7 @@ describe('Ollama provider model defaults', () => {
       ['gpt-oss:20b', 'levels'],
       ['mistral-medium-3.5:128b', 'levels']
     ])
-    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(17)
+    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(22)
     // The invariant that actually matters: an `unknown` row renders as
     // "Reasoning is not configurable for this model", so a curated row must
     // never land there.

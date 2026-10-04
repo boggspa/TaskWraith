@@ -47,6 +47,11 @@ struct ContextWindowsTests {
             ContextWindows.resolve(
                 provider: "ollama", model: "nemotron-3.5-lightning:30b-mlx") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.2:3b") == 131_072)
+        for modelId in ["tev1:0.8b", "tev1:4b", "nimble:9b", "clef-flash:9b", "clef:27b"] {
+            #expect(
+                ContextWindows.byModel[modelId] == 262_144,
+                "missing or drifted window row for \(modelId)")
+        }
         for modelId in ["granite4.2:3b", "granite4.2:8b", "granite4.2:30b"] {
             #expect(ContextWindows.resolve(provider: "ollama", model: modelId) == 131_072)
         }

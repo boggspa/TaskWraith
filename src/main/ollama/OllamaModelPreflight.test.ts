@@ -38,6 +38,25 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('granite4.2:3b')).toBe('granite4_2_3b')
     expect(resolveOllamaModelFamily('granite4.2:latest')).toBe('granite4_2_8b')
     expect(resolveOllamaModelFamily('granite4.2:30b')).toBe('granite4_2_30b')
+    // The 2026-10 decision models each need their own arm: a new tag matches
+    // no existing prefix, and their GGUFs report family `qwen35`.
+    expect(resolveOllamaModelFamily('tev1:0.8b')).toBe('tev1_0_8b')
+    expect(resolveOllamaModelFamily('tev1:latest')).toBe('tev1_4b')
+    expect(resolveOllamaModelFamily('tev1:4b-q4_K_M')).toBe('tev1_4b')
+    expect(resolveOllamaModelFamily('nimble:9b')).toBe('nimble_9b')
+    expect(resolveOllamaModelFamily('clef-flash:9b')).toBe('clef_flash_9b')
+    expect(resolveOllamaModelFamily('clef:27b')).toBe('clef_27b')
+    expect(resolveOllamaModelFamily('clef:latest')).toBe('clef_27b')
+    // The tag wins over the `qwen35` metadata, which would otherwise file a
+    // decision model under a Qwen 3.5 coding profile.
+    expect(
+      resolveOllamaModelFamily('nimble:9b', {
+        id: 'nimble:9b',
+        label: 'Nimble',
+        family: 'qwen35',
+        parameterSize: '9.0B'
+      })
+    ).toBe('nimble_9b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
     expect(resolveOllamaModelFamily('nemotron-3.5-lightning:30b-mlx')).toBe(
       'nemotron3_5_lightning_30b'

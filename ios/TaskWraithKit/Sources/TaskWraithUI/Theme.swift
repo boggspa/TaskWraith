@@ -243,6 +243,12 @@ public enum TWTheme {
         // Apodex ships no brand asset: a citron design token, dE 8.6 from
         // nexagi. Mirrors theme.css.
         case "apodex": return 0x757B00
+        // The local decision-model vendors (Nimble, Clef, Tev1): an orchid, a
+        // burnt amber that keeps Cloudflare's orange, and a slate periwinkle.
+        // Mirrors theme.css.
+        case "bespoke": return 0x9D5CB0
+        case "cloudflare": return 0x9C6B34
+        case "together": return 0x6D6FB1
         default: return chroma1Hex
         }
     }
@@ -283,7 +289,7 @@ public enum TWTheme {
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
         "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana", "stealth",
-        "unbiased", "typesafe", "inclusionai", "apodex"
+        "unbiased", "typesafe", "inclusionai", "apodex", "bespoke", "cloudflare", "together"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

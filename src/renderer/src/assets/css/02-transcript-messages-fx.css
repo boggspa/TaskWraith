@@ -6090,6 +6090,15 @@ html:has(
 .message-meta.provider-essential {
   color: var(--provider-essential-color) !important;
 }
+.message-meta.provider-bespoke {
+  color: var(--provider-bespoke-color) !important;
+}
+.message-meta.provider-cloudflare {
+  color: var(--provider-cloudflare-color) !important;
+}
+.message-meta.provider-together {
+  color: var(--provider-together-color) !important;
+}
 .message-meta.provider-nvidia {
   color: var(--provider-nvidia-color) !important;
 }
@@ -6236,6 +6245,15 @@ html:has(
 }
 .message-group:has(.message-meta.provider-essential) {
   --message-working-accent: var(--provider-essential-color);
+}
+.message-group:has(.message-meta.provider-bespoke) {
+  --message-working-accent: var(--provider-bespoke-color);
+}
+.message-group:has(.message-meta.provider-cloudflare) {
+  --message-working-accent: var(--provider-cloudflare-color);
+}
+.message-group:has(.message-meta.provider-together) {
+  --message-working-accent: var(--provider-together-color);
 }
 .message-group:has(.message-meta.provider-nvidia) {
   --message-working-accent: var(--provider-nvidia-color);
@@ -7427,6 +7445,15 @@ html:has(
 }
 .participant-health-chip.provider-essential {
   color: var(--provider-essential-color, var(--text-primary));
+}
+.participant-health-chip.provider-bespoke {
+  color: var(--provider-bespoke-color, var(--text-primary));
+}
+.participant-health-chip.provider-cloudflare {
+  color: var(--provider-cloudflare-color, var(--text-primary));
+}
+.participant-health-chip.provider-together {
+  color: var(--provider-together-color, var(--text-primary));
 }
 .participant-health-chip.provider-nvidia {
   color: var(--provider-nvidia-color, var(--text-primary));

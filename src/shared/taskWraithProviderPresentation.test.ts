@@ -140,6 +140,12 @@ describe('TaskWraith TUI provider presentation', () => {
       'Mistral Medium 3.5 (128B Param)'
     )
     expect(taskWraithModelLabel('ollama', 'granite4.2:8b')).toBe('Granite 4.2 (8B Param)')
+    // `clef-flash` must be matched before `clef`, whose pattern accepts a `-`.
+    expect(taskWraithModelLabel('ollama', 'clef-flash:9b')).toBe('Clef Flash (9B Param)')
+    expect(taskWraithModelLabel('ollama', 'clef:27b')).toBe('Clef (27B Param)')
+    expect(taskWraithModelLabel('ollama', 'tev1:0.8b')).toBe('Tev1 (0.8B Param)')
+    expect(taskWraithModelLabel('ollama', 'tev1')).toBe('Tev1 (4B Param)')
+    expect(taskWraithModelLabel('ollama', 'nimble:latest')).toBe('Nimble (9B Param)')
     expect(taskWraithModelLabel('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
     expect(resolveTaskWraithProviderPresentation('ollama', 'ornith-1.5:35b')).toMatchObject({
       displayProvider: 'Deep Reinforce',

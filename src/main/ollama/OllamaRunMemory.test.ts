@@ -152,6 +152,12 @@ describe('OllamaRunMemory', () => {
     expect(resolveOllamaWorkingMemoryLimits('granite4.2:3b').toolResultMaxChars).toBe(420)
     expect(resolveOllamaWorkingMemoryLimits('granite4.2:8b').toolResultMaxChars).toBe(760)
     expect(resolveOllamaWorkingMemoryLimits('granite4.2:30b').toolResultMaxChars).toBe(1200)
+    // Decision models sit in the size class of their parameter count.
+    expect(resolveOllamaWorkingMemoryLimits('tev1:0.8b').toolResultMaxChars).toBe(420)
+    expect(resolveOllamaWorkingMemoryLimits('tev1:4b').toolResultMaxChars).toBe(420)
+    expect(resolveOllamaWorkingMemoryLimits('nimble:9b').toolResultMaxChars).toBe(760)
+    expect(resolveOllamaWorkingMemoryLimits('clef-flash:9b').toolResultMaxChars).toBe(760)
+    expect(resolveOllamaWorkingMemoryLimits('clef:27b').toolResultMaxChars).toBe(1200)
     for (const modelId of [
       'ministral-3:3b',
       'granite4:3b',

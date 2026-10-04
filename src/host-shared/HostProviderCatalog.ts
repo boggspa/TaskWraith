@@ -406,6 +406,11 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         ollamaModel('granite4.2:3b', 'Granite 4.2 (3B Param)'),
         ollamaModel('granite4.2:8b', 'Granite 4.2 (8B Param)'),
         ollamaModel('granite4.2:30b', 'Granite 4.2 (30B Param)'),
+        ollamaModel('tev1:0.8b', 'Tev1 (0.8B Param)'),
+        ollamaModel('tev1:4b', 'Tev1 (4B Param)'),
+        ollamaModel('nimble:9b', 'Nimble (9B Param)'),
+        ollamaModel('clef-flash:9b', 'Clef Flash (9B Param)'),
+        ollamaModel('clef:27b', 'Clef (27B Param)'),
         ollamaModel('mistral-medium-3.5:128b', 'Mistral Medium 3.5 (128B Param)')
       ],
       authFlows: []

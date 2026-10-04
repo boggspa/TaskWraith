@@ -206,6 +206,15 @@ export function ollamaModelFamilyPromptLines(
         'Model profile (Granite 4.1 30B): strong for local review, RAG-style search, and structured tool use.',
         'Read targeted files before editing and make any assumptions explicit.'
       ]
+    case 'tev1_0_8b':
+    case 'tev1_4b':
+    case 'nimble_9b':
+    case 'clef_flash_9b':
+    case 'clef_27b':
+      return [
+        'Model profile (decision model): trained to pick one option per typed question from a supplied state and schema, not to write prose or drive tools.',
+        'Answer with the single best-fitting choice, and say plainly when the task needs a general model instead.'
+      ]
     case 'granite4_2_3b':
     case 'granite4_2_8b':
     case 'granite4_2_30b':

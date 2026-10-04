@@ -1613,6 +1613,15 @@
 .ensemble-above-chip.provider-essential .ensemble-above-chip-role {
   color: var(--provider-essential-color);
 }
+.ensemble-above-chip.provider-bespoke .ensemble-above-chip-role {
+  color: var(--provider-bespoke-color);
+}
+.ensemble-above-chip.provider-cloudflare .ensemble-above-chip-role {
+  color: var(--provider-cloudflare-color);
+}
+.ensemble-above-chip.provider-together .ensemble-above-chip-role {
+  color: var(--provider-together-color);
+}
 .ensemble-above-chip.provider-nvidia .ensemble-above-chip-role {
   color: var(--provider-nvidia-color);
 }
@@ -1909,6 +1918,15 @@
 }
 .ensemble-above-chip-tooltip.provider-essential .ensemble-above-chip-tooltip-title {
   color: var(--provider-essential-color);
+}
+.ensemble-above-chip-tooltip.provider-bespoke .ensemble-above-chip-tooltip-title {
+  color: var(--provider-bespoke-color);
+}
+.ensemble-above-chip-tooltip.provider-cloudflare .ensemble-above-chip-tooltip-title {
+  color: var(--provider-cloudflare-color);
+}
+.ensemble-above-chip-tooltip.provider-together .ensemble-above-chip-tooltip-title {
+  color: var(--provider-together-color);
 }
 .ensemble-above-chip-tooltip.provider-nvidia .ensemble-above-chip-tooltip-title {
   color: var(--provider-nvidia-color);

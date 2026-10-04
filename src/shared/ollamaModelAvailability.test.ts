@@ -38,6 +38,11 @@ describe('ollama model availability helpers', () => {
     )
     expect(isOllamaModelInstalled('granite4.2:8b', ['granite4.2:latest'])).toBe(true)
     expect(isOllamaModelInstalled('granite4.2:30b', ['granite4.2:latest'])).toBe(false)
+    expect(isOllamaModelInstalled('clef:27b', ['clef:latest'])).toBe(true)
+    expect(isOllamaModelInstalled('tev1:4b', ['tev1:latest'])).toBe(true)
+    // `latest` is the 4B, so it does not satisfy the 0.8B row.
+    expect(isOllamaModelInstalled('tev1:0.8b', ['tev1:latest'])).toBe(false)
+    expect(isOllamaModelInstalled('clef-flash:9b', ['clef:latest'])).toBe(false)
     expect(
       isOllamaModelInstalled('glm-4.7-flash:q4_K_M', ['glm-4.7-flash:q4_K_M'])
     ).toBe(true)

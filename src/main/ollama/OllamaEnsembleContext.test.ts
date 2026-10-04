@@ -32,6 +32,9 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('granite4.2:3b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('granite4.2:8b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('granite4.2:30b')).toBe(131_072)
+    for (const modelId of ['tev1:0.8b', 'tev1:4b', 'nimble:9b', 'clef-flash:9b', 'clef:27b']) {
+      expect(resolveOllamaContextTokenLimit(modelId), modelId).toBe(262_144)
+    }
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('llama3.1:8b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('deepseek-r1:8b')).toBe(131_072)

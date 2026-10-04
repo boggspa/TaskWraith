@@ -274,6 +274,22 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'granite4.2:3b': 131_072,
   'granite4.2:8b': 131_072,
   'granite4.2:30b': 131_072,
+  // 2026-10 decision models. 262,144 is the architecture window on each
+  // Ollama library page ("256K"); the tags ship a far smaller default num_ctx
+  // (2,050 to 16,384), which TaskWraith overrides per run.
+  'tev1:0.8b': 262_144,
+  tev1: 262_144,
+  'tev1:latest': 262_144,
+  'tev1:4b': 262_144,
+  nimble: 262_144,
+  'nimble:latest': 262_144,
+  'nimble:9b': 262_144,
+  'clef-flash': 262_144,
+  'clef-flash:latest': 262_144,
+  'clef-flash:9b': 262_144,
+  clef: 262_144,
+  'clef:latest': 262_144,
+  'clef:27b': 262_144,
   'nemotron-3-nano:4b': 262_144,
   'nemotron3:33b': 131_072,
   // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.

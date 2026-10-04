@@ -240,6 +240,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'granite4.2:3b': 'Granite 4.2 (3B Param)',
   'granite4.2:8b': 'Granite 4.2 (8B Param)',
   'granite4.2:30b': 'Granite 4.2 (30B Param)',
+  'tev1:0.8b': 'Tev1 (0.8B Param)',
+  'tev1:4b': 'Tev1 (4B Param)',
+  'nimble:9b': 'Nimble (9B Param)',
+  'clef-flash:9b': 'Clef Flash (9B Param)',
+  'clef:27b': 'Clef (27B Param)',
   'nemotron-3-nano:4b': 'Nemotron 3 Nano (4B Param)',
   'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
   'nemotron-3.5-lightning:30b-mlx': 'Nemotron 3.5 Lightning (30B-MLX)',
@@ -412,6 +417,18 @@ export function canonicalModelIdForProvider(
     if (key === 'granite4.2' || key === 'granite4.2:latest') {
       return 'granite4.2:8b'
     }
+    if (key === 'tev1' || key === 'tev1:latest') {
+      return 'tev1:4b'
+    }
+    if (key === 'nimble' || key === 'nimble:latest') {
+      return 'nimble:9b'
+    }
+    if (key === 'clef-flash' || key === 'clef-flash:latest') {
+      return 'clef-flash:9b'
+    }
+    if (key === 'clef' || key === 'clef:latest') {
+      return 'clef:27b'
+    }
     if (key === 'ornith' || key === 'ornith:latest') {
       return 'ornith:9b'
     }
@@ -515,6 +532,21 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('granite4.2:30b-')) {
     return 'Granite 4.2 (30B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('tev1:0.8b-')) {
+    return 'Tev1 (0.8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('tev1:4b-')) {
+    return 'Tev1 (4B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('nimble:9b-')) {
+    return 'Nimble (9B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('clef-flash:9b-')) {
+    return 'Clef Flash (9B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('clef:27b-')) {
+    return 'Clef (27B Param)'
   }
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'

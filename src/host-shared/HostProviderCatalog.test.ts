@@ -456,7 +456,12 @@ describe('HostProviderCatalog', () => {
         'qwen3.8-flash-next:125b-mlx',
         'granite4.2:3b',
         'granite4.2:8b',
-        'granite4.2:30b'
+        'granite4.2:30b',
+        'tev1:0.8b',
+        'tev1:4b',
+        'nimble:9b',
+        'clef-flash:9b',
+        'clef:27b'
       ])
     )
   })

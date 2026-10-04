@@ -97,7 +97,13 @@ const STATIC_PROVIDER_COLORS = {
   // is taken four times over and Apodex ships no brand asset. Sea green is
   // dE 9.9 from xiaomi; citron is dE 8.6 from nexagi.
   inclusionai: '#2C8468',
-  apodex: '#757B00'
+  apodex: '#757B00',
+  // The local decision-model vendors, minted 2026-10-04 (see theme.css):
+  // orchid dE 8.6 from minimax, burnt amber dE 7.1 from stealth, slate
+  // periwinkle dE 8.4 from essential.
+  bespoke: '#9D5CB0',
+  cloudflare: '#9C6B34',
+  together: '#6D6FB1'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -138,7 +144,10 @@ const IOS_PROVIDER_CASES = [
   ['case "unbiased"', '#B85A35'],
   ['case "typesafe"', '#C700E4'],
   ['case "inclusionai"', '#2C8468'],
-  ['case "apodex"', '#757B00']
+  ['case "apodex"', '#757B00'],
+  ['case "bespoke"', '#9D5CB0'],
+  ['case "cloudflare"', '#9C6B34'],
+  ['case "together"', '#6D6FB1']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

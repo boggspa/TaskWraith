@@ -1103,6 +1103,36 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'granite4.2:30b' || key.startsWith('granite4.2:30b-')) {
     return 'Granite 4.2 (30B Param)'
   }
+  if (key === 'tev1:0.8b' || key.startsWith('tev1:0.8b-')) {
+    return 'Tev1 (0.8B Param)'
+  }
+  if (key === 'tev1' || key === 'tev1:latest' || key === 'tev1:4b' || key.startsWith('tev1:4b-')) {
+    return 'Tev1 (4B Param)'
+  }
+  if (
+    key === 'nimble' ||
+    key === 'nimble:latest' ||
+    key === 'nimble:9b' ||
+    key.startsWith('nimble:9b-')
+  ) {
+    return 'Nimble (9B Param)'
+  }
+  if (
+    key === 'clef-flash' ||
+    key === 'clef-flash:latest' ||
+    key === 'clef-flash:9b' ||
+    key.startsWith('clef-flash:9b-')
+  ) {
+    return 'Clef Flash (9B Param)'
+  }
+  if (
+    key === 'clef' ||
+    key === 'clef:latest' ||
+    key === 'clef:27b' ||
+    key.startsWith('clef:27b-')
+  ) {
+    return 'Clef (27B Param)'
+  }
   if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
     return 'Nemotron 3 Nano (4B Param)'
   }

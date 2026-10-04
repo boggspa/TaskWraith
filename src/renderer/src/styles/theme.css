@@ -372,6 +372,22 @@
    * picker section with. 4.58:1 on white, 4.59:1 on black, luminance
    * 0.1795. */
   --provider-apodex-color: #757B00;
+  /* Bespoke Labs (Nimble), Cloudflare (Clef) and Together AI (Tev1), the
+   * local decision-model vendors added 2026-10-04. All three are normalised
+   * to this palette's luminance and placed in its remaining windows.
+   * Cloudflare keeps its orange as far as the band allows: the vivid oranges
+   * are claude, mistral, deep-reinforce and unbiased, so it drops to HLS
+   * saturation 0.50 at hue 32, a burnt amber dE 7.1 from stealth (#9E6C00),
+   * 7.5 from claude (#B16105) and 8.2 from ollama (#976C52).
+   * Together AI's blue is the palette's most contested hue, so it wears a
+   * slate periwinkle at hue 238 / saturation 0.30 — dE 8.4 from essential
+   * (#8462CA) and tencent (#4E73CA).
+   * Bespoke Labs wears an orchid at hue 286 / saturation 0.35 — dE 8.6 from
+   * minimax (#C044A4) and essential, 11.8 from typesafe (#C700E4).
+   * All three: 4.57-4.61:1 on white, 4.56-4.59:1 on black. */
+  --provider-bespoke-color: #9D5CB0;
+  --provider-cloudflare-color: #9C6B34;
+  --provider-together-color: #6D6FB1;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

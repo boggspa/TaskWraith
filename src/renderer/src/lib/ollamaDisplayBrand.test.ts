@@ -164,9 +164,35 @@ describe('resolveOllamaDisplayBrand', () => {
     }
   })
 
+  it('brands the 2026-10 decision models by their publishers', () => {
+    expect(resolveOllamaDisplayBrand('tev1:0.8b')).toMatchObject({
+      providerLabel: 'Together AI',
+      providerClass: 'together',
+      modelLabel: 'Tev1 (0.8B Param)'
+    })
+    expect(resolveOllamaDisplayBrand('tev1:4b')?.modelLabel).toBe('Tev1 (4B Param)')
+    expect(resolveOllamaDisplayBrand('nimble:9b')).toMatchObject({
+      providerLabel: 'Bespoke Labs',
+      providerClass: 'bespoke',
+      modelLabel: 'Nimble (9B Param)'
+    })
+    // One `clef` needle covers both sizes; the labels must still differ.
+    expect(resolveOllamaDisplayBrand('clef-flash:9b')).toMatchObject({
+      providerLabel: 'Cloudflare',
+      providerClass: 'cloudflare',
+      modelLabel: 'Clef Flash (9B Param)'
+    })
+    expect(resolveOllamaDisplayBrand('clef:27b')).toMatchObject({
+      providerClass: 'cloudflare',
+      modelLabel: 'Clef (27B Param)'
+    })
+  })
+
   it('keeps the provider picker order explicit', () => {
     expect(OLLAMA_DISPLAY_BRANDS.map((brand) => brand.id)).toEqual([
       'alibaba',
+      'bespoke',
+      'cloudflare',
       'cohere',
       'deepseek',
       'deep-reinforce',
@@ -182,6 +208,7 @@ describe('resolveOllamaDisplayBrand', () => {
       'openai',
       'openbmb',
       'poolside',
+      'together',
       'zai'
     ])
   })

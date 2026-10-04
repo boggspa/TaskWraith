@@ -4519,6 +4519,11 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
     expect(humanizeOllamaModelId('granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
     expect(humanizeOllamaModelId('granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
+    expect(humanizeOllamaModelId('tev1:0.8b')).toBe('Tev1 (0.8B Param)')
+    expect(humanizeOllamaModelId('tev1:latest')).toBe('Tev1 (4B Param)')
+    expect(humanizeOllamaModelId('nimble:9b')).toBe('Nimble (9B Param)')
+    expect(humanizeOllamaModelId('clef-flash:latest')).toBe('Clef Flash (9B Param)')
+    expect(humanizeOllamaModelId('clef:27b-q8_0')).toBe('Clef (27B Param)')
     expect(humanizeOllamaModelId('nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
     expect(humanizeOllamaModelId('nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'

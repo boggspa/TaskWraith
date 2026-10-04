@@ -172,6 +172,11 @@ describe('shortModelName', () => {
       'Mistral Medium 3.5 (128B Param)'
     )
     expect(shortModelName('ollama', '', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
+    expect(shortModelName('ollama', '', 'tev1:0.8b')).toBe('Tev1 (0.8B Param)')
+    expect(shortModelName('ollama', '', 'tev1:latest')).toBe('Tev1 (4B Param)')
+    expect(shortModelName('ollama', '', 'nimble:9b')).toBe('Nimble (9B Param)')
+    expect(shortModelName('ollama', '', 'clef-flash:9b')).toBe('Clef Flash (9B Param)')
+    expect(shortModelName('ollama', '', 'clef:latest')).toBe('Clef (27B Param)')
   })
 })
 

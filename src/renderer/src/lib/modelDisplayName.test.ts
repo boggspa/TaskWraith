@@ -322,6 +322,11 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
       expect(humaniseModelId('ollama', 'granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
+      expect(humaniseModelId('ollama', 'tev1:0.8b')).toBe('Tev1 (0.8B Param)')
+      expect(humaniseModelId('ollama', 'tev1:latest')).toBe('Tev1 (4B Param)')
+      expect(humaniseModelId('ollama', 'nimble:9b-q4_K_M')).toBe('Nimble (9B Param)')
+      expect(humaniseModelId('ollama', 'clef-flash:latest')).toBe('Clef Flash (9B Param)')
+      expect(humaniseModelId('ollama', 'clef:27b')).toBe('Clef (27B Param)')
       expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
       expect(humaniseModelId('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
         'Nemotron 3.5 Lightning (30B-MLX)'
