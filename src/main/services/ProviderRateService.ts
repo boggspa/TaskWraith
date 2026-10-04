@@ -1812,6 +1812,36 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Free stealth preview (verified 2026-09-23); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
+      },
+      {
+        modelId: 'openrouter/unbiased/pareto-26.10-preview',
+        inputUsdPerMillion: 0.8,
+        outputUsdPerMillion: 3.2,
+        cachedInputUsdPerMillion: 0.03,
+        sourceUrl: 'https://openrouter.ai/unbiased/pareto-26.10-preview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter preview route, Unbiased-hosted with no routing fan-out (verified 2026-10-04); mirrors the cost block in PiOpenRouterModelRegistration. A preview that may be repriced without notice — re-verify before trusting a long-running projection.'
+      },
+      {
+        modelId: 'openrouter/inclusionai/ling-3.1-flash',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/inclusionai/ling-3.1-flash',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free OpenRouter route served by Novita (verified 2026-10-04); mirrors cost 0/0 in PiOpenRouterModelRegistration. The id carries no `:free` suffix, so a later price lands on this same id — re-verify before it prices another run.'
+      },
+      {
+        modelId: 'openrouter/apodex/apodex-1.1-mini:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/apodex/apodex-1.1-mini:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free OpenRouter route served by Novita (verified 2026-10-04); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
       }
     ]
   },

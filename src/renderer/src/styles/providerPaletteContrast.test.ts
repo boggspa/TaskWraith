@@ -92,7 +92,12 @@ const STATIC_PROVIDER_COLORS = {
   // and Jev takes the magenta, which matches TypeSafe's pink mark (dE 11.0
   // from alibaba). See theme.css for both sweeps.
   unbiased: '#B85A35',
-  typesafe: '#C700E4'
+  typesafe: '#C700E4',
+  // Minted 2026-10-04 as design tokens (see theme.css): inclusionAI's Ant blue
+  // is taken four times over and Apodex ships no brand asset. Sea green is
+  // dE 9.9 from xiaomi; citron is dE 8.6 from nexagi.
+  inclusionai: '#2C8468',
+  apodex: '#757B00'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -131,7 +136,9 @@ const IOS_PROVIDER_CASES = [
   ['case "sakana"', '#EA0C2D'],
   ['case "stealth"', '#9E6C00'],
   ['case "unbiased"', '#B85A35'],
-  ['case "typesafe"', '#C700E4']
+  ['case "typesafe"', '#C700E4'],
+  ['case "inclusionai"', '#2C8468'],
+  ['case "apodex"', '#757B00']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

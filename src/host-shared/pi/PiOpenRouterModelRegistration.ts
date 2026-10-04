@@ -369,6 +369,58 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     contextWindow: 1_000_000,
     maxTokens: 524_288,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Pareto 26.10 Preview — Unbiased's preview of the next Pareto, released
+    // 2026-10-01. Paid route: $0.80/$3.20 per Mtok with $0.03 cache read, one
+    // hosting provider. A preview that may change without notice; the stable
+    // `unbiased/pareto` row above stays registered beside it.
+    //
+    // `reasoning: false` for the stable route's reason: supported_parameters
+    // are max_tokens, temperature, tool_choice, tools and top_p ONLY. The
+    // endpoint accepts only `auto` tool_choice, which is all Pi ever sends.
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-10-04.
+    modelId: 'unbiased/pareto-26.10-preview',
+    label: 'Pareto 26.10 Preview',
+    reasoning: false,
+    input: ['text', 'image'],
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    cost: { input: 0.8, output: 3.2, cacheRead: 0.03, cacheWrite: 0 }
+  },
+  {
+    // Ling 3.1 Flash — inclusionAI's hybrid-reasoning MoE, released
+    // 2026-10-02. Free, served by one host (Novita). The endpoint advertises
+    // `reasoning` and `include_reasoning` but no `reasoning_effort` and no
+    // supported_efforts, and its reasoning block is `mandatory: false`,
+    // `default_enabled: true` — Laguna's bare on/off shape, so a toggle.
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-10-04.
+    modelId: 'inclusionai/ling-3.1-flash',
+    label: 'Ling 3.1 Flash',
+    reasoning: true,
+    reasoningControl: 'toggle',
+    input: ['text'],
+    contextWindow: 262_144,
+    maxTokens: 32_768,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Apodex 1.1 Mini — Apodex's reasoning-first research model, released
+    // 2026-10-01. Free, served by one host (Novita, BF16). Same surface as
+    // Ling above: `reasoning` and `include_reasoning` with no effort values
+    // and `mandatory: false`, so a toggle rather than a ladder.
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-10-04.
+    modelId: 'apodex/apodex-1.1-mini:free',
+    label: 'Apodex 1.1 Mini',
+    reasoning: true,
+    reasoningControl: 'toggle',
+    input: ['text'],
+    contextWindow: 262_144,
+    maxTokens: 235_929,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }
 ]
 

@@ -141,6 +141,35 @@ struct PiBrandTableTests {
         #expect(PiBrandTable.brand(forWireModelId: wireId)?.hueClass == "stealth")
     }
 
+    @Test("labels the 2026-10 OpenRouter routes and brands them as the desktop does")
+    func october2026OpenRouterLabelsAndBrands() {
+        // Pareto 26.10 Preview shares the `openrouter/unbiased` override with
+        // the stable route; inclusionAI and Apodex each carry their own
+        // override, never the generic OpenRouter one. Mirrors PI_MODEL_LABELS
+        // and PI_UPSTREAM_BRANDS in src/shared/piBrandTable.ts.
+        let expected: [(wireId: String, label: String, hueClass: String)] = [
+            (
+                wireId: "openrouter/unbiased/pareto-26.10-preview",
+                label: "Pareto 26.10 Preview", hueClass: "unbiased"
+            ),
+            (
+                wireId: "openrouter/inclusionai/ling-3.1-flash",
+                label: "Ling 3.1 Flash", hueClass: "inclusionai"
+            ),
+            (
+                wireId: "openrouter/apodex/apodex-1.1-mini:free",
+                label: "Apodex 1.1 Mini", hueClass: "apodex"
+            ),
+        ]
+        for entry in expected {
+            #expect(
+                PiBrandTable.modelLabels[entry.wireId] == entry.label,
+                "missing or drifted label row for \(entry.wireId)")
+            #expect(PiBrandTable.modelLabel(forWireModelId: entry.wireId) == entry.label)
+            #expect(PiBrandTable.brand(forWireModelId: entry.wireId)?.hueClass == entry.hueClass)
+        }
+    }
+
     @Test("keeps the disambiguating suffix on models two upstreams both serve")
     func disambiguatesSharedModels() {
         #expect(

@@ -79,6 +79,10 @@ describe('derived reasoning offers', () => {
       'xhigh',
       'max'
     ])
+    // The 2026-10 trio: no axis on Pareto 26.10 Preview, on/off on the others.
+    expect(efforts('pi', 'openrouter/unbiased/pareto-26.10-preview')).toEqual([])
+    expect(efforts('pi', 'openrouter/inclusionai/ling-3.1-flash')).toEqual(['off', 'high'])
+    expect(efforts('pi', 'openrouter/apodex/apodex-1.1-mini:free')).toEqual(['off', 'high'])
   })
 
   it('gives GPT-OSS the level ladder Ollama documents for it', () => {

@@ -1661,6 +1661,12 @@
 .ensemble-above-chip.provider-typesafe .ensemble-above-chip-role {
   color: var(--provider-typesafe-color);
 }
+.ensemble-above-chip.provider-inclusionai .ensemble-above-chip-role {
+  color: var(--provider-inclusionai-color);
+}
+.ensemble-above-chip.provider-apodex .ensemble-above-chip-role {
+  color: var(--provider-apodex-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1945,6 +1951,12 @@
 }
 .ensemble-above-chip-tooltip.provider-typesafe .ensemble-above-chip-tooltip-title {
   color: var(--provider-typesafe-color);
+}
+.ensemble-above-chip-tooltip.provider-inclusionai .ensemble-above-chip-tooltip-title {
+  color: var(--provider-inclusionai-color);
+}
+.ensemble-above-chip-tooltip.provider-apodex .ensemble-above-chip-tooltip-title {
+  color: var(--provider-apodex-color);
 }
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);

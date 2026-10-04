@@ -70,6 +70,12 @@ public enum PiBrandTable {
             label: "Unbiased", hueClass: "unbiased"),
         "openrouter/typesafe": Brand(
             label: "TypeSafe", hueClass: "typesafe"),
+        // inclusionAI (Ling) and Apodex: design tokens, a sea green and a
+        // citron — see Theme.swift / theme.css for the derivation.
+        "openrouter/inclusionai": Brand(
+            label: "inclusionAI", hueClass: "inclusionai"),
+        "openrouter/apodex": Brand(
+            label: "Apodex", hueClass: "apodex"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -146,6 +152,9 @@ public enum PiBrandTable {
         "openrouter/unbiased/pareto": "Pareto",
         "openrouter/typesafe/jev-1.13": "Jev 1.13",
         "openrouter/stealth/space-bunny-alpha": "Space Bunny Alpha",
+        "openrouter/unbiased/pareto-26.10-preview": "Pareto 26.10 Preview",
+        "openrouter/inclusionai/ling-3.1-flash": "Ling 3.1 Flash",
+        "openrouter/apodex/apodex-1.1-mini:free": "Apodex 1.1 Mini",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

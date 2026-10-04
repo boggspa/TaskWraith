@@ -58,7 +58,13 @@ describe('resolvePiReasoningSupport', () => {
     // Space Bunny Alpha enumerates its efforts and marks reasoning mandatory:
     // no Off, no Minimal, and both Extra High and Max. Dropping the row would
     // hand it the 7-stop fallback — an Off the route cannot honour.
-    ['openrouter/stealth/space-bunny-alpha', ['low', 'medium', 'high', 'xhigh', 'max']]
+    ['openrouter/stealth/space-bunny-alpha', ['low', 'medium', 'high', 'xhigh', 'max']],
+    // The 2026-10 trio. Pareto 26.10 Preview has no reasoning axis, and Ling
+    // and Apodex advertise a bare `reasoning` toggle with no effort values.
+    // Dropping any row hands it the 7-stop fallback the gateway ignores.
+    ['openrouter/unbiased/pareto-26.10-preview', []],
+    ['openrouter/inclusionai/ling-3.1-flash', ['off', 'high']],
+    ['openrouter/apodex/apodex-1.1-mini:free', ['off', 'high']]
   ]
 
   it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {
@@ -171,6 +177,10 @@ describe('defaultPiReasoningEffort', () => {
     // OpenRouter's own default_effort for this route, so a fresh seat runs at
     // what the gateway would pick with no effort sent at all.
     expect(defaultPiReasoningEffort('openrouter/stealth/space-bunny-alpha')).toBe('max')
+    // Both toggle routes start with reasoning on, which is the gateway default.
+    expect(defaultPiReasoningEffort('openrouter/inclusionai/ling-3.1-flash')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/apodex/apodex-1.1-mini:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/unbiased/pareto-26.10-preview')).toBe('')
     // No reasoning axis at all, so there is nothing to start on.
     expect(defaultPiReasoningEffort('mistral/mistral-large-2512')).toBe('')
     // Unset (seat-level) and unresearched both keep the historical default.

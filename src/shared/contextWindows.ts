@@ -142,6 +142,9 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/unbiased/pareto': 262_144,
   'openrouter/typesafe/jev-1.13': 32_000,
   'openrouter/stealth/space-bunny-alpha': 1_000_000,
+  'openrouter/unbiased/pareto-26.10-preview': 1_048_576,
+  'openrouter/inclusionai/ling-3.1-flash': 262_144,
+  'openrouter/apodex/apodex-1.1-mini:free': 262_144,
   // Codex
   'gpt-6-astra': 1_050_000,
   // GPT-6 Sol and Luna (2026-09-22): 1,050,000 raw API window on both official

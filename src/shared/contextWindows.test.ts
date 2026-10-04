@@ -172,4 +172,13 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(knownModelContextWindow('openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
     expect(resolveContextWindow('pi', 'openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
   })
+
+  it('carries the 2026-10 OpenRouter windows on the table itself', () => {
+    // Pinned with knownModelContextWindow: the Pi provider fallback (1_000_000)
+    // would otherwise hide a dropped row, and silently quadruple the two 262K
+    // routes' meters.
+    expect(knownModelContextWindow('openrouter/unbiased/pareto-26.10-preview')).toBe(1_048_576)
+    expect(knownModelContextWindow('openrouter/inclusionai/ling-3.1-flash')).toBe(262_144)
+    expect(knownModelContextWindow('openrouter/apodex/apodex-1.1-mini:free')).toBe(262_144)
+  })
 })

@@ -3193,6 +3193,12 @@
 .welcome-usage-model-dot.provider-typesafe,
 .welcome-usage-model-meter-fill.provider-typesafe,
 .welcome-usage-bar-segment.provider-typesafe { color: var(--provider-typesafe-color); }
+.welcome-usage-model-dot.provider-inclusionai,
+.welcome-usage-model-meter-fill.provider-inclusionai,
+.welcome-usage-bar-segment.provider-inclusionai { color: var(--provider-inclusionai-color); }
+.welcome-usage-model-dot.provider-apodex,
+.welcome-usage-model-meter-fill.provider-apodex,
+.welcome-usage-bar-segment.provider-apodex { color: var(--provider-apodex-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -15117,6 +15123,12 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-typesafe {
   color: var(--provider-typesafe-color, #c700e4);
+}
+.notification-newadditions-model.provider-inclusionai {
+  color: var(--provider-inclusionai-color, #2c8468);
+}
+.notification-newadditions-model.provider-apodex {
+  color: var(--provider-apodex-color, #757b00);
 }
 
 .notification-newadditions-model.provider-groq {

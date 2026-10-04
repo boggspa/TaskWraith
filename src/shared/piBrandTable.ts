@@ -68,7 +68,11 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // minted for Pareto first. See theme.css for both derivations and the dE
   // bookkeeping.
   'openrouter/unbiased': { label: 'Unbiased', hueClass: 'unbiased' },
-  'openrouter/typesafe': { label: 'TypeSafe', hueClass: 'typesafe' }
+  'openrouter/typesafe': { label: 'TypeSafe', hueClass: 'typesafe' },
+  // inclusionAI (Ling) and Apodex, 2026-10-04. Both wear design tokens rather
+  // than brand values — a sea green and a citron; see theme.css for the sweep.
+  'openrouter/inclusionai': { label: 'inclusionAI', hueClass: 'inclusionai' },
+  'openrouter/apodex': { label: 'Apodex', hueClass: 'apodex' }
 }
 
 /**
@@ -148,7 +152,10 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/stealth/union-alpha': 'Union Alpha',
   'openrouter/unbiased/pareto': 'Pareto',
   'openrouter/typesafe/jev-1.13': 'Jev 1.13',
-  'openrouter/stealth/space-bunny-alpha': 'Space Bunny Alpha'
+  'openrouter/stealth/space-bunny-alpha': 'Space Bunny Alpha',
+  'openrouter/unbiased/pareto-26.10-preview': 'Pareto 26.10 Preview',
+  'openrouter/inclusionai/ling-3.1-flash': 'Ling 3.1 Flash',
+  'openrouter/apodex/apodex-1.1-mini:free': 'Apodex 1.1 Mini'
 }
 
 /**

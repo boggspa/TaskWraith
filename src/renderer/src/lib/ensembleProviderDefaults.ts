@@ -570,7 +570,10 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' },
   { id: 'openrouter/unbiased/pareto', label: 'Pareto' },
   { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' },
-  { id: 'openrouter/stealth/space-bunny-alpha', label: 'Space Bunny Alpha' }
+  { id: 'openrouter/stealth/space-bunny-alpha', label: 'Space Bunny Alpha' },
+  { id: 'openrouter/unbiased/pareto-26.10-preview', label: 'Pareto 26.10 Preview' },
+  { id: 'openrouter/inclusionai/ling-3.1-flash', label: 'Ling 3.1 Flash' },
+  { id: 'openrouter/apodex/apodex-1.1-mini:free', label: 'Apodex 1.1 Mini' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 

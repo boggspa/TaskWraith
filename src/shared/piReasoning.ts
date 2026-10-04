@@ -232,7 +232,17 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
     ['low', 'medium', 'high', 'xhigh', 'max'],
     'max',
     false
-  )
+  ),
+  // Pareto 26.10 Preview keeps the stable route's shape: supported_parameters
+  // are max_tokens, temperature, tool_choice, tools and top_p, with neither
+  // `reasoning` nor `reasoning_effort` (Models API + /endpoints, 2026-10-04).
+  'openrouter/unbiased/pareto-26.10-preview': UNSUPPORTED,
+  // Ling 3.1 Flash and Apodex 1.1 Mini both advertise a bare `reasoning`
+  // parameter — no `reasoning_effort`, no supported_efforts — with
+  // `mandatory: false` (Models API + /endpoints, 2026-10-04). That is Laguna's
+  // on/off shape, so Off is real and the levels are not.
+  'openrouter/inclusionai/ling-3.1-flash': BOOLEAN,
+  'openrouter/apodex/apodex-1.1-mini:free': BOOLEAN
 }
 
 const FULL: PiReasoningSupport = Object.freeze({

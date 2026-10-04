@@ -6131,6 +6131,12 @@ html:has(
 .message-meta.provider-typesafe {
   color: var(--provider-typesafe-color) !important;
 }
+.message-meta.provider-inclusionai {
+  color: var(--provider-inclusionai-color) !important;
+}
+.message-meta.provider-apodex {
+  color: var(--provider-apodex-color) !important;
+}
 .message-meta.provider-deepseek {
   color: var(--provider-deepseek-color) !important;
 }
@@ -6269,6 +6275,12 @@ html:has(
 }
 .message-group:has(.message-meta.provider-typesafe) {
   --message-working-accent: var(--provider-typesafe-color);
+}
+.message-group:has(.message-meta.provider-inclusionai) {
+  --message-working-accent: var(--provider-inclusionai-color);
+}
+.message-group:has(.message-meta.provider-apodex) {
+  --message-working-accent: var(--provider-apodex-color);
 }
 .message-group:has(.message-meta.provider-deepseek) {
   --message-working-accent: var(--provider-deepseek-color);
@@ -7457,6 +7469,12 @@ html:has(
 }
 .participant-health-chip.provider-typesafe {
   color: var(--provider-typesafe-color, var(--text-primary));
+}
+.participant-health-chip.provider-inclusionai {
+  color: var(--provider-inclusionai-color, var(--text-primary));
+}
+.participant-health-chip.provider-apodex {
+  color: var(--provider-apodex-color, var(--text-primary));
 }
 .participant-health-chip.provider-qwen {
   color: var(--provider-qwen-color, var(--text-primary));

@@ -72,6 +72,21 @@ describe('resolvePiUpstreamBrand', () => {
     // anonymous namespace, so it wears the stealth gold with no new override.
     expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.label).toBe('Stealth')
     expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.hueClass).toBe('stealth')
+    // Pareto 26.10 Preview (2026-10-01) is the same vendor namespace as the
+    // stable route, so it wears the Unbiased override with no new entry.
+    expect(resolvePiUpstreamBrand('openrouter/unbiased/pareto-26.10-preview')?.hueClass).toBe(
+      'unbiased'
+    )
+    // inclusionAI and Apodex (2026-10-04) each get an override and a minted
+    // design-token hue, so neither falls through to the generic OpenRouter red.
+    expect(resolvePiUpstreamBrand('openrouter/inclusionai/ling-3.1-flash')).toEqual({
+      label: 'inclusionAI',
+      hueClass: 'inclusionai'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/apodex/apodex-1.1-mini:free')).toEqual({
+      label: 'Apodex',
+      hueClass: 'apodex'
+    })
     // Unbiased and TypeSafe (2026-09-17) each get their own override rather
     // than the generic OpenRouter red — both vendor reds live in the
     // palette's most crowded band, so they wear design tokens instead.
@@ -133,6 +148,11 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('openrouter/unbiased/pareto')).toBe('Pareto')
     expect(resolvePiModelLabel('openrouter/typesafe/jev-1.13')).toBe('Jev 1.13')
     expect(resolvePiModelLabel('openrouter/stealth/space-bunny-alpha')).toBe('Space Bunny Alpha')
+    expect(resolvePiModelLabel('openrouter/unbiased/pareto-26.10-preview')).toBe(
+      'Pareto 26.10 Preview'
+    )
+    expect(resolvePiModelLabel('openrouter/inclusionai/ling-3.1-flash')).toBe('Ling 3.1 Flash')
+    expect(resolvePiModelLabel('openrouter/apodex/apodex-1.1-mini:free')).toBe('Apodex 1.1 Mini')
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {

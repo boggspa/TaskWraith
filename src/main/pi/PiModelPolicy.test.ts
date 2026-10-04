@@ -66,7 +66,10 @@ describe('piModelPolicyVerdict', () => {
       'stealth/union-alpha',
       'unbiased/pareto',
       'typesafe/jev-1.13',
-      'stealth/space-bunny-alpha'
+      'stealth/space-bunny-alpha',
+      'unbiased/pareto-26.10-preview',
+      'inclusionai/ling-3.1-flash',
+      'apodex/apodex-1.1-mini:free'
     ])
   })
 
@@ -214,7 +217,10 @@ describe('catalog/policy lockstep', () => {
       'openrouter/stealth/union-alpha',
       'openrouter/unbiased/pareto',
       'openrouter/typesafe/jev-1.13',
-      'openrouter/stealth/space-bunny-alpha'
+      'openrouter/stealth/space-bunny-alpha',
+      'openrouter/unbiased/pareto-26.10-preview',
+      'openrouter/inclusionai/ling-3.1-flash',
+      'openrouter/apodex/apodex-1.1-mini:free'
     ])
   })
 

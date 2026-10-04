@@ -149,7 +149,14 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // Released 2026-09-23. The next stealth preview after Union Alpha: the same
   // single anonymous provider behind OpenRouter, which is not its developer or
   // owner, so there is no first-party seat this route could duplicate.
-  'stealth/space-bunny-alpha'
+  'stealth/space-bunny-alpha',
+  // Released 2026-10-01/02. Pareto 26.10 Preview is Unbiased's own preview of
+  // the next Pareto, forwarded to that one provider like the stable route.
+  // inclusionAI's Ling 3.1 Flash and Apodex 1.1 Mini are free routes served by
+  // a single host (Novita); neither lab has a first-party seat in the app.
+  'unbiased/pareto-26.10-preview',
+  'inclusionai/ling-3.1-flash',
+  'apodex/apodex-1.1-mini:free'
 ] as const
 
 /**

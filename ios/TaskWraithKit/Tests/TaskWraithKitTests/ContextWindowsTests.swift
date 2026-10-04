@@ -221,6 +221,24 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "pi", model: wireId) == 1_000_000)
     }
 
+    @Test("the 2026-10 OpenRouter routes keep their exact windows on the table itself")
+    func october2026OpenRouterWindows() {
+        // byModel is pinned directly: the pi provider fallback (1_000_000)
+        // would otherwise hide a dropped row and quadruple the 262K meters.
+        // Mirrors CONTEXT_WINDOWS_BY_MODEL in src/shared/contextWindows.ts.
+        let expected: [(wireId: String, window: Int)] = [
+            (wireId: "openrouter/unbiased/pareto-26.10-preview", window: 1_048_576),
+            (wireId: "openrouter/inclusionai/ling-3.1-flash", window: 262_144),
+            (wireId: "openrouter/apodex/apodex-1.1-mini:free", window: 262_144),
+        ]
+        for entry in expected {
+            #expect(
+                ContextWindows.byModel[entry.wireId] == entry.window,
+                "missing or drifted window row for \(entry.wireId)")
+            #expect(ContextWindows.resolve(provider: "pi", model: entry.wireId) == entry.window)
+        }
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)

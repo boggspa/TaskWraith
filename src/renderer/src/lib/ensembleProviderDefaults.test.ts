@@ -1370,6 +1370,11 @@ describe('mistral configurable reasoning support', () => {
       'xhigh',
       'max'
     ])
+    // Ling 3.1 Flash and Apodex 1.1 Mini are bare on/off toggles; Pareto 26.10
+    // Preview has no reasoning axis at all.
+    expect(values('openrouter/inclusionai/ling-3.1-flash')).toEqual(['off', 'high'])
+    expect(values('openrouter/apodex/apodex-1.1-mini:free')).toEqual(['off', 'high'])
+    expect(values('openrouter/unbiased/pareto-26.10-preview')).toEqual([])
     // Non-reasoning models get no control rather than a ladder that does
     // nothing.
     expect(values('mistral/mistral-large-2512')).toEqual([])
@@ -1388,6 +1393,9 @@ describe('mistral configurable reasoning support', () => {
     expect(seat('deepseek/deepseek-v4-pro')).toBe('high')
     expect(seat('openrouter/z-ai/glm-5.2')).toBe('high')
     expect(seat('openrouter/stealth/space-bunny-alpha')).toBe('max')
+    expect(seat('openrouter/inclusionai/ling-3.1-flash')).toBe('high')
+    expect(seat('openrouter/apodex/apodex-1.1-mini:free')).toBe('high')
+    expect(seat('openrouter/unbiased/pareto-26.10-preview')).toBeUndefined()
     // Only where Off is the honest answer: a model with no reasoning axis
     // resolves to no effort at all.
     expect(seat('mistral/mistral-large-2512')).toBeUndefined()

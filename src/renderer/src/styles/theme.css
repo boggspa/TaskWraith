@@ -357,6 +357,21 @@
    * black, luminance 0.1774, and dE 42 from the Unbiased vermilion it shares a
    * picker section with. */
   --provider-typesafe-color: #C700E4;
+  /* inclusionAI (Ling) and Apodex, both 2026-10-04. inclusionAI is Ant Group's
+   * lab and its mark is Ant blue, which kimi, meta, muse and gemini already
+   * crowd (hue 210 is dE 0.1 from kimi), so like xiaomi it wears a
+   * forced-departure design token: a sea green at hue 161 / HLS saturation
+   * 0.50, the widest window left in the palette — dE 9.9 from xiaomi
+   * (#008844), 10.2 from groq (#088482) and 10.3 from cohere (#5E7C6F).
+   * 4.56:1 on white, 4.61:1 on black, luminance 0.1804. */
+  --provider-inclusionai-color: #2C8468;
+  /* Apodex publishes no usable brand asset, so this is a design token too: a
+   * full-chroma citron at hue 63, the one vivid window in the gold band —
+   * dE 8.6 from nexagi (#747A42), 9.0 from cursor (#8C7508) and 9.3 from
+   * nvidia (#538200), and dE 30+ from the inclusionAI green it shares a
+   * picker section with. 4.58:1 on white, 4.59:1 on black, luminance
+   * 0.1795. */
+  --provider-apodex-color: #757B00;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

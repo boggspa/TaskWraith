@@ -417,6 +417,35 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
+    @Test("pi group lists the 2026-10 OpenRouter routes once each with their windows")
+    func piOctober2026OpenRouterRows() {
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let expected: [(id: String, label: String, window: Int, formatted: String)] = [
+            (
+                id: "openrouter/unbiased/pareto-26.10-preview",
+                label: "Pareto 26.10 Preview", window: 1_048_576, formatted: "1.0M"
+            ),
+            (
+                id: "openrouter/inclusionai/ling-3.1-flash",
+                label: "Ling 3.1 Flash", window: 262_144, formatted: "262k"
+            ),
+            (
+                id: "openrouter/apodex/apodex-1.1-mini:free",
+                label: "Apodex 1.1 Mini", window: 262_144, formatted: "262k"
+            ),
+        ]
+        for entry in expected {
+            // The filtered list is pinned, so a dropped row reds.
+            let rows = piRows.filter { $0.modelId == entry.id }
+            #expect(rows.map(\.label) == [entry.label])
+            #expect(rows.first?.contextWindow == entry.window)
+            #expect(rows.first?.formatted == entry.formatted)
+        }
+    }
+
     // MARK: - Provider order
 
     @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/antigravity/pi/mistral, no ollama")

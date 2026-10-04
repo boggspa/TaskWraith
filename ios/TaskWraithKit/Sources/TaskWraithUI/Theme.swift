@@ -236,6 +236,13 @@ public enum TWTheme {
         // TypeSafe's mark is a vivid pink, so Jev wears the magenta — dE 11.0
         // from alibaba. Swapped with Pareto 2026-09-18. Mirrors theme.css.
         case "typesafe": return 0xC700E4
+        // inclusionAI's Ant blue is crowded out (kimi, meta, muse, gemini), so
+        // Ling wears a sea-green design token — dE 9.9 from xiaomi. Mirrors
+        // theme.css.
+        case "inclusionai": return 0x2C8468
+        // Apodex ships no brand asset: a citron design token, dE 8.6 from
+        // nexagi. Mirrors theme.css.
+        case "apodex": return 0x757B00
         default: return chroma1Hex
         }
     }
@@ -276,7 +283,7 @@ public enum TWTheme {
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
         "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana", "stealth",
-        "unbiased", "typesafe"
+        "unbiased", "typesafe", "inclusionai", "apodex"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

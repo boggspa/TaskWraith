@@ -749,6 +749,54 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 524_288,
     thinking: true,
     images: true
+  },
+  {
+    // Pareto 26.10 Preview — Unbiased's preview of the next Pareto, released
+    // 2026-10-01 and kept BESIDE the stable `unbiased/pareto` row (OpenRouter
+    // itself points at the dated stable route for unchanging behaviour). A
+    // quarter of the stable price ($0.80/$3.20 per Mtok, $0.03 cache read)
+    // with four times the window. `thinking` is FALSE for the stable route's
+    // reason: supported_parameters are max_tokens, temperature, tool_choice,
+    // tools and top_p — no `reasoning` or `reasoning_effort`. Verified against
+    // the OpenRouter Models API + /endpoints on 2026-10-04.
+    wireId: 'openrouter/unbiased/pareto-26.10-preview',
+    upstream: 'openrouter',
+    modelId: 'unbiased/pareto-26.10-preview',
+    label: 'Pareto 26.10 Preview',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
+  },
+  {
+    // Ling 3.1 Flash — inclusionAI's hybrid-reasoning mixture-of-experts model
+    // (25B active of 560B), released 2026-10-02. Free route, one host
+    // (Novita), text only. Reasoning is on by default and can be switched off
+    // (`mandatory: false`, `default_enabled: true`), with no effort values.
+    // Verified against the OpenRouter Models API + /endpoints on 2026-10-04.
+    wireId: 'openrouter/inclusionai/ling-3.1-flash',
+    upstream: 'openrouter',
+    modelId: 'inclusionai/ling-3.1-flash',
+    label: 'Ling 3.1 Flash',
+    contextWindow: 262_144,
+    maxOutputTokens: 32_768,
+    thinking: true,
+    images: false
+  },
+  {
+    // Apodex 1.1 Mini — Apodex's reasoning-first research and forecasting
+    // model, released 2026-10-01. Free route, one host (Novita, BF16), text
+    // only. Same reasoning shape as Ling: a bare `reasoning` toggle that is
+    // not mandatory, with no effort values. Verified against the OpenRouter
+    // Models API + /endpoints on 2026-10-04.
+    wireId: 'openrouter/apodex/apodex-1.1-mini:free',
+    upstream: 'openrouter',
+    modelId: 'apodex/apodex-1.1-mini:free',
+    label: 'Apodex 1.1 Mini',
+    contextWindow: 262_144,
+    maxOutputTokens: 235_929,
+    thinking: true,
+    images: false
   }
 ]
 

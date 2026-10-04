@@ -489,6 +489,64 @@ describe('writePiOpenRouterModelRegistration', () => {
     })
   })
 
+  it('registers Pareto 26.10 Preview as a paid NON-reasoning route beside stable Pareto', () => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find(
+      (model) => model.modelId === 'unbiased/pareto-26.10-preview'
+    )
+    expect(entry).toEqual({
+      modelId: 'unbiased/pareto-26.10-preview',
+      label: 'Pareto 26.10 Preview',
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+      cost: { input: 0.8, output: 3.2, cacheRead: 0.03, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('thinkingLevelMap')
+    expect(entry).not.toHaveProperty('reasoningControl')
+    // The preview does not replace the stable route.
+    expect(
+      PI_OPENROUTER_CUSTOM_MODELS.some((model) => model.modelId === 'unbiased/pareto')
+    ).toBe(true)
+  })
+
+  it.each([
+    ['inclusionai/ling-3.1-flash', 'Ling 3.1 Flash', 32_768],
+    ['apodex/apodex-1.1-mini:free', 'Apodex 1.1 Mini', 235_929]
+  ] as const)('registers %s as a free on/off reasoning toggle', (modelId, label, maxTokens) => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === modelId)
+    expect(entry).toEqual({
+      modelId,
+      label,
+      reasoning: true,
+      // A bare `reasoning` parameter with no effort values: a toggle, not a
+      // ladder, so no thinkingLevelMap either.
+      reasoningControl: 'toggle',
+      input: ['text'],
+      contextWindow: 262_144,
+      maxTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('thinkingLevelMap')
+
+    const home = isolatedHome()
+    expect(writePiOpenRouterModelRegistration({ isolatedHomeDir: home, modelId })).toBe(true)
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.openrouter.models[0]).toMatchObject({
+      id: modelId,
+      name: label,
+      reasoning: true,
+      input: ['text'],
+      contextWindow: 262_144,
+      maxTokens,
+      compat: {
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        thinkingFormat: 'together'
+      }
+    })
+  })
+
   it('leaves Pi’s home untouched for every model outside the curated exception', () => {
     const home = isolatedHome()
 
