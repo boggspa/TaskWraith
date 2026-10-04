@@ -7,6 +7,7 @@ import * as path from 'path'
 import { deriveChatRecordMutation } from './ChatRecordMutation'
 import {
   createIncrementalChatJournal,
+  INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES,
   MAX_PENDING_DEFERRED_FSYNCS,
   type IncrementalChatJournal
 } from './IncrementalChatJournal'
@@ -652,6 +653,72 @@ describe('IncrementalChatJournal', () => {
 
     journal.clear()
     expect(fs.existsSync(baseDir)).toBe(false)
+  })
+
+  describe('per-chat artifact list', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      syncBuiltinESMExports()
+    })
+
+    // Loading a chat's state begins by probing its tombstone, so the probed
+    // names are exactly the chats a sweep found in the directory.
+    function chatsFoundBySweep(): string[] {
+      const probed: string[] = []
+      const realExists = fsModule.existsSync.bind(fsModule)
+      vi.spyOn(fsModule, 'existsSync').mockImplementation((target) => {
+        const name = path.basename(String(target))
+        if (name.endsWith('.tombstone')) probed.push(name.slice(0, -'.tombstone'.length))
+        return realExists(target)
+      })
+      syncBuiltinESMExports()
+      const sweeper = createIncrementalChatJournal(baseDir, { now: () => nowMs })
+      expect(sweeper.checkpointAll('shutdown')).toBe(0)
+      return probed.sort()
+    }
+
+    it('finds a chat from any one of its journal files and ignores every other name', () => {
+      journal.initialize('by-checkpoint', chat('by-checkpoint'))
+      fs.writeFileSync(path.join(baseDir, 'by-sealed.sealed.mutations.jsonl'), '')
+      fs.writeFileSync(path.join(baseDir, 'by-active.mutations.jsonl'), '')
+      fs.writeFileSync(path.join(baseDir, 'by-tombstone.tombstone'), '')
+      for (const ignored of [
+        '.temp.checkpoint.json.1234.0.tmp',
+        'legacy.jsonl',
+        'has.dot.checkpoint.json',
+        'backup.sealed.mutations.jsonl.bak',
+        'notes.txt'
+      ]) {
+        fs.writeFileSync(path.join(baseDir, ignored), '')
+      }
+
+      expect(chatsFoundBySweep()).toEqual([
+        'by-active',
+        'by-checkpoint',
+        'by-sealed',
+        'by-tombstone'
+      ])
+    })
+
+    it('purges and tombstones through every listed artifact', () => {
+      const ownFiles = (chatId: string): string[] =>
+        fs
+          .readdirSync(baseDir)
+          .filter((name) => name.startsWith(`${chatId}.`))
+          .sort()
+      for (const chatId of ['purged', 'deleted']) {
+        for (const suffix of INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES) {
+          fs.writeFileSync(path.join(baseDir, `${chatId}${suffix}`), '')
+        }
+        expect(ownFiles(chatId)).toHaveLength(INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES.length)
+      }
+
+      journal.purge('purged')
+      journal.delete('deleted')
+
+      expect(ownFiles('purged')).toEqual([])
+      expect(ownFiles('deleted')).toEqual(['deleted.tombstone'])
+    })
   })
 
   describe('journal file creation durability', () => {

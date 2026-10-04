@@ -25,6 +25,19 @@ export const INCREMENTAL_CHAT_CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint' a
 export const INCREMENTAL_CHAT_CHECKPOINT_VERSION = 1 as const
 /** Backpressure bound for D1 deferred fsyncs. Saturation falls back to sync. */
 export const MAX_PENDING_DEFERRED_FSYNCS = 64
+/**
+ * Every file the journal keeps for one chat, as the suffix after the chat id.
+ * The maintenance scan and direct erasure of a chat's journal both read this
+ * list, so a file the journal can find is a file erasure removes. The scan
+ * takes the first match, so the sealed segment must come before the active
+ * segment, whose suffix it also ends with.
+ */
+export const INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES = [
+  '.checkpoint.json',
+  '.sealed.mutations.jsonl',
+  '.mutations.jsonl',
+  '.tombstone'
+] as const
 
 export type IncrementalChatCheckpointReason =
   | 'initial'
@@ -1246,12 +1259,7 @@ export function createIncrementalChatJournal(
       return ids
     }
     for (const entry of entries) {
-      for (const suffix of [
-        '.checkpoint.json',
-        '.sealed.mutations.jsonl',
-        '.mutations.jsonl',
-        '.tombstone'
-      ]) {
+      for (const suffix of INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES) {
         if (!entry.endsWith(suffix)) continue
         const chatId = entry.slice(0, -suffix.length)
         if (CHAT_ID_PATTERN.test(chatId)) ids.add(chatId)

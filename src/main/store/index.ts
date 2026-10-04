@@ -68,7 +68,10 @@ import {
 } from './persistenceProbes'
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
-import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import {
+  createIncrementalChatJournal,
+  INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES
+} from './IncrementalChatJournal'
 import {
   CurrentChatAuthorityIndex,
   type CurrentChatAuthorityMetadata
@@ -9796,8 +9799,10 @@ export class AppStore {
     for (const suffix of ['.tombstone', '.jsonl', '.snapshot.json']) {
       fs.rmSync(path.join(legacyJournalDir, `${chatId}${suffix}`), { force: true })
     }
+    // A cached descriptor would keep an unlinked segment alive and writable.
+    incrementalJournalDescriptorCache?.retireSync([chatId])
     const v2JournalDir = path.join(userDataPath, 'chat-journal-v2')
-    for (const suffix of ['.checkpoint.json', '.mutations.jsonl', '.tombstone']) {
+    for (const suffix of INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES) {
       fs.rmSync(path.join(v2JournalDir, `${chatId}${suffix}`), { force: true })
     }
   }
