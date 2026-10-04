@@ -52,6 +52,17 @@ export class MainQuitSessionRegistry {
   }
 }
 
+/** Lets every drain settle before reporting any failure, so none is left running unjoined. */
+export async function settleQuitDrains(
+  drains: readonly (PromiseLike<unknown> | undefined)[],
+  message: string
+): Promise<void> {
+  const failures = (await Promise.allSettled(drains)).flatMap((drain) =>
+    drain.status === 'rejected' ? [drain.reason] : []
+  )
+  if (failures.length > 0) throw new AggregateError(failures, message)
+}
+
 export function createMainQuitProducerBarrier(ports: {
   fenceAdmissions(): Promise<void>
   fenceQueue(): void

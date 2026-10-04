@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   MainQuitProducerRegistry,
   MainQuitSessionRegistry,
-  createMainQuitProducerBarrier
+  createMainQuitProducerBarrier,
+  settleQuitDrains
 } from './MainQuitProducerRegistry'
 import { createMainRunEventProducerQuiescence } from './MainRunEventProducerQuiescence'
 import { createMainQuitDurabilityIntegration } from './MainQuitDurabilityIntegration'
@@ -11,7 +12,7 @@ describe('main quit producer registry integration', () => {
   it('retains an unresolved session after terminalization until a real callback joins', async () => {
     const registry = new MainQuitSessionRegistry()
     let active = true
-    let callback: Promise<void> | undefined
+    let callback: Promise<void> | undefined = undefined
     const session = {}
     const producer = registry.capture(session, 'untracked', 'main', async () => {
       active = false
@@ -149,5 +150,43 @@ describe('main quit producer registry integration', () => {
     await expect(pending).rejects.toThrow('abandoned')
     expect(hostJoin).not.toHaveBeenCalled()
     expect(shutdown).not.toHaveBeenCalled()
+  })
+
+  it('lets every quit drain settle before reporting a failed one', async () => {
+    let release!: () => void
+    const slow = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let slowSettled = false
+    let reported = false
+    const drained = settleQuitDrains(
+      [
+        Promise.reject(new Error('delegated runs did not join')),
+        slow.then(() => {
+          slowSettled = true
+        })
+      ],
+      'Quit admission drain failed.'
+    )
+    void drained.catch(() => {
+      reported = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    // The failed drain alone must not release the join while its sibling runs.
+    expect(reported).toBe(false)
+    release()
+    const failure = await drained.catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).message).toBe('Quit admission drain failed.')
+    expect((failure as AggregateError).errors.map((error) => (error as Error).message)).toEqual([
+      'delegated runs did not join'
+    ])
+    expect(slowSettled).toBe(true)
+  })
+
+  it('resolves when every quit drain succeeds', async () => {
+    await expect(
+      settleQuitDrains([Promise.resolve(), Promise.resolve('done')], 'unused')
+    ).resolves.toBeUndefined()
   })
 })

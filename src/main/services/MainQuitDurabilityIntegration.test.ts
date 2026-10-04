@@ -36,6 +36,66 @@ describe('main quit durability integration', () => {
     expect(shutdown).not.toHaveBeenCalled()
   })
 
+  it('still writes the final save when a producer cannot be joined, and does not retire', async () => {
+    const order: string[] = []
+    const integration = createMainQuitDurabilityIntegration({
+      quiesceProducers: async () => {
+        order.push('join')
+        throw new Error('Producer did not join: run-1')
+      },
+      saveFinalState: async () => {
+        order.push('save')
+      },
+      shutdownDurability: async () => {
+        order.push('shutdown')
+      }
+    })
+    await expect(integration.flush()).rejects.toThrow('Producer did not join: run-1')
+    expect(order).toEqual(['join', 'save'])
+  })
+
+  it('reports both failures when the join and the final save fail', async () => {
+    const shutdown = vi.fn(async () => {})
+    const integration = createMainQuitDurabilityIntegration({
+      quiesceProducers: async () => {
+        throw new Error('join failed')
+      },
+      saveFinalState: async () => {
+        throw new Error('save failed')
+      },
+      shutdownDurability: shutdown
+    })
+    const failure = await integration.flush().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors.map((error) => (error as Error).message)).toEqual([
+      'join failed',
+      'save failed'
+    ])
+    expect(shutdown).not.toHaveBeenCalled()
+  })
+
+  it('does not start the final save once the fallback teardown has taken over', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const save = vi.fn(async () => {})
+    const integration = createMainQuitDurabilityIntegration({
+      quiesceProducers: async () => {
+        await blocked
+        throw new Error('join failed late')
+      },
+      saveFinalState: save,
+      shutdownDurability: async () => {}
+    })
+    const flush = integration.flush()
+    await Promise.resolve()
+    integration.abandon()
+    release()
+    await expect(flush).rejects.toThrow('abandoned')
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it.each(['join', 'save'])('prevents late retirement after fallback during %s', async (stage) => {
     let release!: () => void
     const blocked = new Promise<void>((resolve) => {

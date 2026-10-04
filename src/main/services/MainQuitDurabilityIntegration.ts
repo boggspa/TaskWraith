@@ -22,9 +22,26 @@ export function createMainQuitDurabilityIntegration(ports: MainQuitDurabilityInt
       if (pending) return pending
       pending = (async () => {
         assertActive()
-        await ports.quiesceProducers()
+        // A producer that cannot be joined must not cost the final save: the
+        // last coalesced chat state is still worth writing. Only descriptor
+        // retirement is unsafe while a producer may still append.
+        let joinFailure: { error: unknown } | undefined
+        try {
+          await ports.quiesceProducers()
+        } catch (error) {
+          joinFailure = { error }
+        }
         assertActive()
-        await ports.saveFinalState()
+        try {
+          await ports.saveFinalState()
+        } catch (error) {
+          if (!joinFailure) throw error
+          throw new AggregateError(
+            [joinFailure.error, error],
+            'Quit producer join and final save both failed.'
+          )
+        }
+        if (joinFailure) throw joinFailure.error
         // A timed-out quit must not later start descriptor retirement while
         // fallback teardown is already running.
         assertActive()

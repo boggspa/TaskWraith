@@ -115,21 +115,53 @@ describe('quit persistence main-process wiring', () => {
   const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 
   it('gates will-quit once and runs destructive teardown only after the drain', () => {
+    const producers = indexSource.indexOf('const quitProducers = createMainQuitProducerBarrier({')
+    const durability = indexSource.indexOf(
+      'const quitDurability = createMainQuitDurabilityIntegration({',
+      producers
+    )
     const coordinator = indexSource.indexOf(
-      'const quitPersistence = createQuitPersistenceCoordinator({'
+      'const quitPersistence = createQuitPersistenceCoordinator({',
+      durability
     )
     const willQuit = indexSource.indexOf("app.on('will-quit', () => {", coordinator)
-    expect(coordinator).toBeGreaterThanOrEqual(0)
+    expect(producers).toBeGreaterThanOrEqual(0)
+    expect(durability).toBeGreaterThan(producers)
+    expect(coordinator).toBeGreaterThan(durability)
     expect(willQuit).toBeGreaterThan(coordinator)
 
-    const persistenceGate = indexSource.slice(coordinator, willQuit)
-    expect(persistenceGate).toContain('AppStore.flushAllChatSaves()')
-    expect(persistenceGate).toContain('shutdownAndJoinEnsembleDelegatedRuns()')
-    expect(persistenceGate).toContain('ensembleOrchestratorRef.shutdownHostAdmission()')
-    expect(persistenceGate).toContain('Promise.allSettled([')
-    expect(persistenceGate.indexOf('shutdownAndJoinEnsembleDelegatedRuns()')).toBeLessThan(
-      persistenceGate.indexOf('AppStore.flushAllChatSaves()')
+    // Both admission drains settle before the producer join reports, so a
+    // failed one cannot leave its sibling running under the final save.
+    const producerBarrier = indexSource.slice(producers, durability)
+    const admissions = producerBarrier.slice(
+      producerBarrier.indexOf('fenceAdmissions:'),
+      producerBarrier.indexOf('fenceQueue:')
     )
+    expect(admissions).toContain('return settleQuitDrains(')
+    expect(admissions).toContain('shutdownAndJoinEnsembleDelegatedRuns()')
+    expect(admissions).toContain('ensembleOrchestratorRef.shutdownHostAdmission()')
+    const nativeJoin = producerBarrier.slice(
+      producerBarrier.indexOf('joinNative:'),
+      producerBarrier.indexOf('operations:')
+    )
+    expect(nativeJoin).toContain('settleQuitDrains(')
+    expect(nativeJoin).toContain('canvasService.join()')
+    // A fail-fast join would report while a sibling drain is still running.
+    expect(admissions).not.toContain('Promise.all(')
+    expect(nativeJoin).not.toContain('Promise.all(')
+
+    // The integration orders join → final save → retirement; its own suite
+    // proves the save still runs when the join fails.
+    const durabilityGate = indexSource.slice(durability, coordinator)
+    expect(durabilityGate).toContain('quiesceProducers: () => quitProducers.quiesce()')
+    expect(durabilityGate).toContain('await AppStore.flushAllChatSaves()')
+    expect(durabilityGate).toContain('shutdownDurability: () => AppStore.shutdownMainDurability()')
+    expect(durabilityGate.indexOf('quiesceProducers:')).toBeLessThan(
+      durabilityGate.indexOf('await AppStore.flushAllChatSaves()')
+    )
+
+    const persistenceGate = indexSource.slice(coordinator, willQuit)
+    expect(persistenceGate).toContain('flush: () => quitDurability.flush()')
     expect(indexSource).toContain('ensembleDelegatedRunAdmission.shutdownBeforeDispatch()')
     expect(indexSource).toContain('terminateAndJoinEnsembleDelegatedRun(')
     expect(indexSource).toContain('entry.settlement.then(() => undefined)')

@@ -1085,7 +1085,7 @@ import { productionMainPerfClock } from './perf/MainPerfClock'
 import { readProviderRunAuthorityMetadata } from './ProviderRunAuthorityMetadata'
 import { createMainPerfSnapshotHandler } from './ipc/MainPerfSnapshotHandler'
 import { MainNativeActionGate } from './lifecycle/MainNativeActionGate'
-import { createMainQuitProducerBarrier, MainQuitSessionRegistry } from './services/MainQuitProducerRegistry'
+import { createMainQuitProducerBarrier, MainQuitSessionRegistry, settleQuitDrains } from './services/MainQuitProducerRegistry'
 import { createMainQuitDurabilityIntegration } from './services/MainQuitDurabilityIntegration'
 import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
 import { bindMainWorkSpanSink } from './perf/mainWorkSpanSink'
@@ -56789,12 +56789,15 @@ if (isGeminiMcpBridgeProcess) {
         unsubscribeCatalogueQueueRecovery?.()
         unsubscribeCatalogueQueueRecovery = null
         threadCatalogueQueueRecoveryRef?.beginShutdown()
-        return Promise.all([
-          shutdownAndJoinEnsembleDelegatedRuns(),
-          ensembleOrchestratorRef
-            ? ensembleOrchestratorRef.shutdownHostAdmission()
-            : Promise.resolve(ensembleHostAdmissionRuntime.shutdown())
-        ]).then(() => {})
+        return settleQuitDrains(
+          [
+            shutdownAndJoinEnsembleDelegatedRuns(),
+            ensembleOrchestratorRef
+              ? ensembleOrchestratorRef.shutdownHostAdmission()
+              : Promise.resolve(ensembleHostAdmissionRuntime.shutdown())
+          ],
+          'Quit admission drain failed.'
+        )
       },
       fenceQueue: () => { runQueueServiceRef?.beginShutdown() },
       fenceNative: () => {
@@ -56802,7 +56805,11 @@ if (isGeminiMcpBridgeProcess) {
         canvasService.beginShutdown()
         launchManagerForQuit?.beginShutdown()
       },
-      joinNative: () => Promise.all([mainNativeActionGate.join(), canvasService.join(), launchManagerForQuit?.join()]).then(() => {}),
+      joinNative: () =>
+        settleQuitDrains(
+          [mainNativeActionGate.join(), canvasService.join(), launchManagerForQuit?.join()],
+          'Quit native action join failed.'
+        ),
       operations: () => [...providerAdapterRunsInFlight.entries(), ...providerTransportOperations.entries(), ...scheduledLaunchOperations.entries()],
       sessions: () => {
         const active = RUN_MANAGER_PROVIDERS.flatMap((provider) =>
