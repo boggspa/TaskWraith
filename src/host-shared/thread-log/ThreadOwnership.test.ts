@@ -1022,14 +1022,19 @@ describe('who may write a thread: the claims an app process holds', () => {
  *
  * Disk is two revisions: the full copy and the head of the log. Ghost fields,
  * which the code under test never sees, record the truth the rules are about:
- * how many writes the thread has had, how many of them each process's copy
- * includes, and the same pair frozen into each claim when it was composed.
+ * every write the thread has had, which of them the full copy, the head of the
+ * log and each process's own copy include, and whether a claim was composed by
+ * a process that had them all. A process that starts reads what is on disk, the
+ * log where it leads; a running process that reads again keeps its own
+ * unpublished saves and puts them on top of the full copy.
  *
  * What the world leaves out, on purpose:
  * - A process that does not hold the thread saves as it does today (it appends
  *   to its log and publishes by compare-and-swap) only where a scenario budgets
  *   for it, and only while it is the one app process alive: the app is
  *   single-instance, and two of them appending to one log is not this protocol.
+ *   The scenarios that pass keep such saves away from Host runs and from a
+ *   process dying: the last tests in this file show what happens otherwise.
  * - A message that can no longer change anything (a reply to a superseded
  *   claim, anything carrying an epoch that is no longer current) is delivered
  *   as soon as it becomes so, checked to change nothing, and dropped. That is
@@ -1060,8 +1065,8 @@ interface Desk {
   /** The full copy this process's state is built on, and the head of the log it continues. */
   base: number
   head: number
-  /** Ghost: how many of the thread's writes this process's copy includes. */
-  seen: number
+  /** Ghost: which of the thread's writes this process's copy includes, one bit each. */
+  has: number
   /** Messages on their way to this process, each as JSON so the queue sorts cheaply. */
   inbox: string[]
 }
@@ -1093,8 +1098,11 @@ interface World {
   hostRun: boolean
   full: number
   log: number
-  /** Ghost: writes that changed the thread's content so far. */
+  /** Ghost: writes that changed the thread's content so far; write n is bit n - 1. */
   writes: number
+  /** Ghost: which of them the full copy includes, and which the head of the log does. */
+  fullHas: number
+  logHas: number
   /** Ghost: the process whose append is the head of the log. */
   logWriter: string | null
   desks: Desk[]
@@ -1114,7 +1122,14 @@ interface Step {
 const hostName = (boot: number): string => `host-${boot}`
 const hostBootOf = (host: string): number => Number(host.slice('host-'.length))
 
-const NO_PROCESS: Desk = { writerId: null, claims: null, base: 0, head: 0, seen: 0, inbox: [] }
+const NO_PROCESS: Desk = { writerId: null, claims: null, base: 0, head: 0, has: 0, inbox: [] }
+
+/** Every write so far, and the newest of them, as the ghost fields count them. */
+const everyWrite = (world: World): number => 2 ** world.writes - 1
+const newestWrite = (world: World): number => 2 ** (world.writes - 1)
+const hasEveryWrite = (world: World, desk: Desk): boolean => desk.has === everyWrite(world)
+/** What a reader finds on disk: the log where it leads, else the full copy. */
+const onDiskHas = (world: World): number => (world.log > world.full ? world.logHas : world.fullHas)
 
 /** Messages are few and repeat across states, so each distinct one is parsed once. */
 const parsedMessages = new Map<string, ToHost | ToDesk>()
@@ -1134,7 +1149,7 @@ function startDesk(world: World, slot: number): void {
     // A cold read: the full copy, and the log where it leads.
     base: world.full,
     head: Math.max(world.full, world.log),
-    seen: world.writes,
+    has: onDiskHas(world),
     inbox: []
   }
 }
@@ -1147,6 +1162,8 @@ function initialWorld(bounds: Bounds): World {
     full: 1,
     log: 1,
     writes: 0,
+    fullHas: 0,
+    logHas: 0,
     logWriter: null,
     desks: [NO_PROCESS, NO_PROCESS],
     toHost: [],
@@ -1223,11 +1240,23 @@ function take(queue: string[], index: number, duplicate: boolean, world: World):
   return message
 }
 
+/**
+ * A running process reads the thread again. With unpublished saves of its own
+ * in the log it keeps them and puts them on top of the full copy, as conflict
+ * recovery does today; otherwise it takes what is on disk.
+ */
 function reread(world: World, slot: number): void {
   const desk = world.desks[slot]
+  if (world.logWriter === desk.writerId && (desk.has & ~world.fullHas) !== 0) {
+    desk.has |= world.fullHas
+    // A save that the full copy has overtaken is written again, on top of it.
+    if (world.log <= world.full) world.log = world.full + 1
+    world.logHas = desk.has
+  } else {
+    desk.has = onDiskHas(world)
+  }
   desk.base = world.full
   desk.head = Math.max(world.full, world.log)
-  desk.seen = world.writes
 }
 
 function hostWriteFacts(world: World): HostWriteFacts {
@@ -1241,6 +1270,8 @@ function hostChangesThread(world: World): void {
   world.left.hostWrites--
   world.full += 1
   world.writes += 1
+  // The Host builds on its own full copy.
+  world.fullHas |= newestWrite(world)
 }
 
 /** Whether a message to the Host names the grant, and for a decline the request, that is current. */
@@ -1422,7 +1453,7 @@ function stepsFrom(world: World): Step[] {
     const state = claims.stateOf(THREAD)
     const holds = claims.owns(THREAD)
     const stale =
-      desk.base !== world.full || desk.head !== durableHead || desk.seen !== world.writes
+      desk.base !== world.full || desk.head !== durableHead || !hasEveryWrite(world, desk)
 
     if (desk.claims!.host !== host) {
       add(`${name} connects to ${host}`, (next, note) => {
@@ -1447,7 +1478,7 @@ function stepsFrom(world: World): Step[] {
                 kind: 'claim',
                 request,
                 writes: next.writes,
-                current: claimer.seen === next.writes
+                current: hasEveryWrite(next, claimer)
               })
             )
           })
@@ -1457,15 +1488,16 @@ function stepsFrom(world: World): Step[] {
     if (holds && world.left.appends > 0) {
       add(`${name} appends`, (next, note) => {
         const writer = next.desks[slot]
-        if (writer.seen !== next.writes || writer.head !== Math.max(next.full, next.log)) {
+        if (!hasEveryWrite(next, writer) || writer.head !== Math.max(next.full, next.log)) {
           throw new Error('a holder appended to a thread it had not caught up with')
         }
         next.left.appends--
+        next.writes += 1
+        writer.has |= newestWrite(next)
         writer.head += 1
         next.log = writer.head
+        next.logHas = writer.has
         next.logWriter = name
-        next.writes += 1
-        writer.seen = next.writes
         note(
           attached(next, writer) ? 'holder appended' : 'holder appended before noticing a restart'
         )
@@ -1475,14 +1507,15 @@ function stepsFrom(world: World): Step[] {
     if (!holds && alone && world.left.todaySaves > 0) {
       add(`${name} saves without holding the thread`, (next, note) => {
         const saver = next.desks[slot]
-        const upToDate = saver.seen === next.writes
+        const upToDate = hasEveryWrite(next, saver)
         next.left.todaySaves--
-        saver.head += 1
-        next.log = saver.head
-        next.logWriter = name
         next.writes += 1
         // A copy that had missed a write still misses it after adding its own.
-        if (upToDate) saver.seen = next.writes
+        saver.has |= newestWrite(next)
+        saver.head += 1
+        next.log = saver.head
+        next.logHas = saver.has
+        next.logWriter = name
         note(
           upToDate
             ? 'saved without holding the thread'
@@ -1511,9 +1544,14 @@ function stepsFrom(world: World): Step[] {
           if (holders(next).some((holder) => holder.writerId !== name)) {
             throw new Error('a full copy was replaced under another holder')
           }
+          const sender = next.desks[slot]
+          if ((next.fullHas & ~sender.has) !== 0) {
+            throw new Error('a published copy dropped a write the full copy held')
+          }
           next.left.publishes--
-          next.full = next.desks[slot].head
-          next.desks[slot].base = next.full
+          next.full = sender.head
+          next.fullHas = sender.has
+          sender.base = next.full
           note('full copy published')
         })
       }
@@ -1579,26 +1617,39 @@ function stepsFrom(world: World): Step[] {
     }
   })
 
+  // The Host asks the table before every change of its own. Asking can change
+  // the table (a dead holder is forgotten), so each step asks again for real.
   const decision = table.requestHostWrite(THREAD, hostWriteFacts(world), 0)
+  const decide = (next: World, note: Note): void => {
+    const held = next.table.threads.length
+    const again = onTable(next, (t) => t.requestHostWrite(THREAD, hostWriteFacts(next), 0))
+    if (again.kind !== decision.kind) throw new Error('the decision changed between two looks')
+    if (next.table.threads.length < held) note('dead holder forgotten when the Host asked')
+  }
   if (decision.kind === 'write' && world.left.hostWrites > 0) {
     add('the Host changes the thread', (next, note) => {
-      const again = onTable(next, (t) => t.requestHostWrite(THREAD, hostWriteFacts(next), 0))
-      if (again.kind !== 'write') throw new Error('the decision changed between two looks')
+      decide(next, note)
       hostChangesThread(next)
       note('Host wrote')
     })
   }
   if (decision.kind === 'write' && !world.hostRun && world.left.runs > 0) {
-    add('a Host run starts on the thread', (next) => {
+    add('a Host run starts on the thread', (next, note) => {
+      decide(next, note)
       next.left.runs--
       next.hostRun = true
     })
   }
   if (decision.kind === 'fold_first') {
     add('the Host folds the log into the full copy', (next, note) => {
+      decide(next, note)
       if (desktopPresence(next) !== 'none') throw new Error('folded while a desktop is alive')
       if (decision.revision !== next.log) throw new Error('folded to the wrong revision')
+      if ((next.fullHas & ~next.logHas) !== 0) {
+        throw new Error('the Host folded a log that lacks a write the full copy held')
+      }
       next.full = next.log
+      next.fullHas = next.logHas
       note('Host folded unpublished work before writing')
     })
   }
@@ -1765,7 +1816,8 @@ const NOTHING: Bounds = {
  * The explored space. One space with every budget at once is far too large to
  * run here, so each scenario spends its budget on one kind of trouble. The
  * sizes are pinned: a change to the rules or to the world moves them, and
- * whoever moves them should look at why.
+ * whoever moves them should look at why. A kind of trouble that no scenario
+ * budgets for together with another is not covered: add a scenario for it.
  */
 const SCENARIOS: Scenario[] = [
   {
@@ -1901,8 +1953,8 @@ const SCENARIOS: Scenario[] = [
       hostWrites: 1,
       hostRestarts: 1
     },
-    states: 4889,
-    steps: 11856,
+    states: 5011,
+    steps: 12270,
     mustSee: [
       'saved without holding the thread',
       'saved on top of a copy that lacks a write',
@@ -1926,16 +1978,43 @@ const SCENARIOS: Scenario[] = [
       asks: 1,
       hostRestarts: 1
     },
-    states: 47572,
-    steps: 170833,
+    states: 46688,
+    steps: 167641,
     mustSee: [
       'dead holder removed',
+      'dead holder forgotten when the Host asked',
       'Host folded unpublished work before writing',
       'claim granted to carry on the unpublished log of another process',
       'claim refused: owned_by_other_writer',
       'claim granted by a restarted Host',
       'release request lapsed',
       'Host wrote'
+    ]
+  },
+  {
+    name: 'an app process dies with a claim on its way, while the Host runs on the thread and a new process starts',
+    bounds: {
+      ...NOTHING,
+      claims: 2,
+      appends: 1,
+      publishes: 1,
+      deaths: 1,
+      starts: 1,
+      hostWrites: 1,
+      asks: 1,
+      runs: 1
+    },
+    states: 29785,
+    steps: 99611,
+    mustSee: [
+      'claim granted',
+      'dead holder removed',
+      'dead holder forgotten when the Host asked',
+      'Host folded unpublished work before writing',
+      'claim granted to carry on the unpublished log of another process',
+      'claim refused: host_run_active',
+      'claim refused: owned_by_other_writer',
+      'Host run wrote'
     ]
   }
 ]
@@ -1958,4 +2037,43 @@ describe('who may write a thread: every interleaving inside the bounds', () => {
       120_000
     )
   }
+})
+
+/*
+ * What two revisions cannot tell apart.
+ *
+ * The rules read a log above the full copy as work the Host must not write
+ * over and must fold before it takes the thread. That is true of a log its
+ * holder wrote. It is not true of a save made the way the app saves today,
+ * before any grant: the app appends to its log first, and the Host may refuse
+ * that save or have changed the thread already. The table is given two
+ * revisions and cannot tell one log from the other. These are the shortest
+ * traces, pinned so that whoever closes the gap sees these tests change.
+ */
+describe('who may write a thread: what two revisions cannot tell apart', () => {
+  it('lets a Host run that is already live write on past a save made without holding the thread', () => {
+    const result = explore({ ...NOTHING, todaySaves: 1, hostWrites: 1, runs: 1 })
+    expect(result.violation).toBe(
+      [
+        'the Host wrote over unpublished desktop work',
+        '1. a Host run starts on the thread',
+        '2. desk-0 saves without holding the thread',
+        '3. the Host run changes the thread'
+      ].join('\n')
+    )
+  })
+
+  it('folds a log that was extended without the Host change before it, once its writer is dead', () => {
+    const result = explore({ ...NOTHING, todaySaves: 2, hostWrites: 1, deaths: 1 })
+    expect(result.violation).toBe(
+      [
+        'the Host folded a log that lacks a write the full copy held',
+        '1. the Host changes the thread',
+        '2. desk-0 saves without holding the thread',
+        '3. desk-0 saves without holding the thread',
+        '4. desk-0 dies',
+        '5. the Host folds the log into the full copy'
+      ].join('\n')
+    )
+  })
 })

@@ -115,7 +115,14 @@ export interface ThreadReleaseDeclinedMessage {
 export interface ThreadDurableFacts {
   /** Revision of the Host's full copy, or null when it has none. */
   readonly fullCopyRevision: number | null
-  /** Head revision of the thread's log, or null when there is none. */
+  /**
+   * Head revision of the thread's log, or null when there is none. Above the
+   * full copy it is read as work its writer has not published. That holds for
+   * a log the thread's holder wrote. The table compares revisions only: it
+   * cannot tell such a log from one a process extended without holding the
+   * thread, on a copy that lacked a Host change. Telling them apart is the
+   * caller's job.
+   */
   readonly logRevision: number | null
 }
 
