@@ -513,6 +513,7 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     onClose: options.onClose,
     startIntroduction: (prompt, onEvent, onClose) =>
       runAcpTurn({
+        diagnosticsLabel: 'mistral',
         prompt,
         cwd: options.cwd,
         cwdLifetime: 'run',
@@ -567,6 +568,7 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     }
   }
   const handle = runAcpTurn({
+    diagnosticsLabel: 'mistral',
     prompt: options.prompt,
     imagePaths: options.imagePaths,
     cwdLifetime: 'run',

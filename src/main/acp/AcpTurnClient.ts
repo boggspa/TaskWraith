@@ -49,6 +49,7 @@ import {
   type AcpPermissionDecision
 } from './AcpProtocol'
 import { isTransientAcpPromptFailure } from './AcpTransientPromptFailure'
+import { createOrderedStreamPump } from '../providers/CooperativeStreamPump'
 import { appendSteeringMessage } from '../steering/SteeringMessageBatch'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
@@ -67,7 +68,13 @@ export interface AcpChildProcess {
     writableEnded?: boolean
     writableDestroyed?: boolean
   } | null
-  stdout: { on(event: 'data', listener: (chunk: Buffer | string) => void): void } | null
+  stdout: {
+    on(event: 'data', listener: (chunk: Buffer | string) => void): void
+    /** Present on a real pipe: lets the output pump stop reading while its
+     *  backlog is over the high-water mark. A fake without them is unbounded. */
+    pause?(): unknown
+    resume?(): unknown
+  } | null
   stderr: { on(event: 'data', listener: (chunk: Buffer | string) => void): void } | null
   on(event: 'error', listener: (err: Error) => void): void
   on(event: 'close', listener: (code: number | null) => void): void
@@ -147,6 +154,11 @@ export type AcpSessionPromptPreparation =
   | { status: 'recover' | 'blocked'; message: string }
 
 export interface AcpTurnOptions {
+  /**
+   * Provider id this turn's output is counted under in the process-wide output
+   * pump counters. Diagnostics only; defaults to `acp`.
+   */
+  diagnosticsLabel?: string
   prompt: string
   /**
    * Main-process-authorized image files for the initial user prompt. This
@@ -1573,10 +1585,10 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     continueAfterInitialize(initializeResult)
   }
 
-  child.stdout?.on('data', (chunk) => {
-    const parsed = parseAcpStreamChunk(chunk.toString(), carry)
-    carry = parsed.carry
-    for (const message of parsed.messages) {
+  // One line of provider output holds at most one message. This stays a loop so
+  // every branch below can still say "done with this message" with `continue`.
+  const handleInboundLine = (line: string): void => {
+    for (const message of parseAcpStreamChunk(`${line}\n`, '').messages) {
       options.onRawFrame?.('in', message)
       rememberToolCall(message)
       // Inbound agent→client request: answer tool-permission asks before all else.
@@ -1940,6 +1952,18 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         setTimeout(() => endProcess(), 25)
       }
     }
+  }
+  // Lines are handled in arrival order in budgeted turns: a burst from this
+  // provider cannot hold the main loop, and nothing overtakes a deferred line.
+  const inboundLinePump = createOrderedStreamPump<string>({
+    label: options.diagnosticsLabel ?? 'acp',
+    source: { pause: () => child.stdout?.pause?.(), resume: () => child.stdout?.resume?.() },
+    visit: handleInboundLine
+  })
+  child.stdout?.on('data', (chunk) => {
+    const lines = (carry + chunk.toString()).split(/\r?\n/)
+    carry = lines.pop() ?? ''
+    inboundLinePump.pushAll(lines)
   })
 
   child.stderr?.on('data', (chunk) => {
@@ -1970,6 +1994,9 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
   })
   child.on('close', (code) => {
+    // Everything the provider wrote is handled before the turn is closed: the
+    // terminal it reported may still be waiting behind a deferred line.
+    inboundLinePump.flush()
     if (terminalCloseDelivered) return
     terminalCloseDelivered = true
     closed = true

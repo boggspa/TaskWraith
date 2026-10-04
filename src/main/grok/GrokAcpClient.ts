@@ -197,6 +197,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     resolveClosed = resolve
   })
   const handle = runAcpTurn({
+    diagnosticsLabel: 'grok',
     prompt: options.prompt,
     imagePaths: options.imagePaths,
     readImageFile: options.readImageFile,

@@ -285,6 +285,7 @@ export function runAntigravityAcpTurn(options: AntigravityAcpRunOptions): Antigr
     routeUnavailable: () => options.toolReceipt?.snapshot().readiness === 'degraded'
   })
   const handle = runAcpTurn({
+    diagnosticsLabel: 'antigravity',
     prompt: `${options.prompt}\n\n${options.toolReceipt ? formatRunToolCapabilityReceipt(options.toolReceipt.snapshot()) : ''}\nTaskWraith native ACP permission decisions are automatic. Provider wording such as "user rejected" does not establish a human decline. Use actually listed TaskWraith tools within the assigned scope. If a required route is absent or the same refusal repeats, preserve the design and report the exact blocker; the coordinator can recover after the lane settles.`,
     cwdLifetime: 'run',
     cwd: options.cwd,

@@ -223,6 +223,7 @@ export function runDevinAcpTurn(options: DevinAcpRunOptions): DevinAcpRunHandle 
     resolveClosed = resolve
   })
   const handle = runAcpTurn({
+    diagnosticsLabel: 'devin',
     prompt: options.prompt,
     cwdLifetime: 'run',
     cwd: options.cwd,

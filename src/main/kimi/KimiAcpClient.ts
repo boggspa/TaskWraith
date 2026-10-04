@@ -115,6 +115,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
   let toolSnapshotRequested = false
   let handle: AcpTurnHandle | null = null
   handle = runAcpTurn({
+    diagnosticsLabel: 'kimi',
     prompt: options.prompt,
     imagePaths: options.imagePaths,
     resumeSessionId: options.resumeSessionId,
