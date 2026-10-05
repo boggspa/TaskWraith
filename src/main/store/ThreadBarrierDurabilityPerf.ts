@@ -34,6 +34,7 @@ import type { ToolActivityDetailStagingSnapshot } from './ToolActivityDetailStag
 import type { RunQueueFile, RunQueueFileSnapshot } from './RunQueueFile'
 import type { UsageJournalUnsyncedSnapshot } from './UsageJournalStore'
 import type { DurableMomentGate, DurableMomentGateSnapshot } from '../run/DurableMomentGate'
+import type { CheckpointPreparationWorkerSnapshot } from './CheckpointPreparationWorker'
 
 export interface ThreadBarrierDurabilityPerfSection {
   /** The switch as this process resolved it. */
@@ -51,6 +52,8 @@ export interface ThreadBarrierDurabilityPerfSection {
   threads: ThreadDebtTrackerSnapshot | null
   /** Tool detail staged off the save path and synced at the port's background class. */
   staging: ToolActivityDetailStagingSnapshot | null
+  /** Why checkpoint work could not start, and the pool's resource use and outcomes. */
+  checkpointPreparation: CheckpointPreparationWorkerSnapshot | null
   /** The usage log: appends and spills written without a sync, its background rounds and compactions. */
   usageLog: UsageJournalUnsyncedSnapshot | null
   /** The run queue: its changes, writes and syncs, and the waits of a person's changes. */
@@ -100,6 +103,7 @@ export function readThreadBarrierDurabilityPerf(
     starts: sources.startGate?.snapshot() ?? null,
     threads: layer?.threads ?? null,
     staging: layer?.staging ?? null,
+    checkpointPreparation: layer?.checkpointPreparation ?? null,
     usageLog: sources.usage.unsyncedSnapshot(),
     runQueue: sources.runQueue
       ? {

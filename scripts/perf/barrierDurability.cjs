@@ -192,6 +192,22 @@ const SECTION_FIGURES = Object.freeze({
     syncs: { files: COUNTER, directories: COUNTER },
     checkpointEvents: COUNTER
   },
+  checkpointPreparation: {
+    activeJobs: LEVEL,
+    reservedBytes: LEVEL,
+    started: COUNTER,
+    completed: COUNTER,
+    failed: COUNTER,
+    deadlineExceeded: COUNTER,
+    cancelled: COUNTER,
+    refusals: {
+      invalidSource: COUNTER,
+      sourceTooLarge: COUNTER,
+      jobOverBudget: COUNTER,
+      slotsBusy: COUNTER,
+      aggregateBusy: COUNTER
+    }
+  },
   usageLog: {
     appends: COUNTER,
     spills: COUNTER,
@@ -224,7 +240,12 @@ const SECTION_FIGURES = Object.freeze({
 })
 
 /** Fields that are not figures: the switch, and the one place a gate was missed. */
-const NOT_FIGURES = new Set(['enabled', 'ignored', 'tickets.lastMissingGate'])
+const NOT_FIGURES = new Set([
+  'enabled',
+  'ignored',
+  'tickets.lastMissingGate',
+  'checkpointPreparation.lastFailureCode'
+])
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -343,6 +364,19 @@ function barrierDurabilityChange(before, after) {
   if (isPlainObject(change.tickets)) {
     change.tickets.lastMissingGate = isPlainObject(after.tickets.lastMissingGate)
       ? after.tickets.lastMissingGate
+      : null
+  }
+  if (isPlainObject(change.checkpointPreparation)) {
+    const code = after.checkpointPreparation.lastFailureCode
+    change.checkpointPreparation.lastFailureCode = [
+      'spawn',
+      'post',
+      'deadline',
+      'process',
+      'reply',
+      'cancelled'
+    ].includes(code)
+      ? code
       : null
   }
   return {

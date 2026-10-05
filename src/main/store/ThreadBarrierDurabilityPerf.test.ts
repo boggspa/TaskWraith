@@ -32,6 +32,7 @@ const FIELDS = [
   'starts',
   'threads',
   'staging',
+  'checkpointPreparation',
   'usageLog',
   'runQueue',
   'checkpoints',
@@ -63,6 +64,7 @@ describe('the threadBarrierDurability perf section', () => {
       starts: null,
       threads: null,
       staging: null,
+      checkpointPreparation: null,
       usageLog: null,
       runQueue: null,
       checkpoints,
@@ -171,6 +173,7 @@ describe('the threadBarrierDurability perf section', () => {
       starts: startGate.snapshot(),
       threads: parts.threads,
       staging: parts.staging,
+      checkpointPreparation: parts.checkpointPreparation ?? null,
       usageLog,
       runQueue: {
         ...runQueueFile,
@@ -186,6 +189,38 @@ describe('the threadBarrierDurability perf section', () => {
     expect(section.staging?.rows.staged).toBe(1)
     expect([section.gates?.waits, section.starts?.waits]).toEqual([0, 1])
     expect(section.runQueue?.userWaits.waits).toBe(1)
+  })
+
+  it('carries the checkpoint worker admission evidence without starting work', () => {
+    const layer = createThreadBarrierDurability()
+    const worker = {
+      activeJobs: 1,
+      reservedBytes: 828_742_693,
+      started: 3,
+      completed: 1,
+      failed: 1,
+      deadlineExceeded: 1,
+      cancelled: 0,
+      refusals: {
+        invalidSource: 1,
+        sourceTooLarge: 2,
+        jobOverBudget: 3,
+        slotsBusy: 4,
+        aggregateBusy: 5
+      },
+      lastFailureCode: 'deadline' as const
+    }
+    const section = readThreadBarrierDurabilityPerf({
+      switches: { barrierDurability: true, barrierDurabilityIgnored: null },
+      layer: { snapshot: () => ({ ...layer.snapshot(), checkpointPreparation: worker }) },
+      gate: null,
+      startGate: null,
+      usage: { unsyncedSnapshot: () => null },
+      runQueue: null,
+      checkpoints: counts,
+      tornTailsTruncated: () => 0
+    })
+    expect(section.checkpointPreparation).toEqual(worker)
   })
 })
 

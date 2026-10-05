@@ -552,6 +552,50 @@ describe('what changed between the two fences', () => {
     expect(change.unread).toEqual([])
   })
 
+  it('separates checkpoint admission refusals from resource occupancy and worker outcomes', () => {
+    const withWorker = (n: number) => ({
+      ...sectionOn(n),
+      checkpointPreparation: {
+        activeJobs: n % 2,
+        reservedBytes: 1000 * n,
+        started: 5 * n,
+        completed: 3 * n,
+        failed: n,
+        deadlineExceeded: n,
+        cancelled: n,
+        refusals: {
+          invalidSource: n,
+          sourceTooLarge: 2 * n,
+          jobOverBudget: 3 * n,
+          slotsBusy: 4 * n,
+          aggregateBusy: 5 * n
+        },
+        lastFailureCode: 'deadline'
+      }
+    })
+    const change = (barrierDurabilityChange(withWorker(2), withWorker(5)) as { change: any }).change
+    expect(change.checkpointPreparation).toEqual({
+      activeJobs: { before: 0, after: 1 },
+      reservedBytes: { before: 2000, after: 5000 },
+      started: 15,
+      completed: 9,
+      failed: 3,
+      deadlineExceeded: 3,
+      cancelled: 3,
+      refusals: {
+        invalidSource: 3,
+        sourceTooLarge: 6,
+        jobOverBudget: 9,
+        slotsBusy: 12,
+        aggregateBusy: 15
+      },
+      lastFailureCode: 'deadline'
+    })
+    expect(change.unread).toEqual([])
+    const older = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(older.checkpointPreparation).toBeNull()
+  })
+
   it('reads what an older build does not report as null, and still differences the rest', () => {
     // No staging, no starts and no sync times; a port without its background
     // class, no beside barriers, and waits that are not split.
