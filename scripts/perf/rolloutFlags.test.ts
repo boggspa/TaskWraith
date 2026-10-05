@@ -9,6 +9,10 @@ import {
   isThreadLogAuthorityEnabled,
   THREAD_LOG_AUTHORITY_ENV
 } from '../../src/host-shared/thread-log/ThreadLogAuthoritySwitch'
+import {
+  isThreadBarrierDurabilityRequested,
+  THREAD_BARRIER_DURABILITY_ENV
+} from '../../src/main/store/ThreadBarrierDurabilitySwitch'
 
 const require = createRequire(import.meta.url)
 const {
@@ -32,6 +36,7 @@ const ROTATION = 'TASKWRAITH_JOURNAL_ROTATION'
 const PUBLICATION = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
 const UTILITY = 'TASKWRAITH_UTILITY_WRITE'
 const AUTHORITY = 'TASKWRAITH_THREAD_LOG_AUTHORITY'
+const BARRIER = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
 
 type Spawned = { cmd: string; args: string[]; opts: { env: Record<string, string> } }
 
@@ -76,7 +81,7 @@ describe('programme rollout flags', () => {
     // Production owns dependency admission; capture records declarations exactly.
   })
 
-  it.each([CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY, AUTHORITY])(
+  it.each([CATALOGUE, JOURNAL, RUN_EVENT, ROTATION, PUBLICATION, UTILITY, AUTHORITY, BARRIER])(
     'pins inherited %s off and enables only its explicit declaration',
     (flag) => {
       vi.stubEnv(CATALOGUE, '1')
@@ -86,6 +91,7 @@ describe('programme rollout flags', () => {
       vi.stubEnv(PUBLICATION, '1')
       vi.stubEnv(UTILITY, 'true')
       vi.stubEnv(AUTHORITY, '1')
+      vi.stubEnv(BARRIER, '1')
       for (const declared of [[], [flag]]) {
         const resolved = resolveRolloutFlags({ declared, inheritedEnv: process.env })
         const plan = pinRolloutFlagsOnSpawnPlan(buildElectronSpawnPlan(planBase), resolved)
@@ -98,7 +104,8 @@ describe('programme rollout flags', () => {
           ROTATION,
           PUBLICATION,
           UTILITY,
-          AUTHORITY
+          AUTHORITY,
+          BARRIER
         ]) {
           const token = declared.includes(name) ? '1' : '0'
           expect(spawned[0].opts.env[name]).toBe(token)
@@ -146,6 +153,7 @@ describe('programme rollout flags', () => {
       JOURNAL,
       ROTATION,
       RUN_EVENT,
+      BARRIER,
       AUTHORITY,
       UTILITY
     ])
@@ -162,6 +170,15 @@ describe('programme rollout flags', () => {
     ])
   })
 
+  it('pins barrier durability with the tokens its reader takes for on and off', () => {
+    expect(THREAD_BARRIER_DURABILITY_ENV).toBe(BARRIER)
+    const on = resolveRolloutFlags({ declared: [BARRIER] })
+    expect(isThreadBarrierDurabilityRequested(on.values)).toBe(true)
+    expect(isThreadBarrierDurabilityRequested(resolveRolloutFlags().values)).toBe(false)
+    // Declaring it turns no other switch on with it.
+    expect(Object.entries(on.values).filter(([, value]) => value !== '0')).toEqual([[BARRIER, '1']])
+  })
+
   it('pins every flag off by default and records each as off', () => {
     const resolved = resolveRolloutFlags()
     expect(resolved.values).toEqual({
@@ -175,7 +192,8 @@ describe('programme rollout flags', () => {
       [ROTATION]: '0',
       [PUBLICATION]: '0',
       [UTILITY]: '0',
-      [AUTHORITY]: '0'
+      [AUTHORITY]: '0',
+      [BARRIER]: '0'
     })
     expect(resolved.record).toEqual({
       schemaVersion: 1,
@@ -191,7 +209,8 @@ describe('programme rollout flags', () => {
         [ROTATION]: 'off',
         [PUBLICATION]: 'off',
         [UTILITY]: 'off',
-        [AUTHORITY]: 'off'
+        [AUTHORITY]: 'off',
+        [BARRIER]: 'off'
       },
       inheritedOverridden: []
     })
@@ -210,7 +229,8 @@ describe('programme rollout flags', () => {
       [ROTATION]: '0',
       [PUBLICATION]: '0',
       [UTILITY]: '0',
-      [AUTHORITY]: '0'
+      [AUTHORITY]: '0',
+      [BARRIER]: '0'
     })
     expect(resolved.record.declared).toEqual([QUEUED])
     expect(resolved.record.effective).toEqual({
@@ -224,7 +244,8 @@ describe('programme rollout flags', () => {
       [ROTATION]: 'off',
       [PUBLICATION]: 'off',
       [UTILITY]: 'off',
-      [AUTHORITY]: 'off'
+      [AUTHORITY]: 'off',
+      [BARRIER]: 'off'
     })
   })
 
@@ -267,10 +288,11 @@ describe('spawn plan pinning', () => {
       [ROTATION]: '0',
       [PUBLICATION]: '0',
       [UTILITY]: '0',
-      [AUTHORITY]: '0'
+      [AUTHORITY]: '0',
+      [BARRIER]: '0'
     })
     expect(pinned.shellCommand).toBe(
-      `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${AUTHORITY}=0 ${UTILITY}=0 ${plan.shellCommand}`
+      `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${BARRIER}=0 ${AUTHORITY}=0 ${UTILITY}=0 ${plan.shellCommand}`
     )
     expect(pinned.argv).toEqual(plan.argv)
     // The unpinned plan is left untouched.
@@ -431,7 +453,8 @@ describe('T2 runner', () => {
           [ROTATION]: 'off',
           [PUBLICATION]: 'off',
           [UTILITY]: 'off',
-          [AUTHORITY]: 'off'
+          [AUTHORITY]: 'off',
+          [BARRIER]: 'off'
         },
         inheritedOverridden: [CHECKPOINT]
       })
@@ -439,7 +462,7 @@ describe('T2 runner', () => {
       expect(dry.spawnPlan.env[CHECKPOINT]).toBe('0')
       expect(
         dry.report.launchPlan.shellCommand.startsWith(
-          `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${AUTHORITY}=0 ${UTILITY}=0 `
+          `env ${CATALOGUE}=0 ${PUBLICATION}=0 ${CHECKPOINT}=0 ${FAIRNESS}=0 ${QUEUED}=1 ${TRANSACTION}=0 ${JOURNAL}=0 ${ROTATION}=0 ${RUN_EVENT}=0 ${BARRIER}=0 ${AUTHORITY}=0 ${UTILITY}=0 `
         )
       ).toBe(true)
     } finally {
