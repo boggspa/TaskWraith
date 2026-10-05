@@ -81,6 +81,7 @@ import {
   CANVAS_EVAL_RESULT_REDACTED,
   createCanvasEvalApprovalReceipt
 } from '../canvas/CanvasEvalAudit'
+import { resetOllamaDaemonReadReuseForTests } from './OllamaDaemonReadReuse'
 
 type SendLineCall = {
   provider: string
@@ -289,6 +290,9 @@ function makeProviderDeps(
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  // Every test here stubs a daemon at the same base URL; one test's answers
+  // must not be what the next test's run reuses.
+  resetOllamaDaemonReadReuseForTests()
 })
 
 describe('loadOllamaImageAttachmentBase64', () => {

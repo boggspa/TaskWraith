@@ -110,8 +110,17 @@ import {
   ollamaModelIdsMatch,
   ollamaSessionMemoryKeyForParticipant,
   ollamaToolCallFormatSchema,
-  resolveOllamaFinalLaunchPlan
+  resolveOllamaFinalLaunchPlan,
+  resolveOllamaRequestedWireModel
 } from './OllamaLaunchPlan'
+import {
+  isOllamaRunRead,
+  readOllamaModelShowForRun,
+  recentOllamaCatalog,
+  rememberOllamaCatalog,
+  rememberOllamaModelShow,
+  withinOllamaRunReads
+} from './OllamaDaemonReadReuse'
 import {
   describeOllamaTransportFailure,
   isLikelyOllamaMemoryPressureFailure,
@@ -1552,6 +1561,10 @@ function cloneOllamaModelCatalogSnapshot(
  * status, capability and model refreshes for Ollama land in the same tick, and
  * the daemon log recorded those bursts as three `/api/tags` and eight `/api/me`
  * requests inside seven seconds, every one racing the same stalled event loop.
+ *
+ * Every plain read reaches the daemon and its answer is remembered for runs; a
+ * read made for a launching run (see `withinOllamaRunReads`) reuses an answer
+ * from moments ago instead.
  */
 export async function fetchOllamaModelCatalog(
   settings: OllamaModelCatalogSettings,
@@ -1559,6 +1572,10 @@ export async function fetchOllamaModelCatalog(
 ): Promise<OllamaModelCatalogSnapshot> {
   const key = ollamaCatalogFlightKey(settings, options)
   if (key === null) return fetchOllamaModelCatalogOnce(settings, options)
+  const recent = isOllamaRunRead()
+    ? recentOllamaCatalog<OllamaModelCatalogSnapshot>(key)
+    : undefined
+  if (recent) return cloneOllamaModelCatalogSnapshot(recent)
   const shared = ollamaCatalogFlights.get(key)
   if (shared) return shared.then(cloneOllamaModelCatalogSnapshot)
   const flight = fetchOllamaModelCatalogOnce(settings, options)
@@ -1566,8 +1583,43 @@ export async function fetchOllamaModelCatalog(
   const release = (): void => {
     if (ollamaCatalogFlights.get(key) === flight) ollamaCatalogFlights.delete(key)
   }
-  flight.then(release, release)
+  flight.then(
+    (snapshot) => {
+      release()
+      rememberOllamaCatalog(key, snapshot)
+    },
+    () => {
+      release()
+      rememberOllamaCatalog(key, null)
+    }
+  )
   return flight.then(cloneOllamaModelCatalogSnapshot)
+}
+
+/**
+ * The runnable models for a launching run. The run's admission preflight read
+ * the catalog moments ago, so a remembered answer that lists the model the run
+ * names is reused. Any other case, including a run that names no model, reads
+ * the daemon on the run's own signal as before.
+ */
+async function fetchOllamaRunModels(
+  settings: OllamaModelCatalogSettings,
+  options: OllamaModelCatalogOptions & { signal: AbortSignal },
+  requestedModel: string | null | undefined
+): Promise<OllamaModelInfo[]> {
+  const key = options.cloudApiKey ? null : ollamaCatalogFlightKey(settings, {})
+  const named = resolveOllamaRequestedWireModel(requestedModel, settings.ollamaDefaultModel, [])
+  const recent = key ? recentOllamaCatalog<OllamaModelCatalogSnapshot>(key) : undefined
+  const runnable = recent?.models.filter((model) => !model.disabled) ?? []
+  if (named && runnable.some((model) => ollamaModelIdsMatch(model.id, named))) {
+    assertOllamaTransportLaunchAuthorized(options.signal, options.launchAuthorized)
+    return runnable.map((model) => ({ ...model }))
+  }
+  const catalog = await fetchOllamaModelCatalog(settings, options)
+  if (key && !options.signal.aborted && options.launchAuthorized?.() !== false) {
+    rememberOllamaCatalog(key, catalog)
+  }
+  return catalog.models.filter((model) => !model.disabled)
 }
 
 async function fetchOllamaModelCatalogOnce(
@@ -1669,6 +1721,36 @@ async function fetchOllamaModelShow(
   }
 }
 
+/** The digest is the one `/api/tags` reported, so a re-pulled tag is a new key. */
+function ollamaModelShowKey(baseUrl: string, model: string, digest?: string): string {
+  return JSON.stringify([normalizeOllamaBaseUrl(baseUrl), model, digest || ''])
+}
+
+/**
+ * The launch plan's `/api/show`: shared with concurrent runs of the same model
+ * and reused for a short while (see `readOllamaModelShowForRun`). A keyed
+ * Cloud read is never shared, like a keyed catalog read.
+ */
+async function fetchOllamaRunModelShow(
+  baseUrl: string,
+  model: string,
+  options: {
+    signal: AbortSignal
+    launchAuthorized?: OllamaTransportLaunchAuthority
+    apiKey?: string | null
+    digest?: string
+  }
+): Promise<OllamaModelShowInfo | null> {
+  const { digest, ...request } = options
+  if (request.apiKey) return fetchOllamaModelShow(baseUrl, model, request)
+  assertOllamaTransportLaunchAuthorized(request.signal, request.launchAuthorized)
+  return readOllamaModelShowForRun(
+    ollamaModelShowKey(baseUrl, model, digest),
+    () => fetchOllamaModelShow(baseUrl, model, request),
+    request.signal
+  )
+}
+
 async function enrichOllamaModelsWithShowInfo(
   baseUrl: string,
   models: OllamaModelInfo[],
@@ -1677,25 +1759,36 @@ async function enrichOllamaModelsWithShowInfo(
   const targets = models.filter((model) => !model.contextLength && !model.disabled).slice(0, 16)
   if (targets.length === 0) return models
   const showResults = await Promise.all(
-    targets.map(async (model) => ({
-      id: model.id,
-      show: await fetchOllamaModelShow(
-        model.source === 'cloud' && cloudApiKey ? OLLAMA_CLOUD_API_BASE_URL : baseUrl,
-        model.source === 'cloud' && cloudApiKey ? ollamaCloudBaseModelId(model.id) : model.id,
+    targets.map(async (model) => {
+      const directCloud = model.source === 'cloud' && Boolean(cloudApiKey)
+      const show = await fetchOllamaModelShow(
+        directCloud ? OLLAMA_CLOUD_API_BASE_URL : baseUrl,
+        directCloud ? ollamaCloudBaseModelId(model.id) : model.id,
         {
           timeoutMs: 750,
-          ...(model.source === 'cloud' && cloudApiKey ? { apiKey: cloudApiKey } : {})
+          ...(directCloud ? { apiKey: cloudApiKey } : {})
         }
       )
-    }))
+      // This read always reaches the daemon, so what it found is what the
+      // next run of this model reuses, or, when it failed, must ask again for.
+      if (!directCloud) {
+        rememberOllamaModelShow(ollamaModelShowKey(baseUrl, model.id, model.digest), show)
+      }
+      return { id: model.id, show }
+    })
   )
   const showById = new Map(showResults.map((result) => [result.id, result.show]))
   return models.map((model) => mergeOllamaModelShow(model, showById.get(model.id) || null) || model)
 }
 
+/**
+ * `modelShow: false` leaves out each model's `/api/show` metadata (context
+ * window, capabilities), which only the per-model rows carry; availability,
+ * counts and the error are the same either way.
+ */
 export async function getOllamaStatusSnapshot(
   settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'>,
-  options: { cloudApiKey?: string | null } = {}
+  options: { cloudApiKey?: string | null; modelShow?: boolean } = {}
 ): Promise<OllamaStatusSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   try {
@@ -1703,11 +1796,10 @@ export async function getOllamaStatusSnapshot(
       { ...settings, ollamaBaseUrl: baseUrl },
       { cloudApiKey: options.cloudApiKey }
     )
-    const models = await enrichOllamaModelsWithShowInfo(
-      baseUrl,
-      catalog.models,
-      options.cloudApiKey
-    )
+    const models =
+      options.modelShow === false
+        ? catalog.models
+        : await enrichOllamaModelsWithShowInfo(baseUrl, catalog.models, options.cloudApiKey)
     const localModels = models.filter((model) => model.source !== 'cloud')
     const cloudModels = models.filter((model) => model.source === 'cloud')
     const runnableCloudModelCount = catalog.cloud.authenticated
@@ -1783,8 +1875,12 @@ export async function getOllamaCapabilityContract(
   // Tier retirement (2026-07): the surface is always full; 'provider_parity' is a
   // fixed placeholder for the (tier-agnostic) name resolver.
   const toolNames = ollamaToolNamesForTier('provider_parity', { networkAccess })
+  // The contract reads availability, never per-model metadata. Each run reads
+  // the contract twice (admission and capability warnings), and the show for
+  // every installed model each time was eight of a run's nine `/api/show`s.
   const status = await getOllamaStatusSnapshot(settings, {
-    cloudApiKey: deps.getCloudApiKey?.()
+    cloudApiKey: deps.getCloudApiKey?.(),
+    modelShow: false
   })
   return buildProviderCapabilityContract({
     provider: 'ollama',
@@ -4206,6 +4302,8 @@ export async function runOllamaProvider(
   deps.runManager.attachAbortController(route.appRunId!, controller)
   const launchAuthorized = (): boolean =>
     !controller.signal.aborted && deps.runManager.canAdmitTransport(route.appRunId, true)
+  // The launch plan's model list, so its show read can key on the tag's digest.
+  let launchModels: readonly OllamaModelInfo[] = []
   const reportWorkingTokenUsage = (stats: Record<string, unknown>): void => {
     try {
       deps.reportWorkingTokenUsage?.(stats, {
@@ -4247,15 +4345,17 @@ export async function runOllamaProvider(
         }
       },
       {
-        loadInstalledModels: () =>
-          fetchOllamaModels(
+        loadInstalledModels: async () =>
+          (launchModels = await fetchOllamaRunModels(
             { ...settings, ollamaBaseUrl: baseUrl },
-            { signal: controller.signal, launchAuthorized, cloudApiKey }
-          ),
-        loadModelShow: (_model, transport) =>
-          fetchOllamaModelShow(transport.baseUrl, transport.wireModel, {
+            { signal: controller.signal, launchAuthorized, cloudApiKey },
+            payload.model
+          )),
+        loadModelShow: (model, transport) =>
+          fetchOllamaRunModelShow(transport.baseUrl, transport.wireModel, {
             signal: controller.signal,
             launchAuthorized,
+            digest: launchModels.find((entry) => ollamaModelIdsMatch(entry.id, model))?.digest,
             ...(transport.directCloudApi ? { apiKey: cloudApiKey } : {})
           }),
         modelLabel: humanizeOllamaModelId,
@@ -4423,15 +4523,19 @@ export async function runOllamaProvider(
       memoryMonitor.start()
     }
 
-    await deps.emitProviderCapabilityWarnings?.(
-      event.sender,
-      'ollama',
-      payload.workspace,
-      // Tier retirement (2026-07): report the run's actual permission role, not a
-      // hardcoded 'plan' — Ollama now honors Plan/Ask/Accept Edits/Full Access like
-      // every provider, so capability warnings must reflect the real posture.
-      payload.approvalMode || 'default',
-      route
+    // The warnings read the capability contract through provider-generic code;
+    // marking the call lets that read reuse the catalog this launch just read.
+    await withinOllamaRunReads(() =>
+      deps.emitProviderCapabilityWarnings?.(
+        event.sender,
+        'ollama',
+        payload.workspace,
+        // Tier retirement (2026-07): report the run's actual permission role, not a
+        // hardcoded 'plan' — Ollama now honors Plan/Ask/Accept Edits/Full Access like
+        // every provider, so capability warnings must reflect the real posture.
+        payload.approvalMode || 'default',
+        route
+      )
     )
 
     deps.sendAgentCompatLine(
