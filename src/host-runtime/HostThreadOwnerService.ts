@@ -34,6 +34,12 @@
  * thread's file again, and a file it cannot read, whether the file or the
  * folder is at fault, keeps the thread as a live writer's would, so the Host
  * neither grants the thread nor writes it. The counts are in its snapshot.
+ *
+ * The Host asks it, through `requestHostWrite`, before it changes a thread's
+ * full copy itself. A file whose writer is alive keeps the thread; a file
+ * whose writer has ended, under a log above the full copy, waits for a fold.
+ * Taking a file away is what lets the Host write: one it cannot take away
+ * keeps the thread too, and is counted.
  */
 import * as path from 'node:path'
 
@@ -44,7 +50,10 @@ import {
   type ThreadWriterLiveness
 } from '../host-shared/thread-log/ThreadAuthorityFile'
 import { isThreadLogAuthorityEnabled } from '../host-shared/thread-log/ThreadLogAuthoritySwitch'
-import type { HostThreadOwnerTableSnapshot } from '../host-shared/thread-log/ThreadOwnership'
+import type {
+  HostThreadOwnerTableSnapshot,
+  HostWriteDecision
+} from '../host-shared/thread-log/ThreadOwnership'
 import { isSafeChatId } from '../shared/ChatPath'
 import type {
   HostLocalTransportSuccessResult,
@@ -80,6 +89,8 @@ export interface HostThreadOwnerServiceOptions {
   logRevision?(threadId: string): Promise<number | null>
   /** Defaults to signal 0 to the writer's process id. */
   liveness?(writer: ThreadAuthorityWriter): ThreadWriterLiveness
+  /** The clock a request to a writer to let go is timed by; defaults to `Date.now`. */
+  readonly now?: () => number
   readonly log?: (line: string) => void
   /** Told what the writers say about their threads; its failures change no answer. */
   readonly observer?: HostThreadOwnerServiceObserver
@@ -101,6 +112,9 @@ export interface HostThreadOwnerAuthorityHealth {
   readonly damagedReads: number
   /** The threads among them, the first DAMAGED_THREADS_KEPT. */
   readonly damagedThreads: readonly string[]
+  /** Host writes refused because the thread's file could not be taken away. */
+  readonly removeFailures: number
+  readonly lastRemoveError: string | null
 }
 
 export interface HostThreadOwnerServiceSnapshot {
@@ -162,12 +176,16 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   private lastFolderError: string | null = null
   private damagedReads = 0
   private readonly damagedThreads = new Set<string>()
+  private removeFailures = 0
+  private lastRemoveError: string | null = null
+  private readonly now: () => number
 
   constructor(options: HostThreadOwnerServiceOptions) {
     const switchedOn = isThreadLogAuthorityEnabled(options.environment)
     this.mode = !switchedOn ? 'off' : options.transactionalPersist ? 'off-txn-persist' : 'on'
     this.log = options.log ?? (() => {})
     this.observer = options.observer
+    this.now = options.now ?? Date.now
     if (this.mode === 'off-txn-persist') {
       this.log(
         'taskwraith-host: TASKWRAITH_THREAD_LOG_AUTHORITY=1 ignored: a Host with TASKWRAITH_HOST_TXN_PERSIST=1 takes no thread claims\n'
@@ -183,7 +201,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             files: {
               read: (threadId) => this.read(files, threadId),
               list: () => files.list(),
-              remove: (threadId) => files.remove(threadId)
+              remove: (threadId) => this.remove(files, threadId)
             },
             fullCopyRevision: (threadId) => options.fullCopyRevision(threadId),
             logRevision: options.logRevision
@@ -269,6 +287,17 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     }
   }
 
+  /**
+   * Asked before the Host changes a thread's full copy itself; only `write`
+   * lets it. A Host that takes no claims lets every write through. A caller
+   * let through holds the thread for its write, as `hostRunActive` reports,
+   * from the moment it is answered.
+   */
+  async requestHostWrite(threadId: string): Promise<HostWriteDecision> {
+    if (!this.registry) return { kind: 'write' }
+    return this.registry.requestHostWrite(threadId, this.now())
+  }
+
   /** The socket closed. The last of a writer's gives its threads back to the Host. */
   closed(connectionId: number): void {
     const writerId = this.writerOfConnection.get(connectionId)
@@ -294,7 +323,9 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
               folderUnreadable: this.folderUnreadable,
               lastFolderError: this.lastFolderError,
               damagedReads: this.damagedReads,
-              damagedThreads: [...this.damagedThreads]
+              damagedThreads: [...this.damagedThreads],
+              removeFailures: this.removeFailures,
+              lastRemoveError: this.lastRemoveError
             }
           }
         : {})
@@ -317,6 +348,20 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
       if (this.damagedThreads.size < DAMAGED_THREADS_KEPT) this.damagedThreads.add(threadId)
     }
     return read
+  }
+
+  /** Takes a thread's file away; one it cannot is counted, and the write it was for refused. */
+  private async remove(
+    files: Pick<ThreadAuthorityFiles, 'remove'>,
+    threadId: string
+  ): Promise<boolean> {
+    try {
+      return await files.remove(threadId)
+    } catch (error) {
+      this.removeFailures += 1
+      this.lastRemoveError = errorText(error)
+      throw error
+    }
   }
 
   private tell(call: (observer: HostThreadOwnerServiceObserver) => void): void {

@@ -19,6 +19,7 @@ import { fingerprintHostCommand } from './HostCommandFingerprint'
 import { isExactHostActorIdentity, type HostAuthorityCallContext } from './HostAuthority'
 import type { HostPermissionConsentRequest } from './HostPermissionConsent'
 import { isHostSetupCommand } from './HostSetupCommand'
+import type { HostThreadWriteGate } from './HostThreadWriteGate'
 
 export interface HostSetupWorkspacePort {
   register(input: {
@@ -96,6 +97,13 @@ export interface HostSetupCommandExecutorPorts {
   readonly providerAuth: HostSetupProviderAuthPort
   readonly currentOffers: HostSetupOfferReader
   readonly currentAuthFlows: HostSetupAuthFlowReader
+  /**
+   * Asked, once a command has passed every check of its own, before a port
+   * configures or archives a thread: an app process may own the thread. Its
+   * refusal is the command's answer. Absent, or answering null, while the
+   * Host's writes ask nobody.
+   */
+  readonly threadWrites?: () => Pick<HostThreadWriteGate, 'admit'> | null
 }
 
 const LOCAL_SETUP_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
@@ -124,6 +132,14 @@ function failed(
     | 'setup_execution_failed'
 ) {
   return { status: 'failed' as const, errorCode: code }
+}
+
+/** The registry's refusal of a write to a thread an app process may own, as the command's answer. */
+function refusedWrite(refusal: {
+  readonly errorCode: string
+  readonly errorMessage: string
+}): HostCommandExecutionResult {
+  return { status: 'failed', errorCode: refusal.errorCode, errorMessage: refusal.errorMessage }
 }
 
 function succeeded(resultRef: HostResultRef): HostCommandExecutionResult {
@@ -276,7 +292,7 @@ export class HostSetupCommandExecutor {
         issuedAt: command.issuedAt
       }
     }
-    const result = await this.ports.thread.configure({
+    const input: Parameters<HostSetupThreadPort['configure']>[0] = {
       threadId,
       ...(command.arguments.chatKind === 'single' || command.arguments.chatKind === 'ensemble'
         ? { chatKind: command.arguments.chatKind }
@@ -303,7 +319,16 @@ export class HostSetupCommandExecutor {
         : {}),
       ...(postureConsentProvenance ? { postureConsentProvenance } : {}),
       ...(typeof command.arguments.title === 'string' ? { title: command.arguments.title } : {})
-    })
+    }
+    const writes = this.ports.threadWrites?.()
+    const write = writes ? await writes.admit(threadId, 'thread.configure') : null
+    if (write?.kind === 'refused') return refusedWrite(write)
+    let result: Awaited<ReturnType<HostSetupThreadPort['configure']>>
+    try {
+      result = await this.ports.thread.configure(input)
+    } finally {
+      write?.release()
+    }
     if (!isSafeResultId(result?.threadId) || result.threadId !== threadId) {
       return failed('setup_execution_failed')
     }
@@ -314,7 +339,15 @@ export class HostSetupCommandExecutor {
     const threadId = command.target.threadId
     const archived = command.arguments.archived
     if (typeof archived !== 'boolean') return failed('setup_invalid')
-    const result = await this.ports.thread.archive({ threadId, archived })
+    const writes = this.ports.threadWrites?.()
+    const write = writes ? await writes.admit(threadId, 'thread.archive') : null
+    if (write?.kind === 'refused') return refusedWrite(write)
+    let result: Awaited<ReturnType<HostSetupThreadPort['archive']>>
+    try {
+      result = await this.ports.thread.archive({ threadId, archived })
+    } finally {
+      write?.release()
+    }
     if (!isSafeResultId(result?.threadId) || result.threadId !== threadId) {
       return failed('setup_execution_failed')
     }

@@ -69,6 +69,7 @@ import {
   type HostThreadLogWorkerSeed
 } from '../host-runtime/HostThreadLogWorkerSeed'
 import { HostThreadOwnerService, threadLogDirectory } from '../host-runtime/HostThreadOwnerService'
+import { HostThreadWriteGate } from '../host-runtime/HostThreadWriteGate'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
@@ -452,6 +453,8 @@ export class HostNodeProductionServer {
   /** Set only with the thread log authority switch on: app-owned threads' history from their logs. */
   private threadHistoryRouter: HostThreadHistoryRouter | null = null
   private threadLogWorkerSeed: HostThreadLogWorkerSeed | null = null
+  /** Set only with the thread log authority switch on: asked before the Host's own writes. */
+  private threadWriteGate: HostThreadWriteGate | null = null
   private threadCatalogueMirror: ThreadCatalogueMirror | null = null
   private threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
   private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
@@ -724,6 +727,7 @@ export class HostNodeProductionServer {
           : {}),
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
         onProjectionDirty: () => projectionDirtyRef.current?.(),
+        threadWriteGate: () => this.threadWriteGate,
         ...(queuedStartSlot && queuedStartExecutionClaimStore
           ? {
               executionClaimStore: queuedStartExecutionClaimStore,
@@ -866,6 +870,35 @@ export class HostNodeProductionServer {
         )
       }
       if (this.stopRequested) return
+      // Which app process writes each thread (`thread.owner`). The thread log
+      // authority switch is read once, here; grants carry the welcome's epoch.
+      // It starts before anything the Host writes itself, from catalogue
+      // recovery on: with the switch on, each of those writes asks it first.
+      const threadOwners = new HostThreadOwnerService({
+        environment: this.options.environment ?? process.env,
+        transactionalPersist: txnRecordPersistEnabled,
+        profilePath: this.lease.path,
+        incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
+        fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
+        hostRunActive: (threadId) =>
+          !this.domain ||
+          this.domain.hasRuntimeWorkForThread(threadId) ||
+          this.threadWriteGate?.writing(threadId) === true,
+        log: writeHostStderr,
+        // What the writers say reaches the followers of their threads' logs.
+        observer: {
+          advanced: (threadId) => this.threadHistoryRouter?.nudge(threadId),
+          released: (threadId) => this.threadHistoryRouter?.released(threadId)
+        }
+      })
+      this.threadWriteGate =
+        threadOwners.mode === 'on'
+          ? new HostThreadWriteGate({
+              decide: (threadId) => threadOwners.requestHostWrite(threadId)
+            })
+          : null
+      await threadOwners.start()
+      if (this.stopRequested) return
       // Catalogue recovery adopts from its constructor: only after the above.
       if (
         this.threadCatalogue &&
@@ -877,7 +910,8 @@ export class HostNodeProductionServer {
           client: this.threadCatalogue,
           mirror: this.threadCatalogueMirror,
           controller: this.threadRecovery,
-          origin: this.hostRunOrigin
+          origin: this.hostRunOrigin,
+          ...(this.threadWriteGate ? { writes: this.threadWriteGate } : {})
         })
       await this.composition.recoverQueuedStarts()
       // Slice 13f1: seed the public window index in the background. The
@@ -911,24 +945,6 @@ export class HostNodeProductionServer {
         )
       }
       this.leases = leaseProtocolDisabled ? null : this.createLeaseRegistry()
-      // Which app process writes each thread (`thread.owner`). The thread log
-      // authority switch is read once, here; grants carry the welcome's epoch.
-      const threadOwners = new HostThreadOwnerService({
-        environment: this.options.environment ?? process.env,
-        transactionalPersist: txnRecordPersistEnabled,
-        profilePath: this.lease.path,
-        incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
-        fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
-        hostRunActive: (threadId) => !this.domain || this.domain.hasRuntimeWorkForThread(threadId),
-        log: writeHostStderr,
-        // What the writers say reaches the followers of their threads' logs.
-        observer: {
-          advanced: (threadId) => this.threadHistoryRouter?.nudge(threadId),
-          released: (threadId) => this.threadHistoryRouter?.released(threadId)
-        }
-      })
-      await threadOwners.start()
-      if (this.stopRequested) return
       if (threadOwners.mode === 'on') {
         const workerSeed = this.options.threadLogSeedPort
           ? null
@@ -961,8 +977,10 @@ export class HostNodeProductionServer {
             'taskwraith-host: no thread catalogue to seed thread logs from: history is served from the full copy\n'
           )
         }
+        const writeGate = this.threadWriteGate
         hostPerf.registerSections({
           threadOwners: () => threadOwners.snapshot(),
+          ...(writeGate ? { threadWrites: () => writeGate.snapshot() } : {}),
           ...(this.threadHistoryRouter
             ? { threadLogHistory: () => this.threadHistoryRouter?.snapshot() ?? null }
             : {}),

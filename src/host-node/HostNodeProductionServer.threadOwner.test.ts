@@ -491,7 +491,7 @@ describe('HostNodeProductionServer: thread history', () => {
       const answer = input.threadHistoryProvider!({ threadId: CHAT, limit: 2 })
       expect(answer).toBe(h.domain.threadHistory.mock.results[0]!.value)
       const sections = input.perf!.instrumentation!.snapshot().sections
-      expect(Object.keys(sections).sort()).toEqual(['threadOwners', 'workSpans'])
+      expect(Object.keys(sections).sort()).toEqual(['threadOwners', 'threadWrites', 'workSpans'])
       expect(lines).toContainEqual(expect.stringContaining('served from the full copy'))
     } finally {
       await h.server.stop()

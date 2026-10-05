@@ -3,11 +3,18 @@ import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/Thre
 import type { ThreadCatalogueRecoveryController } from '../host-shared/thread-catalogue/ThreadCatalogueRecoveryController'
 import type { ThreadCatalogueRecoveryHold } from '../host-shared/thread-catalogue/ThreadCatalogue'
 import type {
+  HostThreadWriteAdmission,
+  HostThreadWriteGate
+} from '../host-runtime/HostThreadWriteGate'
+import type {
   HostCatalogueRunOrigin,
   PreparedThreadMutation,
   ThreadCatalogueOpenResult,
   ThreadIndexedObject
 } from '../shared/threadCatalogueTypes'
+
+/** How long a thread the Host may not write waits before recovery asks again. */
+const REFUSED_RETRY_MS = 30_000
 
 /** A Host lease proves only its own prior incarnation ended; legacy/Desktop rows are not guessed. */
 export class ThreadCatalogueHostRecovery {
@@ -26,6 +33,11 @@ export class ThreadCatalogueHostRecovery {
       mirror: ThreadCatalogueMirror
       controller: ThreadCatalogueRecoveryController
       origin: HostCatalogueRunOrigin
+      /**
+       * Asked before runs are settled in a thread's full copy, while the
+       * thread log authority switch is on: an app process may own the thread.
+       */
+      writes?: Pick<HostThreadWriteGate, 'admit'>
     }
   ) {
     this.unsubscribe = options.mirror.subscribe((row, id) => {
@@ -82,6 +94,7 @@ export class ThreadCatalogueHostRecovery {
     )
     if (!opened) return
     let hold: ThreadCatalogueRecoveryHold | null = null
+    let write: HostThreadWriteAdmission | null = null
     try {
       const runs: Array<{ runId: string }> = []
       let after: number | undefined
@@ -120,6 +133,16 @@ export class ThreadCatalogueHostRecovery {
         if (runs.length >= 1000 || this.stopped) break
       }
       if (!runs.length || this.stopped || opened.entry.snapshot) return
+      if (this.options.writes) {
+        write = await this.options.writes.admit(chatId, 'catalogue.recovery')
+        if (write.kind === 'refused') {
+          // An app process holds the thread, or left work to fold first: ask
+          // again later, not at each change it makes.
+          this.retry(chatId, REFUSED_RETRY_MS)
+          return
+        }
+        if (this.stopped) return
+      }
       hold = controller.beginHost(chatId)
       const prepared = await client.query<PreparedThreadMutation | null>({
         method: 'prepare',
@@ -135,6 +158,7 @@ export class ThreadCatalogueHostRecovery {
       })
       if (prepared && !this.stopped) await controller.adopt(chatId, hold.token, prepared.preparedId)
     } finally {
+      if (write?.kind === 'write') write.release()
       try {
         if (hold) controller.end(chatId, hold.token)
       } catch {
@@ -146,12 +170,12 @@ export class ThreadCatalogueHostRecovery {
     }
   }
 
-  private retry(id: string): void {
+  private retry(id: string, delayMs = 2000): void {
     if (this.stopped || this.retries.has(id)) return
     const timer = setTimeout(() => {
       this.retries.delete(id)
       this.enqueue(id)
-    }, 2000)
+    }, delayMs)
     timer.unref?.()
     this.retries.set(id, timer)
   }

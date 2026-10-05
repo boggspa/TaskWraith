@@ -64,6 +64,7 @@ import {
   isHostProfileRecordMutationName
 } from '../host-runtime/HostProfileRecordCommandExecutor'
 import { HostSetupCommandExecutor } from '../host-runtime/HostSetupCommandExecutor'
+import type { HostThreadWriteGate } from '../host-runtime/HostThreadWriteGate'
 import type {
   HostPermissionConsentAuthorityPort,
   HostPermissionConsentEnvelope,
@@ -251,6 +252,13 @@ export interface HostNodeDomainPortsOptions {
     threadId: string,
     result: HostCommandExecutionResult
   ) => void | Promise<void>
+  /**
+   * Asked before each of the Host's own writes to a thread's full copy: with
+   * the thread log authority switch on, an app process may own the thread.
+   * Absent, or answering null, while the switch is off; the Host then writes
+   * as it always has.
+   */
+  readonly threadWriteGate?: () => Pick<HostThreadWriteGate, 'admit'> | null
 }
 
 type AuthOperation = {
@@ -682,7 +690,8 @@ export class HostNodeDomainPorts {
         cancel: (input) => this.cancelManualAuth(input)
       },
       currentOffers: { read: (providerId) => this.providerOffers(providerId) },
-      currentAuthFlows: { read: (providerId) => this.providerAuthFlows(providerId) }
+      currentAuthFlows: { read: (providerId) => this.providerAuthFlows(providerId) },
+      threadWrites: () => this.threadWriteGate()
     })
   }
 
@@ -1224,7 +1233,15 @@ export class HostNodeDomainPorts {
       const startedAt = this.controlResponseStartedAt()
       const chatId = this.chatIdForCommandThread(decoded.value.target.threadId)
       try {
-        return this.toggleEnsembleSeat(decoded.value)
+        const gate = this.threadWriteGate()
+        if (!gate) return this.toggleEnsembleSeat(decoded.value)
+        const write = await gate.admit(decoded.value.target.threadId, 'ensemble.seat.toggle')
+        if (write.kind === 'refused') return failed(write.errorCode, write.errorMessage)
+        try {
+          return this.toggleEnsembleSeat(decoded.value)
+        } finally {
+          write.release()
+        }
       } finally {
         this.recordControlResponse(chatId, startedAt, 'seat_toggle')
       }
@@ -1242,11 +1259,34 @@ export class HostNodeDomainPorts {
 
     if (command.name !== 'composer.send') return failed('command_unsupported')
 
-    let thread = this.runPort.getThread(command.target.threadId)
+    const thread = this.runPort.getThread(command.target.threadId)
     if (!thread) return failed('thread_not_found')
     const provider = this.registry.getInstance(thread.providerId)
     if (!provider) return failed('provider_not_composed')
+    const gate = this.threadWriteGate()
+    if (!gate) return this.composerSend(context, command, target, sendOptions, thread, provider)
+    // The send changes the thread, and so do the run it starts and the run's
+    // own writes. Once the run is live it keeps the thread from an app's
+    // claim; until then, this write's hold does.
+    const write = await gate.admit(command.target.threadId, 'composer.send')
+    if (write.kind === 'refused') return failed(write.errorCode, write.errorMessage)
+    try {
+      return await this.composerSend(context, command, target, sendOptions, thread, provider)
+    } finally {
+      write.release()
+    }
+  }
 
+  /** A send the Host may write, from the selection it carries to its run's start. */
+  private async composerSend(
+    context: HostAuthorityCallContext,
+    command: HostCommand,
+    target: HostRunEventTarget,
+    sendOptions: Parameters<HostNodeDomainPorts['executeCommand']>[3],
+    sentThread: NonNullable<ReturnType<HostNodeProfileRunPort['getThread']>>,
+    provider: NonNullable<ReturnType<HostNodeProviderRegistry['getInstance']>>
+  ): Promise<HostCommandExecutionResult> {
+    let thread: ReturnType<HostNodeProfileRunPort['getThread']> = sentThread
     // Providers read the thread back from the run port, so an authority-passed
     // per-send selection must be applied to the stored configuration before
     // dispatch — otherwise the override validates and then silently never runs.
@@ -1512,6 +1552,32 @@ export class HostNodeDomainPorts {
     if (this.staleOfferNotices.has(key)) return
     if (this.staleOfferNotices.size >= 1_024) this.staleOfferNotices.clear()
     this.staleOfferNotices.add(key)
+    const gate = this.threadWriteGate()
+    if (!gate) {
+      this.writeStaleOfferNotice(threadId)
+      return
+    }
+    // The notice changes the thread too. The registry answers it before the
+    // send that follows, and decides that send a turn later, so a notice let
+    // through is still written ahead of the send's run.
+    void gate.admit(threadId, 'offer.notice').then(
+      (write) => {
+        if (write.kind === 'refused') {
+          // Not written: the next send the Host may write gives it again.
+          this.staleOfferNotices.delete(key)
+          return
+        }
+        try {
+          this.writeStaleOfferNotice(threadId)
+        } finally {
+          write.release()
+        }
+      },
+      () => this.staleOfferNotices.delete(key)
+    )
+  }
+
+  private writeStaleOfferNotice(threadId: string): void {
     try {
       this.options.store.appendTranscript({
         threadId,
@@ -1522,6 +1588,11 @@ export class HostNodeDomainPorts {
     } catch {
       // Best effort: the gate decision does not depend on the notice.
     }
+  }
+
+  /** Null while the Host's writes ask nobody. */
+  private threadWriteGate(): Pick<HostThreadWriteGate, 'admit'> | null {
+    return this.options.threadWriteGate?.() ?? null
   }
 
   private toggleEnsembleSeat(command: HostCommand): HostCommandExecutionResult {

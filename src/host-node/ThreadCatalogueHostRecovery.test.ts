@@ -12,6 +12,8 @@ import type {
   ThreadCatalogueProjection,
   ThreadCatalogueQuery
 } from '../shared/threadCatalogueTypes'
+import type { HostWriteDecision } from '../host-shared/thread-log/ThreadOwnership'
+import { HostThreadWriteGate } from '../host-runtime/HostThreadWriteGate'
 import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
 
 const origin: HostCatalogueRunOrigin = {
@@ -237,5 +239,127 @@ describe('ThreadCatalogueHostRecovery scheduling', () => {
     expect(opens).toBe(1)
     expect(vi.getTimerCount()).toBe(0)
     await mirror.dispose()
+  })
+})
+
+describe('ThreadCatalogueHostRecovery and the Host’s own writes', () => {
+  /** A catalogue whose thread holds one run a former incarnation of this Host left unsettled. */
+  function catalogueWithAnUnsettledRun(events: string[]) {
+    return vi.fn(async (request: ThreadCatalogueQuery): Promise<unknown> => {
+      events.push(request.method)
+      if (request.method === 'open') return opened(request.chatId)
+      if (request.method === 'objects') {
+        return request.after === undefined
+          ? [
+              {
+                ordinal: 1,
+                kind: 'inline',
+                value: {
+                  kind: 'run',
+                  runId: 'run-1',
+                  hostRunOrigin: { ...origin, incarnation: 'earlier' }
+                }
+              }
+            ]
+          : []
+      }
+      if (request.method === 'prepare') return { preparedId: 'prepared-1' }
+      if (request.method === 'release') return true
+      throw new Error(`Unexpected request ${request.method}`)
+    })
+  }
+
+  async function until(condition: () => boolean): Promise<void> {
+    for (let turn = 0; turn < 500 && !condition(); turn += 1) await Promise.resolve()
+    expect(condition()).toBe(true)
+  }
+
+  it('settles a thread’s runs only when the Host may write it, and looks again later when it may not', async () => {
+    vi.useFakeTimers()
+    const mirror = mirrorWith(projection('chat'))
+    const events: string[] = []
+    const decisions: HostWriteDecision[] = [
+      { kind: 'busy', reason: 'thread_busy_in_desktop' },
+      { kind: 'write' }
+    ]
+    const gate = new HostThreadWriteGate({ decide: async () => decisions.shift()! })
+    const recoveryController = {
+      beginHost: vi.fn(() => {
+        events.push(`hold:${gate.writing('chat')}`)
+        return { chatId: 'chat', token: 'token-1' }
+      }),
+      adopt: vi.fn(async () => {
+        events.push(`adopt:${gate.writing('chat')}`)
+      }),
+      end: vi.fn(() => {
+        events.push('end')
+      })
+    }
+    const recovery = new ThreadCatalogueHostRecovery({
+      client: { query: catalogueWithAnUnsettledRun(events) } as unknown as Pick<
+        ThreadCatalogueClient,
+        'query'
+      >,
+      mirror,
+      controller: recoveryController as unknown as ThreadCatalogueRecoveryController,
+      origin,
+      writes: gate
+    })
+    try {
+      await until(() => events.includes('release'))
+      expect(events).toEqual(['open', 'objects', 'objects', 'release'])
+      expect(recoveryController.beginHost).not.toHaveBeenCalled()
+
+      // Changes to the thread while it is refused do not ask again at once.
+      mirror.observe(projection('chat', 2))
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(events.filter((event) => event === 'open')).toHaveLength(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await until(() => events.filter((event) => event === 'release').length === 2)
+      expect(events.slice(4)).toEqual([
+        'open',
+        'objects',
+        'objects',
+        'hold:true',
+        'prepare',
+        'adopt:true',
+        'end',
+        'release'
+      ])
+      expect(recoveryController.adopt).toHaveBeenCalledWith('chat', 'token-1', 'prepared-1')
+      expect(gate.writing('chat')).toBe(false)
+      expect(gate.snapshot().paths).toEqual({ 'catalogue.recovery': { asked: 2, refused: 1 } })
+    } finally {
+      recovery.dispose()
+      await mirror.dispose()
+    }
+  })
+
+  it('without a gate, settles at once as it always has', async () => {
+    const mirror = mirrorWith(projection('chat'))
+    const events: string[] = []
+    const recoveryController = {
+      beginHost: vi.fn(() => ({ chatId: 'chat', token: 'token-1' })),
+      adopt: vi.fn(async () => undefined),
+      end: vi.fn()
+    }
+    const recovery = new ThreadCatalogueHostRecovery({
+      client: { query: catalogueWithAnUnsettledRun(events) } as unknown as Pick<
+        ThreadCatalogueClient,
+        'query'
+      >,
+      mirror,
+      controller: recoveryController as unknown as ThreadCatalogueRecoveryController,
+      origin
+    })
+    try {
+      await until(() => events.includes('release'))
+      expect(events).toEqual(['open', 'objects', 'objects', 'prepare', 'release'])
+      expect(recoveryController.adopt).toHaveBeenCalledWith('chat', 'token-1', 'prepared-1')
+    } finally {
+      recovery.dispose()
+      await mirror.dispose()
+    }
   })
 })

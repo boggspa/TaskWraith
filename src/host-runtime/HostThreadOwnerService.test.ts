@@ -231,7 +231,9 @@ describe('the Host’s thread owner service', () => {
       folderUnreadable: 1,
       lastFolderError: 'permission denied',
       damagedReads: 2,
-      damagedThreads: ['thread-1']
+      damagedThreads: ['thread-1'],
+      removeFailures: 0,
+      lastRemoveError: null
     })
   })
 
@@ -426,5 +428,66 @@ describe('the Host’s thread owner service', () => {
       await on.answer(1, { action: 'release', threadId: 'thread-1', epoch: granted, revision: 4 })
     ).toEqual({ kind: 'thread.owner', action: 'release', released: true })
     expect(told).toEqual(['thread-1', 'thread-1'])
+  })
+
+  it('lets every Host write through, reading no file, while it takes no claims', async () => {
+    const files = { read: vi.fn(), list: vi.fn(), remove: vi.fn() }
+    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+      expect(await service(environment, { files }).requestHostWrite('thread-1')).toEqual({
+        kind: 'write'
+      })
+    }
+    expect(files.read).not.toHaveBeenCalled()
+    expect(files.remove).not.toHaveBeenCalled()
+  })
+
+  it('on, answers a Host write from the thread’s authority file and its log', async () => {
+    const on = service(ON, { liveness: (writer) => (writer.pid === 11 ? 'alive' : 'dead') })
+    await on.start()
+    for (const threadId of ['held', 'ended', 'published', 'free']) copies.set(threadId, 3)
+    await writeAuthority('held', 'desk-1', 11, 3)
+    await writeAuthority('ended', 'desk-2', 12, 3)
+    writeLog('ended', 5)
+    await writeAuthority('published', 'desk-3', 13, 3)
+    writeLog('published', 3)
+    const files = new ThreadAuthorityFiles(profile)
+
+    expect(await on.requestHostWrite('held')).toEqual({
+      kind: 'busy',
+      reason: 'thread_busy_in_desktop'
+    })
+    expect(await on.requestHostWrite('ended')).toEqual({ kind: 'fold_first', revision: 5 })
+    expect(await on.requestHostWrite('published')).toEqual({ kind: 'write' })
+    expect(await on.requestHostWrite('free')).toEqual({ kind: 'write' })
+    expect((await files.read('held')).kind).toBe('held')
+    expect((await files.read('ended')).kind).toBe('held')
+    expect((await files.read('published')).kind).toBe('none')
+  })
+
+  it('on, never lets a write over a file it cannot take away, and counts each', async () => {
+    const files = new ThreadAuthorityFiles(profile)
+    const on = service(ON, {
+      liveness: () => 'dead',
+      files: {
+        read: (threadId) => files.read(threadId),
+        list: () => files.list(),
+        remove: async () => {
+          throw Object.assign(new Error('EACCES: permission denied, unlink'), { code: 'EACCES' })
+        }
+      }
+    })
+    await on.start()
+    copies.set('thread-1', 3)
+    await writeAuthority('thread-1', 'desk-1', 12, 3)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await on.requestHostWrite('thread-1')).toEqual({
+        kind: 'busy',
+        reason: 'thread_busy_in_desktop'
+      })
+    }
+    expect(on.snapshot().authority).toMatchObject({
+      removeFailures: 2,
+      lastRemoveError: 'EACCES: permission denied, unlink'
+    })
   })
 })
