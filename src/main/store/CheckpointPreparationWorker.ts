@@ -95,6 +95,37 @@ function spawnPreparationProcess(entryPath: string): CheckpointPreparationProces
   }
 }
 
+export type CheckpointPreparationFailureCode =
+  | 'spawn'
+  | 'post'
+  | 'deadline'
+  | 'process'
+  | 'reply'
+  | 'cancelled'
+
+export interface CheckpointPreparationWorkerSnapshot {
+  /** Reservations remain held until both child exit and output-custody release. */
+  activeJobs: number
+  reservedBytes: number
+  started: number
+  completed: number
+  /** Failed admitted attempts, including a spawn failure before a child exists. */
+  failed: number
+  deadlineExceeded: number
+  cancelled: number
+  /** One reason per refused start; pure admits() probes change no counters. */
+  refusals: {
+    invalidSource: number
+    sourceTooLarge: number
+    jobOverBudget: number
+    slotsBusy: number
+    aggregateBusy: number
+  }
+  lastFailureCode: CheckpointPreparationFailureCode | null
+}
+
+type SourceRefusal = 'invalidSource' | 'sourceTooLarge' | 'jobOverBudget'
+
 /**
  * Bounded, payload-free admission. Rejection leaves the durable journal for a later idle pass.
  *
@@ -111,6 +142,21 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
   private active = 0
   private bytes = 0
   private readonly capacityListeners = new Set<() => void>()
+  private readonly counts = {
+    started: 0,
+    completed: 0,
+    failed: 0,
+    deadlineExceeded: 0,
+    cancelled: 0
+  }
+  private readonly refusals = {
+    invalidSource: 0,
+    sourceTooLarge: 0,
+    jobOverBudget: 0,
+    slotsBusy: 0,
+    aggregateBusy: 0
+  }
+  private lastFailureCode: CheckpointPreparationFailureCode | null = null
 
   constructor(
     private readonly options: {
@@ -132,19 +178,40 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
     }
   }
 
-  stats(): { activeJobs: number; reservedBytes: number } {
-    return { activeJobs: this.active, reservedBytes: this.bytes }
+  stats(): CheckpointPreparationWorkerSnapshot {
+    return {
+      activeJobs: this.active,
+      reservedBytes: this.bytes,
+      ...this.counts,
+      refusals: { ...this.refusals },
+      lastFailureCode: this.lastFailureCode
+    }
   }
 
   admits(source: CheckpointPreparationSource): boolean {
+    return this.sourceRefusal(source) === null
+  }
+
+  private sourceRefusal(source: CheckpointPreparationSource): SourceRefusal | null {
     const sourceBytes = source.checkpoint.identity.size + source.journal.identity.size
-    return (
-      /^[A-Za-z0-9_-]{1,256}$/.test(source.chatId) &&
-      Number.isSafeInteger(sourceBytes) &&
-      sourceBytes > 0 &&
-      sourceBytes <= (this.options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES) &&
-      checkpointPreparationReservationBytes(sourceBytes) <= this.budgetBytes()
+    if (
+      !/^[A-Za-z0-9_-]{1,256}$/.test(source.chatId) ||
+      !Number.isSafeInteger(sourceBytes) ||
+      sourceBytes <= 0
     )
+      return 'invalidSource'
+    if (sourceBytes > (this.options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES))
+      return 'sourceTooLarge'
+    if (!(checkpointPreparationReservationBytes(sourceBytes) <= this.budgetBytes()))
+      return 'jobOverBudget'
+    return null
+  }
+
+  private countFailure(code: CheckpointPreparationFailureCode): void {
+    this.counts.failed++
+    if (code === 'deadline') this.counts.deadlineExceeded++
+    if (code === 'cancelled') this.counts.cancelled++
+    this.lastFailureCode = code
   }
 
   onCapacity(listener: () => void): () => void {
@@ -164,12 +231,17 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
     const sourceBytes = source.checkpoint.identity.size + source.journal.identity.size
     const maxOutputBytes = Math.min(128 * 1024 * 1024, sourceBytes * 2 + 4096)
     const reserved = checkpointPreparationReservationBytes(sourceBytes)
-    if (
-      !this.admits(source) ||
-      this.active >= (this.options.maxJobs ?? 2) ||
-      this.bytes + reserved > this.budgetBytes()
-    )
+    const refused =
+      this.sourceRefusal(source) ??
+      (this.active >= (this.options.maxJobs ?? 2)
+        ? 'slotsBusy'
+        : this.bytes + reserved > this.budgetBytes()
+          ? 'aggregateBusy'
+          : null)
+    if (refused) {
+      this.refusals[refused]++
       return null
+    }
 
     // Reserve before retaining any output bytes or launching a child. Sources
     // are optimistic references: a concurrent rewrite may make this job stale.
@@ -194,9 +266,11 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
       activePreparedCheckpointPaths.delete(outputPath)
       this.active -= 1
       this.bytes -= reserved
+      this.countFailure('spawn')
       throw error
     }
 
+    this.counts.started++
     let exited = false
     let released = false
     let releaseRequested = false
@@ -234,15 +308,16 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
         }
       }
     }
-    const fail = (error: Error): void => {
+    const fail = (error: Error, code: CheckpointPreparationFailureCode): void => {
       if (!settled) {
         settled = true
+        this.countFailure(code)
         reject(error)
       }
       child.kill()
     }
     const timer = setTimeout(
-      () => fail(new Error('Checkpoint preparation deadline exceeded')),
+      () => fail(new Error('Checkpoint preparation deadline exceeded'), 'deadline'),
       this.options.deadlineMs ?? 30_000
     )
     timer.unref()
@@ -251,17 +326,21 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
       reply = value
       child.kill()
     })
-    child.onError(fail)
+    child.onError((error) => fail(error, 'process'))
     child.onExit(() => {
       exited = true
       clearTimeout(timer)
       if (!settled) {
         settled = true
-        if (reply?.ok) resolve(reply.prepared)
-        else
+        if (reply?.ok) {
+          this.counts.completed++
+          resolve(reply.prepared)
+        } else {
+          this.countFailure(reply ? 'reply' : 'process')
           reject(
             new Error(reply?.error ?? 'Checkpoint preparation process exited without a result')
           )
+        }
       }
       // Windows may refuse to unlink an open output. The synchronous caller
       // observes that failure; once the child closes, finish custody cleanup.
@@ -282,13 +361,13 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
       credit()
     }
     const cancel = (): void => {
-      fail(new Error('Checkpoint preparation cancelled'))
+      fail(new Error('Checkpoint preparation cancelled'), 'cancelled')
       release()
     }
     try {
       child.post({ ...source, output, maxOutputBytes })
     } catch (error) {
-      fail(error instanceof Error ? error : new Error(String(error)))
+      fail(error instanceof Error ? error : new Error(String(error)), 'post')
     }
     return { output, result, cancel, release }
   }

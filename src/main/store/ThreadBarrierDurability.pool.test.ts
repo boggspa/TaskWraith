@@ -29,3 +29,25 @@ describe('the barrier layer checkpoint pool', () => {
     }
   })
 })
+
+describe('checkpoint pool diagnostics in the barrier snapshot', () => {
+  it('reports its own worker counters without starting work and keeps injected ports honest', () => {
+    const layer = createThreadBarrierDurability()
+    expect(layer.snapshot().checkpointPreparation).toMatchObject({
+      activeJobs: 0,
+      reservedBytes: 0,
+      started: 0,
+      completed: 0,
+      failed: 0,
+      deadlineExceeded: 0,
+      cancelled: 0,
+      lastFailureCode: null
+    })
+    layer.journal.checkpointPreparation.start(source(97 * MiB))
+    expect(layer.snapshot().checkpointPreparation?.refusals.sourceTooLarge).toBe(1)
+    const injected = createThreadBarrierDurability({ checkpointPreparation: { start: () => null } })
+    expect(injected.snapshot().checkpointPreparation).toBeNull()
+    layer.dispose()
+    injected.dispose()
+  })
+})

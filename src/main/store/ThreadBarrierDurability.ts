@@ -38,7 +38,10 @@ import {
   MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
   type CheckpointPreparationPort
 } from './CheckpointPreparationProtocol'
-import { CheckpointPreparationWorker } from './CheckpointPreparationWorker'
+import {
+  CheckpointPreparationWorker,
+  type CheckpointPreparationWorkerSnapshot
+} from './CheckpointPreparationWorker'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
 import {
@@ -77,6 +80,8 @@ export interface ThreadBarrierDurabilitySnapshot {
   threads: ThreadDebtTrackerSnapshot
   /** Tool detail staged off the save path; null when the layer was not told where it goes. */
   staging: ToolActivityDetailStagingSnapshot | null
+  /** Null for an injected pool that supplies no statistics. */
+  checkpointPreparation: CheckpointPreparationWorkerSnapshot | null
 }
 
 export interface ThreadBarrierDurability {
@@ -175,7 +180,9 @@ export interface ThreadBarrierDurabilityOptions {
   /** Pays the debt; the production port when omitted. */
   port?: ThreadDurabilityPort
   /** The pool the journal folds checkpoints in; a `CheckpointPreparationWorker` when omitted. */
-  checkpointPreparation?: CheckpointPreparationPort
+  checkpointPreparation?: CheckpointPreparationPort & {
+    stats?(): CheckpointPreparationWorkerSnapshot
+  }
   /** Milliseconds, for timing barriers and tickets, and for idle threads. */
   now?: () => number
   /** The idle timer; the real one when omitted. */
@@ -288,6 +295,12 @@ export function createThreadBarrierDurability(
         checkpointInput: detail.checkpointInput
       })
     : null
+  const checkpointPreparation =
+    options.checkpointPreparation ??
+    new CheckpointPreparationWorker({
+      maxSourceBytes: MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
+      maxReservedBytes: 1024 * 1024 * 1024
+    })
   let unclassified = 0
   return {
     note,
@@ -297,12 +310,7 @@ export function createThreadBarrierDurability(
     journal: {
       noteDurabilityDebt: note,
       repairTornTailBeforeAppend: true,
-      checkpointPreparation:
-        options.checkpointPreparation ??
-        new CheckpointPreparationWorker({
-          maxSourceBytes: MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
-          maxReservedBytes: 1024 * 1024 * 1024
-        }),
+      checkpointPreparation,
       syncDirectory: (directory) => port.syncDirectory(directory)
     },
     detailBatch(chat) {
@@ -380,7 +388,8 @@ export function createThreadBarrierDurability(
       port: built?.snapshot() ?? null,
       tickets: tickets.snapshot(),
       threads: threads.snapshot(),
-      staging: staging?.snapshot() ?? null
+      staging: staging?.snapshot() ?? null,
+      checkpointPreparation: checkpointPreparation.stats?.() ?? null
     })
   }
 }

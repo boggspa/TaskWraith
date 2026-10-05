@@ -108,7 +108,7 @@ describe('checkpoint preparation process', () => {
     const preparation = new CheckpointPreparationWorker({ entryPath })
     const { journal, baseDir, after } = fixture('integrated', preparation)
     await expect(journal.checkpointDeferred!('integrated')).resolves.toBe('checkpointed')
-    expect(preparation.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(preparation.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
     expect(createIncrementalChatJournal(baseDir).replay('integrated').record).toEqual(after)
     expect(fs.readdirSync(baseDir)).toEqual(['integrated.checkpoint.json'])
   })
@@ -140,7 +140,7 @@ describe('checkpoint preparation process', () => {
     } finally {
       job.release()
     }
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
     expect(fs.existsSync(job.output.path)).toBe(false)
   })
 
@@ -168,7 +168,7 @@ describe('checkpoint preparation process', () => {
     const worker = new CheckpointPreparationWorker({ entryPath, maxReservedBytes: 1 })
     expect(worker.start(source)).toBeNull()
     expect(fs.readdirSync(baseDir)).toEqual(before)
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
   })
 
   it('releases the empty output reservation when process creation throws', () => {
@@ -180,7 +180,7 @@ describe('checkpoint preparation process', () => {
       }
     })
     expect(() => worker.start(source)).toThrow('spawn failed')
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
     expect(fs.readdirSync(baseDir)).toEqual(before)
   })
 
@@ -286,7 +286,7 @@ describe('checkpoint preparation process', () => {
       expect(child.kill).toHaveBeenCalledTimes(2)
       expect(worker.stats().activeJobs).toBe(1)
       child.emit('exit', 0)
-      expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+      expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
       expect(checkpointFileReference(source.journal.path)).toEqual(source.journal)
     }
   )
@@ -385,12 +385,12 @@ describe('admission to the checkpoint preparation pool', () => {
     expect(checkpointPreparationReservationBytes(sourceBytes(source))).toBe(
       100 * MiB + 9 * sourceBytes(source)
     )
-    expect(worker.stats()).toEqual({
+    expect(worker.stats()).toMatchObject({
       activeJobs: 1,
       reservedBytes: 100 * MiB + 9 * sourceBytes(source)
     })
     job.cancel()
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
   })
 
   it('runs two folds of up to 31 MiB of source together within the default budget of 768 MiB, and one of 32 MiB alone', () => {
@@ -411,7 +411,7 @@ describe('admission to the checkpoint preparation pool', () => {
     expect(worker.start(sized(b, 32 * MiB))).toBeNull()
     expect(worker.admits(sized(b, 32 * MiB))).toBe(true)
     first.cancel()
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
   })
 
   it('never admits an empty source, one that holds more than 64 MiB, or one whose reservation alone passes the budget', () => {
@@ -429,7 +429,7 @@ describe('admission to the checkpoint preparation pool', () => {
     expect(exact.admits(source)).toBe(true)
     expect(short.admits(source)).toBe(false)
     expect(short.start(source)).toBeNull()
-    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
   })
 
   it('tells its listeners when a reservation returns: once its child has exited and its caller released it', async () => {
@@ -459,7 +459,7 @@ describe('admission to the checkpoint preparation pool', () => {
     first.release()
     expect(heard).toBe(1)
     // The room is there when they hear of it.
-    expect(room).toEqual([{ activeJobs: 0, reservedBytes: 0 }])
+    expect(room).toMatchObject([{ activeJobs: 0, reservedBytes: 0 }])
 
     const second = worker.start(b)!
     second.result.catch(() => {})
@@ -490,7 +490,7 @@ describe('admission to the checkpoint preparation pool', () => {
 
       expect(heard).toBe(1)
       expect(errors).toHaveBeenCalledTimes(1)
-      expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+      expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
     } finally {
       errors.mockRestore()
     }
@@ -518,15 +518,15 @@ describe('barrier checkpoint pool source allowance', () => {
       const before = fs.readdirSync(ordinary.baseDir)
       expect(worker.start(later)).toBeNull()
       expect(fs.readdirSync(ordinary.baseDir)).toEqual(before)
-      let next: ReturnType<CheckpointPreparationWorker['start']> = null
+      const next: { job: ReturnType<CheckpointPreparationWorker['start']> } = { job: null }
       const stop = worker.onCapacity(() => {
-        next = worker.start(later)
+        next.job = worker.start(later)
         stop()
       })
       first.cancel()
       await rejected
-      expect(next).not.toBeNull()
-      const second = next as NonNullable<ReturnType<CheckpointPreparationWorker['start']>>
+      expect(next.job).not.toBeNull()
+      const second = next.job!
       second.result.catch(() => {})
       expect(worker.stats().reservedBytes).toBe(checkpointPreparationReservationBytes(32 * MiB))
       second.cancel()
@@ -613,4 +613,141 @@ describe('barrier checkpoint pool source allowance', () => {
     }
     expect(worker.stats().activeJobs).toBe(0)
   }, 30_000)
+})
+
+describe('checkpoint preparation diagnostics', () => {
+  it('counts each refusal once and leaves admission probes and snapshot copies inert', () => {
+    const { source, baseDir } = fixture('diagnostics')
+    const spawn = vi.fn(() => new HeldProcess())
+    const worker = new CheckpointPreparationWorker({ spawn })
+    const before = worker.stats()
+    expect(worker.admits(sized(source, 80_431_677))).toBe(false)
+    expect(worker.stats()).toEqual(before)
+    const names = fs.readdirSync(baseDir)
+    expect(worker.start({ ...source, chatId: '../bad' })).toBeNull()
+    expect(worker.start(sized(source, 64 * MiB + 1))).toBeNull()
+    expect(fs.readdirSync(baseDir)).toEqual(names)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(worker.stats().refusals).toEqual({
+      invalidSource: 1,
+      sourceTooLarge: 1,
+      jobOverBudget: 0,
+      slotsBusy: 0,
+      aggregateBusy: 0
+    })
+    const snapshot = worker.stats()
+    snapshot.refusals.invalidSource = 999
+    expect(worker.stats().refusals.invalidSource).toBe(1)
+
+    const short = new CheckpointPreparationWorker({ spawn, maxReservedBytes: 1 })
+    expect(short.start(source)).toBeNull()
+    expect(short.stats().refusals.jobOverBudget).toBe(1)
+    const one = new CheckpointPreparationWorker({ spawn, maxJobs: 1 })
+    const held = one.start(source)!
+    held.result.catch(() => {})
+    expect(one.start(source)).toBeNull()
+    expect(one.stats().refusals.slotsBusy).toBe(1)
+    held.cancel()
+    const both = new CheckpointPreparationWorker({ spawn })
+    const first = both.start(sized(source, 32 * MiB))!
+    first.result.catch(() => {})
+    expect(both.start(sized(source, 32 * MiB))).toBeNull()
+    expect(both.stats().refusals.aggregateBusy).toBe(1)
+    first.cancel()
+  })
+
+  it('keeps a NaN reservation budget refused before creating output or spawning', () => {
+    const { source, baseDir } = fixture('nan-budget')
+    const spawn = vi.fn(() => new HeldProcess())
+    const worker = new CheckpointPreparationWorker({ spawn, maxReservedBytes: Number.NaN })
+    const before = fs.readdirSync(baseDir)
+    expect(worker.admits(source)).toBe(false)
+    expect(worker.start(source)).toBeNull()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(fs.readdirSync(baseDir)).toEqual(before)
+    expect(worker.stats()).toMatchObject({
+      activeJobs: 0,
+      reservedBytes: 0,
+      refusals: { jobOverBudget: 1 }
+    })
+  })
+
+  it('counts successful completion before custody is released', async () => {
+    const { source } = fixture('completed-count')
+    const child = new HeldProcess()
+    const worker = new CheckpointPreparationWorker({ spawn: () => child })
+    const job = worker.start(source)!
+    child.fold()
+    await job.result
+    expect(worker.stats()).toMatchObject({
+      started: 1,
+      completed: 1,
+      failed: 0,
+      activeJobs: 1,
+      lastFailureCode: null
+    })
+    job.release()
+    expect(worker.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
+  })
+
+  it.each(['spawn', 'post', 'process', 'reply', 'deadline', 'cancelled'] as const)(
+    'counts %s failure once with a bounded code and no source details',
+    async (cause) => {
+      const { source, baseDir } = fixture(`fail-${cause}`)
+      const before = fs.readdirSync(baseDir)
+      let exit!: () => void
+      let reply!: (value: CheckpointPreparationReply) => void
+      let error!: (value: Error) => void
+      const child: CheckpointPreparationProcess = {
+        post() {
+          if (cause === 'post') throw new Error('private post detail')
+        },
+        onExit(listener) {
+          exit = listener
+        },
+        onMessage(listener) {
+          reply = listener
+        },
+        onError(listener) {
+          error = listener
+        },
+        kill() {}
+      }
+      const worker = new CheckpointPreparationWorker({
+        deadlineMs: 5,
+        spawn: () => {
+          if (cause === 'spawn') throw new Error('private spawn detail')
+          return child
+        }
+      })
+      if (cause === 'spawn') {
+        expect(() => worker.start(source)).toThrow('private spawn detail')
+      } else {
+        const job = worker.start(source)!
+        const rejected = expect(job.result).rejects.toBeInstanceOf(Error)
+        if (cause === 'process') error(new Error('private process detail'))
+        if (cause === 'reply') {
+          reply({ ok: false, error: 'private reply detail' })
+          exit()
+        }
+        if (cause === 'cancelled') job.cancel()
+        await rejected
+        exit()
+        job.release()
+        exit()
+      }
+      expect(worker.stats()).toMatchObject({
+        activeJobs: 0,
+        reservedBytes: 0,
+        started: cause === 'spawn' ? 0 : 1,
+        completed: 0,
+        failed: 1,
+        deadlineExceeded: cause === 'deadline' ? 1 : 0,
+        cancelled: cause === 'cancelled' ? 1 : 0,
+        lastFailureCode: cause
+      })
+      expect(JSON.stringify(worker.stats())).not.toContain('private')
+      expect(fs.readdirSync(baseDir)).toEqual(before)
+    }
+  )
 })
