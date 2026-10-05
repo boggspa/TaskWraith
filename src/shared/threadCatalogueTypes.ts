@@ -240,6 +240,50 @@ export interface ThreadCatalogueOwner {
   writerId: string
 }
 
+/**
+ * One line of a dead writer's thread log, as it crosses the catalogue wire.
+ * The envelope is the same `taskwraith-chat-mutation` batch the log holds
+ * (`host-shared/thread-log/ThreadLogBatch`); `src/shared` may not import that
+ * module, so the operations stay opaque here. The fold validates them with
+ * `isThreadLogBatch` and applies them with `applyThreadLogBatches`, which
+ * checks every revision link, so nothing is trusted from this declaration.
+ */
+export interface ThreadFoldLogBatch {
+  format: 'taskwraith-chat-mutation'
+  version: 1
+  chatId: string
+  baseRevision: number
+  revision: number
+  savedAt: string
+  operations: unknown[]
+}
+
+/**
+ * A dead writer's log folded into the thread's full copy, staged beside a
+ * prepared mutation and not yet adopted. Unlike a prepared mutation it keeps
+ * the log's own head revision and `updatedAt`: a fold publishes work that was
+ * already done, it is not a new edit, so neither clock moves.
+ */
+export interface FoldedLogOutcome {
+  /** Unique per fold attempt; names the staged files and the `folded` query. */
+  foldId: string
+  chatId: string
+  epoch: ThreadCatalogueEpoch
+  heads: ThreadCatalogueSourceHeads
+  sourceWitness: string
+  /** Echo of the profile authority binding the fold was requested under. */
+  profileAuthority: string
+  /** Revision of the full copy the log was folded onto. */
+  previousRevision: number
+  /** The log's head: the folded record's `persistenceRevision`, never past it. */
+  headRevision: number
+  /** The log's own timestamp (ISO-8601): the folded record's `updatedAt`. */
+  updatedAt: string
+  projection: ThreadCatalogueProjection
+  record: PreparedThreadFile
+  checkpoint: PreparedThreadFile
+}
+
 export interface ThreadCatalogueActivityPage {
   rows: Array<{
     chatId: string
@@ -279,6 +323,24 @@ export type ThreadCatalogueQuery =
     }
   | { method: 'prepared'; preparedId: string }
   | { method: 'discard-prepared'; preparedId: string }
+  | {
+      method: 'fold-owned-log'
+      chatId: string
+      /** Recovery token bound to the controller's hold. */
+      recoveryToken: string
+      /** Witness of the full copy the log is folded onto. */
+      sourceWitness: string
+      /** Head revision of the folded log; preserved, never incremented. */
+      headRevision: number
+      /** The log's `updatedAt` (ISO-8601); preserved, never replaced by the clock. */
+      updatedAt: string
+      /** Profile authority binding the request was made under. */
+      profileAuthority: string
+      /** The unfolded batches, oldest first. Empty is a no-op fold. */
+      logEntries: ThreadFoldLogBatch[]
+    }
+  | { method: 'folded'; foldId: string }
+  | { method: 'discard-folded'; foldId: string }
   | { method: 'changes'; position?: { incarnation: string; sequence: number } }
   | {
       method: 'list'

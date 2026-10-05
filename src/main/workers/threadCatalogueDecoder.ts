@@ -16,7 +16,10 @@ import {
 } from '../store/ThreadCatalogueDiskReader'
 import { encodeThreadJsonChunks } from '../store/ThreadCatalogueJson'
 import { collectThreadCatalogueRecovery } from '../store/ThreadCatalogueRecovery'
-import { prepareThreadCatalogueMutation } from '../store/ThreadCatalogueMutation'
+import {
+  foldOwnedLogThreadCatalogueMutation,
+  prepareThreadCatalogueMutation
+} from '../store/ThreadCatalogueMutation'
 import {
   projectThreadCatalogueRunSummary,
   threadCatalogueRunOrder
@@ -30,6 +33,7 @@ import {
   THREAD_DECODE_MAX_BATCH_BYTES,
   THREAD_DECODE_MAX_BATCH_FRAMES,
   type ThreadDecodeRequest,
+  type ThreadFoldRequest,
   type ThreadPrepareRequest,
   type ThreadDecodeAcknowledgement,
   type ThreadDecodeMessage
@@ -330,19 +334,32 @@ async function decode(request: ThreadDecodeRequest): Promise<void> {
 
 parentPort?.on(
   'message',
-  (message: ThreadDecodeRequest | ThreadPrepareRequest | ThreadDecodeAcknowledgement) => {
+  (
+    message:
+      | ThreadDecodeRequest
+      | ThreadPrepareRequest
+      | ThreadFoldRequest
+      | ThreadDecodeAcknowledgement
+  ) => {
     if (message.type === 'ack') {
       acknowledge?.(message)
       return
     }
     if (
-      !['decode', 'prepare'].includes(message.type) ||
+      !['decode', 'prepare', 'fold'].includes(message.type) ||
       activeRequest ||
       !Number.isSafeInteger(message.requestId) ||
       message.requestId < 1 ||
       !isSafeChatId(message.chatId) ||
       (message.type === 'decode' &&
-        !['metadata', 'pages', 'record', 'runs', 'remote', 'control'].includes(message.mode))
+        !['metadata', 'pages', 'record', 'runs', 'remote', 'control'].includes(message.mode)) ||
+      (message.type === 'fold' &&
+        (!Number.isSafeInteger(message.headRevision) ||
+          message.headRevision < 1 ||
+          typeof message.updatedAt !== 'string' ||
+          typeof message.profileAuthority !== 'string' ||
+          !message.profileAuthority ||
+          !Array.isArray(message.logEntries)))
     ) {
       if (Number.isSafeInteger(message.requestId))
         parentPort!.postMessage({
@@ -356,6 +373,15 @@ parentPort?.on(
     activeRequest = message.requestId
     const execute = async (): Promise<void> => {
       if (message.type === 'decode') return decode(message)
+      if (message.type === 'fold') {
+        const folded = foldOwnedLogThreadCatalogueMutation(message.options, message)
+        parentPort!.postMessage({
+          type: 'folded',
+          requestId: message.requestId,
+          folded
+        } satisfies ThreadDecodeMessage)
+        return
+      }
       const prepared = prepareThreadCatalogueMutation(message.options, message)
       parentPort!.postMessage({
         type: 'prepared',

@@ -6,6 +6,7 @@ import type {
 } from './ThreadCatalogueDiskReader'
 import type { ThreadIndexObjectFrame, ThreadIndexedObjectKind } from './ThreadCatalogueDatabase'
 import type { PreparedThreadMutation, ThreadCatalogueMutation } from './ThreadCatalogueMutation'
+import type { FoldedLogOutcome, ThreadFoldLogBatch } from '../../shared/threadCatalogueTypes'
 import type { ThreadCatalogueEpoch, ThreadCatalogueSourceHeads } from './ThreadCatalogue'
 import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
@@ -32,8 +33,25 @@ export interface ThreadPrepareRequest {
   mutation: ThreadCatalogueMutation
 }
 
+/** Fold a dead writer's log onto the full copy. Unlike `prepare`, no clock moves. */
+export interface ThreadFoldRequest {
+  type: 'fold'
+  requestId: number
+  chatId: string
+  options: ThreadCatalogueReaderOptions
+  sourceWitness: string
+  epoch: ThreadCatalogueEpoch
+  heads: ThreadCatalogueSourceHeads
+  headRevision: number
+  updatedAt: string
+  profileAuthority: string
+  logEntries: ThreadFoldLogBatch[]
+}
+
 export type ThreadDecodeMessage =
   | { type: 'prepared'; requestId: number; prepared: PreparedThreadMutation | null }
+  /** `null` is a no-op fold, or a thread whose canonical source is missing. */
+  | { type: 'folded'; requestId: number; folded: FoldedLogOutcome | null }
   | {
       type: 'begin'
       requestId: number

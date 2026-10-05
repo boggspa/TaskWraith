@@ -5,12 +5,16 @@ import {
 } from './ThreadCatalogueClient'
 import type { ThreadCatalogueSourcePublisher } from './ThreadCatalogueSourcePublisher'
 import type { ThreadCatalogueReaderOptions } from './ThreadCatalogueWitness'
-import type { PreparedThreadMutation } from '../../shared/threadCatalogueTypes'
-import { adoptPreparedThreadRecord } from './ThreadCatalogueAdoption'
+import type { FoldedLogOutcome, PreparedThreadMutation } from '../../shared/threadCatalogueTypes'
+import {
+  adoptFoldedThreadRecord,
+  adoptPreparedThreadRecord,
+  type FoldedAdoptionGuard
+} from './ThreadCatalogueAdoption'
 import type { ThreadCatalogueRecoveryHold, ThreadCatalogueProjection } from './ThreadCatalogue'
 import { ThreadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
 import { ORPHAN_RETIREMENT_TOKEN } from '../thread-log/ThreadAuthorityRetirement'
-import type { ThreadOwnershipReservation } from '../thread-log/ThreadOwnership'
+import { ReservationInvalid, type ThreadOwnershipReservation } from '../thread-log/ThreadOwnership'
 
 /**
  * How long a recovery hold survives with no token-bearing request naming it.
@@ -65,6 +69,16 @@ export type ThreadCatalogueOrphanEndOutcome =
         | 'live_desktop'
         | 'live_work'
         | 'damaged'
+    }
+
+/** What `adoptViaFold` did. A fold that was refused changed nothing on disk. */
+export type ThreadCatalogueFoldAdoptOutcome =
+  | { readonly kind: 'adopted'; readonly projection: ThreadCatalogueProjection }
+  | {
+      readonly kind: 'busy'
+      readonly reason:
+        | Extract<ThreadCatalogueOrphanEndOutcome, { kind: 'busy' }>['reason']
+        | 'fold_unavailable'
     }
 
 /** Runs on the source-authoritative parent, never inside its decoder. */
@@ -489,6 +503,114 @@ export class ThreadCatalogueRecoveryController {
       .query({ method: 'discard-prepared', preparedId })
       .catch(() => undefined)
     return prepared.projection
+  }
+
+  /**
+   * Adopts a dead writer's log, folded by `fold-owned-log`, as the thread's
+   * full copy. The orphan route's counterpart of `adopt`: it composes with the
+   * opaque reservation, so the exact authority mark it was minted for must
+   * still stand at every guard, and it blocks only on the desktop that owns
+   * THIS thread (`assertNoLiveDeadWriter`), never on an unrelated live one.
+   *
+   * A refusal before anything is staged is returned, not thrown; a failure
+   * once adoption began fails the publication ticket and throws, as `adopt` does.
+   */
+  async adoptViaFold(
+    chatId: string,
+    token: string,
+    foldId: string,
+    reservation: ThreadOwnershipReservation
+  ): Promise<ThreadCatalogueFoldAdoptOutcome> {
+    try {
+      reservation.revalidate()
+    } catch {
+      return { kind: 'busy', reason: 'damaged' }
+    }
+    const held = this.resolveOrphanHold(chatId, token)
+    if ('kind' in held) return held
+    if (held.hostIncarnation !== this.options.incarnation)
+      return { kind: 'busy', reason: 'token_mismatch' }
+    try {
+      this.assertNoLiveDeadWriter(held)
+    } catch {
+      return { kind: 'busy', reason: 'live_desktop' }
+    }
+    if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
+    // The request itself proves a live holder, and the `folded` query below
+    // can burn a whole request budget before the guard renews again.
+    this.renew(chatId, token)
+    const prior = this.completed.get(foldId)
+    if (
+      prior &&
+      prior.token === token &&
+      JSON.stringify(prior.epoch) === JSON.stringify(this.options.publisher.catalogue.epoch(chatId))
+    )
+      return { kind: 'adopted', projection: prior.projection }
+    const fold = await this.options.client.query<FoldedLogOutcome | null>({
+      method: 'folded',
+      foldId
+    })
+    if (!fold || fold.chatId !== chatId) return { kind: 'busy', reason: 'fold_unavailable' }
+    const authority = (): void => {
+      this.options.assertAuthority()
+      reservation.revalidate()
+      const current = this.options.publisher.catalogue.recoveryHold(chatId)
+      if (
+        !current ||
+        current === 'unreadable' ||
+        current.token !== token ||
+        !current.hostWriterId ||
+        current.hostIncarnation !== this.options.incarnation
+      )
+        throw new Error('History recovery admission changed')
+      this.assertNoLiveDeadWriter(current)
+      if (this.options.hasLiveWork(chatId)) throw new Error('History recovery admission changed')
+      this.renew(chatId, token)
+    }
+    const guard: FoldedAdoptionGuard = {
+      authority,
+      epoch: (observed) => {
+        if (
+          JSON.stringify(observed) !==
+          JSON.stringify(this.options.publisher.catalogue.epoch(chatId))
+        )
+          throw new Error('History was erased before recovery')
+      },
+      witness: (observed) => {
+        if (observed !== fold.sourceWitness) throw new Error('History changed before recovery')
+      },
+      headRevision: (observed) => {
+        if (observed !== fold.headRevision) throw new Error('Folded history moved its head')
+      },
+      updatedAt: (observed) => {
+        if (Date.parse(observed) !== Date.parse(fold.updatedAt))
+          throw new Error('Folded history moved its timestamp')
+      }
+    }
+    try {
+      authority()
+    } catch (error) {
+      if (error instanceof ReservationInvalid) return { kind: 'busy', reason: 'damaged' }
+      throw error
+    }
+    const ticket = this.options.publisher.begin(chatId, token)
+    try {
+      adoptFoldedThreadRecord(this.options.reader, fold, guard)
+      this.options.publisher.finishProjection(ticket, fold.projection)
+      this.completed.set(foldId, { projection: fold.projection, epoch: fold.epoch, token })
+      if (this.completed.size > 128) this.completed.delete(this.completed.keys().next().value!)
+    } catch (error) {
+      this.options.publisher.fail(ticket)
+      if (error instanceof ReservationInvalid) return { kind: 'busy', reason: 'damaged' }
+      throw error
+    }
+    try {
+      this.options.onAdopted?.(chatId)
+    } catch {
+      // The index follows on the thread's next write; the adoption stands.
+    }
+    void this.options.client.query({ method: 'discard-folded', foldId }).catch(() => undefined)
+    return { kind: 'adopted', projection: fold.projection }
   }
 
   dispose(): void {

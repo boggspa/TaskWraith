@@ -2,6 +2,7 @@ import { Worker } from 'node:worker_threads'
 import type {
   ThreadDecodeMessage,
   ThreadDecodeRequest,
+  ThreadFoldRequest,
   ThreadPrepareRequest
 } from './ThreadCatalogueWorkerProtocol'
 import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
@@ -9,7 +10,7 @@ import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequest
 type SequencedDecodeMessage = Extract<ThreadDecodeMessage, { sequence: number }>
 export type ThreadDecodeCompletion = Extract<
   ThreadDecodeMessage,
-  { type: 'complete' | 'missing' | 'prepared' }
+  { type: 'complete' | 'missing' | 'prepared' | 'folded' }
 >
 
 interface ActiveDecode {
@@ -35,7 +36,7 @@ export class ThreadCatalogueDecoderClient {
   ) {}
 
   run(
-    request: ThreadDecodeRequest | ThreadPrepareRequest,
+    request: ThreadDecodeRequest | ThreadPrepareRequest | ThreadFoldRequest,
     onMessage: ActiveDecode['onMessage']
   ): Promise<ThreadDecodeCompletion> {
     if (this.disposed) return Promise.reject(new Error('History decoder is shutting down'))
@@ -101,7 +102,8 @@ export class ThreadCatalogueDecoderClient {
     } else if (
       message.type === 'complete' ||
       message.type === 'missing' ||
-      message.type === 'prepared'
+      message.type === 'prepared' ||
+      message.type === 'folded'
     ) {
       clearTimeout(active.timeout)
       this.active = null

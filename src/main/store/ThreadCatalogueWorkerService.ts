@@ -1,4 +1,8 @@
-import type { ThreadCatalogueReadContext } from '../../shared/threadCatalogueTypes'
+import type {
+  FoldedLogOutcome,
+  ThreadCatalogueReadContext,
+  ThreadFoldLogBatch
+} from '../../shared/threadCatalogueTypes'
 import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -71,7 +75,26 @@ interface PreparationJob {
   reject: (error: unknown) => void
   promise: Promise<PreparedThreadMutation | null>
 }
-type CatalogueJob = ImportJob | PreparationJob
+
+/**
+ * Folding a dead writer's log runs in this worker lane, beside preparation,
+ * and never under the recovery controller's command admission: the controller
+ * already holds that admission for the thread, so waiting on it here would
+ * wait on itself.
+ */
+interface FoldJob {
+  chatId: string
+  mode: 'fold'
+  sourceWitness: string
+  headRevision: number
+  updatedAt: string
+  profileAuthority: string
+  logEntries: ThreadFoldLogBatch[]
+  resolve: (value: FoldedLogOutcome | null) => void
+  reject: (error: unknown) => void
+  promise: Promise<FoldedLogOutcome | null>
+}
+type CatalogueJob = ImportJob | PreparationJob | FoldJob
 
 /**
  * The first wait before importing again a thread an import could not settle
@@ -91,6 +114,7 @@ export class ThreadCatalogueWorkerService {
   private readonly queue: CatalogueJob[] = []
   private readonly jobs = new Map<string, CatalogueJob>()
   private readonly prepared = new Map<string, PreparedThreadMutation>()
+  private readonly folded = new Map<string, FoldedLogOutcome>()
   private readonly viewContexts = new Map<string, string>()
   private readonly failed = new Set<string>()
   private readonly refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -401,8 +425,9 @@ export class ThreadCatalogueWorkerService {
     }
     const existing = this.jobs.get(chatId)
     if (existing) {
-      if (existing.mode !== 'prepare' && priority) existing.priority = true
-      if (existing.mode === 'prepare')
+      if (existing.mode !== 'prepare' && existing.mode !== 'fold' && priority)
+        existing.priority = true
+      if (existing.mode === 'prepare' || existing.mode === 'fold')
         return existing.promise.then(() =>
           this.ensureIndexed(chatId, mode, priority, projectionOptions, readContext)
         )
@@ -452,6 +477,19 @@ export class ThreadCatalogueWorkerService {
     }
     if (job.mode === 'prepare') {
       this.running = this.prepareMutation(job).then(
+        (value) => {
+          finish()
+          job.resolve(value)
+        },
+        (error) => {
+          finish()
+          job.reject(error)
+        }
+      )
+      return
+    }
+    if (job.mode === 'fold') {
+      this.running = this.foldMutation(job).then(
         (value) => {
           finish()
           job.resolve(value)
@@ -556,6 +594,108 @@ export class ThreadCatalogueWorkerService {
       fs.rmSync(
         path.join(
           preparedThreadDirectory(this.options.reader.profilePath, prepared.chatId),
+          file.name
+        ),
+        { force: true }
+      )
+  }
+
+  private async enqueueFold(
+    input: Extract<ThreadCatalogueQuery, { method: 'fold-owned-log' }>
+  ): Promise<FoldedLogOutcome | null> {
+    if (!isSafeChatId(input.chatId) || this.closed || this.pausedForErasure)
+      throw new Error('History fold is unavailable')
+    const previous = this.jobs.get(input.chatId)
+    if (previous) {
+      await previous.promise
+      return this.enqueueFold(input)
+    }
+    let resolve!: FoldJob['resolve']
+    let reject!: FoldJob['reject']
+    const promise = new Promise<FoldedLogOutcome | null>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    const job: FoldJob = {
+      mode: 'fold',
+      chatId: input.chatId,
+      sourceWitness: input.sourceWitness,
+      headRevision: input.headRevision,
+      updatedAt: input.updatedAt,
+      profileAuthority: input.profileAuthority,
+      logEntries: input.logEntries,
+      resolve,
+      reject,
+      promise
+    }
+    this.jobs.set(input.chatId, job)
+    this.queue.unshift(job)
+    this.pump()
+    return promise
+  }
+
+  /** Mirrors `prepareMutation`, and like it takes no controller admission. */
+  private async foldMutation(job: FoldJob): Promise<FoldedLogOutcome | null> {
+    if (this.folded.size >= 32) throw new Error('Too many pending history folds')
+    const epoch = this.catalogue.epoch(job.chatId)
+    const heads = this.catalogue.sourceHeads(job.chatId)
+    if (this.catalogue.read(job.chatId).status !== 'ready')
+      throw new Error('History fold requires current metadata')
+    if (!this.options.assertSourceAuthority)
+      throw new Error('History source authority is unavailable')
+    const durableWitness = await flushThreadCatalogueSources(
+      this.options.reader,
+      job.chatId,
+      this.options.assertSourceAuthority
+    )
+    if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
+      throw new ThreadCatalogueRequestError('lease_erased')
+    if (
+      durableWitness !== job.sourceWitness ||
+      JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId))
+    )
+      throw new ThreadCatalogueRequestError('source_changed')
+    const result = await this.decoder.run(
+      {
+        type: 'fold',
+        requestId: this.nextRequestId++,
+        chatId: job.chatId,
+        sourceWitness: job.sourceWitness,
+        epoch,
+        heads,
+        headRevision: job.headRevision,
+        updatedAt: job.updatedAt,
+        profileAuthority: job.profileAuthority,
+        logEntries: job.logEntries,
+        options: this.options.reader
+      },
+      () => {
+        throw new Error('Unexpected fold import frame')
+      }
+    )
+    if (result.type !== 'folded') throw new Error('History fold did not complete')
+    if (result.folded) {
+      this.folded.set(result.folded.foldId, result.folded)
+      if (this.closed) {
+        this.discardFolded(result.folded.foldId)
+        throw new Error('History index is shutting down')
+      }
+      if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId))) {
+        this.discardFolded(result.folded.foldId)
+        throw new ThreadCatalogueRequestError('lease_erased')
+      }
+    }
+    return result.folded
+  }
+
+  private discardFolded(id: string): void {
+    const folded = this.folded.get(id)
+    if (!folded) return
+    this.folded.delete(id)
+    for (const file of [folded.record, folded.checkpoint])
+      fs.rmSync(
+        path.join(
+          preparedThreadDirectory(this.options.reader.profilePath, folded.chatId),
           file.name
         ),
         { force: true }
@@ -824,6 +964,13 @@ export class ThreadCatalogueWorkerService {
       case 'discard-prepared':
         this.discardPrepared(query.preparedId)
         return true
+      case 'fold-owned-log':
+        return this.enqueueFold(query)
+      case 'folded':
+        return this.folded.get(query.foldId) ?? null
+      case 'discard-folded':
+        this.discardFolded(query.foldId)
+        return true
       case 'changes': {
         const after = query.position
         const reset = Boolean(
@@ -917,6 +1064,8 @@ export class ThreadCatalogueWorkerService {
         await this.running
         for (const [id, prepared] of this.prepared)
           if (!query.chatId || prepared.chatId === query.chatId) this.discardPrepared(id)
+        for (const [id, folded] of this.folded)
+          if (!query.chatId || folded.chatId === query.chatId) this.discardFolded(id)
         for (const job of this.queue.splice(0)) {
           this.jobs.delete(job.chatId)
           job.reject(new Error('History indexing interrupted by erasure'))
@@ -981,6 +1130,7 @@ export class ThreadCatalogueWorkerService {
     await this.decoder.dispose()
     await this.running
     for (const id of this.prepared.keys()) this.discardPrepared(id)
+    for (const id of this.folded.keys()) this.discardFolded(id)
     await this.inventoryRunning
     this.database.close()
   }

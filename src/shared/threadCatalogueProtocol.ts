@@ -1,4 +1,4 @@
-import type { ThreadCatalogueQuery } from './threadCatalogueTypes'
+import type { ThreadCatalogueQuery, ThreadFoldLogBatch } from './threadCatalogueTypes'
 import {
   isThreadCatalogueRequestErrorCode,
   type ThreadCatalogueRequestErrorCode
@@ -22,6 +22,9 @@ export type ThreadCatalogueReadQuery = Exclude<
       | 'prepare'
       | 'prepared'
       | 'discard-prepared'
+      | 'fold-owned-log'
+      | 'folded'
+      | 'discard-folded'
       | 'begin-recovery'
       | 'end-recovery'
       | 'adopt-prepared'
@@ -40,6 +43,9 @@ export type ThreadCatalogueMaintenanceQuery = Extract<
       | 'prepare'
       | 'prepared'
       | 'discard-prepared'
+      | 'fold-owned-log'
+      | 'folded'
+      | 'discard-folded'
       | 'begin-recovery'
       | 'end-recovery'
       | 'adopt-prepared'
@@ -58,6 +64,57 @@ const token = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 1024
 const integer = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0
+const isoTimestamp = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length <= 64 &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value) &&
+  Number.isFinite(Date.parse(value))
+
+/** More batches than one fold may carry; a longer unfolded log is folded in several requests. */
+export const THREAD_FOLD_MAX_BATCHES = 10_000
+
+/**
+ * The envelope of each batch and the chain it forms: one thread, links that
+ * meet end to end, and a last revision equal to the head the caller claims.
+ * The operations are not read here; the fold re-validates them where the log
+ * vocabulary lives.
+ */
+function decodeFoldLogEntries(
+  value: unknown,
+  chatId: string,
+  headRevision: number
+): ThreadFoldLogBatch[] | null {
+  if (!Array.isArray(value) || value.length > THREAD_FOLD_MAX_BATCHES) return null
+  const batches: ThreadFoldLogBatch[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+    const b = item as Record<string, unknown>
+    if (
+      b.format !== 'taskwraith-chat-mutation' ||
+      b.version !== 1 ||
+      b.chatId !== chatId ||
+      !integer(b.baseRevision) ||
+      !integer(b.revision) ||
+      b.revision <= b.baseRevision ||
+      !isoTimestamp(b.savedAt) ||
+      !Array.isArray(b.operations)
+    )
+      return null
+    const previous = batches[batches.length - 1]
+    if (previous && previous.revision !== b.baseRevision) return null
+    batches.push({
+      format: 'taskwraith-chat-mutation',
+      version: 1,
+      chatId,
+      baseRevision: b.baseRevision,
+      revision: b.revision,
+      savedAt: b.savedAt,
+      operations: b.operations
+    })
+  }
+  if (batches.length && batches[batches.length - 1].revision !== headRevision) return null
+  return batches
+}
 const kinds = new Set([
   'control',
   'introspection',
@@ -96,6 +153,35 @@ export function decodeThreadCatalogueMaintenanceQuery(
     }
   if ((q.method === 'prepared' || q.method === 'discard-prepared') && safeId(q.preparedId))
     return { method: q.method, preparedId: q.preparedId }
+  if ((q.method === 'folded' || q.method === 'discard-folded') && safeId(q.foldId))
+    return { method: q.method, foldId: q.foldId }
+  if (q.method === 'fold-owned-log') {
+    // Malformed is `null`, the convention of every branch here; the transport
+    // turns it into its single closed rejection.
+    if (
+      !safeId(q.chatId) ||
+      !safeId(q.recoveryToken) ||
+      !token(q.profileAuthority) ||
+      typeof q.sourceWitness !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(q.sourceWitness) ||
+      !Number.isSafeInteger(q.headRevision) ||
+      Number(q.headRevision) < 1 ||
+      !isoTimestamp(q.updatedAt)
+    )
+      return null
+    const logEntries = decodeFoldLogEntries(q.logEntries, q.chatId, Number(q.headRevision))
+    if (!logEntries) return null
+    return {
+      method: 'fold-owned-log',
+      chatId: q.chatId,
+      recoveryToken: q.recoveryToken,
+      sourceWitness: q.sourceWitness,
+      headRevision: Number(q.headRevision),
+      updatedAt: q.updatedAt,
+      profileAuthority: q.profileAuthority,
+      logEntries
+    }
+  }
   if (
     q.method === 'prepare' &&
     safeId(q.chatId) &&

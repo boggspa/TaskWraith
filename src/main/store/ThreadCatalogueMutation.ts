@@ -1,8 +1,13 @@
 import { isThreadTitleRepairTarget, deriveThreadTitleFromTranscript } from './ThreadTitleRepair'
 import type {
+  FoldedLogOutcome,
   StaleChatRunSettlement,
-  TerminalChatRunRecovery
+  TerminalChatRunRecovery,
+  ThreadFoldLogBatch
 } from '../../shared/threadCatalogueTypes'
+import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
+import { isThreadLogBatch, type ThreadLogBatch } from '../../host-shared/thread-log/ThreadLogBatch'
+import { applyThreadLogBatches } from '../../host-shared/thread-log/ThreadLogApply'
 import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -212,6 +217,93 @@ export function prepareThreadCatalogueMutation(
       checkedRuns,
       settlements,
       terminalRecoveries
+    }
+  } catch (error) {
+    for (const name of names) fs.rmSync(join(directory, name), { force: true })
+    throw error
+  }
+}
+
+/**
+ * Decoder-only fold of a dead writer's log onto the thread's full copy.
+ *
+ * `prepareThreadCatalogueMutation` is a new edit: it moves the revision on by
+ * one and stamps `updatedAt` with the clock. A fold publishes work that was
+ * already done, so it keeps the log's own head revision and `updatedAt` and the
+ * full copy's `createdAt`; moving any of them would make the thread look
+ * edited at recovery time and fork its revision chain from the log's.
+ *
+ * Returns null, and writes nothing, when there is nothing to fold or when the
+ * canonical source is missing: a missing source stays unresolved rather than
+ * being resurrected from a log.
+ */
+export function foldOwnedLogThreadCatalogueMutation(
+  options: ThreadCatalogueReaderOptions,
+  input: {
+    chatId: string
+    sourceWitness: string
+    epoch: ThreadCatalogueEpoch
+    heads: ThreadCatalogueSourceHeads
+    headRevision: number
+    updatedAt: string
+    profileAuthority: string
+    logEntries: readonly ThreadFoldLogBatch[]
+  }
+): FoldedLogOutcome | null {
+  const decoded = new ThreadCatalogueDiskReader(options).read(input.chatId)
+  if (!decoded) return null
+  if (!decoded.sourceComplete) throw new Error('History recovery source is incomplete')
+  if (decoded.source.witness !== input.sourceWitness)
+    throw new ThreadCatalogueRequestError('source_changed')
+  const at = Date.parse(input.updatedAt)
+  if (!Number.isSafeInteger(input.headRevision) || input.headRevision < 1 || !Number.isFinite(at))
+    throw new Error('Invalid fold head')
+  if (input.logEntries.length === 0) return null
+  const batches: ThreadLogBatch[] = []
+  for (const entry of input.logEntries) {
+    if (!isThreadLogBatch(entry, input.chatId)) throw new Error('Invalid log batch')
+    batches.push(entry)
+  }
+  if (batches[batches.length - 1].revision !== input.headRevision)
+    throw new Error('Log head does not match the folded revision')
+  const original = decoded.persisted
+  const previousRevision = projectThreadCatalogueRecord(original).revision
+  // The applier checks every link from the full copy's revision to the head.
+  const folded = applyThreadLogBatches(original, batches)
+  const next: ChatRecord = {
+    ...folded,
+    createdAt: original.createdAt,
+    persistenceRevision: input.headRevision,
+    updatedAt: at
+  }
+  const foldId = randomUUID()
+  const directory = preparedThreadDirectory(options.profilePath, input.chatId)
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const names = [`${foldId}.record.json`, `${foldId}.checkpoint.json`]
+  try {
+    const record = writePrepared(directory, names[0], next)
+    const checkpoint = writePrepared(directory, names[1], {
+      format: INCREMENTAL_CHAT_CHECKPOINT_FORMAT,
+      version: INCREMENTAL_CHAT_CHECKPOINT_VERSION,
+      chatId: input.chatId,
+      revision: input.headRevision,
+      savedAt: input.updatedAt,
+      reason: 'recovery',
+      record: next
+    })
+    return {
+      foldId,
+      chatId: input.chatId,
+      epoch: input.epoch,
+      heads: input.heads,
+      sourceWitness: input.sourceWitness,
+      profileAuthority: input.profileAuthority,
+      previousRevision,
+      headRevision: input.headRevision,
+      updatedAt: input.updatedAt,
+      projection: projectThreadCatalogueRecord(next),
+      record,
+      checkpoint
     }
   } catch (error) {
     for (const name of names) fs.rmSync(join(directory, name), { force: true })
