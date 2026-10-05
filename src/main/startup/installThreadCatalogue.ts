@@ -88,7 +88,12 @@ export function installStartupThreadCatalogue(options: {
         return recovery!.end(query.chatId, query.recoveryToken) as T
       if (query.method === 'adopt-prepared')
         return recovery!.adopt(query.chatId, query.recoveryToken, query.preparedId) as Promise<T>
-      if (query.method === 'prepare') recovery!.assertHeld(query.chatId, query.recoveryToken)
+      if (
+        query.method === 'prepare' ||
+        query.method === 'fold-owned-log' ||
+        query.method === 'reestablish-erasure'
+      )
+        recovery!.assertHeld(query.chatId, query.recoveryToken)
       return local.query<T>(query)
     }
     if (!options.broker.maintainThreadCatalogue)

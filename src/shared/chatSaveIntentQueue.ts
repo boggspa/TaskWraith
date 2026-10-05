@@ -133,6 +133,25 @@ export class PerChatSaveIntentQueue {
   }
 
   /**
+   * Update the admitted head's revision to the value a save actually
+   * persisted. The intent is admitted BEFORE the save runs, when the
+   * `record.persistenceRevision` is still the pre-save value; the save then
+   * advances the revision by one. Activation looks up the receipt by
+   * commandId and matches the receipt's revision against the admitted head
+   * — without this pin, every save that advances the revision can never
+   * confirm, because the receipt lives at `previous + 1` and the head still
+   * reads `previous`. A newer intent that took over the slot is left alone.
+   */
+  pinAdmittedRevision(chatId: string, commandId: string, revision: number): boolean {
+    const slot = this.slots.get(chatId)
+    if (!slot?.admitted) return false
+    if (slot.admitted.commandId !== commandId) return false
+    if (!Number.isSafeInteger(revision) || revision < 0) return false
+    slot.admitted = { revision, commandId }
+    return true
+  }
+
+  /**
    * Pin the admitted head and pause flushes until `unfreeze`. The revision must
    * be the admitted head's: freezing anything else would confirm a record the
    * user did not author last.

@@ -1403,6 +1403,8 @@ export class HostNodeProductionServer {
       return { data }
     }
     if (request.method === 'prepare') recovery.assertHeld(request.chatId, request.recoveryToken)
+    if (request.method === 'fold-owned-log' || request.method === 'reestablish-erasure')
+      recovery.assertHeld(request.chatId, request.recoveryToken)
     if (request.method === 'erase')
       await this.threadCataloguePublisher?.drain(request.chatId ? [request.chatId] : undefined)
     const data = await client.query(request)

@@ -425,7 +425,9 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     memory.hold = null
     finish()
     const outcome = await retiring
-    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    // The reservation surfaces the more specific reason: an erasure generation
+    // that changed since mint is `erasing`, not a flat `damaged`.
+    expect(outcome).toEqual({ kind: 'busy', reason: 'erasing' })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 

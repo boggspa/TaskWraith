@@ -382,10 +382,17 @@ export class HostThreadOwnerRegistry {
       } catch (error) {
         // `mark_moved` is damage too — unless this registry itself unlinked
         // the mark and still owes its directory sync, which is decided on
-        // the read below. Every other probe failure refuses here.
+        // the read below. Other reasons carry more specific information
+        // than a flat `damaged`; surface the reason the reservation gave
+        // so the caller can distinguish a recoverable retry from a
+        // genuine permission loss.
         if (error instanceof ReservationInvalid && error.reason === 'mark_moved') {
           // Fall through to the read: an absent mark with a recorded sync
           // debt is retried, not refused.
+        } else if (error instanceof ReservationInvalid && error.reason === 'erasure_changed') {
+          return { kind: 'busy', reason: 'erasing' }
+        } else if (error instanceof ReservationInvalid && error.reason === 'writer_alive') {
+          return { kind: 'busy', reason: 'live_writer' }
         } else {
           return { kind: 'busy', reason: 'damaged' }
         }

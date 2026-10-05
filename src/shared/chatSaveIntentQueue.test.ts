@@ -168,4 +168,39 @@ describe('PerChatSaveIntentQueue', () => {
     expect(queue.stats().droppedHandles).toBe(4)
     expect(latest.supersedes?.at(-1)?.commandId).toBe(`cmd-${MAX_SUPERSEDED_INTENT_HANDLES + 3}`)
   })
+
+  it('pinAdmittedRevision updates the admitted head to the post-save revision', () => {
+    // The intent is admitted before the save runs, so the recorded revision
+    // is the pre-save value. The save then advances the revision by one;
+    // activation looks up the receipt by commandId and matches the
+    // receipt's revision against the admitted head — without a pin, every
+    // save that advances the revision can never confirm.
+    const queue = new PerChatSaveIntentQueue()
+    queue.enqueue(intent('a', 5))
+    expect(queue.admittedHead('a')?.revision).toBe(5)
+    expect(queue.pinAdmittedRevision('a', 'cmd-5', 6)).toBe(true)
+    expect(queue.admittedHead('a')?.revision).toBe(6)
+  })
+
+  it('pinAdmittedRevision refuses to overwrite a head that no longer matches', () => {
+    // A newer intent took over the slot; pinning the older one's revision
+    // would mis-state the head for activation.
+    const queue = new PerChatSaveIntentQueue()
+    queue.enqueue(intent('a', 5))
+    queue.enqueue(intent('a', 6))
+    expect(queue.pinAdmittedRevision('a', 'cmd-5', 5)).toBe(false)
+    expect(queue.admittedHead('a')?.revision).toBe(6)
+  })
+
+  it('pinAdmittedRevision refuses unknown handle, unknown chat, and bad revisions', () => {
+    const queue = new PerChatSaveIntentQueue()
+    expect(queue.pinAdmittedRevision('a', 'cmd-missing', 1)).toBe(false)
+    queue.enqueue(intent('a', 1))
+    expect(queue.pinAdmittedRevision('missing', 'cmd-1', 2)).toBe(false)
+    expect(queue.pinAdmittedRevision('a', 'cmd-other', 99)).toBe(false)
+    expect(queue.pinAdmittedRevision('a', 'cmd-1', -1)).toBe(false)
+    expect(queue.pinAdmittedRevision('a', 'cmd-1', 1.5)).toBe(false)
+    expect(queue.pinAdmittedRevision('a', 'cmd-1', Number.POSITIVE_INFINITY)).toBe(false)
+    expect(queue.admittedHead('a')?.revision).toBe(1)
+  })
 })

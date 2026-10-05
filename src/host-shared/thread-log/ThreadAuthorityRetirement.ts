@@ -30,6 +30,7 @@
  */
 import { isSafeChatId } from '../../shared/ChatPath'
 import type { ThreadOwnershipReservation } from './ThreadOwnership'
+import { ReservationInvalid } from './ThreadOwnership'
 
 /**
  * Marker that a retirement is on the orphan pathway. Ordinary routes do not
@@ -120,6 +121,23 @@ export async function retireOrphanThreadAuthority(
     await context.removeAndSync()
   } catch {
     return { kind: 'uncertain', reason: 'sync_failed' }
+  }
+  // Re-validate the reservation across the await: the writer's liveness,
+  // profile authority or erasure generation can change while the directory
+  // sync runs. A reservation that survived at admission may no longer mean
+  // what it said, and the destructive act is the unlink — refusing here is
+  // the only post-sync witness the reservation gives us.
+  try {
+    context.reservation.revalidate()
+  } catch (error) {
+    // `mark_moved` is expected here: we just unlinked the file. The
+    // destructive act is the unlink itself, so the mark is gone by design.
+    // The mark witness already covers the absent case below.
+    if (error instanceof ReservationInvalid && error.reason === 'mark_moved') {
+      // fall through to the witness check
+    } else {
+      return { kind: 'busy', reason: 'damaged' }
+    }
   }
   if (observation.exactMarkWitness()) return { kind: 'uncertain', reason: 'witness_changed' }
   return { kind: 'retired' }

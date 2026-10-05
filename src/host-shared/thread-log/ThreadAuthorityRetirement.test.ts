@@ -102,9 +102,12 @@ describe('ThreadAuthorityRetirement.orphan keep-custody policy', () => {
     )
     expect(outcome).toEqual({ kind: 'retired' })
     expect(fs.removeCalls).toBe(1)
-    // The reservation is revalidated at the pre-check and consulted for the
-    // catalogue's erasing state; the witness is what confirms the removal.
-    expect(reservation.revalidateCalls).toBe(1)
+    // The reservation is revalidated both at the pre-check and after the
+    // directory sync: the post-sync revalidate closes the window where
+    // writer liveness, profile authority or erasure generation can change
+    // while the unlink is in flight. The witness is what confirms the
+    // removal.
+    expect(reservation.revalidateCalls).toBe(2)
     expect(reservation.erasingCalls).toBeGreaterThanOrEqual(1)
   })
 

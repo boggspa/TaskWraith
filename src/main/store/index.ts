@@ -8516,6 +8516,18 @@ export class AppStore {
         saved,
         awaitCatalogueHeadSources(saved.appChatId)
       )
+    if (ownershipSave && !ownershipSave.active) {
+      // Pin the admitted head to the revision the save actually persisted.
+      // The intent was admitted BEFORE the save with the previous revision;
+      // activation's publicationConfirmed looks up the receipt by commandId
+      // and matches against the admitted head — without this pin every save
+      // that advances the revision can never confirm.
+      saveCoalescer.intentQueue.pinAdmittedRevision(
+        saved.appChatId,
+        ownershipSave.commandId,
+        saved.persistenceRevision
+      )
+    }
     if (ownershipSave?.active) {
       // Owned: the owned journal's own barrier confirms the save, not a Host
       // receipt. A failed barrier leaves the intent pending for replay.

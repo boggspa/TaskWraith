@@ -383,11 +383,11 @@ describe('HostThreadOwnerRegistry retirement interrupted', () => {
     // The process id is alive again: a restarted writer, or a reused pid.
     machine.start('desk-a-returned', 4101)
     expect(invalidReason(() => reservation.revalidate())).toBe('writer_alive')
-    // A reservation that fails revalidation is damage to the retirement, so
-    // it is refused before any liveness-specific answer is reached.
+    // The reservation surfaces the more specific reason: a writer that came
+    // back is `live_writer`, not a flat `damaged`.
     expect(await host.retireOrphanAuthority(THREAD, reservation)).toEqual({
       kind: 'busy',
-      reason: 'damaged'
+      reason: 'live_writer'
     })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
