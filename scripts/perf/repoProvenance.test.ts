@@ -19,9 +19,28 @@ const { runT2BaselineCli } = require('./runT2Baseline.cjs') as {
   runT2BaselineCli: (argv: string[], options: Record<string, unknown>) => Promise<unknown>
 }
 
+/** Every directory this file makes is named so, directly in the temporary folder. */
+const MADE_PREFIX = 'harness-provenance-'
 const made: string[] = []
+
+/** A fresh directory of this file's own, removed after the test. */
+function makeDirectory(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), MADE_PREFIX))
+  made.push(dir)
+  return dir
+}
+
+/** Removes a directory only when it is one this file made: never the folder above it. */
+function removeMade(dir: string) {
+  const root = tmpdir()
+  if (dir === root || path.resolve(dir) !== dir || !dir.startsWith(root + path.sep + MADE_PREFIX)) {
+    throw new Error(`refusing to remove ${dir}: not a directory this file made`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
+
 afterEach(() => {
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true })
+  while (made.length > 0) removeMade(made.pop()!)
 })
 
 function git(cwd: string, ...args: string[]) {
@@ -47,8 +66,7 @@ function git(cwd: string, ...args: string[]) {
  * holding a frozen export: a tree of files with no git of its own.
  */
 function checkoutWithExport() {
-  const root = mkdtempSync(path.join(tmpdir(), 'tw-provenance-'))
-  made.push(root)
+  const root = makeDirectory()
   git(root, 'init', '--quiet')
   writeFileSync(path.join(root, '.gitignore'), 'frozen/\n')
   writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}\n')
@@ -61,11 +79,12 @@ function checkoutWithExport() {
   return { root, exportRoot, head: git(root, 'rev-parse', 'HEAD') }
 }
 
-/** A linked worktree of root with a commit of its own and nothing changed. */
+/**
+ * A linked worktree of root with a commit of its own and nothing changed,
+ * made inside a directory of this file's own for git to create it in.
+ */
 function linkedWorktree(root: string) {
-  const linked = mkdtempSync(path.join(tmpdir(), 'tw-provenance-linked-'))
-  made.push(linked)
-  rmSync(linked, { recursive: true })
+  const linked = path.join(makeDirectory(), 'tree')
   git(root, 'worktree', 'add', '--quiet', '--detach', linked, 'HEAD')
   writeFileSync(path.join(linked, 'later.txt'), 'later\n')
   git(linked, 'add', 'later.txt')
@@ -120,8 +139,7 @@ describe('repo provenance', () => {
   it('names a linked worktree by its own commit, through a path with a link in it', () => {
     const { root } = checkoutWithExport()
     const { linked, head } = linkedWorktree(root)
-    const alias = path.join(mkdtempSync(path.join(tmpdir(), 'tw-provenance-alias-')), 'tree')
-    made.push(path.dirname(alias))
+    const alias = path.join(makeDirectory(), 'tree')
     symlinkSync(linked, alias)
     const provenance = collectRepoProvenance({ repoRoot: alias })
     expect(provenance).toMatchObject({

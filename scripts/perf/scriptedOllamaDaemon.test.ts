@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { createRequire } from 'node:module'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { runOllamaProvider, type OllamaProviderDeps } from '../../src/main/ollama/OllamaProvider'
@@ -60,7 +60,25 @@ const SHAPE = { chunksPerTurn: 13, chunkBytes: 32, chunkIntervalMs: 0 }
 const SLOW_SHAPE = { chunksPerTurn: 50, chunkBytes: 16, chunkIntervalMs: 20 }
 const MODEL = daemonModule.DEFAULT_MODEL.name
 const opened: ScriptedDaemon[] = []
-const temporaryPaths: string[] = []
+/** Every directory this file makes is named so, directly in the temporary folder. */
+const MADE_PREFIX = 'harness-scripted-ollama-'
+const made: string[] = []
+
+/** A fresh directory of this file's own, removed after the test. */
+function makeDirectory(): string {
+  const dir = mkdtempSync(join(tmpdir(), MADE_PREFIX))
+  made.push(dir)
+  return dir
+}
+
+/** Removes a directory only when it is one this file made: never the folder above it. */
+function removeMade(dir: string) {
+  const root = tmpdir()
+  if (dir === root || resolve(dir) !== dir || !dir.startsWith(root + sep + MADE_PREFIX)) {
+    throw new Error(`refusing to remove ${dir}: not a directory this file made`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
 
 async function openDaemon(options: Record<string, unknown> = {}) {
   const daemon = daemonModule.createScriptedOllamaDaemon({ seed: 7, shape: SHAPE, ...options })
@@ -71,7 +89,7 @@ async function openDaemon(options: Record<string, unknown> = {}) {
 afterEach(async () => {
   vi.restoreAllMocks()
   while (opened.length > 0) await opened.pop()!.close()
-  while (temporaryPaths.length > 0) rmSync(temporaryPaths.pop()!, { recursive: true, force: true })
+  while (made.length > 0) removeMade(made.pop()!)
 })
 
 function sha256(text: string): string {
@@ -553,8 +571,7 @@ describe('scripted Ollama daemon against the production adapter', () => {
 
 describe('scripted Ollama daemon as a child process', () => {
   it('publishes its address when ready and writes its turn record on SIGTERM', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'scripted-ollama-'))
-    temporaryPaths.push(dir)
+    const dir = makeDirectory()
     const config = join(dir, 'config.json')
     const ready = join(dir, 'ready.json')
     const summaryFile = join(dir, 'summary.json')
@@ -594,8 +611,7 @@ describe('scripted Ollama daemon as a child process', () => {
   })
 
   it('stops for its summary when its stdin closes, as when its runner dies', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'scripted-ollama-'))
-    temporaryPaths.push(dir)
+    const dir = makeDirectory()
     const config = join(dir, 'config.json')
     const ready = join(dir, 'ready.json')
     const summaryFile = join(dir, 'summary.json')

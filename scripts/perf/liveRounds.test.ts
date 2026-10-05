@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -68,15 +68,26 @@ type DaemonHandle = {
   }>
 }
 
-const temporaryPaths: string[] = []
+/** Every directory this file makes is named so, directly in the temporary folder. */
+const MADE_PREFIX = 'harness-live-rounds-'
+const made: string[] = []
+
+/** Removes a directory only when it is one this file made: never the folder above it. */
+function removeMade(dir: string) {
+  const root = tmpdir()
+  if (dir === root || resolve(dir) !== dir || !dir.startsWith(root + sep + MADE_PREFIX)) {
+    throw new Error(`refusing to remove ${dir}: not a directory this file made`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
 
 afterEach(() => {
-  while (temporaryPaths.length > 0) rmSync(temporaryPaths.pop()!, { recursive: true, force: true })
+  while (made.length > 0) removeMade(made.pop()!)
 })
 
 function temporaryDirectory(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'perf-live-rounds-runner-'))
-  temporaryPaths.push(dir)
+  const dir = mkdtempSync(join(tmpdir(), MADE_PREFIX))
+  made.push(dir)
   return dir
 }
 
