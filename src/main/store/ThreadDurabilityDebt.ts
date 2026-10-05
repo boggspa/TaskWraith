@@ -20,6 +20,15 @@
  * next one. A path noted by several runs, or by a run and by the thread, is
  * synced once, by the first barrier that takes it, for all of them.
  *
+ * `barrier(chatId, { threadOnly: true })` pays the thread's own debt alone,
+ * and leaves what every run owes to that run's barrier or to one without a
+ * run. It cannot name a run. A wait the user sits in needs no more: the
+ * message, the decision or the destructive batch it waits for, and the record
+ * a dispatch reads, are journal lines. It joins a running barrier when nothing
+ * of the thread's own has been noted since that one began, and otherwise the
+ * barrier queued behind it, which pays the thread's own debt whatever runs it
+ * pays for besides.
+ *
  * `barrier(chatId, { urgent: true })` is for a wait the user is sitting in.
  * It asks the port for its syncs as urgent, which the port starts ahead of
  * every sync that is not urgent and has not started, and it keeps the port's
@@ -123,12 +132,21 @@ export interface ThreadDurabilityPort {
   ahead?(urgent: boolean): number
 }
 
-export interface ThreadDurabilityBarrierOptions {
-  /** Pay only the thread's own debt and this run's. */
-  run?: string
+export type ThreadDurabilityBarrierOptions = {
   /** A wait the user is sitting in. */
   urgent?: boolean
-}
+} & (
+  | {
+      /** Pay only the thread's own debt and this run's. */
+      run?: string
+      threadOnly?: false
+    }
+  | {
+      /** Pay only the thread's own debt: what was noted without a run. */
+      threadOnly: true
+      run?: undefined
+    }
+)
 
 export interface ThreadDurabilityOwnerCounters {
   /** Calls to `note`, repeats of one path included. */
@@ -170,6 +188,8 @@ export interface ThreadDurabilityDebtSnapshot {
     longestWaitMs: number
     /** Raised with a run. */
     scoped: number
+    /** Raised for the thread's own debt alone. */
+    threadOnly: number
     /** Raised as urgent. */
     urgent: number
     /** Barriers running or queued that an urgent one raised, because it had to wait for them. */
@@ -189,7 +209,8 @@ export interface ThreadDurabilityDebt {
   note: NoteThreadDurabilityDebt
   /**
    * Resolves when everything the thread owed at this call is synced: with a
-   * run, the thread's own debt and that run's.
+   * run, the thread's own debt and that run's; with `threadOnly`, the
+   * thread's own debt alone.
    */
   barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
   /** Drop what a thread owes without syncing it: the thread is being erased. */
@@ -289,6 +310,7 @@ export function createThreadDurabilityDebt(
     waitMsTotal: 0,
     longestWaitMs: 0,
     scoped: 0,
+    threadOnly: 0,
     urgent: 0,
     hastened: 0
   }
@@ -297,7 +319,11 @@ export function createThreadDurabilityDebt(
   const owesNothing = (state: ThreadState): boolean =>
     state.owed.files.size === 0 && state.owed.directories.size === 0
 
-  /** Whether anything a barrier paying for these runs would take is owed; null is every run. */
+  /**
+   * Whether anything a barrier paying for these runs would take is owed: the
+   * thread's own debt and theirs. Null is every run; an empty set is the
+   * thread's own debt alone.
+   */
   const owesFor = (state: ThreadState, runs: ReadonlySet<string> | null): boolean => {
     if (runs === null) return !owesNothing(state)
     if (state.own.files.size > 0 || state.own.directories.size > 0) return true
@@ -641,9 +667,16 @@ export function createThreadDurabilityDebt(
   }
 
   const barrier = (chatId: string, options: ThreadDurabilityBarrierOptions = {}): Promise<void> => {
+    const threadOnly = options.threadOnly === true
+    if (threadOnly && options.run !== undefined) {
+      return Promise.reject(
+        new TypeError('A barrier of the thread’s own debt alone cannot name a run')
+      )
+    }
     const urgent = options.urgent === true
     barriers.raised += 1
     if (options.run !== undefined) barriers.scoped += 1
+    if (threadOnly) barriers.threadOnly += 1
     if (urgent) barriers.urgent += 1
     const kind = urgent ? waits.urgent : waits.normal
     const ahead = port.ahead?.(urgent) ?? 0
@@ -651,12 +684,12 @@ export function createThreadDurabilityDebt(
     if (ahead > kind.aheadMost) kind.aheadMost = ahead
     const urgency = urgent ? port.urgent?.() : undefined
     const raisedAt = now()
-    const promise = settled(
-      chatId,
-      options.run === undefined ? null : new Set([options.run]),
-      urgent,
-      urgency
-    )
+    const runs = threadOnly
+      ? new Set<string>()
+      : options.run === undefined
+        ? null
+        : new Set([options.run])
+    const promise = settled(chatId, runs, urgent, urgency)
     const timed = (): void => {
       const waited = now() - raisedAt
       barriers.waitMsTotal += waited

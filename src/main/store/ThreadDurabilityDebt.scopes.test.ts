@@ -221,9 +221,142 @@ describe('a barrier for one run', () => {
   })
 })
 
+describe('a barrier for the thread’s own debt only', () => {
+  let port: HeldPort
+  let debt: ThreadDurabilityDebt
+
+  beforeEach(() => {
+    clock = 0
+    port = new HeldPort()
+    debt = createThreadDurabilityDebt({ port })
+  })
+
+  /** What thirty runs of one thread leave owing, beside the thread's journal. */
+  const thirtyRuns = (): string[] => {
+    const runs = Array.from({ length: 30 }, (_unused, index) => `run-${index + 1}`)
+    debt.note(CHAT, { file: journal, owner: 'journal' })
+    debt.note(CHAT, { directory: journalDirectory })
+    for (const run of runs) {
+      debt.note(CHAT, { file: events(run), owner: 'run-events', run })
+      debt.note(CHAT, { file: detail(run), owner: 'detail', run })
+      debt.note(CHAT, { directory: runFolder(run), run })
+    }
+    return runs
+  }
+
+  it('asks the port for the journal’s paths only, urgently, on a thread where thirty runs owe files', async () => {
+    thirtyRuns()
+
+    const barrier = debt.barrier(CHAT, { threadOnly: true, urgent: true })
+    await settle()
+    expect(port.waiting()).toEqual([journal])
+    await port.release()
+    expect(port.waiting()).toEqual([journalDirectory])
+    await port.release()
+    await barrier
+
+    expect(port.asked.map((each) => [each.path, each.urgent])).toEqual([
+      [journal, true],
+      [journalDirectory, true]
+    ])
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 60, directories: 30 })
+    expect(debt.snapshot().owingRuns).toBe(30)
+    expect(debt.snapshot().barriers).toMatchObject({
+      raised: 1,
+      threadOnly: 1,
+      urgent: 1,
+      scoped: 0,
+      rounds: 1
+    })
+  })
+
+  it('leaves every run’s debt to a later barrier without a run, which pays all of it', async () => {
+    const runs = thirtyRuns()
+    const own = debt.barrier(CHAT, { threadOnly: true, urgent: true })
+    await port.drain()
+    await own
+    const before = port.asked.length
+
+    const everything = debt.barrier(CHAT)
+    await port.drain()
+    await everything
+
+    const paid = port.asked.slice(before).map((each) => each.path)
+    expect(paid.sort()).toEqual(
+      runs.flatMap((run) => [events(run), detail(run), runFolder(run)]).sort()
+    )
+    expect(port.asked.slice(before).every((each) => !each.urgent)).toBe(true)
+    expect(debt.snapshot().owed).toEqual({ threads: 0, files: 0, directories: 0 })
+    expect(debt.snapshot().owingRuns).toBe(0)
+  })
+
+  it('resolves at once, without the port, when the thread owes nothing of its own, whatever its runs owe', async () => {
+    debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
+    debt.note(CHAT, { directory: runFolder('run-1'), run: 'run-1' })
+
+    await expect(debt.barrier(CHAT, { threadOnly: true, urgent: true })).resolves.toBeUndefined()
+
+    expect(port.asked).toEqual([])
+    expect(debt.snapshot().barriers).toMatchObject({ raised: 1, idle: 1, rounds: 0 })
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 1 })
+  })
+
+  it('cannot name a run as well', async () => {
+    debt.note(CHAT, { file: journal, owner: 'journal' })
+    debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
+
+    await expect(debt.barrier(CHAT, { threadOnly: true, run: 'run-1' } as never)).rejects.toThrow(
+      TypeError
+    )
+
+    await settle()
+    expect(port.asked).toEqual([])
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 2, directories: 0 })
+    expect(debt.snapshot().barriers).toMatchObject({ raised: 0, threadOnly: 0 })
+  })
+
+  it('joins a running barrier that took everything the thread owed of its own, and asks for nothing more', async () => {
+    debt.note(CHAT, { file: journal, owner: 'journal' })
+    debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
+    debt.note(CHAT, { file: events('run-2'), owner: 'run-events', run: 'run-2' })
+    const running = debt.barrier(CHAT, { run: 'run-1' })
+    await settle()
+
+    const own = debt.barrier(CHAT, { threadOnly: true, urgent: true })
+    await port.drain()
+    await Promise.all([running, own])
+
+    expect(port.asked.map((each) => each.path)).toEqual([journal, events('run-1')])
+    expect(debt.snapshot().barriers).toMatchObject({ shared: 1, rounds: 1 })
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 0 })
+  })
+
+  it('waits behind a running barrier for one of its own when the thread wrote since, and that one takes no run’s debt', async () => {
+    debt.note(CHAT, { file: journal, owner: 'journal' })
+    debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
+    const running = debt.barrier(CHAT, { run: 'run-1' })
+    await settle()
+    // The user's message: a journal line, written while the run's barrier syncs.
+    debt.note(CHAT, { file: journal, owner: 'journal' })
+    debt.note(CHAT, { file: events('run-2'), owner: 'run-events', run: 'run-2' })
+
+    const own = debt.barrier(CHAT, { threadOnly: true, urgent: true })
+    await port.drain()
+    await Promise.all([running, own])
+
+    expect(port.asked.map((each) => [each.path, each.urgent])).toEqual([
+      [journal, false],
+      [events('run-1'), false],
+      [journal, true]
+    ])
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 0 })
+    expect(debt.snapshot().owingRuns).toBe(1)
+  })
+})
+
 describe('barriers for runs, a barrier for the thread and a note, in every order', () => {
-  type Step = 'barrier A' | 'barrier B' | 'barrier' | 'note'
-  const STEPS: Step[] = ['barrier A', 'barrier B', 'barrier', 'note']
+  type Step = 'barrier A' | 'barrier B' | 'barrier' | 'barrier own' | 'note'
+  const STEPS: Step[] = ['barrier A', 'barrier B', 'barrier', 'barrier own', 'note']
 
   const orders = (items: Step[]): Step[][] =>
     items.length === 0
@@ -242,7 +375,7 @@ describe('barriers for runs, a barrier for the thread and a note, in every order
   const later = detail('A')
 
   it.each([false, true])(
-    'covers, for each barrier, everything it needed that was noted before it (run A urgent: %s)',
+    'covers, for each barrier, everything it needed that was noted before it, the urgent one of the thread’s own debt alone included (run A urgent: %s)',
     async (urgentA) => {
       let cases = 0
       for (const order of orders(STEPS)) {
@@ -277,20 +410,24 @@ describe('barriers for runs, a barrier for the thread and a note, in every order
               const needs =
                 step === 'barrier'
                   ? [...noted.keys()]
-                  : [
-                      ...own,
-                      ...ofRun(step === 'barrier A' ? 'A' : 'B'),
-                      ...(step === 'barrier A' && noted.has(later) ? [later] : [])
-                    ]
+                  : step === 'barrier own'
+                    ? [...own]
+                    : [
+                        ...own,
+                        ...ofRun(step === 'barrier A' ? 'A' : 'B'),
+                        ...(step === 'barrier A' && noted.has(later) ? [later] : [])
+                      ]
               const entry = { step, at: tick(), needs, settledAt: null as number | null }
               raised.push(entry)
               const options =
                 step === 'barrier'
                   ? undefined
-                  : {
-                      run: step === 'barrier A' ? 'A' : 'B',
-                      urgent: step === 'barrier A' && urgentA
-                    }
+                  : step === 'barrier own'
+                    ? ({ threadOnly: true, urgent: true } as const)
+                    : {
+                        run: step === 'barrier A' ? 'A' : 'B',
+                        urgent: step === 'barrier A' && urgentA
+                      }
               debt.barrier(CHAT, options).then(() => {
                 entry.settledAt = tick()
               })
@@ -315,11 +452,11 @@ describe('barriers for runs, a barrier for the thread and a note, in every order
               expect(covered, `${label}: ${barrier.step} needs ${path}`).toBe(true)
             }
           }
-          // The urgent barrier never depends only on a sync asked for at the
+          // An urgent barrier never depends only on a sync asked for at the
           // ordinary priority after it was raised: what it waits for was
           // either asked before (the port moves it ahead) or asked as urgent.
-          if (urgentA) {
-            const urgent = raised.find((each) => each.step === 'barrier A')!
+          const urgentSteps: Step[] = urgentA ? ['barrier own', 'barrier A'] : ['barrier own']
+          for (const urgent of raised.filter((each) => urgentSteps.includes(each.step))) {
             for (const path of urgent.needs) {
               const last = Math.max(...noted.get(path)!.filter((at) => at < urgent.at))
               const covering = port.asked.filter(
@@ -331,13 +468,13 @@ describe('barriers for runs, a barrier for the thread and a note, in every order
               )
               expect(
                 covering.some((each) => each.askedAt < urgent.at || each.urgent),
-                `${label}: barrier A waits for ${path} at the ordinary priority`
+                `${label}: ${urgent.step} waits for ${path} at the ordinary priority`
               ).toBe(true)
             }
           }
         }
       }
-      expect(cases).toBe(24 * 8)
+      expect(cases).toBe(120 * 16)
     }
   )
 })
