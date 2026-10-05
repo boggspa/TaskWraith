@@ -60,3 +60,15 @@ describe('durable moment gate wiring in index.ts', () => {
     expect(answered).toContain('settleUserMoment(state.appChatId')
   })
 })
+
+describe('the routes in index.ts that say the user asked for a removal', () => {
+  const probe = new MainSourceProbe('index.ts', new URL('./index.ts', import.meta.url))
+
+  it("saves the phone's message deletion with what its handler says of it", () => {
+    const calls = probe.callsTo(probe.source, 'handleRemoteTranscriptMessageDeletion')
+    expect(calls).toHaveLength(1)
+    expect(probe.propText(calls[0], 1, 'saveChat')).toBe(
+      '(chat, options) => AppStore.saveChat(chat, options)'
+    )
+  })
+})

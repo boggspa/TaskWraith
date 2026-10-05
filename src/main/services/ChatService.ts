@@ -221,6 +221,13 @@ export interface PrepareForkMessagesInput {
 
 export type PrepareForkMessages = (input: PrepareForkMessagesInput) => ChatMessage[]
 
+/** What the caller of a save says of it, passed on to the store. */
+export interface ChatServiceSaveOptions {
+  authoredTranscript?: AuthoredChatTranscriptMutation
+  /** The user asked for the rows this save removes, as the route it came by says. */
+  removalAskedByUser?: boolean
+}
+
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
   getAbandonedReapCandidates: () => { chats: ChatRecord[]; parentChatIds: Set<string> }
@@ -244,10 +251,7 @@ export interface ChatServiceStore {
   ) => ChatRecord
   getChildChats: (parentChatId: string) => ChatRecord[]
   getSideChats: (parentChatId: string) => ChatRecord[]
-  saveChat: (
-    chat: ChatRecord,
-    options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
-  ) => ChatRecord
+  saveChat: (chat: ChatRecord, options?: ChatServiceSaveOptions) => ChatRecord
   persistChatComposerSelection: (
     request: ChatComposerSelectionPatchRequest
   ) => Promise<{ chat: ChatRecord; changed: boolean }>
@@ -724,10 +728,7 @@ export class ChatService {
     return this.deps.appStore.getSideChats(requireSafeChatId(parentChatId, 'Parent chat id'))
   }
 
-  saveChat(
-    chat: ChatRecord,
-    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
-  ): ChatRecord {
+  saveChat(chat: ChatRecord, options: ChatServiceSaveOptions = {}): ChatRecord {
     return this.saveChatInternal(chat, false, options)
   }
 
@@ -741,7 +742,7 @@ export class ChatService {
   private saveChatInternal(
     chat: ChatRecord,
     allowWorkspaceTransition: boolean,
-    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+    options: ChatServiceSaveOptions = {}
   ): ChatRecord {
     const sanitizedInput = this.deps.sanitizeChatForSave(chat)
     assertSafeChatId(sanitizedInput.appChatId)
@@ -775,9 +776,12 @@ export class ChatService {
       : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
     const importedTranscriptFenced = this.preserveExternalProviderThreadImport(continuityFenced)
     const sanitized = this.preserveCollaboratorComments(importedTranscriptFenced)
-    return options.authoredTranscript && sanitized.messages === chat.messages
-      ? this.deps.appStore.saveChat(sanitized, options)
-      : this.deps.appStore.saveChat(sanitized)
+    const authored = options.authoredTranscript && sanitized.messages === chat.messages
+    if (!authored && !options.removalAskedByUser) return this.deps.appStore.saveChat(sanitized)
+    return this.deps.appStore.saveChat(sanitized, {
+      ...(authored ? { authoredTranscript: options.authoredTranscript } : {}),
+      ...(options.removalAskedByUser ? { removalAskedByUser: true } : {})
+    })
   }
 
   /**

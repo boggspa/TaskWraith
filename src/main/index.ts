@@ -50640,7 +50640,7 @@ if (isGeminiMcpBridgeProcess) {
               remoteQuestionRegistry
                 .listPending({ threadId })
                 .map((question) => question.questionId),
-            saveChat: (chat) => AppStore.saveChat(chat),
+            saveChat: (chat, options) => AppStore.saveChat(chat, options),
             broadcastChatUpdated,
             pushRemoteThreadSnapshot
           }),

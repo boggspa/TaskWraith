@@ -782,7 +782,9 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       previous,
       deps.normalizeTranscriptMarkdownMediaForChat(chat)
     )
-    const saved = deps.chatService.saveChat(normalized)
+    // The renderer saves a whole record when the user deletes a message, so a
+    // row it no longer has is one removed at the user's asking.
+    const saved = deps.chatService.saveChat(normalized, { removalAskedByUser: true })
     observeNoHistoryChat(saved)
     deps.broadcastChatUpdated(saved)
     deps.maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
@@ -1011,10 +1013,13 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         ? deps.normalizeTranscriptMarkdownMediaForChat(candidate)
         : candidate
       const authoredTranscript = transaction.finish()
-      const saved = deps.chatService.saveChat(
-        normalized,
-        normalized.messages === messages ? { authoredTranscript } : undefined
-      )
+      // An edit and resend cuts what followed at the user's asking. A delete
+      // comes only from the solo stream's tail lane: the run's own output.
+      const rewind = request.transcriptOps.some((operation) => operation.op === 'truncateFrom')
+      const saved = deps.chatService.saveChat(normalized, {
+        ...(normalized.messages === messages ? { authoredTranscript } : {}),
+        ...(rewind ? { removalAskedByUser: true } : {})
+      })
       const accepted =
         deps.getSettings().storeLocalChatHistory === false ||
         chatPersistenceRevision(saved) > chatPersistenceRevision(previous)

@@ -1018,7 +1018,7 @@ describe('registerChatHandlers', () => {
     })
 
     expect(deps.normalizeTranscriptMarkdownMediaForChat).toHaveBeenCalledWith(next)
-    expect(deps.chatService.saveChat).toHaveBeenCalledWith(next)
+    expect(deps.chatService.saveChat).toHaveBeenCalledWith(next, { removalAskedByUser: true })
     expect(deps.observeSoloSteerTranscriptRows).not.toHaveBeenCalled()
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1235,7 +1235,8 @@ describe('registerChatHandlers', () => {
       expect.objectContaining({
         messages: [expect.objectContaining({ id: 'graph-output', content: 'Durable result' })],
         runs: [expect.objectContaining({ runId: 'graph-run' })]
-      })
+      }),
+      { removalAskedByUser: true }
     )
   })
 
@@ -1269,7 +1270,8 @@ describe('registerChatHandlers', () => {
     handlerFor('save-chat')({} as any, renderer)
 
     expect(deps.chatService.saveChat).toHaveBeenCalledWith(
-      expect.objectContaining({ messages: [], runs: [] })
+      expect.objectContaining({ messages: [], runs: [] }),
+      { removalAskedByUser: true }
     )
   })
 
@@ -1821,5 +1823,83 @@ describe('the replies that report a message accepted, under barrier durability',
       await expect(reply).resolves.toMatchObject({ accepted: true, revision: 8 })
     }
     expect(gate.snapshot()).toMatchObject({ waits: 2, overdue: 1 })
+  })
+})
+
+describe('the removals the user asks for, as the routes say', () => {
+  const previous = chat('chat-1', {
+    persistenceRevision: 3,
+    messages: [
+      { id: 'user-1', role: 'user', content: 'First question', timestamp: 'now' },
+      { id: 'reply-1', role: 'assistant', content: 'An answer', timestamp: 'now' },
+      { id: 'user-2', role: 'user', content: 'Second question', timestamp: 'now' },
+      { id: 'reply-2', role: 'assistant', content: 'Another answer', timestamp: 'now' }
+    ]
+  })
+
+  it("saves a renderer's whole record as one whose removals the user asked for", () => {
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
+    registerChatHandlers(deps)
+    // The user deleted a message: the renderer saves the record without it.
+    const deleted = {
+      ...previous,
+      messages: previous.messages.filter((row) => row.id !== 'reply-1')
+    }
+
+    handlerFor('save-chat')({} as any, deleted)
+
+    expect(deps.chatService.saveChat).toHaveBeenCalledWith(deleted, { removalAskedByUser: true })
+  })
+
+  it("saves an edit and resend as cutting rows at the user's asking, and no other transcript mutation", () => {
+    const mutations: Record<string, unknown[]> = {
+      'an edit and resend': [
+        {
+          op: 'update',
+          id: 'user-2',
+          message: { ...previous.messages[2], content: 'Second question, again' }
+        },
+        { op: 'truncateFrom', id: 'user-2' }
+      ],
+      // The solo stream's tail lane: what it deletes is the run's own output.
+      "the stream's tail": [{ op: 'delete', id: 'reply-2' }],
+      'a message appended': [
+        {
+          op: 'append',
+          messages: [{ id: 'user-3', role: 'user', content: 'Third', timestamp: 'now' }]
+        }
+      ]
+    }
+    const asked: Record<string, boolean> = {}
+    for (const [name, transcriptOps] of Object.entries(mutations)) {
+      const deps = createDeps()
+      vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
+      vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
+        ...record,
+        persistenceRevision: 4
+      }))
+      mockedHandle.mockReset()
+      registerChatHandlers(deps)
+
+      const result = handlerFor('mutate-chat-transcript')(
+        { sender: { id: 41 } },
+        { version: 1, chatId: 'chat-1', baseRevision: 3, transcriptOps }
+      )
+
+      expect(result, name).toMatchObject({ accepted: true })
+      expect(deps.chatService.saveChat, name).toHaveBeenCalledWith(
+        expect.objectContaining({ appChatId: 'chat-1' }),
+        expect.objectContaining({ authoredTranscript: expect.anything() })
+      )
+      asked[name] = vi
+        .mocked(deps.chatService.saveChat)
+        .mock.calls.some((call) => JSON.stringify(call).includes('"removalAskedByUser":true'))
+    }
+    expect(asked).toEqual({
+      'an edit and resend': true,
+      "the stream's tail": false,
+      'a message appended': false
+    })
   })
 })

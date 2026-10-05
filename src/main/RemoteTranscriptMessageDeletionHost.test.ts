@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DurableMomentGate, installDurableMomentGate } from './run/DurableMomentGate'
+import { ChatDurabilityTickets } from './store/ChatDurabilityTickets'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
   handleRemoteTranscriptMessageDeletion,
@@ -27,8 +29,10 @@ function chat(messages: ChatMessage[]): ChatRecord {
   } as ChatRecord
 }
 
+type SaveChat = RemoteTranscriptMessageDeletionHostDeps['saveChat']
+
 function deps(record: ChatRecord): RemoteTranscriptMessageDeletionHostDeps & {
-  saveChat: ReturnType<typeof vi.fn<(chat: ChatRecord) => void>>
+  saveChat: ReturnType<typeof vi.fn<SaveChat>>
   broadcastChatUpdated: ReturnType<typeof vi.fn<(chat: ChatRecord) => void>>
   pushRemoteThreadSnapshot: ReturnType<
     typeof vi.fn<(chat: ChatRecord, workspaceId: string) => void>
@@ -38,7 +42,7 @@ function deps(record: ChatRecord): RemoteTranscriptMessageDeletionHostDeps & {
     getChat: () => record,
     canonicalWorkspaceId: () => 'workspace-1',
     listPendingQuestionIds: () => [],
-    saveChat: vi.fn<(chat: ChatRecord) => void>(),
+    saveChat: vi.fn<SaveChat>(),
     broadcastChatUpdated: vi.fn<(chat: ChatRecord) => void>(),
     pushRemoteThreadSnapshot: vi.fn<(chat: ChatRecord, workspaceId: string) => void>(),
     now: () => 99
@@ -60,6 +64,8 @@ describe('handleRemoteTranscriptMessageDeletion', () => {
     expect(host.saveChat).toHaveBeenCalledTimes(1)
     const saved = host.saveChat.mock.calls[0][0] as ChatRecord
     expect(saved.messages.map((item) => item.id)).toEqual(['b'])
+    // The user asked for the row to go, from the phone.
+    expect(host.saveChat).toHaveBeenCalledWith(saved, { removalAskedByUser: true })
     expect(saved.updatedAt).toBe(99)
     expect(host.broadcastChatUpdated).toHaveBeenCalledWith(saved)
     expect(host.pushRemoteThreadSnapshot).toHaveBeenCalledWith(saved, 'workspace-1')
@@ -117,5 +123,57 @@ describe('handleRemoteTranscriptMessageDeletion', () => {
       )
     ).toEqual({ ok: false, error: 'Message not found' })
     expect(host.saveChat).not.toHaveBeenCalled()
+  })
+})
+
+describe("the phone's deletion, under barrier durability", () => {
+  afterEach(() => installDurableMomentGate(null))
+
+  const action = { workspaceId: 'workspace-1', threadId: 'chat-1', messageId: 'a' }
+
+  it('replies only once the deletion is on the disk, or at the bound when the disk hangs', async () => {
+    const clock = { now: 0 }
+    const tickets = new ChatDurabilityTickets({ now: () => clock.now })
+    const timers: Array<() => void> = []
+    const gate = new DurableMomentGate({
+      source: tickets,
+      now: () => clock.now,
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => {}
+    })
+    installDurableMomentGate(gate)
+    for (const [revision, hang] of [
+      [2, false],
+      [3, true]
+    ] as const) {
+      let settle!: () => void
+      const barrier = new Promise<void>((resolve) => (settle = resolve))
+      const host = deps(chat([message('a'), message('b')]))
+      // What the store's save does under the switch: a ticket for the removal.
+      host.saveChat.mockImplementation((saved) => {
+        tickets.note(saved.appChatId, revision, 'destructive', barrier)
+      })
+
+      const reply = handleRemoteTranscriptMessageDeletion(action, host)
+      expect(reply).toBeInstanceOf(Promise)
+      let replied = false
+      void Promise.resolve(reply).then(() => (replied = true))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(replied).toBe(false)
+
+      if (hang) timers.splice(0).forEach((fire) => fire())
+      else settle()
+      await expect(reply).resolves.toEqual({ ok: true })
+    }
+    expect(gate.snapshot()).toMatchObject({ waits: 2, overdue: 1 })
+  })
+
+  it('replies at once, and synchronously, with no gate installed', () => {
+    expect(handleRemoteTranscriptMessageDeletion(action, deps(chat([message('a')])))).toEqual({
+      ok: true
+    })
   })
 })

@@ -5043,6 +5043,12 @@ export interface ChatSaveOptions {
   authoritativeContinuityDelivery?: boolean
   /** Exact message operations authored by a trusted main-process producer. */
   authoredTranscript?: AuthoredChatTranscriptMutation
+  /**
+   * The rows this save removes are ones the user asked to remove, as the
+   * route it came by says: a deletion from the renderer or the phone, an edit
+   * and resend. Only such a removal is a moment the user waits for.
+   */
+  removalAskedByUser?: boolean
 }
 
 export class AppStore {
@@ -8509,7 +8515,8 @@ export class AppStore {
       previousChatForFeedback,
       normalizedChat,
       incrementalResult,
-      flushReason
+      flushReason,
+      options.removalAskedByUser
     )
     // In-memory projection: this process reads the new record immediately.
     this.rememberChatRecord(normalizedChat.appChatId, {
@@ -8785,7 +8792,8 @@ export class AppStore {
         previousChatForFeedback,
         normalizedChat,
         incrementalResult,
-        flushReason
+        flushReason,
+        options.removalAskedByUser
       )
       // Stage 3: mirror the same save (with the same substituted authored
       // ops) onto the segmented store. The authoritative legacy write is

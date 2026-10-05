@@ -527,6 +527,28 @@ describe('ChatService', () => {
     )
   })
 
+  it('forwards that the user asked for the removals, with authored transcript ops or without', () => {
+    const { deps, store } = makeDeps()
+    const service = new ChatService(deps)
+    const record = makeChat({ title: ' Chat ' })
+    const authoredTranscript = {
+      operations: [],
+      transcriptOps: [],
+      changedMessageCount: 0
+    }
+
+    service.saveChat(record, { removalAskedByUser: true })
+    service.saveChat(record, { authoredTranscript, removalAskedByUser: true })
+
+    expect(store.saveChat).toHaveBeenNthCalledWith(1, makeChat({ title: 'Chat' }), {
+      removalAskedByUser: true
+    })
+    expect(store.saveChat).toHaveBeenNthCalledWith(2, makeChat({ title: 'Chat' }), {
+      authoredTranscript,
+      removalAskedByUser: true
+    })
+  })
+
   it('preserves imported transcript provenance across renderer whole-record saves', () => {
     const importedMetadata = {
       schemaVersion: 1 as const,

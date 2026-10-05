@@ -221,6 +221,38 @@ describe('the tickets a save takes', () => {
     expect(layer.debt.snapshot().barriers.raised).toBe(0)
   })
 
+  it("takes none for rows the app removes on its own, and a destructive one on the user's barrier for rows the user asked to remove", async () => {
+    const port = recordingPort()
+    const layer = createThreadBarrierDurability({ port })
+    const previous = thread({
+      messages: [
+        { id: 'user-1', role: 'user', content: 'First question', timestamp: AT },
+        { id: 'reply-1', role: 'assistant', content: 'An answer', timestamp: AT, runId: 'run-1' }
+      ]
+    })
+    const next = { ...previous, persistenceRevision: 8, messages: previous.messages.slice(0, 1) }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+
+    expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([])
+    expect(layer.tickets.snapshot().moments.destructive.noted).toBe(0)
+    expect(layer.debt.snapshot().barriers.raised).toBe(0)
+
+    expect(layer.noteSave(previous, next, appended(previous, next), 'normal', true)).toEqual([
+      { moment: 'destructive' }
+    ])
+    expect(layer.tickets.snapshot().moments.destructive.noted).toBe(1)
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: 1,
+      urgent: 1,
+      threadOnly: 1,
+      scoped: 0
+    })
+    await layer.tickets.awaitChat('chat-1')
+    // What the user waits for is the journal's line; the run's file stays owed.
+    expect(port.paid).toEqual(['file:/p/chat-journal-v2/chat-1.mutations.jsonl'])
+  })
+
   it("takes one for a save that created a thread with the user's message, on the user's barrier", async () => {
     const port = heldPort()
     const layer = createThreadBarrierDurability({ port })
@@ -329,7 +361,8 @@ describe('the barriers for the moments of one save', () => {
         { id: 'reply-1', role: 'assistant', content: 'An answer', timestamp: AT, runId: 'run-1' }
       ]
     })
-    // The run ends in the same save that removes a row: classified run end first.
+    // The run ends in the same save that removes a row at the user's asking:
+    // classified run end first.
     const next = {
       ...previous,
       persistenceRevision: 8,
@@ -339,7 +372,7 @@ describe('the barriers for the moments of one save', () => {
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
     layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
 
-    expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
+    expect(layer.noteSave(previous, next, appended(previous, next), 'normal', true)).toEqual([
       { moment: 'run_final', runId: 'run-1' },
       { moment: 'destructive' }
     ])

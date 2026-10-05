@@ -18,26 +18,32 @@
  *   from the run's own transition and never from the flush reason, which says
  *   `terminal` only when no run on the thread is live: on a thread with many
  *   seats most final records arrive under `normal`.
- * - `destructive`: the batch removes transcript rows, or the save is the
- *   deletion flush.
+ * - `destructive`: the batch removes transcript rows the user asked to
+ *   remove (a message deleted from the renderer or the phone, an edit and
+ *   resend cutting what followed), as the route the save came by says, or the
+ *   save is the deletion flush. Rows the app removes on its own are not: an
+ *   ensemble flush dropping a row of a run's timeline it no longer has, or a
+ *   media carrier giving way. Nobody is told they are gone.
  * Streamed output, a run starting and an approval opening are not moments.
  *
  * Read from what the save already has: its batch, the renderer operations
  * derived with it, its flush reason, and the few parts of the record before
  * it that the batch points at. It never walks the record. Beyond the batch it
  * reads:
- * - the ids of the rows a splice removed, and only when the batch puts back at
- *   least as many rows as it removed, to tell a moved row from a removed one;
+ * - the ids of the rows a splice removed, to tell a moved row from a removed
+ *   one: for a removal the user asked for, only when the batch puts back at
+ *   least as many rows as it removed; for one the app made, only when a row
+ *   it puts back would be a moment if it were new;
  * - the runs from the newest back to the oldest run the batch writes as
  *   finished, to tell a run reaching its end from a finished run written
  *   again; a seat that ends reads the runs started after it;
  * - an ensemble round's queued prompts and the thread's path grants, when the
  *   batch changes the ensemble or the provider metadata.
- * A batch that removes more rows than it puts back is destructive without
- * reading which went, and each row it puts back is then read as new: a moved
- * row of the user's would count as a message, which waits for the same
- * barrier the removal already does. A rewrite of a decided plan's metadata is
- * read as the decision again, which costs one barrier.
+ * A removal the user asked for that takes out more rows than it puts back is
+ * destructive without reading which went, and each row it puts back is then
+ * read as new: a moved row of the user's would count as a message, which
+ * waits for the same barrier the removal already does. A rewrite of a decided
+ * plan's metadata is read as the decision again, which costs one barrier.
  *
  * A fork is created empty and its rows are copied in by the save that marks
  * it a fork (`forkContext`). They are copies, not messages, so the rows that
@@ -80,6 +86,11 @@ export interface ChatSaveMomentsInput {
   /** The renderer operations derived with the batch; null when the save needs a snapshot instead. */
   transcriptOps?: readonly ChatUpdateTranscriptOp[] | null
   flushReason: FlushReason
+  /**
+   * The rows this save removes are ones the user asked to remove, as the
+   * route it came by says. Without it a removal is the app's own.
+   */
+  removalAskedByUser?: boolean
 }
 
 /** Kinds of row with the user's role that the user did not write. */
@@ -281,23 +292,29 @@ export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMo
       0
     )
     const removedCount = removed.reduce((count, range) => count + range.to - range.from, 0)
+    const asked = input.removalAskedByUser === true
+    /** The rows put in that would be a moment if they were new. */
+    const found: Array<{ id: string; moment: 'user_message' | 'decision' }> = []
+    for (const row of forkCopy ? [] : inserted()) {
+      const moment = rowMoment(row)
+      if (moment) found.push({ id: row.id, moment })
+    }
     let moved: Set<string> | null = null
-    if (removedCount > insertedCount) {
+    if (asked && removedCount > insertedCount) {
       destructive = true
-    } else if (removedCount > 0) {
+    } else if (removedCount > 0 && (asked || found.length > 0)) {
       const insertedIds = new Set(inserted().map((row) => row.id))
       moved = new Set()
       for (const range of removed) {
         for (let index = range.from; index < range.to; index += 1) {
           const id = previous.messages[index]?.id
           if (id !== undefined && insertedIds.has(id)) moved.add(id)
-          else destructive = true
+          else if (asked) destructive = true
         }
       }
     }
-    for (const row of forkCopy ? [] : inserted()) {
-      if (moved?.has(row.id)) continue
-      const moment = rowMoment(row)
+    for (const { id, moment } of found) {
+      if (moved?.has(id)) continue
       if (moment === 'user_message') userMessage = true
       if (moment === 'decision') decision = true
     }

@@ -1,5 +1,6 @@
 import type { ChatRecord } from './store/types'
 import { deleteTranscriptMessage } from './RemoteTranscriptMessageDeletion'
+import { afterUserMoment } from './run/DurableMomentGate'
 
 export interface RemoteTranscriptMessageDeletionAction {
   workspaceId: string
@@ -11,7 +12,8 @@ export interface RemoteTranscriptMessageDeletionHostDeps {
   getChat(threadId: string): ChatRecord | null | undefined
   canonicalWorkspaceId(workspaceId: string | null | undefined): string | null
   listPendingQuestionIds(threadId: string): readonly string[]
-  saveChat(chat: ChatRecord): void
+  /** Saves the chat, saying the row it no longer has is one the user asked to remove. */
+  saveChat(chat: ChatRecord, options: { removalAskedByUser: true }): void
   broadcastChatUpdated(chat: ChatRecord): void
   pushRemoteThreadSnapshot(chat: ChatRecord, workspaceId: string): void
   now?: () => number
@@ -32,7 +34,7 @@ const OPEN_ANCHOR_ERROR = 'Answer or dismiss the open prompt before deleting thi
 export function handleRemoteTranscriptMessageDeletion(
   action: RemoteTranscriptMessageDeletionAction,
   deps: RemoteTranscriptMessageDeletionHostDeps
-): RemoteTranscriptMessageDeletionHostResult {
+): RemoteTranscriptMessageDeletionHostResult | Promise<RemoteTranscriptMessageDeletionHostResult> {
   const chat = deps.getChat(action.threadId)
   if (!chat) return { ok: false, error: 'Thread not found' }
 
@@ -52,8 +54,11 @@ export function handleRemoteTranscriptMessageDeletion(
     }
   }
 
-  deps.saveChat(result.chat)
+  deps.saveChat(result.chat, { removalAskedByUser: true })
   deps.broadcastChatUpdated(result.chat)
   deps.pushRemoteThreadSnapshot(result.chat, workspaceId)
-  return { ok: true }
+  // The phone is told the row is gone once that is on the disk.
+  return afterUserMoment<RemoteTranscriptMessageDeletionHostResult>(result.chat.appChatId, {
+    ok: true
+  })
 }

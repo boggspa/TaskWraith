@@ -54,11 +54,20 @@ function advanced(previous: ChatRecord, next: ChatRecord): ChatRecord {
   return { ...next, persistenceRevision: previous.persistenceRevision! + 1 }
 }
 
+/** What the route a save came by says of it: whether the user asked for the rows it removes. */
+interface SaveRoute {
+  removalAskedByUser?: boolean
+}
+
+/** A route the user removes rows by: a deletion from the renderer or the phone, an edit and resend. */
+const ASKED: SaveRoute = { removalAskedByUser: true }
+
 /** One save from `previous` to what `change` makes of it, through the derivation the store runs. */
 function save(
   previous: ChatRecord,
   change: (record: ChatRecord) => ChatRecord,
-  flushReason: FlushReason = 'normal'
+  flushReason: FlushReason = 'normal',
+  { removalAskedByUser = false }: SaveRoute = {}
 ): ChatSaveMoment[] {
   const next = advanced(previous, change(previous))
   const { batch, transcriptOps } = deriveChatRecordMutationWithProjection(previous, next)
@@ -67,7 +76,8 @@ function save(
     next,
     operations: batch.operations,
     transcriptOps,
-    flushReason
+    flushReason,
+    removalAskedByUser
   })
 }
 
@@ -77,7 +87,8 @@ function authoredSave(
   author: (
     transaction: ReturnType<ChatTranscriptMutationIndex['begin']>,
     rows: ChatMessage[]
-  ) => void
+  ) => void,
+  { removalAskedByUser = false }: SaveRoute = {}
 ): ChatSaveMoment[] {
   const transaction = new ChatTranscriptMutationIndex(
     previous.messages,
@@ -94,7 +105,8 @@ function authoredSave(
     next,
     operations: batch.operations,
     transcriptOps,
-    flushReason: 'normal'
+    flushReason: 'normal',
+    removalAskedByUser
   })
 }
 
@@ -220,9 +232,9 @@ describe('the moments of one save', () => {
       []
     ],
     [
-      'rows removed from the transcript',
+      'rows removed from the transcript, with no one asking',
       (record) => ({ ...record, messages: record.messages.slice(0, 1) }),
-      DESTRUCTIVE
+      []
     ],
     [
       'the same rows in another order',
@@ -272,12 +284,6 @@ describe('the moments of one save', () => {
     ).toEqual([])
   })
 
-  it('reads every save of the deletion flush as destructive, whatever its batch holds', () => {
-    expect(
-      save(thread(), (record) => ({ ...record, title: 'Renamed' }), 'history-deletion')
-    ).toEqual(DESTRUCTIVE)
-  })
-
   it('reads an edit and resend, as the renderer authors it, as a message and a removal', () => {
     const previous = thread({
       messages: [
@@ -289,13 +295,17 @@ describe('the moments of one save', () => {
     })
 
     expect(
-      authoredSave(previous, (transaction, rows) => {
-        const edited = { ...rows[2], content: 'Second question, rephrased' }
-        transaction.update(edited)
-        rows[2] = edited
-        transaction.splice(3, 1, ['reply-2'], [])
-        rows.splice(3, 1)
-      })
+      authoredSave(
+        previous,
+        (transaction, rows) => {
+          const edited = { ...rows[2], content: 'Second question, rephrased' }
+          transaction.update(edited)
+          rows[2] = edited
+          transaction.splice(3, 1, ['reply-2'], [])
+          rows.splice(3, 1)
+        },
+        ASKED
+      )
     ).toEqual([{ moment: 'user_message' }, { moment: 'destructive' }])
   })
 
@@ -315,12 +325,17 @@ describe('the moments of one save', () => {
     expect(save(previous, rephrase('Second question, with more'))).toEqual(USER_MESSAGE)
     expect(save(previous, rephrase('A different question'))).toEqual(USER_MESSAGE)
     expect(
-      save(previous, (record) => ({
-        ...rephrase('A different question')(record),
-        messages: rephrase('A different question')(record).messages.filter(
-          (row) => row.id !== 'reply-1'
-        )
-      }))
+      save(
+        previous,
+        (record) => ({
+          ...rephrase('A different question')(record),
+          messages: rephrase('A different question')(record).messages.filter(
+            (row) => row.id !== 'reply-1'
+          )
+        }),
+        'normal',
+        ASKED
+      )
     ).toEqual([{ moment: 'user_message' }, { moment: 'destructive' }])
   })
 
@@ -357,15 +372,20 @@ describe('the moments of one save', () => {
         transaction.append([tool, question])
       })
     ).toEqual([])
-    // A stale row of a run removed, as an ensemble flush does, and its new rows added.
+    // A row removed at the user's asking among rows put back elsewhere.
     expect(
-      authoredSave(previous, (transaction, rows) => {
-        rows.splice(2, 1)
-        transaction.splice(2, 1, ['tool-1'], [])
-        const added = [message('reply-3', 'assistant', 'Done')]
-        rows.push(...added)
-        transaction.append(added)
-      })
+      authoredSave(
+        previous,
+        (transaction, rows) => {
+          const [tool] = rows.splice(2, 1)
+          transaction.splice(2, 1, ['tool-1'], [])
+          rows.splice(2, 1)
+          transaction.splice(2, 1, ['reply-2'], [])
+          rows.push(tool)
+          transaction.append([tool])
+        },
+        ASKED
+      )
     ).toEqual(DESTRUCTIVE)
   })
 
@@ -493,6 +513,76 @@ const FORK_CONTEXT: NonNullable<ChatRecord['forkContext']> = {
   note: 'TaskWraith emulated fork: transcript copied into an isolated sibling chat.'
 }
 
+describe('a removal', () => {
+  const oneRowGoes = (record: ChatRecord): ChatRecord => ({
+    ...record,
+    messages: record.messages.slice(0, 1)
+  })
+
+  it('is destructive when the user asked for it, as a deletion from the renderer or the phone does', () => {
+    expect(save(thread(), oneRowGoes, 'normal', ASKED)).toEqual(DESTRUCTIVE)
+  })
+
+  it('is no moment when the app makes it on its own: nobody is told the row is gone', () => {
+    expect(save(thread(), oneRowGoes)).toEqual([])
+  })
+
+  it("is no moment when an ensemble flush drops a run's stale row and adds the rows it has now", () => {
+    const previous = thread({
+      messages: [
+        message('user-1', 'user', 'Build it'),
+        message('ensemble-content-run-1-0', 'assistant', 'Reading the code'),
+        message('ensemble-content-run-1-1', 'assistant', '[System] Yie')
+      ]
+    })
+
+    expect(
+      authoredSave(previous, (transaction, rows) => {
+        rows.splice(2, 1)
+        transaction.splice(2, 1, ['ensemble-content-run-1-1'], [])
+        const added = [message('ensemble-tool-run-1-2', 'tool', '')]
+        rows.push(...added)
+        transaction.append(added)
+      })
+    ).toEqual([])
+  })
+
+  it("does not read a user's row the app moved, while it removed others, as their message", () => {
+    const previous = thread({
+      messages: [
+        message('user-1', 'user', 'First question'),
+        message('reply-1', 'assistant', 'An answer'),
+        message('tool-1', 'tool', ''),
+        message('reply-2', 'assistant', 'More')
+      ]
+    })
+    const questionLast = (
+      transaction: ReturnType<ChatTranscriptMutationIndex['begin']>,
+      rows: ChatMessage[]
+    ): void => {
+      const [question] = rows.splice(0, 3)
+      transaction.splice(0, 3, ['user-1', 'reply-1', 'tool-1'], [])
+      rows.push(question)
+      transaction.append([question])
+    }
+
+    expect(authoredSave(previous, questionLast)).toEqual([])
+    // At the user's asking, more rows going than coming back is destructive
+    // unread, and the rows put back are read as new: the moved question waits
+    // for the barrier the removal already does.
+    expect(authoredSave(previous, questionLast, ASKED)).toEqual([
+      { moment: 'user_message' },
+      { moment: 'destructive' }
+    ])
+  })
+
+  it('makes every save of the deletion flush destructive, whatever its batch holds', () => {
+    expect(
+      save(thread(), (record) => ({ ...record, title: 'Renamed' }), 'history-deletion')
+    ).toEqual(DESTRUCTIVE)
+  })
+})
+
 describe('the moments of a save that creates a thread', () => {
   const created = (rows: ChatMessage[], overrides: Partial<ChatRecord> = {}): ChatRecord =>
     thread({ persistenceRevision: 0, messages: rows, runs: [], ...overrides })
@@ -592,7 +682,7 @@ describe('what classifying a save reads of the record', () => {
   function classifyCounting(
     previous: ChatRecord,
     next: ChatRecord,
-    flushReason: FlushReason = 'normal'
+    { removalAskedByUser = false }: SaveRoute = {}
   ) {
     const { batch, transcriptOps } = deriveChatRecordMutationWithProjection(previous, next)
     const before = { messages: counted(previous.messages), runs: counted(previous.runs) }
@@ -602,7 +692,8 @@ describe('what classifying a save reads of the record', () => {
       next: { ...next, messages: after.messages.items, runs: after.runs.items },
       operations: batch.operations,
       transcriptOps,
-      flushReason
+      flushReason: 'normal',
+      removalAskedByUser
     })
     return {
       moments,
@@ -633,10 +724,29 @@ describe('what classifying a save reads of the record', () => {
     expect(result).toEqual({ moments: [], rowsRead: 0, runsRead: 0 })
   })
 
-  it('reads no row to find a truncation destructive', () => {
-    const result = classifyCounting(long, advanced(long, { ...long, messages: rows.slice(0, 10) }))
+  it('reads no row to find a truncation the user asked for destructive', () => {
+    const truncated = advanced(long, { ...long, messages: rows.slice(0, 10) })
 
-    expect(result).toEqual({ moments: DESTRUCTIVE, rowsRead: 0, runsRead: 0 })
+    expect(classifyCounting(long, truncated, ASKED)).toEqual({
+      moments: DESTRUCTIVE,
+      rowsRead: 0,
+      runsRead: 0
+    })
+    expect(classifyCounting(long, truncated)).toEqual({ moments: [], rowsRead: 0, runsRead: 0 })
+  })
+
+  it('reads no row of a removal the app makes among rows that mean nothing', () => {
+    const last = rows[rows.length - 1]
+    const result = classifyCounting(
+      long,
+      advanced(long, {
+        ...long,
+        messages: [...rows.slice(0, -1), message('reply-new', 'assistant', 'In its place')]
+      })
+    )
+
+    expect(last.role).toBe('assistant')
+    expect(result).toEqual({ moments: [], rowsRead: 0, runsRead: 0 })
   })
 
   it("reads none of the rows a fork's copy puts in", () => {

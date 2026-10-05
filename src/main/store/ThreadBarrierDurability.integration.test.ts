@@ -517,7 +517,10 @@ describe('the tickets each save takes', () => {
       name: 'rows removed from the transcript',
       act: (store) => {
         const chat = store.getChat(CHAT)!
-        store.saveChat({ ...chat, messages: chat.messages.slice(0, 2) })
+        store.saveChat(
+          { ...chat, messages: chat.messages.slice(0, 2) },
+          { removalAskedByUser: true }
+        )
       }
     }
   ]

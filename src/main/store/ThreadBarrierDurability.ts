@@ -102,13 +102,16 @@ export interface ThreadBarrierDurability {
    * checkpoint instead of a batch, owed like a line, and takes a ticket at the
    * record's revision when it holds the user's message. A save whose append
    * failed (`persisted` null) wrote nothing a barrier pays and takes none.
-   * Returns the moments found.
+   * `removalAskedByUser`: the route the save came by says the user asked for
+   * the rows it removes; without it a removal takes no ticket. Returns the
+   * moments found.
    */
   noteSave(
     previous: ChatRecord | null,
     next: ChatRecord,
     persisted: Pick<IncrementalChatPersistResult, 'derived'> | null,
-    flushReason: FlushReason
+    flushReason: FlushReason,
+    removalAskedByUser?: boolean
   ): ChatSaveMoment[]
   snapshot(): ThreadBarrierDurabilitySnapshot
 }
@@ -213,7 +216,7 @@ export function createThreadBarrierDurability(
     },
     payAll: (budgetMs) => threads.payAll(budgetMs),
     dispose: () => threads.dispose(),
-    noteSave(previous, next, persisted, flushReason) {
+    noteSave(previous, next, persisted, flushReason, removalAskedByUser = false) {
       if (!persisted) return []
       const derived = persisted.derived
       const chatId = derived?.batch.chatId ?? next.appChatId
@@ -227,7 +230,8 @@ export function createThreadBarrierDurability(
             next,
             operations: derived.batch.operations,
             transcriptOps: derived.transcriptOps,
-            flushReason
+            flushReason,
+            removalAskedByUser
           })
         } else return []
       } catch (error) {
