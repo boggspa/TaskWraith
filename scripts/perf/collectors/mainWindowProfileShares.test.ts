@@ -12,7 +12,8 @@ const {
 } = require('./mainWindowProfileShares.cjs')
 
 type Frame = { name: string; url?: string; line?: number; column?: number }
-type Row = { stack: Frame[]; us: number }
+/** `atLine` is the line V8 puts the sample on, one-based; a function's first line by default. */
+type Row = { stack: Frame[]; us: number; atLine?: number }
 
 const BUNDLE_URL = 'file:///build/out/main/index-AbCd1234.js'
 const CHUNK_URL = 'file:///build/out/main/chatUpdateTransport-Zz99.js'
@@ -47,7 +48,11 @@ const BUNDLE_LINES = [
   /* 19 */ 'function commitUnderFence(work) { acquireInstanceFence(work); releaseInstanceFence(work) }',
   /* 20 */ 'function persistOrThrow() {}',
   /* 21 */ 'function assertSourceMutationAllowed(id) { assertRecoveryHoldAllows(id); captureThreadCatalogueWitness(id) }',
-  /* 22 */ 'function getCurrentChatAuthorityMetadata(id) { rememberChatRecord(id) }'
+  /* 22 */ 'function getCurrentChatAuthorityMetadata(id) { rememberChatRecord(id) }',
+  /* 23 */ 'function joinDurability(operation) {',
+  /* 24 */ '  while (!operation.done) Atomics.wait(operation.words, 0, 1, 5)',
+  /* 25 */ '}',
+  /* 26 */ 'const later = (words) => Atomics.waitAsync(words, 0, 1)'
 ]
 const CHUNK_LINES = ['function computeChatSubRevisions(chat) {', '}']
 const buildScripts = (bundleLines = BUNDLE_LINES) => [
@@ -65,9 +70,17 @@ const native = (name: string): Frame => ({ name, url: '' })
 const nodeFs = (name: string): Frame => ({ name, url: 'node:fs' })
 const sync = [nodeFs('fsyncSync'), native('fsync')]
 
-/** One sample per row, in time order; `us` is the time since the row before. */
+/**
+ * One sample per row, in time order; `us` is the time since the row before.
+ * A sample of a script's function is ticked on its line, as V8 does.
+ */
 function buildProfile(rows: Row[], tailUs = 3000) {
-  const nodes: Array<{ id: number; callFrame: object; children: number[] }> = [
+  const nodes: Array<{
+    id: number
+    callFrame: object
+    children: number[]
+    positionTicks?: Array<{ line: number; ticks: number }>
+  }> = [
     {
       id: 1,
       callFrame: { functionName: '(root)', url: '', lineNumber: -1, columnNumber: -1 },
@@ -99,6 +112,14 @@ function buildProfile(rows: Row[], tailUs = 3000) {
         byPath.set(path, id)
       }
       parent = id
+    }
+    const leaf = row.stack[row.stack.length - 1]
+    if (leaf.url) {
+      const line = row.atLine ?? (leaf.line ?? 0) + 1
+      const ticks = (nodes[parent - 1].positionTicks ??= [])
+      const tick = ticks.find((entry) => entry.line === line)
+      if (tick) tick.ticks += 1
+      else ticks.push({ line, ticks: 1 })
     }
     samples.push(parent)
     timeDeltas.push(row.us)
@@ -277,7 +298,8 @@ describe('main-thread shares of a measured window', () => {
           firstLine: 2,
           lastLine: 7
         }
-      }
+      },
+      atomicsWaitLines: [{ script: 'index-AbCd1234.js', line: 25 }]
     })
     const [window] = result.windows
     expect(window).toMatchObject({
@@ -300,7 +322,8 @@ describe('main-thread shares of a measured window', () => {
       garbageCollection: 0.05,
       transcriptHashing: 0.04,
       flusherBookkeeping: 0.08,
-      plainFileCalls: 0
+      plainFileCalls: 0,
+      atomicsWait: 0
     })
   })
 
@@ -490,6 +513,53 @@ describe('main-thread shares of a measured window', () => {
     ])
   })
 
+  it('measures the main thread held in Atomics.wait, which V8 gives no frame of its own', () => {
+    // V8 counts a wait as self time of the function that calls Atomics.wait,
+    // ticked on the line of the call.
+    const rows = spendingTheRest([
+      { stack: [js('saveChat'), js('joinDurability', 23)], us: 4_000, atLine: 25 },
+      // Another path to the same function: by its ticks, half of it waits.
+      { stack: [js('flushNow'), js('joinDurability', 23)], us: 1_000, atLine: 25 },
+      { stack: [js('flushNow'), js('joinDurability', 23)], us: 1_000, atLine: 24 },
+      // An asynchronous wait does not hold the thread, and a line that waits
+      // in one script says nothing of the same line in another.
+      { stack: [js('later', 26)], us: 2_000, atLine: 27 },
+      {
+        stack: [{ name: 'computeChatSubRevisions', url: CHUNK_URL, line: 0, column: 32 }],
+        us: 1_000,
+        atLine: 25
+      },
+      { stack: [js('handleProviderOutput', 1)], us: 3_000 }
+    ])
+    const [window] = measure({ profile: buildProfile(rows) }).windows
+    expect(window.shares.atomicsWait).toBe(0.05)
+    expect(window.shares.sync).toBe(0.2)
+  })
+
+  it('leaves the wait unmeasured where it cannot be found, and zero where nothing can wait', () => {
+    const rows = spendingTheRest([
+      { stack: [js('saveChat'), js('joinDurability', 23)], us: 4_000, atLine: 25 },
+      { stack: [js('handleProviderOutput', 1)], us: 8_000 }
+    ])
+    // Without the build there are no lines to look for.
+    expect(
+      measure({ profile: buildProfile(rows), buildScripts: null }).windows[0].shares
+    ).toMatchObject({
+      atomicsWait: null,
+      sync: 0.2
+    })
+    // Without line ticks the profile cannot say which line a sample was on.
+    const unticked = buildProfile(rows)
+    for (const node of unticked.nodes) delete node.positionTicks
+    expect(measure({ profile: unticked }).windows[0].shares.atomicsWait).toBeNull()
+    // A build that never calls it cannot wait in it, ticks or none.
+    const waitless = buildScripts(
+      BUNDLE_LINES.map((line) => line.replace('Atomics.wait(', 'poll('))
+    )
+    const [window] = measure({ profile: unticked, buildScripts: waitless }).windows
+    expect(window.shares.atomicsWait).toBe(0)
+  })
+
   it('names the callers that read the whole thread and splits the copy', () => {
     const [window] = measure().windows
     expect(window.wholeThreadReadCallers).toEqual([
@@ -545,6 +615,7 @@ describe('the flusher share and the build', () => {
     const result = measure({ buildScripts: null })
     expect(result.build).toEqual({ scripts: 0, unavailable: 'build_scripts_not_given' })
     expect(result.windows[0].shares.flusherBookkeeping).toBeNull()
+    expect(result.windows[0].shares.atomicsWait).toBeNull()
     expect(result.windows[0].shares.sync).toBe(0.2)
   })
 

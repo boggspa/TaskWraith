@@ -23,6 +23,13 @@
  * - wholeThreadCopy: time under the Host record transfer.
  * - prepareForSave, transcriptHashing: time under the function each names.
  * - garbageCollection: self time in `(garbage collector)`.
+ * - atomicsWait: the main thread held in `Atomics.wait`. V8 gives a wait no
+ *   frame of its own (Electron 41's V8 14.6 included): it is self time of the
+ *   function that calls it, ticked on the line of the call. So it is the self
+ *   time on the lines of the build that call `Atomics.wait`, each frame's time
+ *   shared out by its line ticks (`positionTicks`). Those are kept for the
+ *   whole profile, so a frame's mix of lines is taken to hold in every window.
+ *   A wait inside Node's own modules has no source to look in and is missed.
  * - flusherBookkeeping: self time in frames of the durability flusher's class.
  *
  * Frame matching. A captured profile names bundled functions (`readJson$7`),
@@ -157,6 +164,8 @@ const ESTIMATED_PROFILE_END = Object.freeze({ lagMs: 500, lagBoundsMs: Object.fr
  * 2.8 ms seen, where the windows measured are 30 s and 120 s.
  */
 const LOOSE_CLOCK_SHARE_TOLERANCE = 0.001
+/** A call that holds the thread; `Atomics.waitAsync` does not. */
+const ATOMICS_WAIT_CALL = /(?<![\w$])Atomics\.wait\s*\(/
 /** A frame of the app's bundled main process, by its script's URL. */
 const BUNDLED_MAIN_SCRIPT = /^file:\/\/.*\/out\/main\/[^/]+\.js$/
 
@@ -184,6 +193,19 @@ function scriptPath(url) {
   } catch {
     return null
   }
+}
+
+/** A node's samples by the line V8 put them on (one-based), or null when it gives none. */
+function lineTicksOf(node) {
+  if (!Array.isArray(node.positionTicks)) return null
+  const ticks = node.positionTicks.filter(
+    (entry) =>
+      isPlainObject(entry) &&
+      Number.isSafeInteger(entry.line) &&
+      Number.isSafeInteger(entry.ticks) &&
+      entry.ticks > 0
+  )
+  return ticks.length > 0 ? ticks : null
 }
 
 /**
@@ -221,7 +243,8 @@ function readProfileTimeline(profile) {
     frames.set(node.id, {
       name: baseName(node.callFrame.functionName),
       url: node.callFrame.url,
-      line: node.callFrame.lineNumber
+      line: node.callFrame.lineNumber,
+      ticks: lineTicksOf(node)
     })
   }
   const parents = new Map()
@@ -267,6 +290,7 @@ function readProfileTimeline(profile) {
     startUs: profile.startTime,
     endUs,
     profileEndUs: profile.endTime,
+    lineTicked: [...frames.values()].some((frame) => frame.ticks !== null),
     backwardsDeltas,
     backwardsUs,
     // The same profile with its steps backwards absorbed, for the calibration.
@@ -283,7 +307,8 @@ function inspectBuild(buildScripts, unavailable) {
     return {
       summary: { scripts: 0, unavailable: unavailable || 'build_scripts_not_given' },
       missing: null,
-      classRanges: new Map()
+      classRanges: new Map(),
+      waitLines: null
     }
   }
   const names = [...new Set(Object.values(SHARE_NAMES).flat())]
@@ -310,10 +335,29 @@ function inspectBuild(buildScripts, unavailable) {
       }
     } else classes[className] = range
   }
+  // Every line that can hold the thread in a wait, one-based as V8 ticks them.
+  const waitLines = new Map()
+  const atomicsWaitLines = []
+  for (const script of buildScripts) {
+    const file = scriptPath(script.url)
+    if (file === null || !ATOMICS_WAIT_CALL.test(script.text)) continue
+    script.text.split('\n').forEach((text, index) => {
+      if (!ATOMICS_WAIT_CALL.test(text)) return
+      if (!waitLines.has(file)) waitLines.set(file, new Set())
+      waitLines.get(file).add(index + 1)
+      atomicsWaitLines.push({ script: path.basename(file), line: index + 1 })
+    })
+  }
   return {
-    summary: { scripts: buildScripts.length, missingNames: [...missing].sort(), classes },
+    summary: {
+      scripts: buildScripts.length,
+      missingNames: [...missing].sort(),
+      classes,
+      atomicsWaitLines
+    },
     missing,
-    classRanges
+    classRanges,
+    waitLines
   }
 }
 
@@ -348,7 +392,7 @@ function findClassRange(scripts, className) {
 }
 
 /** What one profile node counts towards, worked out once per node. */
-function createClassifier(timeline, classRanges) {
+function createClassifier(timeline, { classRanges, waitLines }) {
   const kinds = new Map()
   const paths = new Map()
   const pathOf = (url) => {
@@ -368,6 +412,19 @@ function createClassifier(timeline, classRanges) {
       }
     }
     return null
+  }
+  // The part of a frame's samples V8 ticked on a line that waits.
+  const waitFractionOf = (frame) => {
+    const lines =
+      frame.ticks === null || waitLines === null ? undefined : waitLines.get(pathOf(frame.url))
+    if (lines === undefined) return 0
+    let all = 0
+    let waiting = 0
+    for (const { line, ticks } of frame.ticks) {
+      all += ticks
+      if (lines.has(line)) waiting += ticks
+    }
+    return waiting / all
   }
   return function classify(nodeId) {
     const known = kinds.get(nodeId)
@@ -397,7 +454,8 @@ function createClassifier(timeline, classRanges) {
       copyParts: [],
       prepare: has(PREPARE_UNDER),
       hashing: has(HASHING_UNDER),
-      classShare: classShareOf(leaf)
+      classShare: classShareOf(leaf),
+      waitFraction: waitFractionOf(leaf)
     }
     const owner = OWNERS.find(([, owners]) => owners.some(has))
     if (kind.sync) {
@@ -468,7 +526,8 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     chatRead: 0,
     copy: 0,
     prepare: 0,
-    hashing: 0
+    hashing: 0,
+    atomicsWait: 0
   }
   const syncOwners = new Map()
   const syncOtherCallers = new Map()
@@ -520,6 +579,7 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     if (kind.prepare) sums.prepare += us
     if (kind.hashing) sums.hashing += us
     if (kind.classShare !== null) add(classShares, kind.classShare, us)
+    sums.atomicsWait += us * kind.waitFraction
   }
   return {
     sums,
@@ -566,6 +626,7 @@ function sharesOf(interval, build) {
   }
   // Runtime frames only: no name of the app's to vouch for.
   shares.plainFileCalls = share(sums.fileCall)
+  shares.atomicsWait = build.waitsMeasurable ? share(sums.atomicsWait) : null
   return shares
 }
 
@@ -801,10 +862,14 @@ function measureWindow(window, context) {
 function measureMainWindowProfileShares(input) {
   const timeline = readProfileTimeline(input.profile)
   const build = inspectBuild(input.buildScripts, input.buildScriptsUnavailable)
+  // Waits are found by line: the build's lines that wait, and a profile that
+  // ticks its samples by line, unless the build never waits at all.
+  build.waitsMeasurable =
+    build.waitLines !== null && (build.waitLines.size === 0 || timeline.lineTicked === true)
   const context = {
     timeline,
     build,
-    classify: timeline.ok ? createClassifier(timeline, build.classRanges) : null,
+    classify: timeline.ok ? createClassifier(timeline, build) : null,
     markers: Array.isArray(input.markers) ? input.markers : [],
     capture: input.capture,
     estimate: input.estimate ?? ESTIMATED_PROFILE_END
