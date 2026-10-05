@@ -316,6 +316,7 @@ describe('main-thread shares of a measured window', () => {
       idle: 0.1,
       busy: 0.9,
       sync: 0.2,
+      asyncSyncSubmission: 0,
       wholeThreadRead: 0.18,
       allJsonRead: 0.2,
       wholeThreadCopy: 0.11,
@@ -355,6 +356,53 @@ describe('main-thread shares of a measured window', () => {
     all.splice(at, 1, ...rows)
     return all
   }
+
+  it.each(['fsync', 'fdatasync'])(
+    'separates proven async %s submission and retains unresolved native samples',
+    (name) => {
+      const rows = spendingTheRest([
+        { stack: [js('', 24), nodeFs(name), native(name)], us: 2_000 },
+        { stack: [js('', 24), nodeFs(name)], us: 2_000 },
+        { stack: [js('recordUsage'), nodeFs(`${name}Sync`), native(name)], us: 3_000 },
+        { stack: [native(name)], us: 2_000 },
+        { stack: [js(name)], us: 1_000 },
+        { stack: [native('(idle)')], us: 2_000 }
+      ])
+      const [window] = measure({
+        profile: buildProfile(rows),
+        windows: [{ ...WINDOW, modelTurns: 10 }]
+      }).windows
+      expect(window.shares).toMatchObject({ busy: 0.88, sync: 0.25, asyncSyncSubmission: 0.04 })
+      expect(window.syncOwners).toMatchObject({ usageLedger: 0.05, other: 0.02 })
+      expect(window.syncOtherCallers).toEqual([
+        { callers: '(unattributed runtime sync)', share: 0.02 }
+      ])
+      expect(window.asyncSyncSubmissionCallers).toEqual([
+        { callers: '(anonymous)@index-AbCd1234.js:25', share: 0.04 }
+      ])
+      expect(window.mainThreadMs).toMatchObject({ busy: 88, sync: 25, asyncSyncSubmission: 4 })
+      expect(window.perModelTurn).toMatchObject({
+        mainBusyMs: 8.8,
+        syncMs: 2.5,
+        asyncSyncSubmissionMs: 0.4,
+        restMs: 6.3
+      })
+    }
+  )
+
+  it('keeps synchronous ancestry and anonymous app diagnostics distinct from an app function named fsync', () => {
+    const rows = spendingTheRest([
+      { stack: [js('', 24), ...sync], us: 5_000 },
+      { stack: [nodeFs('fsync'), nodeFs('fsyncSync'), native('fsync')], us: 3_000 },
+      { stack: [js('fsync')], us: 4_000 }
+    ])
+    const [window] = measure({ profile: buildProfile(rows) }).windows
+    expect(window.shares).toMatchObject({ sync: 0.28, asyncSyncSubmission: 0 })
+    expect(window.syncOtherCallers).toEqual([
+      { callers: '(anonymous)@index-AbCd1234.js:25', share: 0.05 },
+      { callers: '(unattributed runtime sync)', share: 0.03 }
+    ])
+  })
 
   it('names the syncs left beside the thread’s stores, and leaves a store’s own to it inside them', () => {
     const fenced = [js('releaseAllForRun'), js('commitUnderFence')]
@@ -545,6 +593,7 @@ describe('main-thread shares of a measured window', () => {
     expect(window.perModelTurn).toEqual({
       mainBusyMs: 9,
       syncMs: 2.1,
+      asyncSyncSubmissionMs: 0,
       plainFileCallMs: 0.7,
       atomicsWaitMs: 0,
       restMs: 6.2
@@ -604,6 +653,7 @@ describe('main-thread shares of a measured window', () => {
     expect(window.perModelTurn).toEqual({
       mainBusyMs: 18,
       syncMs: 4,
+      asyncSyncSubmissionMs: 0,
       plainFileCallMs: 0,
       atomicsWaitMs: 1,
       restMs: 13
@@ -1286,10 +1336,17 @@ describe('main-thread time per model turn', () => {
   it('divides the window’s main-thread time by the model turns it was given', () => {
     const [window] = measure({ windows: [{ ...WINDOW, modelTurns: 4 }] }).windows
     expect(window.modelTurns).toBe(4)
-    expect(window.mainThreadMs).toEqual({ busy: 90, sync: 20, plainFileCalls: 0, atomicsWait: 0 })
+    expect(window.mainThreadMs).toEqual({
+      busy: 90,
+      sync: 20,
+      asyncSyncSubmission: 0,
+      plainFileCalls: 0,
+      atomicsWait: 0
+    })
     expect(window.perModelTurn).toEqual({
       mainBusyMs: 22.5,
       syncMs: 5,
+      asyncSyncSubmissionMs: 0,
       plainFileCallMs: 0,
       atomicsWaitMs: 0,
       restMs: 17.5

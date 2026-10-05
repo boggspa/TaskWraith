@@ -10,8 +10,10 @@
  * while preparing a record counts as both).
  *
  * - idle, busy: self time in `(idle)`, and the rest.
- * - sync: self time in the runtime's `fsync` / `fdatasync` frames, with its
- *   owner named from the functions above it (`OWNERS`, first match).
+ * - sync: runtime sync-shaped samples with synchronous API ancestry, or
+ *   unresolved native ancestry kept conservatively; owners follow `OWNERS`.
+ * - asyncSyncSubmission: samples under callback-based `node:fs` sync APIs.
+ *   Submission is main-thread work, but is not a synchronous disk-flush wait.
  * - plainFileCalls: self time in the runtime's other synchronous file calls,
  *   reads apart: every runtime frame at or under the outermost `node:fs` call
  *   named `...Sync` on the stack (`openSync`, `writeFileSync`, `renameSync`,
@@ -469,10 +471,33 @@ function createClassifier(timeline, { classRanges, waitLines }) {
     const names = stack.map((frame) => frame.name)
     const leaf = stack[stack.length - 1]
     const has = (name) => names.includes(name)
+    const syncFrame = SYNC_FRAMES.has(leaf.name) && isRuntime(leaf)
+    // The nearest Node wrapper identifies the API, even when the leaf is native.
+    // A bare native frame stays unresolved; an app's identically named method is no evidence.
+    const syncApi = [...stack]
+      .reverse()
+      .find((frame) => frame.url === 'node:fs' && SYNC_FRAMES.has(frame.name))
+    const asyncSync = syncFrame && (syncApi?.name === 'fsync' || syncApi?.name === 'fdatasync')
+    const callers = () =>
+      stack
+        .map((frame) => {
+          if (SYNC_FRAMES.has(frame.name)) return null
+          if (!UNNAMED_CALLERS.has(frame.name)) return frame.name
+          const file = pathOf(frame.url)
+          return frame.name === '(anonymous)' && file !== null
+            ? `(anonymous)@${path.basename(file)}:${frame.line + 1}`
+            : null
+        })
+        .filter(Boolean)
+        .slice(-SYNC_OTHER_CALLER_DEPTH)
+        .reverse()
+        .join(' <- ')
     const kind = {
       idle: leaf.name === '(idle)',
       gc: leaf.name === '(garbage collector)',
-      sync: SYNC_FRAMES.has(leaf.name) && isRuntime(leaf),
+      sync: syncFrame && !asyncSync,
+      asyncSyncSubmission: asyncSync,
+      asyncSyncSubmissionCallers: asyncSync ? callers() || '(unattributed runtime sync)' : null,
       syncOwner: null,
       syncOtherCallers: null,
       fileCall: null,
@@ -495,11 +520,7 @@ function createClassifier(timeline, { classRanges, waitLines }) {
     if (kind.sync) {
       kind.syncOwner = owner ? owner[0] : 'other'
       if (!owner) {
-        kind.syncOtherCallers = names
-          .filter((name) => !SYNC_FRAMES.has(name) && !UNNAMED_CALLERS.has(name))
-          .slice(-SYNC_OTHER_CALLER_DEPTH)
-          .reverse()
-          .join(' <- ')
+        kind.syncOtherCallers = callers() || '(unattributed runtime sync)'
       }
     }
     // The call the app made: a runtime call can make another (`writeFileSync`
@@ -555,6 +576,7 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     idle: 0,
     gc: 0,
     sync: 0,
+    asyncSyncSubmission: 0,
     fileCall: 0,
     read: 0,
     chatRead: 0,
@@ -565,6 +587,7 @@ function sumInterval(timeline, classify, fromUs, toUs) {
   }
   const syncOwners = new Map()
   const syncOtherCallers = new Map()
+  const asyncSyncSubmissionCallers = new Map()
   const fileCalls = new Map()
   const fileCallOwners = new Map()
   const fileCallOtherCallers = new Map()
@@ -594,6 +617,10 @@ function sumInterval(timeline, classify, fromUs, toUs) {
       add(syncOwners, kind.syncOwner, us)
       if (kind.syncOtherCallers !== null) add(syncOtherCallers, kind.syncOtherCallers, us)
     }
+    if (kind.asyncSyncSubmission) {
+      sums.asyncSyncSubmission += us
+      add(asyncSyncSubmissionCallers, kind.asyncSyncSubmissionCallers, us)
+    }
     if (kind.fileCall !== null) {
       sums.fileCall += us
       add(fileCalls, kind.fileCall, us)
@@ -619,6 +646,7 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     sums,
     syncOwners,
     syncOtherCallers,
+    asyncSyncSubmissionCallers,
     fileCalls,
     fileCallOwners,
     fileCallOtherCallers,
@@ -646,6 +674,7 @@ function sharesOf(interval, build) {
     idle: share(sums.idle),
     busy: share(sums.total - sums.idle),
     sync: share(sums.sync),
+    asyncSyncSubmission: share(sums.asyncSyncSubmission),
     wholeThreadRead: measurable('wholeThreadRead') ? share(sums.chatRead) : null,
     allJsonRead: measurable('allJsonRead') ? share(sums.read) : null,
     wholeThreadCopy: measurable('wholeThreadCopy') ? share(sums.copy) : null,
@@ -691,12 +720,19 @@ function describeInterval(interval, build) {
     mainThreadMs: {
       busy: round((sums.total - sums.idle) / 1000, 3),
       sync: round(sums.sync / 1000, 3),
+      asyncSyncSubmission: round(sums.asyncSyncSubmission / 1000, 3),
       plainFileCalls: round(sums.fileCall / 1000, 3),
       atomicsWait: build.waitsMeasurable ? round(sums.atomicsWait / 1000, 3) : null
     },
     shares,
     syncOwners: owned(interval.syncOwners),
     syncOtherCallers: otherCallers(interval.syncOtherCallers),
+    asyncSyncSubmissionCallers: topRows(
+      interval.asyncSyncSubmissionCallers,
+      sums.total,
+      MAX_SYNC_OTHER_CALLERS,
+      'callers'
+    ),
     plainFileCallOwners: owned(interval.fileCallOwners),
     plainFileCallOtherCallers: otherCallers(interval.fileCallOtherCallers),
     plainFileCallsByCall: topRows(interval.fileCalls, sums.total, MAX_FILE_CALLS, 'call'),
@@ -726,6 +762,7 @@ function perTurn(ms, turns) {
   return {
     mainBusyMs: each(ms.busy),
     syncMs: each(ms.sync),
+    asyncSyncSubmissionMs: each(ms.asyncSyncSubmission),
     plainFileCallMs: each(ms.plainFileCalls),
     atomicsWaitMs: each(ms.atomicsWait),
     restMs: each(ms.busy - ms.sync - ms.plainFileCalls - (ms.atomicsWait ?? 0))
