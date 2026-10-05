@@ -158,7 +158,10 @@ export function barriersForSaveMoments(
   }
 }
 
-/** The moments the user sits in come first, so a run's barrier can join theirs. */
+/**
+ * The moments the user sits in come first: their barrier goes to the port
+ * before a run's, and so never queues behind what the run wrote.
+ */
 function userWaitsFirst(moments: readonly ChatSaveMoment[]): ChatSaveMoment[] {
   return [
     ...moments.filter((found) => found.moment !== 'run_final'),
