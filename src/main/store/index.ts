@@ -2,6 +2,10 @@ import {
   assertPeopleDonorMutationAllowed,
   pendingPeopleDonorMutation
 } from '../../host-shared/thread-catalogue/PeopleDonorMutationGate'
+import {
+  threadAuthorityArtifactPaths,
+  threadAuthorityDirectory
+} from '../../host-shared/thread-log/ThreadAuthorityFile'
 import { preserveSettledRunSeals } from '../../shared/threadCatalogueTerminalRuns'
 import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
 import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
@@ -9825,6 +9829,10 @@ export class AppStore {
     for (const suffix of INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES) {
       fs.rmSync(path.join(v2JournalDir, `${chatId}${suffix}`), { force: true })
     }
+    // The thread's authority file vouches for its log; it goes with the log.
+    for (const target of threadAuthorityArtifactPaths(userDataPath, chatId)) {
+      fs.rmSync(target, { force: true })
+    }
   }
 
   private static async executeHostChatRecordErasure(intent: HistoryDeletionIntent): Promise<void> {
@@ -9886,6 +9894,7 @@ export class AppStore {
       // open keeps an unlinked segment alive and writable.
       incrementalJournalDescriptorCache?.retireSync()
       removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
+      removePathStrict(threadAuthorityDirectory(userDataPath), 'thread authority directory')
       // Stage 3: the segmented store is a durable transcript copy; a global
       // clear must retire it (and its in-memory baselines) with the rest.
       segmentedChatStore.clear()
