@@ -1178,6 +1178,11 @@ const durableMomentGate = threadBarrierDurability
   ? new DurableMomentGate({ source: threadBarrierDurability.tickets })
   : null
 if (durableMomentGate) installDurableMomentGate(durableMomentGate)
+// The same bounded wait for the barrier of a queued start, counted apart: a
+// start is the app's work, not a wait the user sits in.
+const queuedStartGate = threadBarrierDurability
+  ? new DurableMomentGate({ source: threadBarrierDurability.tickets })
+  : null
 /**
  * What the dispatch barriers wait for before the journal holds a revision on
  * the disk. Under barrier durability the journal syncs nothing itself, and a
@@ -9246,6 +9251,23 @@ export class AppStore {
     return awaitThreadJournalDurable(chatId)
   }
 
+  /**
+   * What a Host queued start waits for before it tells the Host that its
+   * prompt and run row are durable (`durablePromptAndStartPersisted`): the
+   * dispatch's wait, and under barrier durability a barrier of the thread's
+   * own debt, which pays the run row's line. The row is saved in a save of
+   * its own, which holds no moment, so no ticket covers it. The barrier is
+   * bounded like the gate, and counted apart.
+   */
+  static awaitChatRecordStartDurable(chatId: string): Promise<void> {
+    const dispatch = this.awaitChatRecordDispatchDurable(chatId)
+    if (!threadBarrierDurability || !queuedStartGate) return dispatch
+    return Promise.all([
+      dispatch,
+      queuedStartGate.bound(threadBarrierDurability.startBarrier(chatId))
+    ]).then(() => undefined)
+  }
+
   private static awaitChatRecordPersistedWork(chatId: string): Promise<void> {
     if (threadCatalogueWriteGate.isHeld(chatId))
       return threadCatalogueWriteGate
@@ -9376,6 +9398,7 @@ export class AppStore {
       switches: threadDurabilitySwitches,
       layer: threadBarrierDurability,
       gate: durableMomentGate,
+      startGate: queuedStartGate,
       checkpoints: () => journalCheckpointCounts.snapshot(),
       tornTailsTruncated: () => incrementalJournal.stats().tornTailsTruncated
     })

@@ -29,6 +29,7 @@ const FIELDS = [
   'port',
   'tickets',
   'gates',
+  'starts',
   'threads',
   'staging',
   'checkpoints',
@@ -43,6 +44,7 @@ describe('the threadBarrierDurability perf section', () => {
       switches: { barrierDurability: false, barrierDurabilityIgnored: null },
       layer: null,
       gate: null,
+      startGate: null,
       checkpoints: () => checkpoints,
       tornTailsTruncated: () => 2
     })
@@ -54,6 +56,7 @@ describe('the threadBarrierDurability perf section', () => {
       port: null,
       tickets: null,
       gates: null,
+      starts: null,
       threads: null,
       staging: null,
       checkpoints,
@@ -70,6 +73,7 @@ describe('the threadBarrierDurability perf section', () => {
       },
       layer: null,
       gate: null,
+      startGate: null,
       checkpoints: counts,
       tornTailsTruncated: () => 0
     })
@@ -90,7 +94,10 @@ describe('the threadBarrierDurability perf section', () => {
       }
     })
     const gate = new DurableMomentGate({ source: layer.tickets })
+    const startGate = new DurableMomentGate({ source: layer.tickets })
     layer.tickets.note('chat-1', 3, 'user_message', Promise.resolve())
+    // A queued start's barrier, counted apart from the waits the user sits in.
+    void startGate.bound(Promise.resolve())
     // A row staged and never committed: counted, and nothing is written.
     layer.detailBatch({ appChatId: 'chat-1' } as ChatRecord)!.stage('run-1', {
       id: 'activity-1',
@@ -106,6 +113,7 @@ describe('the threadBarrierDurability perf section', () => {
       switches: { barrierDurability: true, barrierDurabilityIgnored: null },
       layer,
       gate,
+      startGate,
       checkpoints: counts,
       tornTailsTruncated: () => 1
     })
@@ -119,6 +127,7 @@ describe('the threadBarrierDurability perf section', () => {
       port: parts.port,
       tickets: parts.tickets,
       gates: gate.snapshot(),
+      starts: startGate.snapshot(),
       threads: parts.threads,
       staging: parts.staging,
       checkpoints: counts(),
@@ -128,6 +137,7 @@ describe('the threadBarrierDurability perf section', () => {
     expect(section.port).not.toBeNull()
     expect(section.tickets?.moments.user_message.noted).toBe(1)
     expect(section.staging?.rows.staged).toBe(1)
+    expect([section.gates?.waits, section.starts?.waits]).toEqual([0, 1])
   })
 })
 

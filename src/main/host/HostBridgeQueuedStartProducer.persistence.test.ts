@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHostProjectionSerialQueue } from '../../host-runtime/HostProjectionSerialQueue'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import type { IncrementalChatJournalOptions } from '../store/IncrementalChatJournal'
 import type { ChatRecord } from '../store/types'
 import { createHostBridgeQueuedStartAdapter } from './HostBridgeQueuedStartAdapter'
@@ -175,8 +176,9 @@ function savePromptAndStart(
 function bindProducer(store: Awaited<ReturnType<typeof importStore>>) {
   const producer = createHostBridgeQueuedStartProducer({
     persistenceEnabled: () => store.AppStore.getSettings().storeLocalChatHistory,
+    // As the app wires it.
     awaitPromptAndStartDurable: (identity) =>
-      store.AppStore.awaitChatRecordDispatchDurable(identity.threadId),
+      store.AppStore.awaitChatRecordStartDurable(identity.threadId),
     verifyPromptAndStart: (identity) =>
       verifyHostBridgeQueuedStartRecord(store.AppStore.getChat(identity.threadId), identity)
   })
@@ -418,5 +420,16 @@ describe('HostBridgeQueuedStartProducer with real AppStore persistence', () => {
     expect(store.persistPort.drain).not.toHaveBeenCalled()
     expect(store.persistPort.drainAll).not.toHaveBeenCalled()
     expect(journalFsyncs).toHaveLength(0)
+  })
+})
+
+describe('the producer as the app wires it', () => {
+  const probe = new MainSourceProbe('index.ts', new URL('../index.ts', import.meta.url))
+
+  it('claims a queued start durable only after the store has waited for its run row', () => {
+    const [binding] = probe.callsTo(probe.source, 'createHostBridgeQueuedStartProducerBinding')
+    expect(probe.propText(binding, 0, 'awaitPromptAndStartDurable')).toContain(
+      'AppStore.awaitChatRecordStartDurable(threadId)'
+    )
   })
 })

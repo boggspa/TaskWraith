@@ -104,6 +104,13 @@ export interface ThreadBarrierDurability {
   /** A barrier for the thread, as every barrier the app raises for one is. */
   barrier(chatId: string): Promise<void>
   /**
+   * The barrier a queued start waits for before it tells the Host its run row
+   * is durable: the thread's own debt, where the row's journal line is. A
+   * start is no moment, so no save's ticket pays it; and it is the app's
+   * work, not a wait the user sits in, so the barrier is not urgent.
+   */
+  startBarrier(chatId: string): Promise<void>
+  /**
    * What a dispatch waits for: the chat's tickets for the user's moments. Each
    * save that held one raised its urgent barrier already, so a dispatch raises
    * none of its own, and with none pending it resolves at once: what streaming
@@ -291,6 +298,7 @@ export function createThreadBarrierDurability(
     },
     catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),
+    startBarrier: (chatId) => threads.barrier(chatId, { threadOnly: true }),
     awaitDurable: (chatId) => tickets.awaitChat(chatId, USER_DURABILITY_MOMENTS),
     forget(chatId) {
       threads.forget(chatId)

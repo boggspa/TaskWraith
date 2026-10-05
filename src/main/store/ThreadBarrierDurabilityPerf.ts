@@ -5,9 +5,9 @@
  *
  * - `enabled` and `ignored`: the switch as this process resolved it, and why
  *   it was set but not honoured.
- * - `debt`, `port`, `tickets`, `gates`, `threads` and `staging`: the layer's
- *   own counters, each its module's whole snapshot. Null with the switch off,
- *   when none of them exists.
+ * - `debt`, `port`, `tickets`, `gates`, `starts`, `threads` and `staging`:
+ *   the layer's own counters, each its module's whole snapshot. Null with the
+ *   switch off, when none of them exists.
  * - `checkpoints`: the journal's checkpoints by what triggered them, counted
  *   whatever the switch, so the pair off against on compares like with like.
  * - `tornTailsRepaired`: torn journal tails cut before an append, each with
@@ -35,6 +35,8 @@ export interface ThreadBarrierDurabilityPerfSection {
   port: ThreadDurabilityDebtFsSnapshot | null
   tickets: ChatDurabilityTicketsSnapshot | null
   gates: DurableMomentGateSnapshot | null
+  /** The bounded barriers queued starts waited for before claiming their run row durable. */
+  starts: DurableMomentGateSnapshot | null
   /** Threads that may still owe something, and the idle and quit barriers. */
   threads: ThreadDebtTrackerSnapshot | null
   /** Tool detail staged off the save path and synced at the port's background class. */
@@ -50,6 +52,8 @@ export interface ThreadBarrierDurabilityPerfSources {
   layer: Pick<ThreadBarrierDurability, 'snapshot'> | null
   /** Null with the switch off. */
   gate: Pick<DurableMomentGate, 'snapshot'> | null
+  /** The gate a queued start's barrier is bounded by; null with the switch off. */
+  startGate: Pick<DurableMomentGate, 'snapshot'> | null
   checkpoints: () => JournalCheckpointCounts
   /** The journal's count of torn tails it cut before an append. */
   tornTailsTruncated: () => number
@@ -66,6 +70,7 @@ export function readThreadBarrierDurabilityPerf(
     port: layer?.port ?? null,
     tickets: layer?.tickets ?? null,
     gates: sources.gate?.snapshot() ?? null,
+    starts: sources.startGate?.snapshot() ?? null,
     threads: layer?.threads ?? null,
     staging: layer?.staging ?? null,
     checkpoints: sources.checkpoints(),

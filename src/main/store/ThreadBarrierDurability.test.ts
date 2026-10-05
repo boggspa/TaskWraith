@@ -653,6 +653,26 @@ describe('the barriers for the moments of one save', () => {
   })
 })
 
+describe("what a queued start's claim waits for", () => {
+  it("raises a barrier of the thread's own debt, not urgent: it pays the journal and leaves the runs' debt", async () => {
+    const port = recordingPort()
+    const layer = createThreadBarrierDurability({ port })
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+
+    await layer.startBarrier('chat-1')
+
+    expect(port.paid).toEqual(['file:/p/chat-journal-v2/chat-1.mutations.jsonl'])
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: 1,
+      urgent: 0,
+      threadOnly: 1,
+      scoped: 0
+    })
+    expect(layer.debt.snapshot().owed.files).toBe(1)
+  })
+})
+
 describe('what a dispatch waits for', () => {
   it("waits for the tickets of the user's moments, on their saves' barriers, and raises none of its own", async () => {
     const port = heldPort()

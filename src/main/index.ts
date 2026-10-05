@@ -56455,7 +56455,7 @@ if (isGeminiMcpBridgeProcess) {
       ? createHostBridgeQueuedStartProducerBinding({
           persistenceEnabled: () => AppStore.getSettings().storeLocalChatHistory !== false,
           awaitPromptAndStartDurable: ({ threadId }) =>
-            AppStore.awaitChatRecordDispatchDurable(threadId),
+            AppStore.awaitChatRecordStartDurable(threadId),
           verifyPromptAndStart: (identity) =>
             verifyHostBridgeQueuedStartRecord(AppStore.getChat(identity.threadId), identity),
           onCurrentProducer: (producer) => {

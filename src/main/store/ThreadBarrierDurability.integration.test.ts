@@ -8,6 +8,13 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createHostProjectionSerialQueue } from '../../host-runtime/HostProjectionSerialQueue'
+import { createHostBridgeQueuedStartAdapter } from '../host/HostBridgeQueuedStartAdapter'
+import {
+  createHostBridgeQueuedStartProducer,
+  verifyHostBridgeQueuedStartRecord,
+  type HostBridgeQueuedStartIdentity
+} from '../host/HostBridgeQueuedStartProducer'
 import { CHAT_DURABILITY_MOMENTS, type ChatDurabilityMoment } from './ChatDurabilityTickets'
 import type { ThreadBarrierDurability } from './ThreadBarrierDurability'
 import { ThreadCatalogueDiskReader } from './ThreadCatalogueDiskReader'
@@ -1540,6 +1547,139 @@ describe('the dispatch barriers', () => {
     await expect(AppStore.awaitChatRecordDispatchDurable(CHAT)).resolves.toBeUndefined()
     expect(gates.durableMomentGateSnapshot()).toBeNull()
     expect(layers.built).toEqual([])
+  })
+
+  const QUEUED: HostBridgeQueuedStartIdentity = {
+    hostCommandActionId: 'host:command:22222222-2222-4222-8222-222222222222',
+    threadId: CHAT,
+    runId: 'run-queued-b2',
+    promptMessageId: 'user-queued-2',
+    provider: 'codex'
+  }
+
+  /**
+   * A prompt queued from the phone, its ticket paid, then its run row in a save
+   * of its own, as the Host bridge saves them; and the producer wired as the
+   * app wires it, its adapter invoked.
+   */
+  async function queuedStart(store: Store, hold: () => void, asked: () => number) {
+    const chat = store.getChat(CHAT)!
+    store.saveChat({
+      ...chat,
+      messages: [
+        ...chat.messages,
+        {
+          id: QUEUED.promptMessageId,
+          role: 'user',
+          content: 'Queued from the phone',
+          timestamp: AT
+        }
+      ]
+    })
+    await layers.built[0].tickets.awaitChat(CHAT)
+    hold()
+    const prompted = store.getChat(CHAT)!
+    store.saveChat({
+      ...prompted,
+      runs: [
+        ...prompted.runs,
+        {
+          runId: QUEUED.runId,
+          provider: 'codex',
+          startedAt: AT,
+          promptMessageId: QUEUED.promptMessageId,
+          status: 'running'
+        }
+      ]
+    })
+    expect(verifyHostBridgeQueuedStartRecord(store.getChat(CHAT), QUEUED)).toBe(true)
+    const producer = createHostBridgeQueuedStartProducer({
+      persistenceEnabled: () => true,
+      awaitPromptAndStartDurable: ({ threadId }) => store.awaitChatRecordStartDurable(threadId),
+      verifyPromptAndStart: (identity) =>
+        verifyHostBridgeQueuedStartRecord(store.getChat(identity.threadId), identity)
+    })
+    const adapter = createHostBridgeQueuedStartAdapter({
+      runProjectionOperation: createHostProjectionSerialQueue()
+    })
+    const prepared = vi.spyOn(adapter, 'prepared')
+    producer.onAdapter(adapter, vi.fn())
+    const askedBeforeTheClaim = asked()
+    adapter.register({
+      hostCommandActionId: QUEUED.hostCommandActionId,
+      threadId: CHAT,
+      authority: {
+        actorId: 'actor-a',
+        clientId: 'client-a',
+        clientClass: 'desktop',
+        commandFingerprint: 'fingerprint-a'
+      }
+    })
+    producer
+      .observeDispatch(QUEUED)!
+      .observer.onAdapterInvoked?.({ provider: 'codex', appRunId: QUEUED.runId })
+    return {
+      prepared,
+      askedBeforeTheClaim,
+      async drain() {
+        producer.beginShutdown()
+        await producer.drain()
+        await adapter.drain()
+      }
+    }
+  }
+
+  it("make a queued start claim its run row durable only once a normal barrier has synced the row's line", async () => {
+    const { AppStore, hold, release, asked } = await dispatching()
+    const layer = layers.built[0]
+    const before = layer.debt.snapshot().barriers
+
+    const start = await queuedStart(AppStore, hold, asked)
+    // The run row's line, asked of the held disk, and no claim yet.
+    await vi.waitFor(() => expect(asked()).toBeGreaterThan(start.askedBeforeTheClaim), {
+      timeout: 500
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(start.prepared).not.toHaveBeenCalled()
+    // The prompt's urgent barrier, and the start's: of the thread's own debt, not urgent.
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: before.raised + 2,
+      urgent: before.urgent + 1,
+      threadOnly: before.threadOnly + 2
+    })
+
+    release()
+    await vi.waitFor(() => expect(start.prepared).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    expect(start.prepared.mock.calls[0][0]).toMatchObject({
+      durablePromptAndStartPersisted: true,
+      start: { kind: 'solo', runId: QUEUED.runId }
+    })
+    expect(AppStore.getThreadBarrierDurabilityPerf().starts).toMatchObject({
+      waits: 1,
+      overdue: 0,
+      rejected: 0
+    })
+    await start.drain()
+  })
+
+  it('let a queued start claim at the bound when the disk hangs, and count it overdue', async () => {
+    const { AppStore, gates, hold, release, asked } = await dispatching()
+
+    const start = await queuedStart(AppStore, hold, asked)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(start.prepared).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(start.prepared).toHaveBeenCalledOnce(), {
+      timeout: gates.DURABLE_MOMENT_GATE_BOUND_MS + 1_000
+    })
+
+    expect(AppStore.getThreadBarrierDurabilityPerf().starts).toMatchObject({
+      waits: 1,
+      overdue: 1
+    })
+    // Apart from the waits the user sits in.
+    expect(gates.durableMomentGateSnapshot()).toMatchObject({ overdue: 0 })
+    release()
+    await start.drain()
   })
 })
 
