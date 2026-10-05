@@ -1111,8 +1111,37 @@ describe('the runner’s section for a capture it just took', () => {
       report: captureReport(),
       profilePath: '/artifacts/profiles/main.cpuprofile',
       calibrationMarkers: CAPTURE_MARKERS,
+      // The model's turns as the runner read them: two begun in the window.
+      modelTurns: [
+        {
+          model: 'scripted-llama:latest',
+          startedAtMs: 1_000_000,
+          endedAtMs: 1_001_600,
+          outcome: 'done'
+        },
+        {
+          model: 'scripted-llama:heavy',
+          startedAtMs: 1_119_999,
+          endedAtMs: null,
+          outcome: 'streaming'
+        },
+        {
+          model: 'scripted-llama:heavy',
+          startedAtMs: 1_120_000,
+          endedAtMs: null,
+          outcome: 'streaming'
+        }
+      ],
       baselineReportPaths: ['/baselines/off.json'],
       fsApi: fs
+    })
+    expect(mainThreadShares.modelTurns).toEqual({
+      counted: 'began_streaming_in_the_runner_window',
+      from: 'daemon_read'
+    })
+    expect(mainThreadShares.windows[0]).toMatchObject({
+      modelTurns: 2,
+      perModelTurn: { mainBusyMs: 35, syncMs: 10 }
     })
     expect(mainThreadShares.windows[0]).toMatchObject({
       id: 'light_beside_0',

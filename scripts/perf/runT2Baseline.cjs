@@ -1477,6 +1477,34 @@ function createWindowedRateTracker(windowMs, options = {}) {
 }
 
 /**
+ * The model's turns over a run's live windows, read from the scripted model
+ * while it still runs, for the shares' figures per model turn: `{ modelTurns }`,
+ * or `{ modelTurnsUnavailable }` with the reason there are none.
+ */
+async function readLiveWindowTurns(liveRounds, daemon) {
+  const phase = [liveRounds?.lanes, liveRounds?.agents].find(
+    (candidate) => candidate && Array.isArray(candidate.windows)
+  )
+  const timed = (phase ? phase.windows : []).filter(
+    (window) =>
+      Number.isFinite(window?.startedAtMs) &&
+      Number.isFinite(window?.endedAtMs) &&
+      window.endedAtMs > window.startedAtMs
+  )
+  if (timed.length === 0) return { modelTurnsUnavailable: 'no_timed_window' }
+  try {
+    return {
+      modelTurns: await readScriptedDaemonTurns(daemon.baseUrl, {
+        fromMs: Math.floor(Math.min(...timed.map((window) => window.startedAtMs))),
+        toMs: Math.ceil(Math.max(...timed.map((window) => window.endedAtMs)))
+      })
+    }
+  } catch {
+    return { modelTurnsUnavailable: 'daemon_turns_unavailable' }
+  }
+}
+
+/**
  * Whether a launch may claim an authoritative baseline: a real build from an
  * authoritative checkout, and never a live-round run, which is a diagnostic
  * smoke.
@@ -3345,6 +3373,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         { captureDeadlineExceeded, captureElapsedMs: report.captureDeadline.captureElapsedMs },
         { log: true }
       )
+      // The model's turns over the windows, for the shares' figures per turn,
+      // read while the model still runs.
+      const windowTurns =
+        report.liveRounds?.lanes || report.liveRounds?.agents
+          ? await readLiveWindowTurns(report.liveRounds, liveDaemon)
+          : {}
       if (report.liveRounds?.lanes) {
         const custody = retainFrozenSourceBinding(
           options.mainProfileSourceBinding,
@@ -3373,6 +3407,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             report,
             profilePath: mainCpuPath,
             calibrationMarkers,
+            ...windowTurns,
             baselineReportPaths: args.phaseBaselines
           })
         )
@@ -3393,7 +3428,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           report.mainThreadShares = mainWindowProfileSharesForReport({
             report,
             profilePath: mainCpuPath,
-            calibrationMarkers
+            calibrationMarkers,
+            ...windowTurns
           })
         } catch (error) {
           report.mainThreadShares = {
@@ -3904,5 +3940,6 @@ module.exports = {
   declareT2RunReplayBases,
   carryT2DriverPopulationFields,
   parseArgs,
+  readLiveWindowTurns,
   runT2BaselineCli
 }

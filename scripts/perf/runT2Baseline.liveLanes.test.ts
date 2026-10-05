@@ -10,20 +10,25 @@ import ts from 'typescript'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { createT2HostWindowSampler, runT2BaselineCli } = require('./runT2Baseline.cjs') as {
-  createT2HostWindowSampler: (options: Record<string, unknown>) => {
-    start: () => Promise<boolean>
-    sampleOnce: () => Promise<boolean>
-    stop: () => {
-      accepted: number
-      duplicateSequence: number
-      nonMonotonicSequence: number
-      refusals: Record<string, number>
-      samples: Array<Record<string, unknown>>
+const { createT2HostWindowSampler, readLiveWindowTurns, runT2BaselineCli } =
+  require('./runT2Baseline.cjs') as {
+    createT2HostWindowSampler: (options: Record<string, unknown>) => {
+      start: () => Promise<boolean>
+      sampleOnce: () => Promise<boolean>
+      stop: () => {
+        accepted: number
+        duplicateSequence: number
+        nonMonotonicSequence: number
+        refusals: Record<string, number>
+        samples: Array<Record<string, unknown>>
+      }
     }
+    readLiveWindowTurns: (
+      liveRounds: Record<string, unknown>,
+      daemon: { baseUrl: string } | null
+    ) => Promise<Record<string, unknown>>
+    runT2BaselineCli: (argv: string[], options: Record<string, unknown>) => Promise<unknown>
   }
-  runT2BaselineCli: (argv: string[], options: Record<string, unknown>) => Promise<unknown>
-}
 
 const repoRoot = path.resolve(__dirname, '..', '..')
 const PROVENANCE = {
@@ -34,15 +39,44 @@ const PROVENANCE = {
   isolatedWorktree: true,
   authoritativeBaseline: true
 }
-const temporaryPaths: string[] = []
+/**
+ * Every directory this file makes is named so, directly in the temporary
+ * folder or, for an isolated home the launch must find there, in the
+ * checkout's perf-homes.
+ */
+const MADE_PREFIX = 'harness-lanes-'
+const made: Array<{ dir: string; root: string }> = []
+
+/** A fresh directory of this file's own in `root`, removed after the test. */
+function makeDirectory(root: string): string {
+  const dir = mkdtempSync(path.join(root, MADE_PREFIX))
+  made.push({ dir, root })
+  return dir
+}
+
+/** Removes a directory only when it is one this file made: never the folder above it. */
+function removeMade(dir: string, root: string) {
+  const roots = [tmpdir(), path.join(repoRoot, 'perf-homes')]
+  if (
+    !roots.includes(root) ||
+    dir === root ||
+    path.resolve(dir) !== dir ||
+    !dir.startsWith(root + path.sep + MADE_PREFIX)
+  ) {
+    throw new Error(`refusing to remove ${dir}: not a directory this file made`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
 
 afterEach(() => {
-  while (temporaryPaths.length > 0) rmSync(temporaryPaths.pop()!, { recursive: true, force: true })
+  while (made.length > 0) {
+    const { dir, root } = made.pop()!
+    removeMade(dir, root)
+  }
 })
 
 function dryRun(extra: string[]) {
-  const artifactDir = mkdtempSync(path.join(tmpdir(), 'perf-t2-lanes-'))
-  temporaryPaths.push(artifactDir)
+  const artifactDir = makeDirectory(tmpdir())
   return runT2BaselineCli(['--dry-run', `--artifact-dir=${artifactDir}`, ...extra], {
     repoRoot,
     provenance: PROVENANCE
@@ -278,12 +312,38 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     }
   })
 
-  /** The scripted daemon's activity route on loopback, answering one fixed record. */
+  /**
+   * The scripted daemon's routes on loopback: activity answers one fixed
+   * record, turns a light and a heavy turn begun in the measured window.
+   */
   async function activityDaemon(): Promise<string> {
     daemon = createServer((request, response) => {
       daemonRequests.push(String(request.url))
       const url = new URL(String(request.url), 'http://127.0.0.1')
       response.setHeader('content-type', 'application/json')
+      if (url.pathname === '/_scripted/turns') {
+        response.end(
+          JSON.stringify({
+            fromMs: Number(url.searchParams.get('from')),
+            toMs: Number(url.searchParams.get('to')),
+            turns: [
+              {
+                model: 'scripted-llama:latest',
+                startedAtMs: 1_010_000,
+                endedAtMs: 1_011_600,
+                outcome: 'done'
+              },
+              {
+                model: 'scripted-llama:heavy',
+                startedAtMs: 1_100_000,
+                endedAtMs: 1_101_600,
+                outcome: 'done'
+              }
+            ]
+          })
+        )
+        return
+      }
       response.end(
         JSON.stringify({
           model: url.searchParams.get('model'),
@@ -315,10 +375,8 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     const daemonBaseUrl = await activityDaemon()
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
-    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-lanes-'))
-    temporaryPaths.push(home)
-    const artifacts = mkdtempSync(path.join(tmpdir(), 'perf-t2-lanes-'))
-    temporaryPaths.push(artifacts)
+    const home = makeDirectory(homesRoot)
+    const artifacts = makeDirectory(tmpdir())
     const lanesCalls: LanesCall[] = []
     const snapshotReads: Array<Record<string, unknown>> = []
     const roundCalls: Array<{ prompt: string; timeoutMs: number | undefined }> = []
@@ -646,8 +704,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
   }
 
   it('reports the main-thread shares and the phase exits of the windows it measured', async () => {
-    const baselinePath = path.join(mkdtempSync(path.join(tmpdir(), 'perf-t2-base-')), 'report.json')
-    temporaryPaths.push(path.dirname(baselinePath))
+    const baselinePath = path.join(makeDirectory(tmpdir()), 'report.json')
     writeFileSync(
       baselinePath,
       JSON.stringify({
@@ -684,10 +741,14 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
           measured: true,
           clock: { basis: 'markers' },
           shares: { idle: 0.3, busy: 0.7, sync: 0.2 },
-          syncOwners: { runEvents: 0.2 }
+          syncOwners: { runEvents: 0.2 },
+          // 70 ms busy over the two turns the model began in the window.
+          modelTurns: 2,
+          perModelTurn: { mainBusyMs: 35, syncMs: 10 }
         }
       ]
     })
+    expect(daemonRequests).toContain('/_scripted/turns?from=1000000&to=1120000')
     const { exits, phases, baseline, workload } = report.phaseExits
     expect(workload).toBe('light_beside_large_live')
     expect(
@@ -716,6 +777,32 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     })
     expect(phases.phase1.verdict).toBe('fail')
     expect(phases.phase2.verdict).toBe('pass')
+  })
+
+  it('reads the model’s turns once, over every window the lanes timed', async () => {
+    const baseUrl = await activityDaemon()
+    const lanes = {
+      windows: [
+        { repetition: 0, startedAtMs: 999_999.6, endedAtMs: 1_120_000 },
+        // A window that never opened is not one to count turns in.
+        { repetition: 1, startedAtMs: null, endedAtMs: null },
+        { repetition: 2, startedAtMs: 1_200_000.6, endedAtMs: 1_320_000.4 }
+      ]
+    }
+    const read = await readLiveWindowTurns({ lanes }, { baseUrl })
+    // Whole milliseconds that hold every window, from the first start to the last end.
+    expect(daemonRequests).toEqual(['/_scripted/turns?from=999999&to=1320001'])
+    expect((read.modelTurns as unknown[]).length).toBe(2)
+    // No window to count in: no read at all.
+    daemonRequests.length = 0
+    expect(
+      await readLiveWindowTurns({ lanes: { windows: [lanes.windows[1]] } }, { baseUrl })
+    ).toEqual({ modelTurnsUnavailable: 'no_timed_window' })
+    expect(daemonRequests).toEqual([])
+    // A model that cannot be read gives a reason, not an error.
+    expect(await readLiveWindowTurns({ lanes }, { baseUrl: 'http://127.0.0.1:9' })).toEqual({
+      modelTurnsUnavailable: 'daemon_turns_unavailable'
+    })
   })
 
   it('reports no phase exits for a run whose lanes never started', async () => {
@@ -760,8 +847,7 @@ describe('runT2Baseline --phase-baseline refusals', () => {
     expect(await refusal(['--live-lanes', '--phase-baseline=/nowhere/report.json'])).toBe(
       'phase baseline unusable: baseline_report_unreadable'
     )
-    const directory = mkdtempSync(path.join(tmpdir(), 'perf-t2-base-'))
-    temporaryPaths.push(directory)
+    const directory = makeDirectory(tmpdir())
     const other = path.join(directory, 'report.json')
     writeFileSync(other, JSON.stringify({ environment: { workload: 'light_beside_large' } }))
     expect(await refusal(['--live-lanes', `--phase-baseline=${other}`])).toBe(

@@ -7,6 +7,7 @@ const {
   ESTIMATED_PROFILE_END,
   LOOSE_CLOCK_SHARE_TOLERANCE,
   measureMainWindowProfileShares,
+  mainWindowsOfReport,
   mainWindowProfileSharesForCapture,
   mainWindowProfileSharesForReport
 } = require('./mainWindowProfileShares.cjs')
@@ -485,8 +486,18 @@ describe('main-thread shares of a measured window', () => {
       { stack: [js('loadState'), nodeFs('readFileSync'), native('readFileUtf8')], us: 1_000 },
       { stack: [js('listThreads'), nodeFs('readdirSync'), native('readdir')], us: 1_000 }
     ])
-    const [window] = measure({ profile: buildProfile(rows) }).windows
+    const [window] = measure({
+      profile: buildProfile(rows),
+      windows: [{ ...WINDOW, modelTurns: 10 }]
+    }).windows
     expect(window.shares).toMatchObject({ sync: 0.21, plainFileCalls: 0.07, allJsonRead: 0.21 })
+    expect(window.perModelTurn).toEqual({
+      mainBusyMs: 9,
+      syncMs: 2.1,
+      plainFileCallMs: 0.7,
+      atomicsWaitMs: 0,
+      restMs: 6.2
+    })
     expect(window.syncOwners).toMatchObject({ sessionCheckpoint: 0.01, other: 0 })
     expect(window.plainFileCallOwners).toEqual({
       cataloguePublication: 0.02,
@@ -531,9 +542,20 @@ describe('main-thread shares of a measured window', () => {
       },
       { stack: [js('handleProviderOutput', 1)], us: 3_000 }
     ])
-    const [window] = measure({ profile: buildProfile(rows) }).windows
+    const [window] = measure({
+      profile: buildProfile(rows),
+      windows: [{ ...WINDOW, modelTurns: 5 }]
+    }).windows
     expect(window.shares.atomicsWait).toBe(0.05)
     expect(window.shares.sync).toBe(0.2)
+    // A wait is a part of busy time of its own, apart from the rest.
+    expect(window.perModelTurn).toEqual({
+      mainBusyMs: 18,
+      syncMs: 4,
+      plainFileCallMs: 0,
+      atomicsWaitMs: 1,
+      restMs: 13
+    })
   })
 
   it('leaves the wait unmeasured where it cannot be found, and zero where nothing can wait', () => {
@@ -947,6 +969,19 @@ describe('the profile clock', () => {
     })
   })
 
+  it('carries each figure per turn across the bounds of loose markers', () => {
+    const [window] = measure({
+      profile: buildProfile(looseRows(120_000)),
+      windows: [{ ...looseWindow(120_000), modelTurns: 100 }],
+      markers: looseMarkers(120_000)
+    }).windows
+    expect(window.perModelTurn).toMatchObject({ mainBusyMs: 960, syncMs: 180 })
+    expect(window.perModelTurnBounds).toMatchObject({
+      mainBusyMs: [959.986, 960],
+      syncMs: [179.986, 180]
+    })
+  })
+
   it('refuses a loose window only when its bounds move a share by more than the tolerance', () => {
     expect(LOOSE_CLOCK_SHARE_TOLERANCE).toBe(0.001)
     // 1.4 ms either way on 1,400 ms moves a share by exactly the tolerance.
@@ -1170,6 +1205,93 @@ describe('the profile clock', () => {
   })
 })
 
+describe('main-thread time per model turn', () => {
+  it('divides the window’s main-thread time by the model turns it was given', () => {
+    const [window] = measure({ windows: [{ ...WINDOW, modelTurns: 4 }] }).windows
+    expect(window.modelTurns).toBe(4)
+    expect(window.mainThreadMs).toEqual({ busy: 90, sync: 20, plainFileCalls: 0, atomicsWait: 0 })
+    expect(window.perModelTurn).toEqual({
+      mainBusyMs: 22.5,
+      syncMs: 5,
+      plainFileCallMs: 0,
+      atomicsWaitMs: 0,
+      restMs: 17.5
+    })
+  })
+
+  it('gives no figure per turn for a window without turns, or without a count of them', () => {
+    const [none] = measure({ windows: [{ ...WINDOW, modelTurns: 0 }] }).windows
+    expect(none).toMatchObject({
+      measured: true,
+      modelTurns: 0,
+      perModelTurn: null,
+      perModelTurnUnavailable: 'no_model_turns'
+    })
+    const [uncounted] = measure().windows
+    expect(uncounted).toMatchObject({
+      measured: true,
+      modelTurns: null,
+      perModelTurn: null,
+      perModelTurnUnavailable: 'model_turns_unavailable'
+    })
+    // The window's own time is there either way.
+    expect(uncounted.mainThreadMs.busy).toBe(90)
+  })
+
+  it('leaves a wait it cannot measure in the rest', () => {
+    const [window] = measure({
+      windows: [{ ...WINDOW, modelTurns: 4 }],
+      buildScripts: null
+    }).windows
+    expect(window.mainThreadMs.atomicsWait).toBeNull()
+    expect(window.perModelTurn).toMatchObject({ atomicsWaitMs: null, restMs: 17.5 })
+  })
+
+  it('carries each figure per turn across the bounds of an estimated clock', () => {
+    const legacy = {
+      id: 'light_beside_0',
+      repetition: 0,
+      startedAtMs: 9030,
+      endedAtMs: 9130,
+      modelTurns: 5
+    }
+    const [window] = measure({
+      windows: [legacy],
+      markers: [],
+      capture: { stopRequestedAtMs: 9145 },
+      estimate: { lagMs: 5, lagBoundsMs: [0, 10] }
+    }).windows
+    // Busy 90 ms at the estimate, 85 to 95 across its bounds.
+    expect(window.perModelTurn).toMatchObject({ mainBusyMs: 18, syncMs: 4 })
+    expect(window.perModelTurnBounds).toMatchObject({ mainBusyMs: [17, 19], syncMs: [4, 4] })
+  })
+
+  it('counts the turns the model began in the window the runner timed, however they ended', () => {
+    const report = (windows: object[]) => ({ liveRounds: { agents: { windows } } })
+    const window = { repetition: 0, startedAtMs: 1_000, endedAtMs: 2_000, mainWindow: {} }
+    const turns = [
+      // Streamed into the window, but began before it.
+      { model: 'scripted-llama:t001', startedAtMs: 999, endedAtMs: 1_500, outcome: 'done' },
+      { model: 'scripted-llama:t001', startedAtMs: 1_000, endedAtMs: 2_600, outcome: 'done' },
+      // Another thread's, still streaming when the record was read.
+      { model: 'scripted-llama:t002', startedAtMs: 1_400, endedAtMs: null, outcome: 'streaming' },
+      { model: 'scripted-llama:t001', startedAtMs: 1_999, endedAtMs: 2_100, outcome: 'aborted' },
+      // Begun as the window closed.
+      { model: 'scripted-llama:t002', startedAtMs: 2_000, endedAtMs: 2_500, outcome: 'done' }
+    ]
+    expect(mainWindowsOfReport(report([window]), turns)[0].modelTurns).toBe(3)
+    // A record whose turns do not say when they began counts nothing.
+    expect(
+      mainWindowsOfReport(report([window]), [...turns, { model: 'scripted-llama:t001' }])[0]
+        .modelTurns
+    ).toBeNull()
+    // Without the runner's own times for the window there is nothing to count in.
+    const untimed = { repetition: 0, mainWindow: {} }
+    expect(mainWindowsOfReport(report([untimed]), turns)[0].modelTurns).toBeNull()
+    expect(mainWindowsOfReport(report([window]), null)[0].modelTurns).toBeNull()
+  })
+})
+
 describe('reading a capture from disk', () => {
   function fakeFs(files: Record<string, string>, directories: Record<string, string[]>) {
     return {
@@ -1228,6 +1350,49 @@ describe('reading a capture from disk', () => {
       measured: false,
       reason: 'main_window_receipt_absent'
     })
+  })
+
+  it('counts each window’s model turns from the record the model left as it stopped', () => {
+    const timed = {
+      ...report,
+      liveRounds: {
+        lanes: {
+          windows: [{ ...report.liveRounds.lanes.windows[0], startedAtMs: 5_000, endedAtMs: 6_000 }]
+        },
+        daemonStop: {
+          summary: {
+            turns: [
+              {
+                model: 'scripted-llama:latest',
+                startedAtMs: 5_100,
+                endedAtMs: 5_200,
+                outcome: 'done'
+              },
+              {
+                model: 'scripted-llama:heavy',
+                startedAtMs: 5_900,
+                endedAtMs: 6_300,
+                outcome: 'done'
+              }
+            ]
+          }
+        }
+      }
+    }
+    const result = mainWindowProfileSharesForCapture('/capture', {
+      fs: fakeFs({ ...files(), '/capture/perf-t2-report.json': JSON.stringify(timed) }, directories)
+    })
+    expect(result.modelTurns).toEqual({
+      counted: 'began_streaming_in_the_runner_window',
+      from: 'daemon_stop_record'
+    })
+    expect(result.windows[0]).toMatchObject({ modelTurns: 2, perModelTurn: { mainBusyMs: 45 } })
+    // A capture whose model left no record has no turns to divide by.
+    const plain = mainWindowProfileSharesForCapture('/capture', {
+      fs: fakeFs(files(), directories)
+    })
+    expect(plain.modelTurns).toEqual({ unavailable: 'model_turns_not_recorded' })
+    expect(plain.windows[0]).toMatchObject({ modelTurns: null, perModelTurn: null })
   })
 
   it('measures without the build when its scripts are gone, and says so', () => {
@@ -1368,8 +1533,40 @@ describe('reading a capture from disk', () => {
         directories
       )
     })
+    // Without the model's turns in hand, as a capture without its record.
     expect(fromReport).toEqual(fromCapture)
     expect(fromReport.build).toMatchObject({ scripts: 2, missingNames: [] })
+    const counted = mainWindowProfileSharesForReport({
+      report: {
+        ...agentsReport,
+        liveRounds: {
+          agents: {
+            windows: [
+              { ...agentsReport.liveRounds.agents.windows[0], startedAtMs: 0, endedAtMs: 100 }
+            ]
+          }
+        }
+      },
+      profilePath: '/capture/profiles/main.cpuprofile',
+      calibrationMarkers: MARKERS,
+      modelTurns: [
+        { model: 'scripted-llama:t001', startedAtMs: 50, endedAtMs: 60, outcome: 'done' }
+      ],
+      fsApi: fakeFs(files(), directories)
+    })
+    expect(counted.modelTurns).toEqual({
+      counted: 'began_streaming_in_the_runner_window',
+      from: 'daemon_read'
+    })
+    expect(counted.windows[0]).toMatchObject({ modelTurns: 1, perModelTurn: { mainBusyMs: 90 } })
+    const unread = mainWindowProfileSharesForReport({
+      report: agentsReport,
+      profilePath: '/capture/profiles/main.cpuprofile',
+      calibrationMarkers: MARKERS,
+      modelTurnsUnavailable: 'daemon_turns_unavailable',
+      fsApi: fakeFs(files(), directories)
+    })
+    expect(unread.modelTurns).toEqual({ unavailable: 'daemon_turns_unavailable' })
     expect(fromReport.windows[0].shares.flusherBookkeeping).toBe(0.08)
     // Without the markers the window cannot be placed.
     const unplaced = mainWindowProfileSharesForReport({

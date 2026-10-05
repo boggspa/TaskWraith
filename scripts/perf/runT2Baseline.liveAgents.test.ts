@@ -22,15 +22,44 @@ const PROVENANCE = {
   isolatedWorktree: true,
   authoritativeBaseline: true
 }
-const temporaryPaths: string[] = []
+/**
+ * Every directory this file makes is named so, directly in the temporary
+ * folder or, for an isolated home the launch must find there, in the
+ * checkout's perf-homes.
+ */
+const MADE_PREFIX = 'harness-agents-'
+const made: Array<{ dir: string; root: string }> = []
+
+/** A fresh directory of this file's own in `root`, removed after the test. */
+function makeDirectory(root: string): string {
+  const dir = mkdtempSync(path.join(root, MADE_PREFIX))
+  made.push({ dir, root })
+  return dir
+}
+
+/** Removes a directory only when it is one this file made: never the folder above it. */
+function removeMade(dir: string, root: string) {
+  const roots = [tmpdir(), path.join(repoRoot, 'perf-homes')]
+  if (
+    !roots.includes(root) ||
+    dir === root ||
+    path.resolve(dir) !== dir ||
+    !dir.startsWith(root + path.sep + MADE_PREFIX)
+  ) {
+    throw new Error(`refusing to remove ${dir}: not a directory this file made`)
+  }
+  rmSync(dir, { recursive: true, force: true })
+}
 
 afterEach(() => {
-  while (temporaryPaths.length > 0) rmSync(temporaryPaths.pop()!, { recursive: true, force: true })
+  while (made.length > 0) {
+    const { dir, root } = made.pop()!
+    removeMade(dir, root)
+  }
 })
 
 function dryRun(extra: string[]) {
-  const artifactDir = mkdtempSync(path.join(tmpdir(), 'perf-t2-agents-'))
-  temporaryPaths.push(artifactDir)
+  const artifactDir = makeDirectory(tmpdir())
   return runT2BaselineCli(['--dry-run', `--artifact-dir=${artifactDir}`, ...extra], {
     repoRoot,
     provenance: PROVENANCE
@@ -158,6 +187,7 @@ describe('runT2Baseline --live-agents launch wiring', () => {
 
   afterEach(async () => {
     daemonRequests.length = 0
+    failFromMs = null
     if (daemon !== null) {
       const closing = daemon
       daemon = null
@@ -165,19 +195,37 @@ describe('runT2Baseline --live-agents launch wiring', () => {
     }
   })
 
-  /** The scripted daemon's turns route on loopback, answering one turn. */
+  /**
+   * The scripted daemon's turns route on loopback: the turns streaming at
+   * some moment of the range asked for, the first of them early in the run
+   * and three in the measured window. A range from `failFromMs` is refused.
+   */
+  const DAEMON_TURNS = [
+    { model: 'scripted-llama:t001', startedAtMs: 1_500, endedAtMs: 3_100, outcome: 'done' },
+    { model: 'scripted-llama:t001', startedAtMs: 1_000_500, endedAtMs: 1_002_100, outcome: 'done' },
+    { model: 'scripted-llama:t002', startedAtMs: 1_060_000, endedAtMs: 1_061_600, outcome: 'done' },
+    { model: 'scripted-llama:t003', startedAtMs: 1_119_000, endedAtMs: null, outcome: 'streaming' }
+  ]
+  let failFromMs: number | null = null
   async function turnsDaemon(): Promise<string> {
     daemon = createServer((request, response) => {
       daemonRequests.push(String(request.url))
       const url = new URL(String(request.url), 'http://127.0.0.1')
+      const fromMs = Number(url.searchParams.get('from'))
+      const toMs = Number(url.searchParams.get('to'))
+      if (fromMs === failFromMs) {
+        response.statusCode = 500
+        response.end()
+        return
+      }
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
-          fromMs: Number(url.searchParams.get('from')),
-          toMs: Number(url.searchParams.get('to')),
-          turns: [
-            { model: 'scripted-llama:t001', startedAtMs: 1_500, endedAtMs: 3_100, outcome: 'done' }
-          ]
+          fromMs,
+          toMs,
+          turns: DAEMON_TURNS.filter(
+            (turn) => turn.startedAtMs < toMs && (turn.endedAtMs ?? Infinity) >= fromMs
+          )
         })
       )
     })
@@ -201,10 +249,8 @@ describe('runT2Baseline --live-agents launch wiring', () => {
     const daemonBaseUrl = await turnsDaemon()
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
-    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-agents-'))
-    temporaryPaths.push(home)
-    const artifacts = mkdtempSync(path.join(tmpdir(), 'perf-t2-agents-'))
-    temporaryPaths.push(artifacts)
+    const home = makeDirectory(homesRoot)
+    const artifacts = makeDirectory(tmpdir())
     const agentsCalls: AgentsCall[] = []
     const snapshotReads: Array<Record<string, unknown>> = []
     const roundCalls: Array<{ prompt: string; chatId: string; timeoutMs: number | undefined }> = []
@@ -630,6 +676,42 @@ describe('runT2Baseline --live-agents launch wiring', () => {
     ])
     // With whatever marker the phase, or the capture around it, could not take.
     expect(kept.failures).toContain('window_end_marker_failed')
+  })
+
+  it('divides the window’s main-thread time by the turns the model began in it', async () => {
+    const { result, error } = await launchAgents(true, SMALL, measuredWindow)
+    expect(error).toBeNull()
+    // Read from the run's own model over the windows, while it still runs.
+    expect(daemonRequests).toContain('/_scripted/turns?from=1000000&to=1120000')
+    const shares = (result as { report: Record<string, any> }).report.mainThreadShares
+    expect(shares.modelTurns).toEqual({
+      counted: 'began_streaming_in_the_runner_window',
+      from: 'daemon_read'
+    })
+    // 70 ms busy, 20 of it a sync, over three turns; no build to find a wait in.
+    expect(shares.windows[0]).toMatchObject({
+      modelTurns: 3,
+      perModelTurn: {
+        mainBusyMs: 23.333,
+        syncMs: 6.667,
+        plainFileCallMs: 0,
+        atomicsWaitMs: null,
+        restMs: 16.667
+      }
+    })
+  })
+
+  it('says why a window has no figures per turn when the model’s turns cannot be read', async () => {
+    failFromMs = 1_000_000
+    const { result, error } = await launchAgents(true, SMALL, measuredWindow)
+    expect(error).toBeNull()
+    const shares = (result as { report: Record<string, any> }).report.mainThreadShares
+    expect(shares.modelTurns).toEqual({ unavailable: 'daemon_turns_unavailable' })
+    expect(shares.windows[0]).toMatchObject({
+      measured: true,
+      modelTurns: null,
+      perModelTurn: null
+    })
   })
 
   it('reports shares as unavailable, not as zero, when the profile was never written', async () => {

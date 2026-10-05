@@ -32,6 +32,16 @@
  *   A wait inside Node's own modules has no source to look in and is missed.
  * - flusherBookkeeping: self time in frames of the durability flusher's class.
  *
+ * Per model turn. A window's model turns are those the scripted model began
+ * streaming inside the window the runner timed (its own wall-clock window,
+ * the one its other figures use), whatever their thread or lane and however
+ * they ended, counted from the model's own record of its turns: the record it
+ * leaves as it stops, or the runner's read of it while the run is in hand.
+ * Main timed the same window on its own clock; the two differ by the probes'
+ * latency at either end. The window's main-thread time (`mainThreadMs`) is
+ * divided by that count (`perModelTurn`): busy, syncs, plain file calls and
+ * waits, and the rest of busy, which holds any wait that could not be found.
+ *
  * Frame matching. A captured profile names bundled functions (`readJson$7`),
  * not sources: the main build emits no source map, so the path-qualified rules
  * of `mainGapProfileAttribution.cjs` cannot apply to it. Functions are matched on
@@ -113,6 +123,8 @@ const NOT_PLAIN_FILE_CALLS = new Set([
   'readvSync',
   'readdirSync'
 ])
+/** Which of the model's turns a window's figures per turn are divided by. */
+const MODEL_TURNS_COUNTED = 'began_streaming_in_the_runner_window'
 /** Shares measured as self time in the frames of one bundled class. */
 const CLASS_SHARES = Object.freeze({ flusherBookkeeping: 'MainDurabilityFlusher' })
 /** The app functions each share needs the build to still have. */
@@ -654,6 +666,12 @@ function describeInterval(interval, build) {
       : null
   return {
     sampledMs: round(sums.total / 1000, 3),
+    mainThreadMs: {
+      busy: round((sums.total - sums.idle) / 1000, 3),
+      sync: round(sums.sync / 1000, 3),
+      plainFileCalls: round(sums.fileCall / 1000, 3),
+      atomicsWait: build.waitsMeasurable ? round(sums.atomicsWait / 1000, 3) : null
+    },
     shares,
     syncOwners: owned(interval.syncOwners),
     syncOtherCallers: otherCallers(interval.syncOtherCallers),
@@ -677,6 +695,45 @@ function describeInterval(interval, build) {
               round((interval.copyParts.get(part) || 0) / sums.total, 5)
             ])
           )
+  }
+}
+
+/** One placement's main-thread time per model turn. */
+function perTurn(ms, turns) {
+  const each = (value) => (value === null ? null : round(value / turns, 3))
+  return {
+    mainBusyMs: each(ms.busy),
+    syncMs: each(ms.sync),
+    plainFileCallMs: each(ms.plainFileCalls),
+    atomicsWaitMs: each(ms.atomicsWait),
+    restMs: each(ms.busy - ms.sync - ms.plainFileCalls - (ms.atomicsWait ?? 0))
+  }
+}
+
+/**
+ * A measured window's figures per model turn, carried across the placements
+ * of a window that has more than one.
+ */
+function perModelTurnOf(window, described, candidates) {
+  const turns =
+    Number.isSafeInteger(window.modelTurns) && window.modelTurns >= 0 ? window.modelTurns : null
+  if (turns === null || turns === 0) {
+    return {
+      modelTurns: turns,
+      perModelTurn: null,
+      perModelTurnUnavailable: turns === null ? 'model_turns_unavailable' : 'no_model_turns'
+    }
+  }
+  return {
+    modelTurns: turns,
+    perModelTurn: perTurn(described.mainThreadMs, turns),
+    ...(candidates === undefined
+      ? {}
+      : {
+          perModelTurnBounds: boundsAcross(
+            candidates.map((candidate) => perTurn(candidate.mainThreadMs, turns))
+          )
+        })
   }
 }
 
@@ -784,7 +841,8 @@ function measureWindow(window, context) {
         measured: true,
         clock: { basis: 'markers', uncertaintyMs: (upper - lower) / 2 },
         windowMs: round(windowMs, 3),
-        ...described
+        ...described,
+        ...perModelTurnOf(window, described)
       }
     }
     const clock = {
@@ -814,7 +872,8 @@ function measureWindow(window, context) {
       windowMs: round(windowMs, 3),
       ...described,
       shareBounds,
-      ...ownerBounds
+      ...ownerBounds,
+      ...perModelTurnOf(window, described, candidates)
     }
   }
 
@@ -843,7 +902,8 @@ function measureWindow(window, context) {
     windowMs: round(windowMs, 3),
     ...described,
     shareBounds: boundsAcross(candidates.map((candidate) => candidate.shares)),
-    ...ownerBoundsAcross(described, candidates)
+    ...ownerBoundsAcross(described, candidates),
+    ...perModelTurnOf(window, described, candidates)
   }
 }
 
@@ -890,12 +950,37 @@ function measureMainWindowProfileShares(input) {
   }
 }
 
+/** The model's turns as a list a window can count, or null when they are not one. */
+function modelTurnList(turns) {
+  return Array.isArray(turns) &&
+    turns.every((turn) => isPlainObject(turn) && Number.isFinite(turn.startedAtMs))
+    ? turns
+    : null
+}
+
+/** How many of the model's turns began inside the window the runner timed, or null. */
+function turnsBegunIn(turns, window) {
+  if (
+    turns === null ||
+    !Number.isFinite(window.startedAtMs) ||
+    !Number.isFinite(window.endedAtMs) ||
+    !(window.endedAtMs > window.startedAtMs)
+  ) {
+    return null
+  }
+  return turns.filter(
+    (turn) => turn.startedAtMs >= window.startedAtMs && turn.startedAtMs < window.endedAtMs
+  ).length
+}
+
 /**
  * Each live window's receipt from main, as `measureMainWindowProfileShares`
  * takes it: a live-lane capture's windows, or a many-agent capture's (a run
- * drives one workload or the other).
+ * drives one workload or the other), with the model's turns begun in it when
+ * they are given.
  */
-function mainWindowsOfReport(report) {
+function mainWindowsOfReport(report, modelTurns = null) {
+  const turns = modelTurnList(modelTurns)
   const live = isPlainObject(report.liveRounds) ? report.liveRounds : {}
   const phase = [live.lanes, live.agents].find(
     (candidate) => isPlainObject(candidate) && Array.isArray(candidate.windows)
@@ -908,9 +993,17 @@ function mainWindowsOfReport(report) {
       repetition: window.repetition,
       startedAtMs: receipt.startedAtMs,
       endedAtMs: receipt.endedAtMs,
-      ...(isPlainObject(receipt.clock) ? { clock: receipt.clock } : {})
+      ...(isPlainObject(receipt.clock) ? { clock: receipt.clock } : {}),
+      modelTurns: turnsBegunIn(turns, window)
     }
   })
+}
+
+/** Which turns a capture's figures per turn count, and from where, or why it has none. */
+function modelTurnsDescription(turns, from, unavailable) {
+  return modelTurnList(turns) === null
+    ? { unavailable: unavailable ?? 'model_turns_not_recorded' }
+    : { counted: MODEL_TURNS_COUNTED, from }
 }
 
 /**
@@ -971,29 +1064,43 @@ function mainWindowProfileSharesForCapture(captureDir, options = {}) {
   if (!isPlainObject(profile)) return unavailable('cpu_profile_unreadable')
   const calibration = readJson('main-profile-calibration.json')
   const build = readBuildScripts(profile, fsApi)
-  return measureMainWindowProfileShares({
-    profile,
-    windows: mainWindowsOfReport(report),
-    markers: calibration?.calibration?.markers,
-    capture: { stopRequestedAtMs: Date.parse(report.captureDeadline?.captureStartedAt) },
-    buildScripts: build.scripts ?? null,
-    buildScriptsUnavailable: build.unavailable,
-    ...(options.estimate === undefined ? {} : { estimate: options.estimate })
-  })
+  // The record of every turn the model left as the runner stopped it.
+  const turns = report.liveRounds?.daemonStop?.summary?.turns
+  return {
+    ...measureMainWindowProfileShares({
+      profile,
+      windows: mainWindowsOfReport(report, turns),
+      markers: calibration?.calibration?.markers,
+      capture: { stopRequestedAtMs: Date.parse(report.captureDeadline?.captureStartedAt) },
+      buildScripts: build.scripts ?? null,
+      buildScriptsUnavailable: build.unavailable,
+      ...(options.estimate === undefined ? {} : { estimate: options.estimate })
+    }),
+    modelTurns: modelTurnsDescription(turns, 'daemon_stop_record')
+  }
 }
 
 /**
  * The shares of a report the runner still holds: the profile is read from
  * the file it was written to, and the markers are the ones the runner kept
  * as the windows ran. A profile that cannot be read is named, and no window
- * is measured from it.
+ * is measured from it. The model's turns are the runner's read of them, or
+ * the reason it has none.
  *
  * @param {{
  *   report: object, profilePath: string, calibrationMarkers?: object[],
+ *   modelTurns?: object[], modelTurnsUnavailable?: string,
  *   fsApi?: { readFileSync: Function, readdirSync: Function }
  * }} input
  */
-function mainWindowProfileSharesForReport({ report, profilePath, calibrationMarkers, fsApi = fs }) {
+function mainWindowProfileSharesForReport({
+  report,
+  profilePath,
+  calibrationMarkers,
+  modelTurns,
+  modelTurnsUnavailable,
+  fsApi = fs
+}) {
   let profile = null
   try {
     profile = JSON.parse(String(fsApi.readFileSync(profilePath, 'utf8')))
@@ -1005,11 +1112,12 @@ function mainWindowProfileSharesForReport({ report, profilePath, calibrationMark
   return {
     ...measureMainWindowProfileShares({
       profile,
-      windows: mainWindowsOfReport(report),
+      windows: mainWindowsOfReport(report, modelTurns),
       markers: calibrationMarkers,
       buildScripts: build.scripts ?? null,
       buildScriptsUnavailable: build.unavailable
     }),
+    modelTurns: modelTurnsDescription(modelTurns, 'daemon_read', modelTurnsUnavailable),
     ...(readable ? {} : { unavailable: 'cpu_profile_unreadable' })
   }
 }

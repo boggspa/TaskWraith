@@ -458,11 +458,13 @@ function judgeReport(report, shares, baselineReportPaths, fsApi) {
 /**
  * The runner's two sections for a capture it has just taken: the main-thread
  * shares of each live-lane window and the phase exits judged from them. The
- * profile is read from disk; the markers are the ones the runner still holds.
+ * profile is read from disk; the markers are the ones the runner still holds,
+ * and so are the model's turns, or the reason it has none.
  * Never throws: a capture keeps its report whatever happens here.
  *
  * @param {{
  *   report: object, profilePath: string, calibrationMarkers?: object[],
+ *   modelTurns?: object[], modelTurnsUnavailable?: string,
  *   baselineReportPaths?: string[], fsApi?: { readFileSync: Function, readdirSync: Function }
  * }} input
  */
@@ -470,6 +472,8 @@ function collectPhaseExits({
   report,
   profilePath,
   calibrationMarkers,
+  modelTurns,
+  modelTurnsUnavailable,
   baselineReportPaths,
   fsApi = fs
 }) {
@@ -479,6 +483,8 @@ function collectPhaseExits({
       report,
       profilePath,
       calibrationMarkers,
+      modelTurns,
+      modelTurnsUnavailable,
       fsApi
     })
     return {
