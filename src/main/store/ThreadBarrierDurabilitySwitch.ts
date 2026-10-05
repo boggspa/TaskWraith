@@ -3,9 +3,12 @@
  * and notes what it owes, and only the moments the user or another component
  * is told "done" wait for a barrier that pays it off the event loop.
  *
- * Only the app reads it. The stores it changes are the app's own files and the
- * Host takes no part, so there is nothing for the two to agree on. Only the
- * exact token `1` is on; anything else, an absent variable included, is off.
+ * Only the app acts on it. The stores it changes are the app's own files and
+ * the Host takes no part, so there is nothing for the two to agree on; the
+ * history decoder, which reads those files wherever it runs, reads the switch
+ * through `ThreadBarrierDurabilityEnv` to read them as the app wrote them.
+ * Only the exact token `1` is on; anything else, an absent variable included,
+ * is off.
  *
  * Two rules decide what the process honours, each announced by one warning:
  * - It is never combined with the earlier mechanisms: while any of the
@@ -29,23 +32,19 @@ import {
   THREAD_LOG_AUTHORITY_ENV
 } from '../../host-shared/thread-log/ThreadLogAuthoritySwitch'
 import { isCheckpointPreparationWorkerEnabled } from './CheckpointPreparationWorker'
+import {
+  barrierDurabilityExclusions,
+  isThreadBarrierDurabilityRequested,
+  THREAD_BARRIER_DURABILITY_ENV,
+  type ThreadDurabilityEnvironment as Environment
+} from './ThreadBarrierDurabilityEnv'
 
-export const THREAD_BARRIER_DURABILITY_ENV = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
-
-/** The earlier flusher's switches, each on only for its own token `1`. */
-export const FLUSHER_DURABILITY_ENVS = [
-  'TASKWRAITH_JOURNAL_FLUSHER',
-  'TASKWRAITH_RUN_EVENT_FLUSHER',
-  'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
-] as const
-
-/** Checkpoint publication's switch, on only for its own token `1`. */
-export const CHECKPOINT_PUBLICATION_ENV = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
-
-/** While any of these is on, barrier durability is ignored. */
-const EXCLUDING_ENVS = [...FLUSHER_DURABILITY_ENVS, CHECKPOINT_PUBLICATION_ENV]
-
-type Environment = Readonly<Record<string, string | undefined>>
+export {
+  CHECKPOINT_PUBLICATION_ENV,
+  FLUSHER_DURABILITY_ENVS,
+  isThreadBarrierDurabilityRequested,
+  THREAD_BARRIER_DURABILITY_ENV
+} from './ThreadBarrierDurabilityEnv'
 
 export interface ThreadDurabilitySwitches {
   /** Barrier durability as this process honours it. */
@@ -64,17 +63,12 @@ export interface ThreadDurabilitySwitches {
   readonly checkpointWorker: boolean
 }
 
-/** Whether the environment asks for barrier durability, before the rules above. */
-export function isThreadBarrierDurabilityRequested(env: Environment = process.env): boolean {
-  return env[THREAD_BARRIER_DURABILITY_ENV] === '1'
-}
-
 export function resolveThreadDurabilitySwitches(
   env: Environment = process.env,
   warn: (message: string) => void = console.warn
 ): ThreadDurabilitySwitches {
   const requested = isThreadBarrierDurabilityRequested(env)
-  const excluding = EXCLUDING_ENVS.filter((name) => env[name] === '1')
+  const excluding = barrierDurabilityExclusions(env)
   let barrierDurabilityIgnored: string | null = null
   if (requested && excluding.length > 0) {
     barrierDurabilityIgnored = `${excluding.join(', ')} on`

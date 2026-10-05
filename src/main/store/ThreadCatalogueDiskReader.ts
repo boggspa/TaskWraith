@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import { isThreadBarrierDurabilityHonoured } from './ThreadBarrierDurabilityEnv'
 import { createSegmentedChatStore } from './SegmentedChatStore'
 import { ChatComposerSelectionOverlayStore } from './ChatComposerSelectionOverlayPersistence'
 import { readCanonicalCatalogueChat } from './ThreadCatalogueCanonicalRead'
@@ -44,7 +45,13 @@ export class ThreadCatalogueDiskReader {
       path.join(this.options.profilePath, 'chat-journal-v2'),
       {
         canWrite: () => false,
-        canRepairOnRead: () => false
+        canRepairOnRead: () => false,
+        // Under barrier durability the app writes the journal without a sync,
+        // and loads the longest chain with no gap: a segment a power cut left
+        // past one holds nothing anyone was told was done. Read it the same
+        // way. Read-only, this notes nothing and moves nothing, and reads past
+        // such a segment where it lies.
+        ...(isThreadBarrierDurabilityHonoured() ? { noteDurabilityDebt: () => {} } : {})
       }
     )
     const segmented = createSegmentedChatStore(
