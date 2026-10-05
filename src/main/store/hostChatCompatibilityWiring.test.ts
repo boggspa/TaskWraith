@@ -58,8 +58,10 @@ describe('Host compatibility checkpoint wiring in store/index.ts', () => {
     expect(materialize).toContain('void incrementalChatPersistence.checkpointChatDeferred(chatId)')
     expect(materialize).toContain('incrementalChatPersistence.checkpointChat(chatId)')
     expect(materialize).toContain('return materializeHostChatCompatibility(chatId)')
+    // Built as TASKWRAITH_CHECKPOINT_WORKER asks, and never under barrier
+    // durability, whose journal folds in a pool of its own.
     expect(store.text(store.binding('checkpointPreparationWorker'))).toContain(
-      'isCheckpointPreparationWorkerEnabled()'
+      'threadDurabilitySwitches.checkpointWorker'
     )
     const journal = store.callsTo(store.source, 'createIncrementalChatJournal')
     expect(journal).toHaveLength(1)

@@ -610,7 +610,35 @@ export function createIncrementalChatJournal(
   }
   const scheduleFsync =
     options.scheduleFsync ?? ((fd, done) => fs.fsync(fd, (error) => done(error)))
-  const noteDebt = options.noteDurabilityDebt
+  /**
+   * Where the names of the folders this journal made live, not yet owed. A
+   * folder's name is in its parent, so under the debt option each parent is
+   * owed by the first chat noted after the folder was made, with that chat's
+   * own debt, and is on the disk once that chat's barrier is.
+   */
+  let madeFolderParents: string[] = []
+  /** Makes this journal's folder, and any missing above it, if they are missing. */
+  const makeFolder = (): void => {
+    const made = fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    // Without the debt option no one would read the names.
+    if (made === undefined || !options.noteDurabilityDebt) return
+    const top = path.dirname(path.resolve(made))
+    for (let parent = path.dirname(path.resolve(baseDir)); ; parent = path.dirname(parent)) {
+      madeFolderParents.push(parent)
+      if (parent === top || parent === path.dirname(parent)) break
+    }
+  }
+  const owe = options.noteDurabilityDebt
+  const noteDebt: NoteThreadDurabilityDebt | undefined =
+    owe &&
+    ((chatId, debt) => {
+      if (madeFolderParents.length > 0) {
+        const parents = madeFolderParents
+        madeFolderParents = []
+        for (const directory of parents) owe(chatId, { directory })
+      }
+      owe(chatId, debt)
+    })
   /** Compaction by bytes, in the worker: see `noteDurabilityDebt`. */
   const debtCompaction = noteDebt !== undefined && !options.descriptorCache
   const compactionHardCapBytes = positiveInteger(
@@ -711,7 +739,7 @@ export function createIncrementalChatJournal(
   const deferredFailureByChat = new Map<string, NodeJS.ErrnoException>()
   let pendingDeferredCount = 0
   if (canWrite()) {
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     removePreparedCheckpointFiles(baseDir, undefined, true)
   }
 
@@ -755,7 +783,7 @@ export function createIncrementalChatJournal(
     )
 
   const atomicWrite = (filePath: string, data: string): number => {
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     const tempPath = temporaryPath(filePath)
     let fd: number | null = null
     try {
@@ -789,7 +817,7 @@ export function createIncrementalChatJournal(
    * barrier, and the caller owes the directory its new name.
    */
   const writeUnsynced = (chatId: string, filePath: string, data: string): number => {
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     const tempPath = temporaryPath(filePath)
     let fd: number | null = null
     try {
@@ -855,7 +883,7 @@ export function createIncrementalChatJournal(
     line: string,
     explicitImmediate = false
   ): { bytes: number; syncFailure: NodeJS.ErrnoException | null } => {
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created = false
     let bytes: number
@@ -883,7 +911,7 @@ export function createIncrementalChatJournal(
       options.descriptorCache.append(chatId, filePath, line, 'deferred')
       return Buffer.byteLength(line, 'utf8')
     }
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created: boolean
     let bytes: number
@@ -964,7 +992,7 @@ export function createIncrementalChatJournal(
       note(chatId, { file: filePath, owner: 'journal' })
       return Buffer.byteLength(line, 'utf8')
     }
-    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    makeFolder()
     const fd = fs.openSync(filePath, 'a', 0o600)
     let created: boolean
     let bytes: number

@@ -8,11 +8,18 @@
  * exact token `1` is on; anything else, an absent variable included, is off.
  *
  * Two rules decide what the process honours, each announced by one warning:
- * - It is never combined with the earlier durability flusher: while any of the
- *   flusher's switches is on, this one is ignored.
+ * - It is never combined with the earlier mechanisms: while any of the
+ *   durability flusher's switches is on, or checkpoint publication's, this one
+ *   is ignored.
  * - Thread log authority builds on it: without barrier durability, the app
  *   ignores authority and never claims a thread. The Host reads the authority
  *   switch on its own and needs nothing from this one.
+ *
+ * Barrier durability folds checkpoints in a worker pool of its own, which the
+ * journal is handed whole. While it is honoured, TASKWRAITH_CHECKPOINT_WORKER
+ * no longer matters: the worker that switch asks for, and the host reference
+ * connector it starts folds through, belong to the earlier mechanisms and are
+ * not built.
  *
  * Resolve it once, when the store is built, and keep the answer for the life
  * of the process.
@@ -21,6 +28,7 @@ import {
   isThreadLogAuthorityEnabled,
   THREAD_LOG_AUTHORITY_ENV
 } from '../../host-shared/thread-log/ThreadLogAuthoritySwitch'
+import { isCheckpointPreparationWorkerEnabled } from './CheckpointPreparationWorker'
 
 export const THREAD_BARRIER_DURABILITY_ENV = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
 
@@ -30,6 +38,12 @@ export const FLUSHER_DURABILITY_ENVS = [
   'TASKWRAITH_RUN_EVENT_FLUSHER',
   'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
 ] as const
+
+/** Checkpoint publication's switch, on only for its own token `1`. */
+export const CHECKPOINT_PUBLICATION_ENV = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
+
+/** While any of these is on, barrier durability is ignored. */
+const EXCLUDING_ENVS = [...FLUSHER_DURABILITY_ENVS, CHECKPOINT_PUBLICATION_ENV]
 
 type Environment = Readonly<Record<string, string | undefined>>
 
@@ -42,6 +56,12 @@ export interface ThreadDurabilitySwitches {
   readonly logAuthority: boolean
   /** Why authority was asked for and is not honoured, else null. */
   readonly logAuthorityIgnored: string | null
+  /**
+   * Whether the store builds the checkpoint worker of the earlier mechanisms,
+   * as TASKWRAITH_CHECKPOINT_WORKER asks. Never while barrier durability is
+   * honoured, which builds a pool of its own.
+   */
+  readonly checkpointWorker: boolean
 }
 
 /** Whether the environment asks for barrier durability, before the rules above. */
@@ -54,12 +74,12 @@ export function resolveThreadDurabilitySwitches(
   warn: (message: string) => void = console.warn
 ): ThreadDurabilitySwitches {
   const requested = isThreadBarrierDurabilityRequested(env)
-  const flushers = FLUSHER_DURABILITY_ENVS.filter((name) => env[name] === '1')
+  const excluding = EXCLUDING_ENVS.filter((name) => env[name] === '1')
   let barrierDurabilityIgnored: string | null = null
-  if (requested && flushers.length > 0) {
-    barrierDurabilityIgnored = `${flushers.join(', ')} on`
+  if (requested && excluding.length > 0) {
+    barrierDurabilityIgnored = `${excluding.join(', ')} on`
     warn(
-      `${THREAD_BARRIER_DURABILITY_ENV} is ignored: ${flushers.join(', ')} ${flushers.length === 1 ? 'is' : 'are'} on, and the two durability mechanisms are never combined.`
+      `${THREAD_BARRIER_DURABILITY_ENV} is ignored: ${excluding.join(', ')} ${excluding.length === 1 ? 'is' : 'are'} on, and the two durability mechanisms are never combined.`
     )
   }
   const barrierDurability = requested && barrierDurabilityIgnored === null
@@ -74,6 +94,7 @@ export function resolveThreadDurabilitySwitches(
     barrierDurability,
     barrierDurabilityIgnored,
     logAuthority: isThreadLogAuthorityEnabled(env) && logAuthorityIgnored === null,
-    logAuthorityIgnored
+    logAuthorityIgnored,
+    checkpointWorker: !barrierDurability && isCheckpointPreparationWorkerEnabled(env)
   }
 }

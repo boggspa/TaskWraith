@@ -6,8 +6,11 @@
  * The store builds one only while its switch is on, and hands the thread
  * stores the debt's `note`. The journal, the run-event ledger and a save's
  * tool-detail writer then write without a sync and say what they owe; a
- * barrier raised for a thread pays it. Building one starts no timer, opens no
- * file and syncs nothing, and nothing here can sync on the calling thread.
+ * barrier raised for a thread pays it. The journal is also handed the worker
+ * pool it folds checkpoints in, whole, and the port's directory sync for the
+ * rename that installs one. Building one starts no timer, opens no file,
+ * starts no process and syncs nothing, and nothing here can sync on the
+ * calling thread.
  *
  * After each append the store hands it the save, and it takes a ticket for
  * each moment the save contains (`ChatSaveMoments`), waiting for a barrier of
@@ -26,6 +29,8 @@ import {
   classifyCreatedChatMoments,
   type ChatSaveMoment
 } from './ChatSaveMoments'
+import type { CheckpointPreparationPort } from './CheckpointPreparationProtocol'
+import { CheckpointPreparationWorker } from './CheckpointPreparationWorker'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
 import {
@@ -62,11 +67,17 @@ export interface ThreadBarrierDurability {
   /**
    * The journal's options in this mode. A line written without a sync can be
    * torn by a power cut, and the next append must not be glued to the
-   * fragment, so the journal cuts it first.
+   * fragment, so the journal cuts it first. Its compactions fold in the pool,
+   * which it is given whole: its own queue waits for room with `admits` and
+   * `onCapacity`. The rename that installs a folded checkpoint is made durable
+   * by the port every barrier uses, within the same limit and counted with
+   * the rest.
    */
   readonly journal: {
     readonly noteDurabilityDebt: NoteThreadDurabilityDebt
     readonly repairTornTailBeforeAppend: true
+    readonly checkpointPreparation: CheckpointPreparationPort
+    readonly syncDirectory: (directory: string) => Promise<unknown>
   }
   /** What one save's tool-detail writer is given, for that save's thread. */
   detail(chatId: string): ToolActivityDetailDebt
@@ -119,6 +130,8 @@ export interface ThreadBarrierDurability {
 export interface ThreadBarrierDurabilityOptions {
   /** Pays the debt; the production port when omitted. */
   port?: ThreadDurabilityPort
+  /** The pool the journal folds checkpoints in; a `CheckpointPreparationWorker` when omitted. */
+  checkpointPreparation?: CheckpointPreparationPort
   /** Milliseconds, for timing barriers and tickets, and for idle threads. */
   now?: () => number
   /** The idle timer; the real one when omitted. */
@@ -183,7 +196,8 @@ export function createThreadBarrierDurability(
 ): ThreadBarrierDurability {
   const now = options.now ?? Date.now
   const built = options.port ? null : createThreadDurabilityDebtFs()
-  const debt = createThreadDurabilityDebt({ port: options.port ?? built!, now })
+  const port = options.port ?? built!
+  const debt = createThreadDurabilityDebt({ port, now })
   const tickets = new ChatDurabilityTickets({ now })
   const threads = new ThreadDebtTracker({
     debt,
@@ -197,7 +211,12 @@ export function createThreadBarrierDurability(
     note,
     debt,
     tickets,
-    journal: { noteDurabilityDebt: note, repairTornTailBeforeAppend: true },
+    journal: {
+      noteDurabilityDebt: note,
+      repairTornTailBeforeAppend: true,
+      checkpointPreparation: options.checkpointPreparation ?? new CheckpointPreparationWorker(),
+      syncDirectory: (directory) => port.syncDirectory(directory)
+    },
     detail: (chatId) => ({ chatId, note }),
     catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),

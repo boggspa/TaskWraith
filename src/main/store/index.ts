@@ -90,10 +90,7 @@ import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomen
 import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
-import {
-  CheckpointPreparationWorker,
-  isCheckpointPreparationWorkerEnabled
-} from './CheckpointPreparationWorker'
+import { CheckpointPreparationWorker } from './CheckpointPreparationWorker'
 import {
   createIncrementalChatPersistence,
   DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP,
@@ -1182,6 +1179,17 @@ function awaitThreadJournalDurable(chatId: string): Promise<void> {
     ? durableMomentGate.bound(threadBarrierDurability.awaitDurable(chatId))
     : incrementalChatPersistence.awaitDeferredDurability(chatId)
 }
+/**
+ * What a save's catalogue head waits for before it settles: the journal's own
+ * deferred syncs of the save. Under barrier durability nothing: heads are owed
+ * to no barrier, and one a power loss leaves ahead of its journal is derived
+ * again from the thread's sources.
+ */
+function awaitCatalogueHeadSources(chatId: string): Promise<void> {
+  return threadBarrierDurability
+    ? Promise.resolve()
+    : incrementalChatPersistence.awaitDeferredDurability(chatId)
+}
 const mainDurabilityRuntime = createMainDurabilityRuntime({
   residualObserver: baselineResidualObserver,
   runEventsDir,
@@ -1220,7 +1228,9 @@ const journalPreparationFlags = journalPreparationEnrollment(
   process.env,
   incrementalJournalDescriptorCache !== undefined
 )
-const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
+// The earlier mechanisms' worker. Barrier durability hands the journal a pool
+// of its own instead, and none of this is built.
+const checkpointPreparationWorker = threadDurabilitySwitches.checkpointWorker
   ? new CheckpointPreparationWorker()
   : undefined
 let sharedCheckpointPreparationPort:
@@ -8298,7 +8308,7 @@ export class AppStore {
       this.threadCataloguePublisher?.finishAfter(
         publication,
         saved,
-        incrementalChatPersistence.awaitDeferredDurability(saved.appChatId)
+        awaitCatalogueHeadSources(saved.appChatId)
       )
     const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
     if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)
@@ -9286,6 +9296,8 @@ export class AppStore {
       deferredHostMaterialization?.dispose()
       clearInterval(incrementalChatIdleCheckpointTimer)
     }
+    // The idle timer starts folds in barrier durability's pool too: none at quit.
+    if (threadBarrierDurability) clearInterval(incrementalChatIdleCheckpointTimer)
     // Barrier durability pays what every thread owes within the same budget.
     const quitBudgetMs = options?.hostDrainTimeoutMs ?? HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS
     if (legacyStoreCanWrite()) {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { THREAD_LOG_AUTHORITY_ENV } from '../../host-shared/thread-log/ThreadLogAuthoritySwitch'
 import {
+  CHECKPOINT_PUBLICATION_ENV,
   FLUSHER_DURABILITY_ENVS,
   isThreadBarrierDurabilityRequested,
   resolveThreadDurabilitySwitches,
@@ -19,6 +20,8 @@ const FLUSHERS = [
   'TASKWRAITH_RUN_EVENT_FLUSHER',
   'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
 ]
+const PUBLICATION = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
+const WORKER = 'TASKWRAITH_CHECKPOINT_WORKER'
 
 function resolve(env: Record<string, string | undefined>) {
   const warnings: string[] = []
@@ -27,9 +30,10 @@ function resolve(env: Record<string, string | undefined>) {
 }
 
 describe('thread barrier durability switch', () => {
-  it('is read from TASKWRAITH_THREAD_BARRIER_DURABILITY, beside the flusher switches it excludes', () => {
+  it('is read from TASKWRAITH_THREAD_BARRIER_DURABILITY, beside the switches it excludes', () => {
     expect(THREAD_BARRIER_DURABILITY_ENV).toBe(BARRIER)
     expect([...FLUSHER_DURABILITY_ENVS]).toEqual(FLUSHERS)
+    expect(CHECKPOINT_PUBLICATION_ENV).toBe(PUBLICATION)
     expect(THREAD_LOG_AUTHORITY_ENV).toBe(AUTHORITY)
   })
 
@@ -39,7 +43,8 @@ describe('thread barrier durability switch', () => {
         barrierDurability: false,
         barrierDurabilityIgnored: null,
         logAuthority: false,
-        logAuthorityIgnored: null
+        logAuthorityIgnored: null,
+        checkpointWorker: false
       },
       warnings: []
     })
@@ -53,7 +58,8 @@ describe('thread barrier durability switch', () => {
         barrierDurability: true,
         barrierDurabilityIgnored: null,
         logAuthority: false,
-        logAuthorityIgnored: null
+        logAuthorityIgnored: null,
+        checkpointWorker: false
       },
       warnings: []
     })
@@ -78,6 +84,24 @@ describe('thread barrier durability switch', () => {
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toContain(BARRIER)
     expect(warnings[0]).toContain(flusher)
+  })
+
+  it('is ignored, with one warning, while checkpoint publication is on', () => {
+    const { switches, warnings } = resolve({ [BARRIER]: '1', [PUBLICATION]: '1' })
+
+    expect(switches.barrierDurability).toBe(false)
+    expect(switches.barrierDurabilityIgnored).toBe(`${PUBLICATION} on`)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain(BARRIER)
+    expect(warnings[0]).toContain(PUBLICATION)
+  })
+
+  it('reads checkpoint publication as on only by its own token, 1', () => {
+    for (const value of ['', '0', 'true', ' 1']) {
+      const { switches, warnings } = resolve({ [BARRIER]: '1', [PUBLICATION]: value })
+      expect(switches.barrierDurability).toBe(true)
+      expect(warnings).toEqual([])
+    }
   })
 
   it('names every flusher switch that is on in its one warning', () => {
@@ -123,6 +147,32 @@ describe('thread barrier durability switch', () => {
   })
 })
 
+describe('the checkpoint worker the earlier mechanisms share, as the app honours it', () => {
+  it('is built as TASKWRAITH_CHECKPOINT_WORKER asks while barrier durability is off', () => {
+    expect(resolve({ [WORKER]: '1' })).toEqual({
+      switches: expect.objectContaining({ barrierDurability: false, checkpointWorker: true }),
+      warnings: []
+    })
+    for (const value of [undefined, '', '0', 'true', ' 1']) {
+      expect(resolve({ [WORKER]: value }).switches.checkpointWorker).toBe(false)
+    }
+  })
+
+  it('is never built while barrier durability is honoured, which has a pool of its own: the switch no longer matters', () => {
+    for (const value of [undefined, '1', '0']) {
+      const { switches, warnings } = resolve({ [BARRIER]: '1', [WORKER]: value })
+      expect(switches).toMatchObject({ barrierDurability: true, checkpointWorker: false })
+      expect(warnings).toEqual([])
+    }
+  })
+
+  it('is built as asked again when barrier durability is ignored', () => {
+    const { switches } = resolve({ [BARRIER]: '1', [PUBLICATION]: '1', [WORKER]: '1' })
+
+    expect(switches).toMatchObject({ barrierDurability: false, checkpointWorker: true })
+  })
+})
+
 describe('thread log authority, as the app honours it', () => {
   it('is on with barrier durability beside it', () => {
     expect(resolve({ [BARRIER]: '1', [AUTHORITY]: '1' })).toEqual({
@@ -130,7 +180,8 @@ describe('thread log authority, as the app honours it', () => {
         barrierDurability: true,
         barrierDurabilityIgnored: null,
         logAuthority: true,
-        logAuthorityIgnored: null
+        logAuthorityIgnored: null,
+        checkpointWorker: false
       },
       warnings: []
     })

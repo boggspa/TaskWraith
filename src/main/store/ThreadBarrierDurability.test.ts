@@ -1,7 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, sep } from 'node:path'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatDurabilityTickets } from './ChatDurabilityTickets'
 import { deriveChatRecordMutationWithProjection } from './ChatRecordMutation'
+import type { CheckpointPreparationPort } from './CheckpointPreparationProtocol'
+import { CheckpointPreparationWorker } from './CheckpointPreparationWorker'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import { barriersForSaveMoments, createThreadBarrierDurability } from './ThreadBarrierDurability'
 import type {
@@ -43,13 +49,50 @@ describe('the barrier durability layer', () => {
     expect(layer.debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 0 })
   })
 
-  it('gives the journal the note, and the repair of a torn tail before its next append', () => {
-    const layer = createThreadBarrierDurability({ port: recordingPort() })
+  it('gives the journal the note, the repair of a torn tail, its pool, and the port for its renames', async () => {
+    const port = recordingPort()
+    const pool: CheckpointPreparationPort = {
+      start: () => null,
+      admits: () => true,
+      onCapacity: () => () => {}
+    }
+    const layer = createThreadBarrierDurability({ port, checkpointPreparation: pool })
 
     expect(layer.journal).toEqual({
       noteDurabilityDebt: layer.note,
-      repairTornTailBeforeAppend: true
+      repairTornTailBeforeAppend: true,
+      // The pool whole: the journal's own queue decides what waits for room.
+      checkpointPreparation: pool,
+      syncDirectory: expect.any(Function)
     })
+    // An adopted checkpoint's rename is made durable by the port every barrier uses.
+    await expect(layer.journal.syncDirectory('/p/chat-journal-v2')).resolves.toBe('synced')
+    expect(port.paid).toEqual(['directory:/p/chat-journal-v2'])
+  })
+
+  it('builds the journal a checkpoint worker of its own when given none', () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+
+    expect(layer.journal.checkpointPreparation).toBeInstanceOf(CheckpointPreparationWorker)
+    expect(createThreadBarrierDurability().journal.checkpointPreparation).not.toBe(
+      layer.journal.checkpointPreparation
+    )
+  })
+
+  it("counts the journal's directory syncs with the barriers', on the port it built", async () => {
+    const own = tmpdir() + sep + 'owner-barrier-layer-'
+    const directory = mkdtempSync(own)
+    try {
+      const layer = createThreadBarrierDurability()
+
+      await expect(layer.journal.syncDirectory(directory)).resolves.toBe('synced')
+      expect(layer.snapshot().port).toMatchObject({ started: 1, inFlight: 0 })
+    } finally {
+      // Only the folder made above, and nothing else.
+      if (dirname(directory) !== tmpdir() || !directory.startsWith(own))
+        throw new Error(`Refusing to remove ${directory}`)
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it("gives a save's tool-detail writer the note for that save's thread", () => {

@@ -266,11 +266,13 @@ const CHECKPOINT_TEMPORARY = `chat-journal-v2/.${CHAT}.checkpoint.json.<pid>.<ti
 
 /**
  * The creating save's first checkpoint under the switch: written without a
- * sync, owing exactly its file and its folder to the thread's barrier.
+ * sync, owing exactly its file and its folder to the thread's barrier, and
+ * the profile's folder, where the name of the journal's folder is: the store
+ * made that folder, in a new profile.
  */
 const FIRST_CHECKPOINT_OWED = {
   issued: [],
-  owed: ['directory:chat-journal-v2', `file:chat-journal-v2/${CHAT}.checkpoint.json`]
+  owed: ['directory:.', 'directory:chat-journal-v2', `file:chat-journal-v2/${CHAT}.checkpoint.json`]
 }
 
 /** The creating save's first checkpoint: what it synced after `before`, and what it left owed. */
@@ -1183,7 +1185,7 @@ describe("a new thread's first save", () => {
     await expect(reply).resolves.toEqual({ accepted: true })
     await expect(dispatching).resolves.toMatchObject({ dispatched: true })
     expect(started).toEqual([CHAT])
-    expect(paid()).toEqual(['directory:chat-journal-v2', `file:${CHECKPOINT}`])
+    expect(paid()).toEqual(['directory:.', 'directory:chat-journal-v2', `file:${CHECKPOINT}`])
     expect(layers.built[0].tickets.snapshot().moments.user_message).toMatchObject({
       noted: 1,
       covered: 1
@@ -1266,13 +1268,13 @@ describe("a new thread's first save", () => {
       expect(layer.tickets.snapshot().moments.user_message.noted).toBe(0)
       expect(gates.awaitUserMoment(CHAT)).toBeNull()
       expect(layer.debt.snapshot().barriers.raised).toBe(0)
-      expect(layer.debt.snapshot().owed).toMatchObject({ threads: 1, files: 1, directories: 1 })
+      expect(layer.debt.snapshot().owed).toMatchObject({ threads: 1, files: 1, directories: 2 })
 
       // Fifteen quiet seconds later, the idle barrier pays it.
       layers.clockOffsetMs += 15_000
       layers.timers.filter((timer) => !timer.cleared && timer.ms >= 1_000).forEach((t) => t.fire())
       await vi.waitFor(() => expect(layer.debt.snapshot().owed.threads).toBe(0))
-      expect(paid()).toEqual(['directory:chat-journal-v2', `file:${CHECKPOINT}`])
+      expect(paid()).toEqual(['directory:.', 'directory:chat-journal-v2', `file:${CHECKPOINT}`])
       expect(layer.snapshot().threads).toMatchObject({ owing: 0, idleBarriers: 1 })
     }
   )
