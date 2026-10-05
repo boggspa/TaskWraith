@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -145,6 +146,7 @@ describe('idle and quit under the barrier, without a descriptor cache', () => {
   afterEach(() => {
     syncs.dispose()
     vi.restoreAllMocks()
+    syncBuiltinESMExports()
     removeTemporaryDirectory(baseDir)
   })
 
@@ -231,6 +233,23 @@ describe('idle and quit under the barrier, without a descriptor cache', () => {
     expect(journal.checkpointIdle(clock)).toBe(1)
     expect(worker.started).toHaveLength(1)
     expect(journal.stats()).toMatchObject({ idleCompactionsDeclined: 1 })
+  })
+
+  it('passes over a chat whose checkpoint it cannot look at, and folds the ones after it', () => {
+    const journal = open()
+    write(journal, CHAT, 3)
+    write(journal, OTHER, 3)
+    const real = fs.statSync
+    vi.spyOn(fs, 'statSync').mockImplementation(((target: fs.PathLike, ...rest: unknown[]) => {
+      if (String(target).endsWith(CHECKPOINT))
+        throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+      return (real as (...args: unknown[]) => unknown)(target, ...rest)
+    }) as typeof fs.statSync)
+    syncBuiltinESMExports()
+    clock += 1_000
+
+    expect(journal.checkpointIdle(clock)).toBe(1)
+    expect(worker.started.map((each) => each.request.chatId)).toEqual([OTHER])
   })
 
   it('asks no second fold of a chat whose fold is running', () => {

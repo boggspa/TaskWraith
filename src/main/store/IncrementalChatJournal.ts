@@ -2614,8 +2614,13 @@ export function createIncrementalChatJournal(
         state.idleDeclinedAt === state.journalBytes
       )
         continue
-      const checkpointBytes =
-        fs.statSync(checkpointPath(chatId), { throwIfNoEntry: false })?.size ?? 0
+      let checkpointBytes: number
+      try {
+        checkpointBytes = fs.statSync(checkpointPath(chatId), { throwIfNoEntry: false })?.size ?? 0
+      } catch {
+        // One chat's trouble must not stop the sweep for the chats after it.
+        continue
+      }
       if (state.journalBytes * 2 < checkpointBytes) {
         state.idleDeclinedAt = state.journalBytes
         idleCompactionsDeclined += 1
