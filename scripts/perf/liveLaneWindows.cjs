@@ -40,6 +40,12 @@ const { WORK_SPAN_KINDS } = require('./collectors/hostSpans.cjs')
 const { timingsByKind } = require('./collectors/hostRecentSpanWindows.cjs')
 const { awaitWithTimeout } = require('./boundedAwait.cjs')
 const { barrierDurabilityAtFences } = require('./barrierDurability.cjs')
+const {
+  d1CountersOf,
+  d1Delta,
+  journalPathFor,
+  windowJournalPathReasons
+} = require('./liveRounds.cjs')
 
 /** Global the S3a handle installs in main (`perfWorkSpanHandle.ts`); keep in lockstep. */
 const MAIN_WORK_SPANS_GLOBAL = '__TASKWRAITH_PERF_WORK_SPANS__'
@@ -248,8 +254,11 @@ function positiveOption(options, name) {
  *   lanes: { runLight(o: { untilMs: number }): Promise<any>, snapshot(): any },
  *   lightChatId: string, heavyChatId: string,
  *   readMainWindow: (query: object) => Promise<unknown>,
- *   readD1Counters: () => Promise<{ deferredAppends: number, normalSaves: number } | null>,
+ *   readD1Counters: () => Promise<{
+ *     deferredAppends: number, unsyncedAppends?: number, normalSaves: number
+ *   } | null>,
  *   readBarrierDurability?: () => Promise<{ ok: boolean, section?: object, reason?: string }>,
+ *   barrierDurability: 'on' | 'off',
  *   readLaneActivity: (lane: 'light' | 'heavy', range: { fromMs: number, toMs: number }) =>
  *     Promise<{ started: number, done: number, busyMs: number, maxQuietMs: number }>,
  *   hostUnion?: { evaluate(windows: object[], lanes: object): any } | null,
@@ -272,6 +281,8 @@ async function runLiveLaneWindows(options) {
   ) {
     throw new Error('runLiveLaneWindows needs main window, D1 and lane activity readers')
   }
+  // The journal path each window is judged on, as the run pinned it.
+  journalPathFor(options.barrierDurability)
   const laneChats = { light: options.lightChatId, heavy: options.heavyChatId }
   const count = options.windows === undefined ? DEFAULT_OPTIONS.windows : options.windows
   if (!Number.isSafeInteger(count) || count <= 0) throw new Error('windows must be positive')
@@ -333,18 +344,14 @@ async function runLiveLaneWindows(options) {
   }
   const readD1 = async () => {
     try {
-      const counters = await readD1Counters()
-      return isPlainObject(counters) &&
-        Number.isSafeInteger(counters.deferredAppends) &&
-        Number.isSafeInteger(counters.normalSaves)
-        ? { deferredAppends: counters.deferredAppends, normalSaves: counters.normalSaves }
-        : null
+      return d1CountersOf(await readD1Counters())
     } catch {
       return null
     }
   }
-  // Barrier durability, read at the same fences as the save counters when
-  // the caller can read it. It never rules a window out.
+  // Barrier durability, read at the same fences as the save counters. Its
+  // switch says which journal path the window's saves took: a window it
+  // cannot say that for is not judged on its counters.
   const readBarrier = async () => {
     if (typeof options.readBarrierDurability !== 'function') return null
     try {
@@ -491,16 +498,17 @@ async function runLiveLaneWindows(options) {
       if (activity.heavy.maxQuietMs > maxHeavyQuietMs) reasons.push('heavy_lane_quiet')
     }
 
-    // D1: real rounds reached the deferred journal inside the fences.
-    const d1 =
-      d1Before && d1After
-        ? {
-            deferredAppends: d1After.deferredAppends - d1Before.deferredAppends,
-            normalSaves: d1After.normalSaves - d1Before.normalSaves
-          }
-        : null
-    if (d1 === null) reasons.push('d1_counters_unavailable')
-    else if (!(d1.deferredAppends > 0)) reasons.push('d1_no_deferred_append')
+    // D1: real rounds reached the journal inside the fences, on the path
+    // the run pinned and main's section says it took.
+    const d1 = d1Delta(d1Before, d1After)
+    reasons.push(
+      ...windowJournalPathReasons({
+        d1,
+        barrierBefore,
+        barrierAfter,
+        barrierDurability: options.barrierDurability
+      })
+    )
 
     // Main's spans.
     let mainEvidence = null

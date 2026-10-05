@@ -160,6 +160,7 @@ class QuietCdpSocket {
 }
 
 type AgentsCall = {
+  barrierDurability: string
   page: { evaluate: (expression: string) => Promise<unknown> }
   mainSession: { post: (method: string, params: unknown) => Promise<unknown> }
   threads: Array<{ chatId: string; model: string }>
@@ -179,6 +180,19 @@ type AgentsCall = {
   onWindow: (window: { repetition: number; reasons: string[] }) => void
   onCalibrationMarker: (marker: Record<string, unknown>) => void
   onCalibrationFailure: (reason: string) => void
+}
+
+/**
+ * The smoke's D1 delta: with `true`, appends on the journal path the run
+ * pinned; with a path's name, on that path whatever the pin; with `false`, none.
+ */
+function smokeDelta(smoke: boolean | 'deferred' | 'unsynced', args: string[]) {
+  const pinnedOn = args.includes('--flag=TASKWRAITH_THREAD_BARRIER_DURABILITY')
+  const journalPath = smoke === true ? (pinnedOn ? 'unsynced' : 'deferred') : smoke
+  if (journalPath === false) return { deferredAppends: 0, unsyncedAppends: 0, normalSaves: 0 }
+  return journalPath === 'unsynced'
+    ? { deferredAppends: 0, unsyncedAppends: 3, normalSaves: 2 }
+    : { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 }
 }
 
 describe('runT2Baseline --live-agents launch wiring', () => {
@@ -241,7 +255,7 @@ describe('runT2Baseline --live-agents launch wiring', () => {
    * turns route is a real loopback server.
    */
   async function launchAgents(
-    smokeOk: boolean,
+    smokeOk: boolean | 'deferred' | 'unsynced',
     extraArgs: string[] = [],
     measured?: (input: AgentsCall, artifacts: string) => Record<string, unknown>,
     mode: string[] = ['--live-agents']
@@ -367,11 +381,7 @@ describe('runT2Baseline --live-agents launch wiring', () => {
             roundId: round.previousRoundId === null ? 'round-warmup' : 'round-smoke',
             roundStatus: 'completed',
             turnsFinished: 4,
-            d1: {
-              delta: smokeOk
-                ? { deferredAppends: 3, normalSaves: 2 }
-                : { deferredAppends: 0, normalSaves: 0 }
-            }
+            d1: { delta: smokeDelta(smokeOk, extraArgs) }
           }
         },
         hostWelcomeProbe: async () => ({
@@ -534,6 +544,29 @@ describe('runT2Baseline --live-agents launch wiring', () => {
     expect(call).toMatchObject({ seats: 10, seatMode: 'serial' })
     // The window is the phase's own default unless the operator names one.
     expect(call).not.toHaveProperty('windowMs')
+  })
+
+  it('judges the smoke on the journal path the run pinned, and tells the phase that path', async () => {
+    const off = await launchAgents(true, SMALL)
+    expect(off.error).toBeNull()
+    expect(off.agentsCalls[0].barrierDurability).toBe('off')
+    const on = await launchAgents(true, [...SMALL, '--flag=TASKWRAITH_THREAD_BARRIER_DURABILITY'])
+    expect(on.error).toBeNull()
+    expect(on.agentsCalls[0].barrierDurability).toBe('on')
+    // A switch-on run whose smoke took the deferred path never reaches the phase.
+    const wrong = await launchAgents('deferred', [
+      ...SMALL,
+      '--flag=TASKWRAITH_THREAD_BARRIER_DURABILITY'
+    ])
+    expect(wrong.agentsCalls).toEqual([])
+    expect((wrong.result as { report: Record<string, any> }).report.liveRounds.verdict).toEqual({
+      ok: false,
+      reasons: [
+        'smoke: no unsynced journal append',
+        'smoke: deferred journal appends with barrier durability on',
+        'agents: not run'
+      ]
+    })
   })
 
   it('never starts the phase after a failed smoke, and says so', async () => {

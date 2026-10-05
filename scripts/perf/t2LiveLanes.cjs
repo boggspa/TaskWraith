@@ -43,7 +43,7 @@ const {
 } = require('./liveLaneWindows.cjs')
 const { uninstallLaneObserverExpression, laneObserverConfig } = require('./liveLaneObserver.cjs')
 const { cancelRoundExpression, createLiveLanes } = require('./liveRoundLanes.cjs')
-const { readD1Counters } = require('./liveRounds.cjs')
+const { journalPathFor, readD1Counters } = require('./liveRounds.cjs')
 const { readBarrierDurability } = require('./barrierDurability.cjs')
 
 const DEFAULT_OPTIONS = Object.freeze({
@@ -336,7 +336,8 @@ function laneStartFailure(error) {
  *   callTimeoutMs?: number, openChatTimeoutMs?: number, heavyLeadInMs?: number,
  *   cancelEvery?: number, cancelAfterMs?: number,
  *   laneOptions?: object, windowOptions?: object,
- *   onWindow?: (window: object) => void
+ *   onWindow?: (window: object) => void,
+ *   barrierDurability: 'on' | 'off'
  * }} options
  */
 async function runT2LiveLanes(options) {
@@ -363,6 +364,8 @@ async function runT2LiveLanes(options) {
   ) {
     throw new Error('runT2LiveLanes needs a daemon activity reader and one model tag per lane')
   }
+  // The journal path each window is judged on, as the run pinned it.
+  journalPathFor(options.barrierDurability)
   const settings = {}
   for (const name of Object.keys(DEFAULT_OPTIONS)) {
     const value = options[name] === undefined ? DEFAULT_OPTIONS[name] : options[name]
@@ -425,6 +428,7 @@ async function runT2LiveLanes(options) {
       await sleep(settings.heavyLeadInMs)
       windowsResult = await runLiveLaneWindows({
         ...windowOptions,
+        barrierDurability: options.barrierDurability,
         repetitionIndex: options.repetitionIndex ?? 0,
         lanes,
         lightChatId,

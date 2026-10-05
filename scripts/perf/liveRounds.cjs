@@ -18,7 +18,10 @@
  *   round off the daemon are blanked, and the report says which were set.
  * - D1 evidence: `get-main-perf-snapshot` counters read through the page
  *   API before and after a round (`journal.deferredAppends`,
- *   `boundaryMix.normal`). A round that moves neither never reached D1.
+ *   `journal.unsyncedAppends`, `boundaryMix.normal`). A round that moves
+ *   neither never reached D1. With barrier durability off the journal's
+ *   appends take the deferred path, and with it on the unsynced one: each
+ *   round and window is judged on the path its run pinned, and on no other.
  * - An unmeasured warm-up round, then one smoke round, through the
  *   renderer's own page API (`window.api.runEnsembleRound`), the same gates a
  *   user's send passes, and a verdict with its reasons.
@@ -453,14 +456,14 @@ const D1_COUNTERS_EXPRESSION =
   'var persistence = snapshot && snapshot.sections && snapshot.sections.incrementalChatPersistence; ' +
   'if (!persistence) return null; ' +
   'return { deferredAppends: persistence.journal ? persistence.journal.deferredAppends : null, ' +
+  'unsyncedAppends: persistence.journal ? persistence.journal.unsyncedAppends : null, ' +
   'normalSaves: persistence.boundaryMix ? persistence.boundaryMix.normal : null }; }); })()'
 
-async function readD1Counters(page, options = {}) {
-  const value = await withTimeout(
-    page.evaluate(D1_COUNTERS_EXPRESSION),
-    options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS,
-    'getMainPerfSnapshot'
-  )
+/**
+ * D1 counters as read, or null without the two every build counts. A build
+ * from before barrier durability counts no unsynced appends: null there.
+ */
+function d1CountersOf(value) {
   if (
     !isPlainObject(value) ||
     !Number.isSafeInteger(value.deferredAppends) ||
@@ -468,15 +471,102 @@ async function readD1Counters(page, options = {}) {
   ) {
     return null
   }
-  return { deferredAppends: value.deferredAppends, normalSaves: value.normalSaves }
+  return {
+    deferredAppends: value.deferredAppends,
+    unsyncedAppends: Number.isSafeInteger(value.unsyncedAppends) ? value.unsyncedAppends : null,
+    normalSaves: value.normalSaves
+  }
+}
+
+async function readD1Counters(page, options = {}) {
+  const value = await withTimeout(
+    page.evaluate(D1_COUNTERS_EXPRESSION),
+    options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS,
+    'getMainPerfSnapshot'
+  )
+  return d1CountersOf(value)
 }
 
 function d1Delta(before, after) {
   if (!before || !after) return null
   return {
     deferredAppends: after.deferredAppends - before.deferredAppends,
+    unsyncedAppends:
+      Number.isSafeInteger(before.unsyncedAppends) && Number.isSafeInteger(after.unsyncedAppends)
+        ? after.unsyncedAppends - before.unsyncedAppends
+        : null,
     normalSaves: after.normalSaves - before.normalSaves
   }
+}
+
+/**
+ * The journal's two paths: deferred appends with barrier durability off,
+ * unsynced appends with it on. Each names its counter and the other path.
+ */
+const JOURNAL_PATHS = Object.freeze({
+  deferred: { counter: 'deferredAppends', other: 'unsynced' },
+  unsynced: { counter: 'unsyncedAppends', other: 'deferred' }
+})
+/** Each journal path reason, as the smoke's verdict says it. */
+const JOURNAL_PATH_WORDS = Object.freeze({
+  no_deferred_append: 'no deferred journal append',
+  no_unsynced_append: 'no unsynced journal append',
+  deferred_append: 'deferred journal appends with barrier durability on',
+  unsynced_append: 'unsynced journal appends with barrier durability off',
+  deferred_appends_uncounted: 'deferred journal appends not counted',
+  unsynced_appends_uncounted: 'unsynced journal appends not counted'
+})
+
+/** The journal path a run's pinned barrier durability sends its appends down. */
+function journalPathFor(barrierDurability) {
+  if (barrierDurability === 'on') return 'unsynced'
+  if (barrierDurability === 'off') return 'deferred'
+  throw new Error("barrier durability must be pinned 'on' or 'off'")
+}
+
+/**
+ * Why a D1 delta does not show its journal path: no append on it, or one on
+ * the other path, which proves that path was off.
+ */
+function journalPathReasons(delta, journalPath) {
+  const reasons = []
+  const own = JOURNAL_PATHS[journalPath]
+  const ownCount = delta[own.counter]
+  const otherCount = delta[JOURNAL_PATHS[own.other].counter]
+  if (!Number.isSafeInteger(ownCount)) reasons.push(`${journalPath}_appends_uncounted`)
+  else if (!(ownCount > 0)) reasons.push(`no_${journalPath}_append`)
+  if (!Number.isSafeInteger(otherCount)) reasons.push(`${own.other}_appends_uncounted`)
+  else if (otherCount !== 0) reasons.push(`${own.other}_append`)
+  return reasons
+}
+
+/** Main's barrier switch in one fence's read of its section, or null when the read cannot say. */
+function barrierEnabledIn(read) {
+  return isPlainObject(read) &&
+    read.ok === true &&
+    isPlainObject(read.section) &&
+    typeof read.section.enabled === 'boolean'
+    ? read.section.enabled
+    : null
+}
+
+/**
+ * Why a measured window's D1 counters do not show the journal path its run
+ * pinned. Main's barrier section, read at the window's two fences, says
+ * which path main took: a section that cannot say, or that says other than
+ * the pin, fails the window, and its counters are not judged.
+ */
+function windowJournalPathReasons({ d1, barrierBefore, barrierAfter, barrierDurability }) {
+  const pinned = journalPathFor(barrierDurability)
+  if (d1 === null) return ['d1_counters_unavailable']
+  const enabled = barrierEnabledIn(barrierBefore)
+  if (enabled === null || barrierEnabledIn(barrierAfter) !== enabled) {
+    return ['d1_path_unconfirmed']
+  }
+  if (enabled !== (pinned === 'unsynced')) {
+    return [`barrier_switch_${enabled ? 'on' : 'off'}_in_main`]
+  }
+  return journalPathReasons(d1, pinned).map((reason) => `d1_${reason}`)
 }
 
 /**
@@ -603,9 +693,11 @@ async function runLiveSmokeRound(options) {
 /**
  * Why a live-round run is not evidence, or none. Each round must have been
  * started by main, settled as `completed`, and streamed at least one scripted
- * turn; the smoke must also move both D1 counters.
+ * turn; the smoke must also make a normal-boundary save and show its run's
+ * journal path (`barrierDurability`, as the run pinned it).
  */
-function liveRoundsVerdict(rounds) {
+function liveRoundsVerdict(rounds, options = {}) {
+  const journalPath = journalPathFor(options.barrierDurability)
   const reasons = []
   const list = Array.isArray(rounds) ? rounds : []
   for (const purpose of LIVE_ROUND_PURPOSES) {
@@ -627,7 +719,9 @@ function liveRoundsVerdict(rounds) {
     const delta = round.d1 && round.d1.delta
     if (!delta) reasons.push('smoke: D1 counters unavailable')
     else {
-      if (!(delta.deferredAppends > 0)) reasons.push('smoke: no deferred journal append')
+      for (const reason of journalPathReasons(delta, journalPath)) {
+        reasons.push(`smoke: ${JOURNAL_PATH_WORDS[reason]}`)
+      }
       if (!(delta.normalSaves > 0)) reasons.push('smoke: no normal-boundary save')
     }
   }
@@ -644,6 +738,8 @@ function liveRoundPrompt(purpose) {
 }
 
 async function runLiveRoundSequence(options) {
+  // Checked before anything is sent: the smoke is judged on the run's path.
+  journalPathFor(options.barrierDurability)
   const runRound = options.runRound || runLiveSmokeRound
   const rounds = []
   const heavyWarmups = []
@@ -680,7 +776,11 @@ async function runLiveRoundSequence(options) {
     if (round.outcome !== 'settled') break
     previousRoundId = round.roundId
   }
-  return { rounds, heavyWarmups, verdict: liveRoundsVerdict(rounds) }
+  return {
+    rounds,
+    heavyWarmups,
+    verdict: liveRoundsVerdict(rounds, { barrierDurability: options.barrierDurability })
+  }
 }
 
 /**
@@ -724,7 +824,10 @@ module.exports = {
   LIVE_ROUND_PURPOSES,
   NEUTRALIZED_OLLAMA_ENV_KEYS,
   buildScriptedDaemonConfig,
+  d1CountersOf,
+  d1Delta,
   daemonStopFailures,
+  journalPathFor,
   liveRoundsVerdict,
   liveModelsOf,
   liveRoundPrompt,
@@ -739,5 +842,6 @@ module.exports = {
   runLiveSmokeRound,
   startScriptedDaemonChild,
   t2RunOk,
+  windowJournalPathReasons,
   withDaemonStopFailures
 }

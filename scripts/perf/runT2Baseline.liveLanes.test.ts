@@ -282,6 +282,7 @@ class QuietCdpSocket {
 }
 
 type LanesCall = {
+  barrierDurability: string
   page: { evaluate: (expression: string) => Promise<unknown> }
   mainSession: { post: (method: string, params: unknown) => Promise<unknown> }
   lightChatId: string
@@ -297,6 +298,17 @@ type LanesCall = {
   }
   onWindow: (window: { repetition: number; reasons: string[] }) => void
   onCalibrationMarker: (marker: Record<string, unknown>) => void
+}
+
+/**
+ * The smoke's D1 delta: with `true`, appends on the journal path the run
+ * pinned; with `false`, none. A heavy warm-up's are the pinned path's too.
+ */
+function smokeDelta(smoke: boolean, args: string[]) {
+  if (!smoke) return { deferredAppends: 0, unsyncedAppends: 0, normalSaves: 0 }
+  return args.includes('--flag=TASKWRAITH_THREAD_BARRIER_DURABILITY')
+    ? { deferredAppends: 0, unsyncedAppends: 3, normalSaves: 2 }
+    : { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 }
 }
 
 describe('runT2Baseline --live-lanes launch wiring', () => {
@@ -493,10 +505,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
             roundStatus: 'completed',
             turnsFinished: 4,
             d1: {
-              delta:
-                smokeOk || round.prompt.startsWith('M5 heavy warm-up')
-                  ? { deferredAppends: 3, normalSaves: 2 }
-                  : { deferredAppends: 0, normalSaves: 0 }
+              delta: smokeDelta(smokeOk || round.prompt.startsWith('M5 heavy warm-up'), extraArgs)
             }
           }
         },
@@ -571,6 +580,8 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     ])
     expect(lanesCalls).toHaveLength(1)
     const [call] = lanesCalls
+    // The lanes judge each window on the journal path the run pinned.
+    expect(call.barrierDurability).toBe('off')
     expect(call.lightChatId).toBe('perf-light_beside_large_live-chat-01')
     expect(call.lightChatTitle).toBe('Perf fixture light_beside_large_live #1')
     expect(call.heavyChatId).toBe('perf-light_beside_large_live-chat-02')
@@ -626,6 +637,14 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
       error: "the heavy lane's round could not be cancelled"
     })
     expect((result as { ok: boolean }).ok).toBe(false)
+  })
+
+  it('tells the lanes a switch-on run’s journal path, once its smoke took it', async () => {
+    const { error, lanesCalls } = await launchLanes(true, [
+      '--flag=TASKWRAITH_THREAD_BARRIER_DURABILITY'
+    ])
+    expect(error).toBeNull()
+    expect(lanesCalls.map((call) => call.barrierDurability)).toEqual(['on'])
   })
 
   it('never starts the lanes after a failed smoke, and says so', async () => {
@@ -697,7 +716,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
           laneSettledAtMs: { light: 1_165_000, heavy: 1_150_000 },
           reasons: [],
           light: { rounds: 0, roundStartPage: null },
-          d1: { deferredAppends: 3, normalSaves: 2 },
+          d1: { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 },
           main: {
             lanes: { light: {}, heavy: { checkpoint_prepare: { count: 1, bytes: 1_200_000 } } }
           },

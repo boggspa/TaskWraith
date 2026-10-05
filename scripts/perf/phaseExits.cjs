@@ -354,6 +354,10 @@ function judgeWindow(lane, share, { buildVerified, baseline, thresholds }) {
       saves: isPlainObject(lane.d1)
         ? {
             deferredAppends: lane.d1.deferredAppends,
+            // Null from a build older than barrier durability, which counts none.
+            unsyncedAppends: Number.isSafeInteger(lane.d1.unsyncedAppends)
+              ? lane.d1.unsyncedAppends
+              : null,
             normalSaves: lane.d1.normalSaves,
             countedForMs: settled.length > 0 ? Math.max(...settled) - lane.startedAtMs : null
           }

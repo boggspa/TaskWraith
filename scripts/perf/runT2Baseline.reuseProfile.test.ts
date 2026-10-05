@@ -266,7 +266,7 @@ async function launch(
           roundId: round.previousRoundId === null ? 'round-warmup' : 'round-smoke',
           roundStatus: 'completed',
           turnsFinished: 4,
-          d1: { delta: { deferredAppends: 3, normalSaves: 2 } }
+          d1: { delta: { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 } }
         }
       },
       hostWelcomeProbe: async () => ({

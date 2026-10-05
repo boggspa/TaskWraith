@@ -21,6 +21,7 @@ const live = require('./liveRounds.cjs') as {
     record: { neutralized: Array<{ key: string; inherited: boolean }> }
   }
   readD1Counters: (page: FakePage) => Promise<unknown>
+  d1Delta: (before: unknown, after: unknown) => Record<string, number | null> | null
   readScriptedDaemonState: (
     baseUrl: string,
     options?: Record<string, unknown>
@@ -41,7 +42,11 @@ const live = require('./liveRounds.cjs') as {
     rounds: Array<Record<string, unknown>>
     verdict: { ok: boolean; reasons: string[] }
   }>
-  liveRoundsVerdict: (rounds: unknown) => { ok: boolean; reasons: string[] }
+  liveRoundsVerdict: (
+    rounds: unknown,
+    options?: { barrierDurability?: unknown }
+  ) => { ok: boolean; reasons: string[] }
+  windowJournalPathReasons: (input: Record<string, unknown>) => string[]
   daemonStopFailures: (stopped: unknown) => string[]
   withDaemonStopFailures: (verdict: unknown, failures: string[]) => unknown
   t2RunOk: (report: unknown) => boolean
@@ -490,14 +495,34 @@ describe('D1 counters through the page API', () => {
       }
     })
     await expect(
+      live.readD1Counters(page({ deferredAppends: 3, unsyncedAppends: 4, normalSaves: 5 }))
+    ).resolves.toEqual({ deferredAppends: 3, unsyncedAppends: 4, normalSaves: 5 })
+    // A build from before barrier durability does not count unsynced appends.
+    await expect(
       live.readD1Counters(page({ deferredAppends: 3, normalSaves: 5 }))
-    ).resolves.toEqual({ deferredAppends: 3, normalSaves: 5 })
+    ).resolves.toEqual({ deferredAppends: 3, unsyncedAppends: null, normalSaves: 5 })
     await expect(live.readD1Counters(page(null))).resolves.toBeNull()
     await expect(
-      live.readD1Counters(page({ deferredAppends: 'x', normalSaves: 5 }))
+      live.readD1Counters(page({ deferredAppends: 'x', unsyncedAppends: 0, normalSaves: 5 }))
     ).resolves.toBeNull()
     expect(expressions[0]).toBe(live.D1_COUNTERS_EXPRESSION)
     expect(live.D1_COUNTERS_EXPRESSION).toContain('window.api.getMainPerfSnapshot()')
+    // Evaluated as the page would, against main's persistence section.
+    const read = (journal: Record<string, number>) =>
+      runInNewContext(live.D1_COUNTERS_EXPRESSION, {
+        window: {
+          api: {
+            getMainPerfSnapshot: async () => ({
+              sections: { incrementalChatPersistence: { journal, boundaryMix: { normal: 9 } } }
+            })
+          }
+        }
+      })
+    await expect(read({ deferredAppends: 1, unsyncedAppends: 2 })).resolves.toEqual({
+      deferredAppends: 1,
+      unsyncedAppends: 2,
+      normalSaves: 9
+    })
   })
 })
 
@@ -639,7 +664,7 @@ describe('one live smoke round', () => {
         if (expression === live.D1_COUNTERS_EXPRESSION) {
           d1Reads += 1
           const appends = d1Reads === 1 ? d1[0] : d1[1]
-          return { deferredAppends: appends, normalSaves: appends - 6 }
+          return { deferredAppends: appends, unsyncedAppends: 0, normalSaves: appends - 6 }
         }
         if (expression === live.roundStateExpression(CHAT)) {
           const status = statuses.length > 1 ? statuses.shift() : statuses[0]
@@ -689,9 +714,9 @@ describe('one live smoke round', () => {
       roundStatus: 'completed',
       turnsFinished: 5,
       d1: {
-        before: { deferredAppends: 10, normalSaves: 4 },
-        after: { deferredAppends: 17, normalSaves: 11 },
-        delta: { deferredAppends: 7, normalSaves: 7 }
+        before: { deferredAppends: 10, unsyncedAppends: 0, normalSaves: 4 },
+        after: { deferredAppends: 17, unsyncedAppends: 0, normalSaves: 11 },
+        delta: { deferredAppends: 7, unsyncedAppends: 0, normalSaves: 7 }
       }
     })
     expect(result.settledAtMs).toEqual(expect.any(Number))
@@ -837,20 +862,29 @@ describe('the live-round verdict and sequence', () => {
     roundId: `round-${purpose}`,
     roundStatus: 'completed',
     turnsFinished: 6,
-    d1: { delta: { deferredAppends: 4, normalSaves: 3 } },
+    d1: { delta: { deferredAppends: 4, unsyncedAppends: 0, normalSaves: 3 } },
     ...extra
   })
+  const OFF = { barrierDurability: 'off' }
+  const ON = { barrierDurability: 'on' }
+  const smokeWith = (delta: Record<string, unknown>) => [
+    settled('warm_up'),
+    settled('smoke', { d1: { delta: { normalSaves: 2, ...delta } } })
+  ]
 
   it('passes only when both rounds completed and the smoke moved both D1 counters', () => {
-    expect(live.liveRoundsVerdict([settled('warm_up'), settled('smoke')])).toEqual({
+    expect(live.liveRoundsVerdict([settled('warm_up'), settled('smoke')], OFF)).toEqual({
       ok: true,
       reasons: []
     })
     expect(
-      live.liveRoundsVerdict([
-        settled('warm_up', { d1: { delta: null } }),
-        settled('smoke', { roundStatus: 'failed', turnsFinished: 0, d1: { delta: null } })
-      ])
+      live.liveRoundsVerdict(
+        [
+          settled('warm_up', { d1: { delta: null } }),
+          settled('smoke', { roundStatus: 'failed', turnsFinished: 0, d1: { delta: null } })
+        ],
+        OFF
+      )
     ).toEqual({
       ok: false,
       reasons: [
@@ -860,26 +894,64 @@ describe('the live-round verdict and sequence', () => {
       ]
     })
     expect(
-      live.liveRoundsVerdict([
-        settled('warm_up'),
-        settled('smoke', { d1: { delta: { deferredAppends: 0, normalSaves: 2 } } })
-      ]).reasons
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 0, unsyncedAppends: 0 }), OFF).reasons
     ).toEqual(['smoke: no deferred journal append'])
     expect(
-      live.liveRoundsVerdict([
-        settled('warm_up'),
-        settled('smoke', { d1: { delta: { deferredAppends: 1, normalSaves: 0 } } })
-      ]).reasons
+      live.liveRoundsVerdict(
+        [
+          settled('warm_up'),
+          settled('smoke', {
+            d1: { delta: { deferredAppends: 1, unsyncedAppends: 0, normalSaves: 0 } }
+          })
+        ],
+        OFF
+      ).reasons
     ).toEqual(['smoke: no normal-boundary save'])
     expect(
-      live.liveRoundsVerdict([
-        { purpose: 'warm_up', outcome: 'not_started', status: 'queued', turnsFinished: 0 }
-      ]).reasons
+      live.liveRoundsVerdict(
+        [{ purpose: 'warm_up', outcome: 'not_started', status: 'queued', turnsFinished: 0 }],
+        OFF
+      ).reasons
     ).toEqual(['warm_up: not started (main answered queued)', 'smoke: not sent'])
-    expect(live.liveRoundsVerdict([settled('warm_up', { outcome: 'timeout' })]).reasons).toEqual([
-      'warm_up: timeout',
-      'smoke: not sent'
+    expect(
+      live.liveRoundsVerdict([settled('warm_up', { outcome: 'timeout' })], OFF).reasons
+    ).toEqual(['warm_up: timeout', 'smoke: not sent'])
+  })
+
+  it('judges the smoke on the journal path its run pinned, and on no other', () => {
+    // Off: deferred appends, and not one unsynced append.
+    expect(
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 3, unsyncedAppends: 1 }), OFF).reasons
+    ).toEqual(['smoke: unsynced journal appends with barrier durability off'])
+    expect(live.liveRoundsVerdict(smokeWith({ deferredAppends: 3 }), OFF).reasons).toEqual([
+      'smoke: unsynced journal appends not counted'
     ])
+    // On: unsynced appends, and not one deferred append.
+    expect(
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 0, unsyncedAppends: 5 }), ON)
+    ).toEqual({ ok: true, reasons: [] })
+    expect(
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 0, unsyncedAppends: 0 }), ON).reasons
+    ).toEqual(['smoke: no unsynced journal append'])
+    expect(
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 2, unsyncedAppends: 5 }), ON).reasons
+    ).toEqual(['smoke: deferred journal appends with barrier durability on'])
+    expect(live.liveRoundsVerdict(smokeWith({ deferredAppends: 0 }), ON).reasons).toEqual([
+      'smoke: unsynced journal appends not counted'
+    ])
+    // A switch-off smoke is not a switch-on one, nor the other way round.
+    expect(
+      live.liveRoundsVerdict(smokeWith({ deferredAppends: 4, unsyncedAppends: 0 }), ON).reasons
+    ).toEqual([
+      'smoke: no unsynced journal append',
+      'smoke: deferred journal appends with barrier durability on'
+    ])
+    // A verdict that does not know the pin is no verdict.
+    for (const options of [undefined, {}, { barrierDurability: true }]) {
+      expect(() => live.liveRoundsVerdict(smokeWith({}), options)).toThrow(
+        "barrier durability must be pinned 'on' or 'off'"
+      )
+    }
   })
 
   it('sends the smoke only after the warm-up settled, naming the warm-up round as previous', async () => {
@@ -888,6 +960,7 @@ describe('the live-round verdict and sequence', () => {
     const run = (outcomes: string[]) =>
       live.runLiveRoundSequence({
         roundOptions,
+        barrierDurability: 'off',
         runRound: async (options: Record<string, unknown>) => {
           calls.push(options)
           const purpose = calls.length === 1 ? 'warm_up' : 'smoke'
@@ -919,6 +992,109 @@ describe('the live-round verdict and sequence', () => {
       ok: false,
       reasons: ['warm_up: timeout', 'smoke: not sent']
     })
+
+    // Without the run's pin it sends nothing.
+    calls.length = 0
+    await expect(
+      live.runLiveRoundSequence({
+        roundOptions,
+        runRound: async (options: Record<string, unknown>) => {
+          calls.push(options)
+          return settled('warm_up')
+        }
+      })
+    ).rejects.toThrow("barrier durability must be pinned 'on' or 'off'")
+    expect(calls).toEqual([])
+  })
+})
+
+describe('the D1 counters a round or window moved', () => {
+  it('counts each between two reads, the unsynced appends only where both reads counted them', () => {
+    const read = (
+      deferredAppends: number,
+      unsyncedAppends: number | null,
+      normalSaves: number
+    ) => ({
+      deferredAppends,
+      unsyncedAppends,
+      normalSaves
+    })
+    expect(live.d1Delta(read(2, 5, 1), read(9, 8, 4))).toEqual({
+      deferredAppends: 7,
+      unsyncedAppends: 3,
+      normalSaves: 3
+    })
+    for (const [before, after] of [
+      [read(2, null, 1), read(9, 8, 4)],
+      [read(2, 5, 1), read(9, null, 4)]
+    ]) {
+      expect(live.d1Delta(before, after)).toMatchObject({ unsyncedAppends: null })
+    }
+    expect(live.d1Delta(null, read(9, 8, 4))).toBeNull()
+  })
+})
+
+describe('a measured window’s journal path', () => {
+  const section = (enabled: boolean) => ({ ok: true, section: { enabled, ignored: null } })
+  const judge = (input: Record<string, unknown>) =>
+    live.windowJournalPathReasons({
+      d1: { deferredAppends: 9, unsyncedAppends: 0, normalSaves: 3 },
+      barrierBefore: section(false),
+      barrierAfter: section(false),
+      barrierDurability: 'off',
+      ...input
+    })
+  const on = { barrierBefore: section(true), barrierAfter: section(true), barrierDurability: 'on' }
+
+  it('takes the path from main’s barrier section at both fences, as the run pinned it', () => {
+    expect(judge({})).toEqual([])
+    expect(
+      judge({ ...on, d1: { deferredAppends: 0, unsyncedAppends: 7, normalSaves: 3 } })
+    ).toEqual([])
+    expect(judge({ d1: { deferredAppends: 0, unsyncedAppends: 0, normalSaves: 3 } })).toEqual([
+      'd1_no_deferred_append'
+    ])
+    expect(judge({ d1: { deferredAppends: 9, unsyncedAppends: 2, normalSaves: 3 } })).toEqual([
+      'd1_unsynced_append'
+    ])
+    expect(judge({ d1: { deferredAppends: 9, unsyncedAppends: null, normalSaves: 3 } })).toEqual([
+      'd1_unsynced_appends_uncounted'
+    ])
+    expect(
+      judge({ ...on, d1: { deferredAppends: 0, unsyncedAppends: 0, normalSaves: 3 } })
+    ).toEqual(['d1_no_unsynced_append'])
+    expect(
+      judge({ ...on, d1: { deferredAppends: 1, unsyncedAppends: 7, normalSaves: 3 } })
+    ).toEqual(['d1_deferred_append'])
+    expect(judge({ d1: null })).toEqual(['d1_counters_unavailable'])
+  })
+
+  it('fails a window whose section says other than the pin, or cannot say', () => {
+    // Pinned on, and main ran with it off: a failed capture, not a skipped gate.
+    expect(judge({ barrierDurability: 'on' })).toEqual(['barrier_switch_off_in_main'])
+    expect(judge({ barrierBefore: section(true), barrierAfter: section(true) })).toEqual([
+      'barrier_switch_on_in_main'
+    ])
+    for (const [barrierBefore, barrierAfter] of [
+      [null, section(false)],
+      [section(false), { ok: false, reason: 'read_failed' }],
+      [
+        { ok: false, reason: 'section_absent' },
+        { ok: false, reason: 'section_absent' }
+      ],
+      [section(false), section(true)],
+      [section(false), { ok: true, section: { enabled: 'yes' } }],
+      [
+        { ok: true, section: { enabled: 'yes' } },
+        { ok: true, section: { enabled: 'yes' } }
+      ],
+      [section(false), { ok: false, section: { enabled: false } }]
+    ]) {
+      expect(judge({ barrierBefore, barrierAfter })).toEqual(['d1_path_unconfirmed'])
+    }
+    expect(() => judge({ barrierDurability: undefined })).toThrow(
+      "barrier durability must be pinned 'on' or 'off'"
+    )
   })
 })
 

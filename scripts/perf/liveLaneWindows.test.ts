@@ -32,7 +32,7 @@ type WindowRecord = {
   }
   heavy: { idleMs: number; roundsEnded: number }
   activity: Record<'light' | 'heavy', Record<string, number> | null>
-  d1: { deferredAppends: number; normalSaves: number } | null
+  d1: { deferredAppends: number; unsyncedAppends: number | null; normalSaves: number } | null
   main: {
     basis: string
     ringRise: Record<string, number> | null
@@ -95,6 +95,21 @@ const COLUMNS = [
   'reason'
 ]
 
+/** Main's barrier durability section with the switch off: the layer's parts do not exist. */
+function barrierSectionOff() {
+  return {
+    enabled: false,
+    ignored: null,
+    debt: null,
+    port: null,
+    tickets: null,
+    gates: null,
+    threads: null,
+    checkpoints: { initial: { count: 1, bytes: 10, mainMs: 1 } },
+    tornTailsRepaired: 0
+  }
+}
+
 /** Main's barrier durability section with the switch on, `raised` barriers so far. */
 function barrierSection(raised: number) {
   return {
@@ -151,6 +166,12 @@ function world(
     mainDropsHeavy?: boolean
     mainRejectsAtMs?: number
     d1Unavailable?: boolean
+    // The journal path main's saves take, and what main's section says of it.
+    barrier?: 'off' | 'on'
+    // Appends on the other path too, as many.
+    bothPaths?: boolean
+    // A build that does not count unsynced appends.
+    unsyncedUncounted?: boolean
     hostRejectsAtMs?: number
     lightTurnsPerRound?: number | ((index: number) => number)
     lightRoundStatus?: (index: number) => string | null
@@ -476,17 +497,30 @@ function world(
   const readD1Counters = async () => {
     d1ReadsAt.push(now)
     if (options.d1Unavailable) return null
+    const own = Math.floor(deferredAppends)
+    const other = options.bothPaths ? own : 0
     return {
-      deferredAppends: Math.floor(deferredAppends),
+      deferredAppends: options.barrier === 'on' ? other : own,
+      ...(options.unsyncedUncounted
+        ? {}
+        : { unsyncedAppends: options.barrier === 'on' ? own : other }),
       normalSaves: Math.floor(deferredAppends / 3)
     }
   }
+  const readBarrierDurability = async () => ({
+    ok: true,
+    section:
+      options.barrier === 'on'
+        ? barrierSection(Math.floor((now - T0) / 1_000))
+        : barrierSectionOff()
+  })
 
   return {
     lanes,
     hostUnion,
     readMainWindow,
     readD1Counters,
+    readBarrierDurability,
     readLaneActivity,
     activityReads,
     lightRounds,
@@ -504,6 +538,8 @@ function run(w: ReturnType<typeof world>, options: Record<string, unknown> = {})
     heavyChatId: HEAVY,
     readMainWindow: w.readMainWindow,
     readD1Counters: w.readD1Counters,
+    readBarrierDurability: w.readBarrierDurability,
+    barrierDurability: 'off',
     readLaneActivity: w.readLaneActivity,
     hostUnion: w.hostUnion,
     nowMs: w.nowMs,
@@ -678,7 +714,7 @@ describe('runLiveLaneWindows', () => {
   })
 
   it("reads barrier durability at the window's two fences, beside the save counters", async () => {
-    const w = world()
+    const w = world({ barrier: 'on' })
     const readsAt: number[] = []
     // Main's section, its counters rising with the clock.
     const readBarrierDurability = async () => {
@@ -686,7 +722,7 @@ describe('runLiveLaneWindows', () => {
       const raised = Math.floor((w.nowMs() - T0) / 1_000)
       return { ok: true, section: barrierSection(raised) }
     }
-    const result = await run(w, { windows: 2, readBarrierDurability })
+    const result = await run(w, { windows: 2, readBarrierDurability, barrierDurability: 'on' })
     expect(readsAt).toEqual(w.d1ReadsAt)
     result.windows.forEach((window, index) => {
       const [before, after] = readsAt.slice(2 * index, 2 * index + 2)
@@ -702,12 +738,12 @@ describe('runLiveLaneWindows', () => {
     })
   })
 
-  it('judges a window as before when barrier durability cannot be read, and says why', async () => {
+  it('fails a window whose barrier section cannot say which journal path main took, and says why', async () => {
     const absent = await run(world(), {
       windows: 1,
       readBarrierDurability: async () => ({ ok: false, reason: 'section_absent' })
     })
-    expect(absent.windows[0].reasons).toEqual([])
+    expect(absent.windows[0].reasons).toEqual(['d1_path_unconfirmed'])
     expect(absent.windows[0].barrierDurability).toEqual({
       before: null,
       after: null,
@@ -715,22 +751,65 @@ describe('runLiveLaneWindows', () => {
       unavailable: 'section_absent'
     })
     let reads = 0
-    const throwing = await run(world(), {
+    const throwing = await run(world({ barrier: 'on' }), {
       windows: 1,
+      barrierDurability: 'on',
       readBarrierDurability: async () => {
         reads += 1
         if (reads === 2) throw new Error('renderer went away')
         return { ok: true, section: barrierSection(1) }
       }
     })
-    expect(throwing.windows[0].reasons).toEqual([])
+    expect(throwing.windows[0].reasons).toEqual(['d1_path_unconfirmed'])
     expect(throwing.windows[0].barrierDurability).toMatchObject({
       before: { enabled: true },
       after: null,
       unavailable: 'read_failed'
     })
-    const unread = await run(world(), { windows: 1 })
+    const unread = await run(world(), { windows: 1, readBarrierDurability: undefined })
+    expect(unread.windows[0].reasons).toEqual(['d1_path_unconfirmed'])
     expect(unread.windows[0].barrierDurability?.unavailable).toBe('reader_absent')
+  })
+
+  it('judges each window on the journal path main took, as its run pinned it', async () => {
+    const reasonsOf = async (worldOptions: Record<string, unknown>, pin: string) =>
+      (await run(world(worldOptions), { windows: 1, barrierDurability: pin })).windows[0]
+    const off = await reasonsOf({}, 'off')
+    expect(off.reasons).toEqual([])
+    expect(off.d1).toEqual({
+      deferredAppends: expect.any(Number),
+      unsyncedAppends: 0,
+      normalSaves: expect.any(Number)
+    })
+    expect(off.d1!.deferredAppends).toBeGreaterThan(0)
+    const on = await reasonsOf({ barrier: 'on' }, 'on')
+    expect(on.reasons).toEqual([])
+    expect(on.d1).toMatchObject({ deferredAppends: 0 })
+    expect(on.d1!.unsyncedAppends).toBeGreaterThan(0)
+    // Pinned on, and main ran with it off: the window fails, its counters unjudged.
+    expect((await reasonsOf({}, 'on')).reasons).toEqual(['barrier_switch_off_in_main'])
+    expect((await reasonsOf({ barrier: 'on' }, 'off')).reasons).toEqual([
+      'barrier_switch_on_in_main'
+    ])
+    expect((await reasonsOf({ barrier: 'on', bothPaths: true }, 'on')).reasons).toEqual([
+      'd1_deferred_append'
+    ])
+    expect((await reasonsOf({ bothPaths: true }, 'off')).reasons).toEqual(['d1_unsynced_append'])
+    expect((await reasonsOf({ unsyncedUncounted: true }, 'off')).reasons).toEqual([
+      'd1_unsynced_appends_uncounted'
+    ])
+    expect((await reasonsOf({ barrier: 'on', deferredPerWindow: 0 }, 'on')).reasons).toEqual([
+      'd1_no_unsynced_append'
+    ])
+  })
+
+  it('runs no window without the journal path its run pinned', async () => {
+    const w = world()
+    await expect(run(w, { barrierDurability: undefined })).rejects.toThrow(
+      "barrier durability must be pinned 'on' or 'off'"
+    )
+    expect(w.readsAt).toEqual([])
+    expect(w.d1ReadsAt).toEqual([])
   })
 
   it('refuses a window whose rounds never reached the deferred journal', async () => {
@@ -968,6 +1047,12 @@ describe('runLiveLaneWindows', () => {
     expect((await run(world({ d1Unavailable: true }), { windows: 1 })).windows[0].reasons).toEqual([
       'd1_counters_unavailable'
     ])
+    // Counters that are not counts are no read either.
+    const junk = await run(world(), {
+      windows: 1,
+      readD1Counters: async () => ({ deferredAppends: 'x', unsyncedAppends: 0, normalSaves: 1 })
+    })
+    expect(junk.windows[0].reasons).toEqual(['d1_counters_unavailable'])
     expect((await run(world({ mainDropsHeavy: true }), { windows: 1 })).windows[0].reasons).toEqual(
       ['main_heavy_spans_missing']
     )

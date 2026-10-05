@@ -24,12 +24,13 @@ describe('X6 live capture controls', () => {
         roundStatus: 'completed',
         turnsFinished: 1,
         roundId: `r-${ids.length}`,
-        d1: { delta: { normalSaves: 1, deferredAppends: 1 } }
+        d1: { delta: { normalSaves: 1, deferredAppends: 1, unsyncedAppends: 0 } }
       }
     }
     const result = await runLiveRoundSequence({
       heavyChatIds: ['h1', 'h2'],
       roundOptions: { chatId: 'light' },
+      barrierDurability: 'off',
       runRound
     })
     expect(ids).toEqual(['h1', 'h2', 'light', 'light'])
@@ -37,6 +38,7 @@ describe('X6 live capture controls', () => {
     const refused = await runLiveRoundSequence({
       heavyChatIds: ['h'],
       roundOptions: { chatId: 'light' },
+      barrierDurability: 'off',
       runRound: async () => ({ outcome: 'settled', roundStatus: 'completed', turnsFinished: 1 })
     })
     expect(refused.verdict.ok).toBe(false)

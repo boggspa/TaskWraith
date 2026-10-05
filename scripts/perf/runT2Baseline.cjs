@@ -55,6 +55,7 @@ const {
 } = require('./electronChildSession.cjs')
 const { resolveRolloutFlags, pinRolloutFlagsOnSpawnPlan } = require('./rolloutFlags.cjs')
 const { guardSpawnPlan, startBrowserGuard } = require('./browserGuard.cjs')
+const { DURABILITY_SWITCH } = require('./durabilityPair.cjs')
 const {
   buildScriptedDaemonConfig,
   daemonStopFailures,
@@ -2909,6 +2910,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         setCapturePhase('live_rounds', {}, { log: true })
         const readDaemonState =
           options.liveDaemonState || (() => readScriptedDaemonState(liveDaemon.baseUrl))
+        // The journal path every round and window is judged on: unsynced
+        // appends with barrier durability on, deferred ones with it off.
+        const barrierDurability = rolloutFlags.record.effective[DURABILITY_SWITCH]
         const { rounds, heavyWarmups, verdict } = await (
           args.reuseInstanceUserData ? skippedLiveRoundSequence : runLiveRoundSequence
         )({
@@ -2918,6 +2922,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           heavyChatIds: fixture.shape.manyAgents
             ? []
             : fixture.chats.slice(1).map((chat) => chat.appChatId),
+          barrierDurability,
           ...(options.liveSmokeRound ? { runRound: options.liveSmokeRound } : {}),
           roundOptions: {
             page,
@@ -2957,6 +2962,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             lanes = await (options.runLiveLanes || runT2LiveLanes)({
               page,
               mainSession: mainInspector,
+              barrierDurability,
               onCalibrationMarker: (marker) => calibrationMarkers.push(marker),
               onCalibrationFailure: (reason) => calibrationFailures.push(reason),
               windowOptions: { windows: args.liveRepetitions ?? 3 },
@@ -3006,6 +3012,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             agents = await (options.runManyAgents || runT2ManyAgents)({
               page,
               mainSession: mainInspector,
+              barrierDurability,
               // What the run sent before the phase, each round with its chat.
               priorRounds: rounds.map((round) => ({
                 ...round,

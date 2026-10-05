@@ -53,7 +53,7 @@ type Window = {
     threads: Array<Array<Record<string, unknown>> | null>
     threadsUnread: number
   }
-  d1: { deferredAppends: number; normalSaves: number } | null
+  d1: { deferredAppends: number; unsyncedAppends: number | null; normalSaves: number } | null
   main: {
     basis: string
     censored: boolean
@@ -193,8 +193,14 @@ type WorldOptions = {
   /** Every D1 read answers nothing, or only the one before or after the window. */
   d1Unavailable?: boolean | 'before' | 'after'
   d1Frozen?: boolean
-  /** Main's barrier durability section at a moment; no section without it. */
-  barrierSection?: (nowMs: number) => unknown
+  /** The journal path main's saves take, and what main's section says of it by default. */
+  barrier?: 'off' | 'on'
+  /** Appends on the other path too, as many. */
+  bothPaths?: boolean
+  /** A build that does not count unsynced appends. */
+  unsyncedUncounted?: boolean
+  /** Main's barrier durability section at a moment; null for a build without it. */
+  barrierSection?: ((nowMs: number) => unknown) | null
   mainHandleAbsent?: boolean
   mainCensored?: boolean
   /** The ring sampled spans out during the window, or had already before it. */
@@ -249,10 +255,30 @@ type WorldOptions = {
  * behind the page, the daemon's turn record, and a Host that captures every
  * five seconds into whatever union the sampler was handed.
  */
+/** Main's barrier durability section with only its switch read: the layer's own parts unreported. */
+function switchSection(enabled: boolean) {
+  return {
+    enabled,
+    ignored: null,
+    debt: null,
+    port: null,
+    tickets: null,
+    gates: null,
+    threads: null,
+    checkpoints: {},
+    tornTailsRepaired: 0
+  }
+}
+
 function world(options: WorldOptions = {}) {
   const threadCount = options.threads ?? 3
   const seats = options.seats ?? 2
   const mode = options.mode ?? 'serial'
+  // Main's section: as the test gives it, or one that says the world's own switch.
+  const barrierSection =
+    options.barrierSection === undefined
+      ? () => switchSection(options.barrier === 'on')
+      : options.barrierSection
   const poolWaitMs = options.poolWaitMs ?? 0
   const pad = (place: number, width: number) => String(place + 1).padStart(width, '0')
   const chatIds = Array.from(
@@ -451,9 +477,8 @@ function world(options: WorldOptions = {}) {
         if (request === undefined) {
           barrierReadsAt.push(now)
           return {
-            sections: options.barrierSection
-              ? { threadBarrierDurability: options.barrierSection(now) }
-              : {}
+            sections:
+              barrierSection === null ? {} : { threadBarrierDurability: barrierSection(now) }
           }
         }
         if (options.probeFails) throw new Error('main went away')
@@ -573,7 +598,14 @@ function world(options: WorldOptions = {}) {
           return null
         }
         const count = options.d1Frozen ? 0 : deferredAppends
-        return { deferredAppends: count, normalSaves: count }
+        const other = options.bothPaths ? count : 0
+        return {
+          deferredAppends: options.barrier === 'on' ? other : count,
+          ...(options.unsyncedUncounted
+            ? {}
+            : { unsyncedAppends: options.barrier === 'on' ? count : other }),
+          normalSaves: count
+        }
       }
       if (expression.includes('uninstallThreadObserverInPage')) {
         if (options.uninstallFails) throw new Error('renderer went away')
@@ -831,6 +863,7 @@ function world(options: WorldOptions = {}) {
       sleep,
       onCalibrationMarker: (marker: Record<string, unknown>) => calibration.push(marker),
       onCalibrationFailure: (reason: string) => calibrationFailures.push(reason),
+      barrierDurability: 'off',
       ...PHASE_OPTIONS,
       ...extra
     })
@@ -1113,12 +1146,17 @@ describe('a many-agent window, seats one after another', () => {
   it('counts the deferred appends between the window’s fences', async () => {
     const w = world()
     // Thirteen turns of each thread end between the two reads.
-    expect((await w.run()).windows[0].d1).toEqual({ deferredAppends: 39, normalSaves: 39 })
+    expect((await w.run()).windows[0].d1).toEqual({
+      deferredAppends: 39,
+      unsyncedAppends: 0,
+      normalSaves: 39
+    })
   })
 
   it('reads barrier durability at the window’s fences, beside the D1 counters', async () => {
     const awaitsAt = (atMs: number) => Math.floor((atMs - T0) / 100)
     const w = world({
+      barrier: 'on',
       barrierSection: (atMs) => ({
         enabled: true,
         ignored: null,
@@ -1140,7 +1178,7 @@ describe('a many-agent window, seats one after another', () => {
         tornTailsRepaired: 0
       })
     })
-    const [window] = (await w.run()).windows
+    const [window] = (await w.run({ barrierDurability: 'on' })).windows
     expect(w.barrierReadsAt).toHaveLength(2)
     expect(w.barrierReadsAt).toEqual(w.d1ReadsAt)
     const [before, after] = w.barrierReadsAt
@@ -1153,9 +1191,9 @@ describe('a many-agent window, seats one after another', () => {
     })
   })
 
-  it('judges the window as before when barrier durability cannot be read, and says why', async () => {
-    const [window] = (await world().run()).windows
-    expect(window.reasons).toEqual([])
+  it('fails the window when its barrier section cannot say which journal path main took', async () => {
+    const [window] = (await world({ barrierSection: null }).run()).windows
+    expect(window.reasons).toEqual(['d1_path_unconfirmed'])
     expect(window.barrierDurability).toEqual({
       before: null,
       after: null,
@@ -1592,6 +1630,31 @@ describe('a window that is not evidence says why', () => {
     expect(result.firstBurst).toEqual({ unavailable: 'daemon_turns_unavailable' })
     // The rest of the window's evidence stands.
     expect(result.windows[0].waiting.pool).not.toBeNull()
+  })
+
+  it('judges the window on the journal path main took, as its run pinned it', async () => {
+    const on = await world({ barrier: 'on' }).run({ barrierDurability: 'on' })
+    expect(on.verdict).toEqual({ ok: true, reasons: [] })
+    expect(on.windows[0].d1).toEqual({ deferredAppends: 0, unsyncedAppends: 39, normalSaves: 39 })
+    // Pinned on, and main ran with it off: the window fails, its counters unjudged.
+    expect(await reasonsOf({}, { barrierDurability: 'on' })).toEqual(['barrier_switch_off_in_main'])
+    expect(await reasonsOf({ barrier: 'on' })).toEqual(['barrier_switch_on_in_main'])
+    expect(
+      await reasonsOf({ barrier: 'on', bothPaths: true }, { barrierDurability: 'on' })
+    ).toEqual(['d1_deferred_append'])
+    expect(await reasonsOf({ barrier: 'on', d1Frozen: true }, { barrierDurability: 'on' })).toEqual(
+      ['d1_no_unsynced_append']
+    )
+    expect(await reasonsOf({ bothPaths: true })).toEqual(['d1_unsynced_append'])
+    expect(await reasonsOf({ unsyncedUncounted: true })).toEqual(['d1_unsynced_appends_uncounted'])
+  })
+
+  it('starts nothing without the journal path its run pinned', async () => {
+    const w = world()
+    await expect(w.run({ barrierDurability: undefined })).rejects.toThrow(
+      "barrier durability must be pinned 'on' or 'off'"
+    )
+    expect(w.events).toEqual([])
   })
 
   it('names missing or unmoved D1 counters', async () => {

@@ -148,6 +148,21 @@ function laneError(code: string, reason?: string) {
 
 type Span = { chatId: string; kind: string; startedAt: number; durationMs: number }
 
+/** Main's barrier durability section with only its switch read: the layer's own parts unreported. */
+function switchSection(enabled: boolean) {
+  return {
+    enabled,
+    ignored: null,
+    debt: null,
+    port: null,
+    tickets: null,
+    gates: null,
+    threads: null,
+    checkpoints: {},
+    tornTailsRepaired: 0
+  }
+}
+
 /**
  * The phase's surroundings on a virtual clock: scripted lanes (a heavy round
  * that streams from its start, light rounds every four seconds), each lane's
@@ -173,10 +188,17 @@ function world(
     probeLate?: number
     /** Main answers a window's end with a snapshot that has no window. */
     endNoWindow?: boolean
-    /** Main's barrier durability section at a moment; no section without it. */
-    barrierSection?: (nowMs: number) => unknown
+    /** The journal path main's saves take, and what main's section says of it by default. */
+    barrier?: 'off' | 'on'
+    /** Main's barrier durability section at a moment; null for a build without it. */
+    barrierSection?: ((nowMs: number) => unknown) | null
   } = {}
 ) {
+  // Main's section: as the test gives it, or one that says the world's own switch.
+  const barrierSection =
+    options.barrierSection === undefined
+      ? () => switchSection(options.barrier === 'on')
+      : options.barrierSection
   let now = T0
   const markers: number[] = []
   const endAsks: number[] = []
@@ -313,9 +335,8 @@ function world(
         if (request === undefined) {
           barrierReadsAt.push(now)
           return {
-            sections: options.barrierSection
-              ? { threadBarrierDurability: options.barrierSection(now) }
-              : {}
+            sections:
+              barrierSection === null ? {} : { threadBarrierDurability: barrierSection(now) }
           }
         }
         return options.endNoWindow && request.window.action === 'end'
@@ -423,7 +444,9 @@ function world(
   const page = {
     evaluate: async (expression: string) => {
       if (expression === D1_COUNTERS_EXPRESSION) {
-        return { deferredAppends, normalSaves: deferredAppends }
+        return options.barrier === 'on'
+          ? { deferredAppends: 0, unsyncedAppends: deferredAppends, normalSaves: deferredAppends }
+          : { deferredAppends, unsyncedAppends: 0, normalSaves: deferredAppends }
       }
       if (options.pageFails) throw new Error('renderer went away')
       return vm.runInNewContext(expression, {
@@ -536,6 +559,7 @@ function world(
         nowMs: () => now,
         sleep,
         windowOptions: WINDOW_OPTIONS,
+        barrierDurability: 'off',
         ...extra
       }),
     page
@@ -632,6 +656,7 @@ describe('runT2LiveLanes', () => {
   it("reads barrier durability through the page at each window's fences", async () => {
     const raisedAt = (atMs: number) => Math.floor((atMs - T0) / 100)
     const w = world({
+      barrier: 'on',
       barrierSection: (atMs) => ({
         enabled: true,
         ignored: null,
@@ -643,7 +668,7 @@ describe('runT2LiveLanes', () => {
         tornTailsRepaired: 0
       })
     })
-    const result = await w.run()
+    const result = await w.run({ barrierDurability: 'on' })
     expect(result.windows.map((window) => window.reasons)).toEqual([[], []])
     expect(w.barrierReadsAt).toHaveLength(4)
     result.windows.forEach((window, index) => {
@@ -655,12 +680,32 @@ describe('runT2LiveLanes', () => {
         change: { enabled: true, port: { started: raisedAt(after) - raisedAt(before) } }
       })
     })
-    // A build without the section: the windows are judged as before.
-    const without = await world().run()
-    expect(without.windows.map((window) => window.reasons)).toEqual([[], []])
+    // A build without the section cannot say which journal path the windows took.
+    const without = await world({ barrierSection: null }).run()
+    expect(without.windows.map((window) => window.reasons)).toEqual([
+      ['d1_path_unconfirmed'],
+      ['d1_path_unconfirmed']
+    ])
     for (const window of without.windows) {
       expect(window.barrierDurability?.unavailable).toBe('section_absent')
     }
+  })
+
+  it('judges the windows on the journal path its run pinned, and starts nothing without it', async () => {
+    // Pinned on, and main ran with it off: each window fails.
+    const mismatched = await world().run({ barrierDurability: 'on' })
+    expect(mismatched.windows.map((window) => window.reasons)).toEqual([
+      ['barrier_switch_off_in_main'],
+      ['barrier_switch_off_in_main']
+    ])
+    const on = await world({ barrier: 'on' }).run({ barrierDurability: 'on' })
+    expect(on.verdict).toEqual({ ok: true, reasons: [] })
+    expect(on.windows[0].d1).toMatchObject({ deferredAppends: 0 })
+    const w = world()
+    await expect(w.run({ barrierDurability: undefined })).rejects.toThrow(
+      "barrier durability must be pinned 'on' or 'off'"
+    )
+    expect(w.events).toEqual([])
   })
 
   it('names a lane that could not start, and still stops everything', async () => {
@@ -1055,9 +1100,10 @@ function liveApp(options: { dropEndOf?: string[] } = {}) {
         ...(options?.window ? { window: probeWindow(options.window) } : {}),
         sections: {
           incrementalChatPersistence: {
-            journal: { deferredAppends },
+            journal: { deferredAppends, unsyncedAppends: 0 },
             boundaryMix: { normal: deferredAppends }
-          }
+          },
+          threadBarrierDurability: switchSection(false)
         }
       })
     }
@@ -1244,6 +1290,7 @@ function liveApp(options: { dropEndOf?: string[] } = {}) {
         cancelEvery: 3,
         cancelAfterMs: 100,
         laneOptions: { pollMs: 50, lightGapMs: 100 },
+        barrierDurability: 'off',
         windowOptions: {
           windows: 2,
           windowMs: 5_000,

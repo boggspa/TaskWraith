@@ -54,7 +54,12 @@ const {
 const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cjs')
 const { liveLaneWindowsVerdict } = require('./liveLaneWindows.cjs')
 const { cancelRoundExpression } = require('./liveRoundLanes.cjs')
-const { readD1Counters } = require('./liveRounds.cjs')
+const {
+  d1Delta,
+  journalPathFor,
+  readD1Counters,
+  windowJournalPathReasons
+} = require('./liveRounds.cjs')
 const { barrierDurabilityAtFences, readBarrierDurability } = require('./barrierDurability.cjs')
 const {
   threadObserverConfig,
@@ -382,7 +387,8 @@ async function tidyAgents({ page, snapshot, chatIds, callTimeoutMs }) {
  *   callTimeoutMs?: number, laneOptions?: object,
  *   onCalibrationMarker?: (marker: object) => void,
  *   onCalibrationFailure?: (reason: string) => void,
- *   onWindow?: (window: object) => void
+ *   onWindow?: (window: object) => void,
+ *   barrierDurability: 'on' | 'off'
  * }} options
  */
 async function runT2ManyAgents(options) {
@@ -417,6 +423,8 @@ async function runT2ManyAgents(options) {
   if (!finiteNonNegative(configuredTurnMs) || configuredTurnMs === 0) {
     throw new Error('configuredTurnMs must be positive')
   }
+  // The journal path the window is judged on, as the run pinned it.
+  journalPathFor(options.barrierDurability)
   const settings = {}
   for (const name of Object.keys(DEFAULT_OPTIONS)) {
     const value = options[name] === undefined ? DEFAULT_OPTIONS[name] : options[name]
@@ -481,8 +489,9 @@ async function runT2ManyAgents(options) {
       return null
     }
   }
-  // Barrier durability at the same fences as the D1 counters; it never rules
-  // the window out.
+  // Barrier durability at the same fences as the D1 counters. Its switch says
+  // which journal path the window's saves took: a window it cannot say that
+  // for is not judged on its counters.
   const readBarrier = () => readBarrierDurability(page, { timeoutMs: settings.callTimeoutMs })
   const probeMain = async (request) => {
     try {
@@ -671,18 +680,19 @@ async function runT2ManyAgents(options) {
       for (const outcome of Object.keys(turns.notDone)) reasons.push(`turns_${outcome}`)
     }
 
-    // D1: real rounds reached the deferred journal inside the fences.
+    // D1: real rounds reached the journal inside the fences, on the path the
+    // run pinned and main's section says it took.
     const d1After = await readD1()
     const barrierAfter = await readBarrier()
-    const d1 =
-      d1Before && d1After
-        ? {
-            deferredAppends: d1After.deferredAppends - d1Before.deferredAppends,
-            normalSaves: d1After.normalSaves - d1Before.normalSaves
-          }
-        : null
-    if (d1 === null) reasons.push('d1_counters_unavailable')
-    else if (!(d1.deferredAppends > 0)) reasons.push('d1_no_deferred_append')
+    const d1 = d1Delta(d1Before, d1After)
+    reasons.push(
+      ...windowJournalPathReasons({
+        d1,
+        barrierBefore,
+        barrierAfter,
+        barrierDurability: options.barrierDurability
+      })
+    )
 
     // Main's spans that started inside the window, eight threads a read,
     // with any the ring evicted since the window closed given back.

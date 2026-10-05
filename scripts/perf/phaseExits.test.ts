@@ -74,7 +74,7 @@ function laneWindow(overrides: Dict = {}): Dict {
       rounds: 4,
       roundStartPage: { count: 4, p50Ms: 218, p95Ms: 326, p99Ms: 326, maxMs: 326 }
     },
-    d1: { deferredAppends: 370, normalSaves: 723 },
+    d1: { deferredAppends: 370, unsyncedAppends: 0, normalSaves: 723 },
     main: {
       lanes: {
         light: { checkpoint_prepare: { count: 103, bytes: 24_000_000 } },
@@ -905,7 +905,12 @@ describe('what each window is read against', () => {
       clock: 'markers',
       mainLoopDelay: { p50Ms: 11, p95Ms: 418, p99Ms: 694, maxMs: 1137 },
       // Counted from the window's start until the last lane settled.
-      saves: { deferredAppends: 370, normalSaves: 723, countedForMs: 165_000 },
+      saves: {
+        deferredAppends: 370,
+        unsyncedAppends: 0,
+        normalSaves: 723,
+        countedForMs: 165_000
+      },
       bytesStaged: { light: 24_000_000, heavy: 2_400_000_000 },
       lightRoundStart: { count: 4, p50Ms: 218, p95Ms: 326 }
     })
@@ -927,15 +932,27 @@ describe('what each window is read against', () => {
       [laneWindow({ laneSettledAtMs: { light: null, heavy: 1_150_000 } })],
       [shareWindow()]
     ).windows
-    expect(settled.saves).toEqual({ deferredAppends: 370, normalSaves: 723, countedForMs: 150_000 })
+    expect(settled.saves).toEqual({
+      deferredAppends: 370,
+      unsyncedAppends: 0,
+      normalSaves: 723,
+      countedForMs: 150_000
+    })
     for (const laneSettledAtMs of [undefined, { light: null, heavy: null }]) {
       const [unsettled] = evaluate([laneWindow({ laneSettledAtMs })], [shareWindow()]).windows
       expect(unsettled.saves).toEqual({
         deferredAppends: 370,
+        unsyncedAppends: 0,
         normalSaves: 723,
         countedForMs: null
       })
     }
+    // A window from a build that counted no unsynced appends says so.
+    const [older] = evaluate(
+      [laneWindow({ d1: { deferredAppends: 370, normalSaves: 723 } })],
+      [shareWindow()]
+    ).windows
+    expect(older.saves).toMatchObject({ deferredAppends: 370, unsyncedAppends: null })
   })
 })
 
