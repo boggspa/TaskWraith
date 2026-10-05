@@ -176,6 +176,12 @@ export interface IncrementalChatJournalStats {
   compactionsQueued: number
   /** Under debt compaction: folds the idle sweep asked the worker for. */
   idleCompactionsRequested: number
+  /**
+   * Under debt compaction: quiet chats the idle sweep left unfolded because
+   * their lines held under half their checkpoint's bytes, once for each size
+   * of their lines.
+   */
+  idleCompactionsDeclined: number
   /** Under `noteDurabilityDebt`: chats with lines `checkpointAll` left to their log. */
   shutdownCheckpointsSkipped: number
   /** Re-anchors by cause, each synced on the calling thread, with or without the option. */
@@ -282,11 +288,14 @@ export interface IncrementalChatJournalOptions {
    *
    * Idle and quit then write no checkpoint on the calling thread. The idle
    * sweep asks the worker to fold each chat that has written nothing for
-   * `idleCheckpointMs` once its lines reach `idleCompactionBytes`, the same
-   * way. `checkpointAll` writes nothing: the barriers raised at quit pay what
-   * each chat owes, its lines are replayed at the next start, and a fold
-   * running at quit is stopped, its sealed segment folded later. Each chat
-   * it leaves with lines is counted as `shutdownCheckpointsSkipped`.
+   * `idleCheckpointMs` once its lines reach `idleCompactionBytes` and half the
+   * bytes of its checkpoint, the same way. A fold rewrites the whole
+   * checkpoint, so one at idle then writes no more for each byte of lines
+   * than one at the trigger does on a thread of twice the trigger, about
+   * three times. `checkpointAll` writes nothing: the barriers raised at quit
+   * pay what each chat owes, its lines are replayed at the next start, and a
+   * fold running at quit is stopped, its sealed segment folded later. Each
+   * chat it leaves with lines is counted as `shutdownCheckpointsSkipped`.
    *
    * A power cut can then leave segments that do not chain: a segment that
    * reached the disk while the end of the one before it did not, or segments
@@ -341,8 +350,9 @@ export interface IncrementalChatJournalOptions {
   idleCheckpointMs?: number
   /**
    * Under `noteDurabilityDebt` without a descriptor cache: the least bytes of
-   * lines for which the idle sweep asks the worker to fold a quiet chat.
-   * Below it a cold load replays the lines instead. Defaults to 1 MiB.
+   * lines for which the idle sweep asks the worker to fold a quiet chat, as
+   * long as they also hold half its checkpoint's bytes. Below it a cold load
+   * replays the lines instead. Defaults to 1 MiB.
    */
   idleCompactionBytes?: number
   maxUncheckpointedMs?: number
@@ -461,6 +471,11 @@ interface RuntimeState {
   sealed?: SealedSegment | null
   /** Debt compaction only: when the segments reached `maxJournalBytes`, while they stay there. */
   aboveTriggerSince?: number | null
+  /**
+   * Debt compaction only: the bytes of lines the idle sweep last found under
+   * half the checkpoint's bytes.
+   */
+  idleDeclinedAt?: number
 }
 
 interface ParsedJournal {
@@ -658,6 +673,7 @@ export function createIncrementalChatJournal(
   let compactionLongestMsAboveTrigger = 0
   let compactionsQueued = 0
   let idleCompactionsRequested = 0
+  let idleCompactionsDeclined = 0
   let shutdownCheckpointsSkipped = 0
   let erasures = 0
   const reanchors = Object.fromEntries(
@@ -2579,9 +2595,11 @@ export function createIncrementalChatJournal(
 
   /**
    * Under debt compaction, the idle sweep: a fold in the worker for each chat
-   * quiet for `idleCheckpointMs` whose lines reach `idleCompactionBytes`. It
-   * reads no file for a chat it passes over. Returns the folds started, or
-   * waiting for room in the worker.
+   * quiet for `idleCheckpointMs` whose lines reach `idleCompactionBytes` and
+   * half the bytes of its checkpoint. It reads no file for a chat it passes
+   * over, and the size of a checkpoint only when the chat's lines have
+   * changed since it last looked. Returns the folds started, or waiting for
+   * room in the worker.
    */
   const requestIdleCompactions = (nowMs: number): Promise<DeferredCheckpointResult>[] => {
     const requested: Promise<DeferredCheckpointResult>[] = []
@@ -2592,9 +2610,17 @@ export function createIncrementalChatJournal(
         state.lastAppendAtMs === null ||
         nowMs - state.lastAppendAtMs < idleCheckpointMs ||
         compactions.has(chatId) ||
-        waitingForWorker.has(chatId)
+        waitingForWorker.has(chatId) ||
+        state.idleDeclinedAt === state.journalBytes
       )
         continue
+      const checkpointBytes =
+        fs.statSync(checkpointPath(chatId), { throwIfNoEntry: false })?.size ?? 0
+      if (state.journalBytes * 2 < checkpointBytes) {
+        state.idleDeclinedAt = state.journalBytes
+        idleCompactionsDeclined += 1
+        continue
+      }
       const folding = compact(chatId, idleCompactionBytes)
       // Failures are counted where they happen.
       folding.catch(() => {})
@@ -2843,6 +2869,7 @@ export function createIncrementalChatJournal(
     compactionLongestMsAboveTrigger,
     compactionsQueued,
     idleCompactionsRequested,
+    idleCompactionsDeclined,
     shutdownCheckpointsSkipped,
     reanchors: Object.fromEntries(
       INCREMENTAL_CHAT_REANCHOR_CAUSES.map((cause) => [cause, { ...reanchors[cause] }])

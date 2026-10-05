@@ -54,6 +54,7 @@ const CHAT = 'chat-1'
 const OTHER = 'chat-2'
 const THIRD = 'chat-3'
 const CHECKPOINT = `${CHAT}.checkpoint.json`
+const ACTIVE = `${CHAT}.mutations.jsonl`
 const SEALED = `${CHAT}.sealed.mutations.jsonl`
 
 function chat(id: string, revision: number, content = `content ${revision}`): ChatRecord {
@@ -202,6 +203,34 @@ describe('idle and quit under the barrier, without a descriptor cache', () => {
     expect(journal.checkpointIdle(clock)).toBe(1)
     expect(worker.started.map((each) => each.request.chatId)).toEqual([CHAT])
     expect(looked).not.toContain(OTHER)
+  })
+
+  it('folds at idle only once the lines hold half the bytes of the checkpoint they would rewrite, and looks again only when they change', () => {
+    const journal = open()
+    let previous = chat(CHAT, 1, 'x'.repeat(4_000))
+    journal.initialize(CHAT, previous)
+    const checkpointBytes = fs.statSync(path.join(baseDir, CHECKPOINT)).size
+    const lineBytes = (): number =>
+      fs.statSync(path.join(baseDir, ACTIVE), { throwIfNoEntry: false })?.size ?? 0
+    const appendOne = (): void => {
+      const next = chat(CHAT, previous.persistenceRevision! + 1)
+      journal.append(deriveChatRecordMutation(previous, next))
+      previous = next
+    }
+    while (lineBytes() < 500) appendOne()
+    expect(lineBytes() * 2).toBeLessThan(checkpointBytes)
+
+    clock += 1_000
+    expect(journal.checkpointIdle(clock)).toBe(0)
+    expect(journal.checkpointIdle(clock + 1_000)).toBe(0)
+    expect(journal.stats()).toMatchObject({ idleCompactionsDeclined: 1 })
+    expect(worker.started).toHaveLength(0)
+
+    while (lineBytes() * 2 < checkpointBytes) appendOne()
+    clock += 1_000
+    expect(journal.checkpointIdle(clock)).toBe(1)
+    expect(worker.started).toHaveLength(1)
+    expect(journal.stats()).toMatchObject({ idleCompactionsDeclined: 1 })
   })
 
   it('asks no second fold of a chat whose fold is running', () => {
