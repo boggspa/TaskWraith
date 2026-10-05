@@ -18,6 +18,14 @@ export interface ChatPersistenceDetailBatch<TCheckpoint> {
   commit(): readonly TCheckpoint[]
   /** Side-channel dependencies, deliberately absent from checkpoint DTOs. */
   dependencies?(): readonly ToolDetailDependency[]
+  /**
+   * Asked after `commit`: whether this save's `stage` left the activity inline
+   * only because its bytes are not durable yet, being staged in a batch, or
+   * passed over while the batch before it runs or none is admitted. Such a row
+   * retries on a later save and is no failure. A row it could not stage at
+   * all is.
+   */
+  awaitsDurability?(runId: string, activityId: string): boolean
 }
 
 export interface ChatPersistencePreparationResult {
@@ -27,7 +35,10 @@ export interface ChatPersistencePreparationResult {
   externalizationFailed: boolean
 }
 
-function hasUnexternalizedJumboLiveToolDetail(chat: ChatRecord): boolean {
+function hasUnexternalizedJumboLiveToolDetail(
+  chat: ChatRecord,
+  awaitsDurability: (runId: string, activityId: string) => boolean
+): boolean {
   const activeRunIds = new Set(
     chat.runs
       .filter((run) =>
@@ -54,7 +65,8 @@ function hasUnexternalizedJumboLiveToolDetail(chat: ChatRecord): boolean {
         sealed &&
         carriesRaw &&
         !activity.detailRef &&
-        estimateLiveToolActivityDetailBytes(activity) >= LIVE_TOOL_DETAIL_EXTERNALIZE_BYTES
+        estimateLiveToolActivityDetailBytes(activity) >= LIVE_TOOL_DETAIL_EXTERNALIZE_BYTES &&
+        !awaitsDurability(message.runId, activity.id)
       ) {
         return true
       }
@@ -70,8 +82,13 @@ function hasUnexternalizedJumboLiveToolDetail(chat: ChatRecord): boolean {
  * persist its strict checkpoint -> publish stripped chat rows. A thrown
  * preparation failure retains the original inline rows; a failed individual
  * stage leaves that activity inline. Both tell the caller to materialize its
- * full compatibility record. The helper owns no paths or stores; all I/O
- * authority arrives through the injected batch/read/checkpoint ports.
+ * full compatibility record. A staged batch orders the same steps across
+ * saves instead: its `stage` returns a ref only once an earlier batch made
+ * those bytes and their checkpoint durable, and its `commit` returns no
+ * checkpoint. A row it leaves inline meanwhile, which `awaitsDurability`
+ * names, is no failure; a commit that throws still is. The helper owns no
+ * paths or stores; all I/O authority arrives through the injected
+ * batch/read/checkpoint ports.
  */
 export function prepareChatForPersistence<TCheckpoint>(input: {
   chat: ChatRecord
@@ -117,7 +134,12 @@ export function prepareChatForPersistence<TCheckpoint>(input: {
     externalizedChat = externalization.chat
     externalizedActivitiesById = externalization.strippedActivitiesById
     externalizationOpRequiredIds = externalization.opRequiredActivityIds
-    if (hasUnexternalizedJumboLiveToolDetail(externalizedChat)) {
+    if (
+      hasUnexternalizedJumboLiveToolDetail(
+        externalizedChat,
+        (runId, activityId) => detailBatch.awaitsDurability?.(runId, activityId) === true
+      )
+    ) {
       externalizationFailed = true
     }
   } catch (error) {

@@ -24,6 +24,9 @@
  *   a finished run is stamped only once every row of it has a ref.
  * - `commit()` writes the new batch's segments without a sync, on the calling
  *   thread, and returns no checkpoints, so the save persists none.
+ * - `awaitsDurability(run, activity)` then says the row was left inline only
+ *   for that wait, staged or passed over, so the save does not count it as a
+ *   failure. A row it could not serialize, and a commit that throws, are.
  *
  * The batch then runs off the event loop, asking the port for every sync at
  * background class: the segment files; then each directory on the path to
@@ -89,6 +92,8 @@ export interface ToolActivityDetailStagingBatch extends ChatPersistenceDetailBat
   stage(runId: string, activity: ToolActivity): ToolActivityDetailRef | null
   /** Writes the new batch's segments and sets it running; returns no checkpoints. */
   commit(): ToolActivityDetailCheckpoint[]
+  /** Whether this save left the activity inline only until its bytes are durable: staged, or passed over. */
+  awaitsDurability(runId: string, activityId: string): boolean
 }
 
 export interface ToolActivityDetailStagingSnapshot {
@@ -324,6 +329,16 @@ export function createToolActivityDetailStaging(
     const staged = new Refs()
     /** The ready refs this save took: spent once it commits. */
     const taken: Array<[string, string, ToolActivityDetailRef]> = []
+    /** The rows this save left inline until their bytes are durable, by run and activity. */
+    const awaiting = new Map<string, Set<string>>()
+    const awaits = (runId: string, activityId: string): void => {
+      let activities = awaiting.get(runId)
+      if (!activities) {
+        activities = new Set()
+        awaiting.set(runId, activities)
+      }
+      activities.add(activityId)
+    }
     let committed = false
     return {
       stage(runId, activity) {
@@ -344,12 +359,14 @@ export function createToolActivityDetailStaging(
         }
         if (!writer) {
           rows.passedOver += 1
+          awaits(runId, activity.id)
           return null
         }
         const ref = writer.stage(runId, activity)
         if (ref) {
           staged.set(runId, activity.id, ref)
           rows.staged += 1
+          awaits(runId, activity.id)
         }
         return null
       },
@@ -364,6 +381,9 @@ export function createToolActivityDetailStaging(
           release(chatId, thread)
         }
         return []
+      },
+      awaitsDurability(runId, activityId) {
+        return awaiting.get(runId)?.has(activityId) === true
       }
     }
   }
