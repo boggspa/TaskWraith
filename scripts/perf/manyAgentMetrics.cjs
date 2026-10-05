@@ -10,10 +10,10 @@
  * round's.
  *
  * Per thread and over all threads:
- * - rounds sent in the window, rounds completed in it, and of the rounds
- *   that ran at some moment of it, those that ended any other way (whenever
- *   they did: the runner follows a round to its end) and those never seen to
- *   end;
+ * - rounds sent in the window, rounds that ran at some moment of it, rounds
+ *   completed in it, and of the rounds that ran in it, those that ended any
+ *   other way (whenever they did: the runner follows a round to its end) and
+ *   those never seen to end;
  * - send to accepted, as the page measured the call;
  * - accepted to the round's first model turn starting, by the daemon's
  *   clock against the runner's (a turn can begin before the runner hears the
@@ -24,6 +24,10 @@
  *   turn. That last figure is the app's own time per turn whether the seats
  *   ran one after another or together;
  * - how many agents were streaming at once, against how many were asked for.
+ *
+ * The round figures are taken from every round that ran at some moment of
+ * the window, whole, whether it was sent in the window or before it: a round
+ * of many seats can outlast the window, which would otherwise have none.
  *
  * Waiting behind the app's own limits is reported as waiting, by cause, from
  * main's admission counters and its wait spans (`summariseAgentWaiting`).
@@ -120,7 +124,7 @@ function runningAtOnce(turns, window) {
 
 function emptyMeasures() {
   return {
-    rounds: { sent: 0, completed: 0, endedOther: {}, unended: 0, withoutTurn: 0 },
+    rounds: { sent: 0, ran: 0, completed: 0, endedOther: {}, unended: 0, withoutTurn: 0 },
     turns: { started: 0, done: 0, notDone: {} },
     sendToAccepted: [],
     acceptedToFirstTurn: [],
@@ -148,18 +152,18 @@ function measureThread(thread, turns, window) {
   }
   for (const [index, round] of thread.rounds.entries()) {
     // A round that ran at some moment of the window is the window's: one
-    // that failed after the window closed still carried its load.
+    // that failed after the window closed still carried its load, and one
+    // sent before it opened ran its turns in it.
     const ranInWindow =
       round.sentAtMs < window.endedAtMs &&
       (round.endedAtMs === null || round.endedAtMs >= window.startedAtMs)
-    if (ranInWindow) {
-      if (round.endedAtMs === null) measures.rounds.unended += 1
-      else if (round.status !== 'completed') {
-        countInto(measures.rounds.endedOther, String(round.status))
-      } else if (inWindow(round.endedAtMs)) measures.rounds.completed += 1
-    }
-    if (!inWindow(round.sentAtMs)) continue
-    measures.rounds.sent += 1
+    if (!ranInWindow) continue
+    measures.rounds.ran += 1
+    if (inWindow(round.sentAtMs)) measures.rounds.sent += 1
+    if (round.endedAtMs === null) measures.rounds.unended += 1
+    else if (round.status !== 'completed') {
+      countInto(measures.rounds.endedOther, String(round.status))
+    } else if (inWindow(round.endedAtMs)) measures.rounds.completed += 1
     measures.sendToAccepted.push(round.pageMs)
     const next = thread.rounds[index + 1]
     const untilMs = next ? next.sentAtMs : Infinity
@@ -258,7 +262,7 @@ function agentsAsked({ threads, seats, seatMode }) {
  *     endedAtMs: number | null, status: string | null }> }>,
  *   turns: Array<{ model: string, startedAtMs: number, endedAtMs: number | null, outcome: string }>,
  *   seats: number, seatMode: 'serial' | 'parallel', configuredTurnMs: number
- * }} input the daemon's turns must cover the window and every round sent in it
+ * }} input the daemon's turns must cover every round that ran in the window, from its send
  */
 function summariseManyAgents(input) {
   const { window, threads, turns, seats, seatMode, configuredTurnMs } = isPlainObject(input)

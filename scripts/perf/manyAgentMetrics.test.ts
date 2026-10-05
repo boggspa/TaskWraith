@@ -13,6 +13,7 @@ type Timings = {
 type Measures = {
   rounds: {
     sent: number
+    ran: number
     completed: number
     endedOther: Record<string, number>
     unended: number
@@ -150,11 +151,12 @@ describe('timings over a list of values', () => {
 })
 
 describe('one thread’s measures', () => {
-  it('counts the rounds sent in the window, completed in it, and still running', () => {
+  it('counts the rounds sent in the window, run in it, completed in it, and still running', () => {
     const { threads } = summarise()
     // a1 was sent before the window and ended in it; a3 ended after it.
     expect(threads[0].rounds).toEqual({
       sent: 2,
+      ran: 3,
       completed: 2,
       endedOther: {},
       unended: 0,
@@ -162,6 +164,7 @@ describe('one thread’s measures', () => {
     })
     expect(threads[1].rounds).toEqual({
       sent: 2,
+      ran: 2,
       completed: 1,
       endedOther: {},
       unended: 1,
@@ -184,6 +187,7 @@ describe('one thread’s measures', () => {
     const { threads } = summarise({ threads: [failed], turns: [] })
     expect(threads[0].rounds).toEqual({
       sent: 5,
+      ran: 5,
       completed: 1,
       endedOther: { failed: 2, cancelled: 1 },
       unended: 0,
@@ -230,11 +234,12 @@ describe('one thread’s measures', () => {
     })
   })
 
-  it('times send to accepted as the page measured it, for rounds sent in the window', () => {
+  it('times send to accepted as the page measured it, for every round that ran in the window', () => {
     const { threads } = summarise()
+    // a1 too, though it was sent before the window.
     expect(threads[0].sendToAcceptedMs).toEqual({
-      count: 2,
-      minMs: 45,
+      count: 3,
+      minMs: 40,
       p50Ms: 45,
       p95Ms: 50,
       maxMs: 50
@@ -244,8 +249,8 @@ describe('one thread’s measures', () => {
 
   it('times accepted, and send, to the round’s first model turn by the daemon’s clock', () => {
     const { threads } = summarise()
-    expect(threads[0].acceptedToFirstTurnMs).toMatchObject({ count: 2, minMs: 40, maxMs: 50 })
-    expect(threads[0].sendToFirstTurnMs).toMatchObject({ count: 2, minMs: 100, maxMs: 100 })
+    expect(threads[0].acceptedToFirstTurnMs).toMatchObject({ count: 3, minMs: 40, maxMs: 50 })
+    expect(threads[0].sendToFirstTurnMs).toMatchObject({ count: 3, minMs: 100, maxMs: 100 })
     expect(threads[1].acceptedToFirstTurnMs).toMatchObject({ count: 2, minMs: 30, maxMs: 80 })
   })
 
@@ -292,17 +297,18 @@ describe('one thread’s measures', () => {
   it('sets the spacing of a round’s turns against the model’s own pace', () => {
     const { threads, configuredTurnMs } = summarise()
     expect(configuredTurnMs).toBe(1_600)
-    // Rounds a2 and a3: each turn streamed 1,600 ms, the next began 200,
+    // Rounds a1 to a3: each turn streamed 1,600 ms, the next began 200,
     // 250 and 400 ms after the one before ended.
     expect(threads[0].turnSpacing).toEqual({
       modelTurnMs: { count: 5, minMs: 1_600, p50Ms: 1_600, p95Ms: 1_600, maxMs: 1_600 },
       startToStartMs: { count: 3, minMs: 1_800, p50Ms: 1_850, p95Ms: 2_000, maxMs: 2_000 },
       betweenTurnsMs: { count: 3, minMs: 200, p50Ms: 250, p95Ms: 400, maxMs: 400 },
       overlapped: 0,
-      // a2: 3,900 ms with 3,200 streaming, two turns; a3: 5,950 with 4,800, three.
-      appMsPerTurn: { count: 2, minMs: 350, p50Ms: 350, p95Ms: 383.333, maxMs: 383.333 }
+      // a1: 2,000 ms with 1,600 streaming, one turn; a2: 3,900 with 3,200,
+      // two; a3: 5,950 with 4,800, three.
+      appMsPerTurn: { count: 3, minMs: 350, p50Ms: 383.333, p95Ms: 400, maxMs: 400 }
     })
-    expect(threads[0].roundMs).toMatchObject({ count: 2, minMs: 3_900, maxMs: 5_950 })
+    expect(threads[0].roundMs).toMatchObject({ count: 3, minMs: 2_000, maxMs: 5_950 })
   })
 
   it('counts turns that ran together as overlapped, not as a gap', () => {
@@ -319,11 +325,34 @@ describe('one thread’s measures', () => {
     expect(threads[0].runningAtOnce).toEqual({ max: 1 })
   })
 
-  it('judges the spacing only of rounds sent in the window and seen to end', () => {
+  it('judges the spacing of every round that ran in the window and was seen to end', () => {
     const { threads } = summarise()
-    // b2 never ended and a1 was sent before the window: neither is judged.
+    // b2 never ended: it is not judged. a1 was sent before the window and is.
     expect(threads[1].roundMs).toMatchObject({ count: 1, minMs: 1_900 })
-    expect(threads[0].roundMs?.count).toBe(2)
+    expect(threads[0].roundMs?.count).toBe(3)
+  })
+
+  it('takes no figure from a round over before the window began or sent after it', () => {
+    const rounds = [
+      round('a0', 7_000, 7_050, 30, 9_500),
+      round('a1', 10_100, 10_150, 40, 12_000),
+      round('a2', 20_000, 20_050, 35, 22_000)
+    ]
+    const turns = [
+      turn('m:a', 7_100, 8_700),
+      turn('m:a', 10_200, 11_800),
+      turn('m:a', 20_100, 21_700)
+    ]
+    const { threads } = summarise({ threads: [{ ...SERIAL, rounds }], turns })
+    expect(threads[0].rounds).toMatchObject({ sent: 1, ran: 1, completed: 1 })
+    expect(threads[0].sendToAcceptedMs).toEqual({
+      count: 1,
+      minMs: 40,
+      p50Ms: 40,
+      p95Ms: 40,
+      maxMs: 40
+    })
+    expect(threads[0].roundMs).toMatchObject({ count: 1, minMs: 1_900 })
   })
 
   it('counts a turn still streaming when its round ended up to that end', () => {
@@ -368,6 +397,7 @@ describe('one thread’s measures', () => {
     })
     expect(threads[0].rounds).toEqual({
       sent: 1,
+      ran: 1,
       completed: 0,
       endedOther: {},
       unended: 1,
@@ -398,6 +428,7 @@ describe('all threads together', () => {
     const { overall } = summarise()
     expect(overall.rounds).toEqual({
       sent: 4,
+      ran: 5,
       completed: 3,
       endedOther: {},
       unended: 1,
@@ -405,19 +436,19 @@ describe('all threads together', () => {
     })
     expect(overall.turns).toEqual({ started: 8, done: 7, notDone: { streaming: 1 } })
     expect(overall.sendToAcceptedMs).toEqual({
-      count: 4,
+      count: 5,
       minMs: 12,
-      p50Ms: 15,
+      p50Ms: 40,
       p95Ms: 50,
       maxMs: 50
     })
-    expect(overall.acceptedToFirstTurnMs).toMatchObject({ count: 4, minMs: 30, maxMs: 80 })
+    expect(overall.acceptedToFirstTurnMs).toMatchObject({ count: 5, minMs: 30, maxMs: 80 })
     expect(overall.turnSpacing.startToStartMs).toMatchObject({ count: 4, minMs: 10, maxMs: 2_000 })
     expect(overall.turnSpacing.betweenTurnsMs).toMatchObject({ count: 3, minMs: 200 })
     expect(overall.turnSpacing.overlapped).toBe(1)
-    expect(overall.turnSpacing.appMsPerTurn).toMatchObject({ count: 3, minMs: 145, maxMs: 383.333 })
+    expect(overall.turnSpacing.appMsPerTurn).toMatchObject({ count: 4, minMs: 145, maxMs: 400 })
     expect(overall.turnSpacing.modelTurnMs).toMatchObject({ count: 7, minMs: 1_600, maxMs: 1_600 })
-    expect(overall.roundMs).toMatchObject({ count: 3, minMs: 1_900, maxMs: 5_950 })
+    expect(overall.roundMs).toMatchObject({ count: 4, minMs: 1_900, maxMs: 5_950 })
     // What two threads share is added up, not replaced.
     const both = summarise({
       threads: [

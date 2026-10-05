@@ -7,7 +7,13 @@ const require = createRequire(import.meta.url)
 type Verdict = { ok: boolean; reasons: string[] }
 type Timings = { count: number; minMs: number; p50Ms: number; p95Ms: number; maxMs: number } | null
 type Measures = {
-  rounds: { sent: number; completed: number; endedOther: Record<string, number>; unended: number }
+  rounds: {
+    sent: number
+    ran: number
+    completed: number
+    endedOther: Record<string, number>
+    unended: number
+  }
   turns: { started: number; done: number; notDone: Record<string, number> }
   sendToAcceptedMs: Timings
   acceptedToFirstTurnMs: Timings
@@ -211,6 +217,8 @@ type WorldOptions = {
   uninstallAnswers?: unknown
   /** The sends take this long to stop once the last round has ended. */
   stopTakesMs?: number
+  /** Each send takes this long to leave the runner. */
+  sendTakesMs?: number
   cancelRejects?: boolean
   cancelHangs?: boolean
   hostHole?: boolean
@@ -359,6 +367,7 @@ function world(options: WorldOptions = {}) {
       return
     }
     const sentAtMs = now
+    if (options.sendTakesMs) advanceTo(now + options.sendTakesMs)
     const round: Round = {
       roundId: `t${place + 1}-${thread.rounds.length + 1}`,
       sentAtMs,
@@ -859,7 +868,9 @@ describe('a many-agent window, seats one after another', () => {
         untilMs: T0 + 31_000
       }
     ])
-    expect(w.daemonReads).toEqual([{ fromMs: T0 + 11_000, toMs: T0 + 37_900 }])
+    // The model's turns from the first sends: a round that ran in the window
+    // may have been sent before it.
+    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 37_900 }])
   })
 
   it('reports each thread’s rounds, its send and first-turn times and its turn spacing', async () => {
@@ -874,21 +885,28 @@ describe('a many-agent window, seats one after another', () => {
     expect(agents?.threads).toHaveLength(3)
     for (const [place, thread] of agents!.threads.entries()) {
       expect(thread).toMatchObject({ thread: place + 1, chatId: w.chatIds[place], failure: null })
-      expect(thread.rounds).toMatchObject({ sent: 6, completed: 6, endedOther: {}, unended: 0 })
+      // Seven rounds ran in the window: the one sent 7,700 ms in, and six sent in it.
+      expect(thread.rounds).toMatchObject({
+        sent: 6,
+        ran: 7,
+        completed: 6,
+        endedOther: {},
+        unended: 0
+      })
       expect(thread.turns).toEqual({ started: 11, done: 11, notDone: {} })
-      expect(thread.sendToAcceptedMs).toEqual(timing(45, 6))
-      expect(thread.acceptedToFirstTurnMs).toEqual(timing(100, 6))
-      expect(thread.sendToFirstTurnMs).toEqual(timing(150, 6))
-      expect(thread.roundMs).toEqual(timing(3_600, 6))
+      expect(thread.sendToAcceptedMs).toEqual(timing(45, 7))
+      expect(thread.acceptedToFirstTurnMs).toEqual(timing(100, 7))
+      expect(thread.sendToFirstTurnMs).toEqual(timing(150, 7))
+      expect(thread.roundMs).toEqual(timing(3_600, 7))
       expect(thread.turnSpacing).toEqual({
         modelTurnMs: timing(1_600, 11),
-        startToStartMs: timing(1_700, 6),
-        betweenTurnsMs: timing(100, 6),
+        startToStartMs: timing(1_700, 7),
+        betweenTurnsMs: timing(100, 7),
         overlapped: 0,
-        appMsPerTurn: timing(200, 6)
+        appMsPerTurn: timing(200, 7)
       })
     }
-    expect(agents?.overall.rounds).toMatchObject({ sent: 18, completed: 18 })
+    expect(agents?.overall.rounds).toMatchObject({ sent: 18, ran: 21, completed: 18 })
     expect(agents?.overall.turns).toEqual({ started: 33, done: 33, notDone: {} })
   })
 
@@ -1092,7 +1110,7 @@ describe('a many-agent window, seats one after another', () => {
     const w = world({ clockOffsetMs: 0.75 })
     const result = await w.run()
     expect(result.windows[0].startedAtMs).toBe(T0 + 11_000.75)
-    expect(w.daemonReads).toEqual([{ fromMs: T0 + 11_000, toMs: T0 + 37_900 }])
+    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 37_900 }])
     expect(result.verdict).toEqual({ ok: true, reasons: [] })
   })
 
@@ -1460,6 +1478,19 @@ describe('a window that is not evidence says why', () => {
     expect(many.windows[0].host?.reasons).toEqual(['transport_hole'])
   })
 
+  it('times the lead-in, and reads the model’s turns, from before the first sends', async () => {
+    // Three sends, each 10 ms: the third leaves 20 ms after the first.
+    const w = world({ sendTakesMs: 10 })
+    const result = await w.run()
+    expect(result.lanes?.threads.map((thread) => thread.rounds[0])).toMatchObject([
+      { sentAtMs: T0 },
+      { sentAtMs: T0 + 10 },
+      { sentAtMs: T0 + 20 }
+    ])
+    expect(result.leadIn?.startedAtMs).toBe(T0)
+    expect(w.daemonReads[0].fromMs).toBe(T0)
+  })
+
   it('polls the lanes at its interval while it waits for their first rounds', async () => {
     const result = await world().run({ leadInPollMs: 400 })
     // The tenth look, 3,600 ms in, is the first to see every first round ended.
@@ -1475,7 +1506,7 @@ describe('a window that is not evidence says why', () => {
     })
     // The settle time had already passed: no wait is asked for, least of all a negative one.
     expect(w.sleeps.filter((ms) => !(ms > 0))).toEqual([])
-    expect(w.daemonReads).toEqual([{ fromMs: T0 + 11_000, toMs: T0 + 44_400 }])
+    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 44_400 }])
   })
 
   it('names a Host fold the union refused', async () => {

@@ -451,9 +451,11 @@ async function runT2ManyAgents(options) {
     }
   }
 
-  /** Wait until every thread has had a round end, or has failed without one. */
-  async function leadIn() {
-    const startedAtMs = nowMs()
+  /**
+   * Wait until every thread has had a round end, or has failed without one.
+   * `startedAtMs` is taken before the first sends.
+   */
+  async function leadIn(startedAtMs) {
     for (;;) {
       const snapshot = lanes.snapshot()
       const ready = snapshot.threads.filter((thread) =>
@@ -475,9 +477,9 @@ async function runT2ManyAgents(options) {
     }
   }
 
-  async function measureWindow(hostUnion, leadInComplete) {
+  async function measureWindow(hostUnion, leadInRecord) {
     const reasons = []
-    if (!leadInComplete) reasons.push('lead_in_incomplete')
+    if (!leadInRecord.complete) reasons.push('lead_in_incomplete')
     // The Host fold needs a read strictly before the window starts.
     if (hostUnion !== null) await sleep(settings.hostCaptureWaitMs)
     const before = lanes.snapshot()
@@ -533,14 +535,15 @@ async function runT2ManyAgents(options) {
     if (drained.drainedAtMs === null) reasons.push('threads_not_drained')
     if (after.observer.faults > before.observer.faults) reasons.push('observer_faults')
 
-    // The scripted model's own record of its turns, to this moment.
+    // The scripted model's own record of its turns, from the first sends to
+    // this moment: a round that ran in the window may have been sent before it.
     let turns = null
     try {
       turns = await options.readDaemonTurns({
         // The daemon keys whole milliseconds, and refuses a range that ends
         // after its own clock: widen a fractional start outward, and end at
         // the last whole millisecond.
-        fromMs: Math.floor(startedAtMs),
+        fromMs: Math.floor(leadInRecord.startedAtMs),
         toMs: Math.floor(nowMs())
       })
     } catch {
@@ -706,12 +709,11 @@ async function runT2ManyAgents(options) {
       startFailure = `agents_not_started:${reason}`.slice(0, 200)
     }
     if (startFailure === null) {
+      const sendsFromMs = nowMs()
       lanes.start()
-      leadInRecord = await leadIn()
+      leadInRecord = await leadIn(sendsFromMs)
       if (leadInRecord.threadsReady === 0) startFailure = 'agents_not_started:no_round_completed'
-      else {
-        windows.push(await measureWindow(samplerStarted ? union : null, leadInRecord.complete))
-      }
+      else windows.push(await measureWindow(samplerStarted ? union : null, leadInRecord))
     }
   } finally {
     try {
