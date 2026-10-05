@@ -259,6 +259,38 @@ describe('phase exits of a live capture', () => {
     expect(rowOf(elsewhere, 'mainThreadSyncs')).toMatchObject({ verdict: 'fail', value: 0.02 })
   })
 
+  it("counts the journal's checkpoints among the thread's stores", () => {
+    const owners = {
+      toolDetail: 0,
+      cataloguePublication: 0.0002,
+      journalCheckpoint: 0.0006,
+      journal: 0.0001,
+      runEvents: 0.0001,
+      runQueue: 0,
+      other: 0
+    }
+    const result = evaluate([quietLane()], [quietShares({ syncOwners: owners })])
+    expect(rowOf(result, 'threadStoreSyncs')).toMatchObject({ verdict: 'pass', value: 0.001 })
+    const over = evaluate(
+      [quietLane()],
+      [quietShares({ syncOwners: { ...owners, journalCheckpoint: 0.0007 } })]
+    )
+    expect(rowOf(over, 'threadStoreSyncs')).toMatchObject({ verdict: 'fail', value: 0.0011 })
+    // A table from before checkpoints were named apart holds them in the journal's.
+    const { journalCheckpoint: _checkpoints, ...older } = owners
+    const before = evaluate([quietLane()], [quietShares({ syncOwners: older })])
+    expect(rowOf(before, 'threadStoreSyncs')).toMatchObject({ verdict: 'pass', value: 0.0004 })
+    // One the build could not vouch for leaves the stores unsummed.
+    const unvouched = evaluate(
+      [quietLane()],
+      [quietShares({ syncOwners: { ...owners, journalCheckpoint: null } })]
+    )
+    expect(rowOf(unvouched, 'threadStoreSyncs')).toMatchObject({
+      verdict: 'not_measured',
+      value: null
+    })
+  })
+
   it('takes a custom set of thresholds', () => {
     const result = evaluate([laneWindow()], [shareWindow()], {
       thresholds: { ...PHASE_EXIT_THRESHOLDS, maxMainBusyShare: 0.95, maxMainLoopDelayP95Ms: 500 }
@@ -1040,6 +1072,8 @@ const BUNDLE_TEXT = [
   'function saveChat(chat) { beginPublication(chat); finishPublication(chat); settleBurst(chat) }',
   'function persistIncrementalChatForHostSave(chat) { appendRunEvent(chat); writeRunQueueJobs(chat) }',
   'const checkpointChat = (chatId) => computeChatSubRevisions(chatId)',
+  'function checkpointIdle() { checkpointAll(); checkpointDeferred(); checkpointIdleDeferred() }',
+  'function recover(id) { replaceAuthoritativeCheckpoint(id); checkpoint(id); initialize(id) }',
   'function recordUsage(entry) { commitUnderFence(entry); acquireInstanceFence(entry) }',
   'function releaseInstanceFence(fence) { persistOrThrow(fence); rememberChatRecord(fence) }',
   'function assertSourceMutationAllowed(id) { assertRecoveryHoldAllows(id) }',

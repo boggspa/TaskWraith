@@ -44,7 +44,7 @@ const BUNDLE_LINES = [
   /* 14 */ 'function prepareChatForPersistence(input) { persistDetailCheckpoint(input) }',
   /* 15 */ 'function saveChat(chat) { beginPublication(chat); finishPublication(chat); settleBurst(chat) }',
   /* 16 */ 'function persistIncrementalChatForHostSave(chat) { appendRunEvent(chat); writeRunQueueJobs(chat) }',
-  /* 17 */ 'const checkpointChat = (chatId) => checkpoint(chatId)',
+  /* 17 */ 'const checkpointChat = (chatId) => checkpoint(chatId) || initialize(chatId) || replaceAuthoritativeCheckpoint(chatId) || checkpointIdle() || checkpointAll() || checkpointDeferred(chatId) || checkpointIdleDeferred()',
   /* 18 */ 'function recordUsage(entry) { releaseLock(entry) }',
   /* 19 */ 'function commitUnderFence(work) { acquireInstanceFence(work); releaseInstanceFence(work) }',
   /* 20 */ 'function persistOrThrow() {}',
@@ -332,7 +332,8 @@ describe('main-thread shares of a measured window', () => {
     const [window] = measure().windows
     expect(window.syncOwners).toEqual({
       cataloguePublication: 0.08,
-      journal: 0.04,
+      journalCheckpoint: 0.01,
+      journal: 0.03,
       runEvents: 0.03,
       toolDetail: 0.02,
       runQueue: 0.01,
@@ -397,7 +398,8 @@ describe('main-thread shares of a measured window', () => {
     expect(window.shares.sync).toBe(0.29)
     expect(window.syncOwners).toEqual({
       cataloguePublication: 0.08,
-      journal: 0.06,
+      journalCheckpoint: 0.01,
+      journal: 0.05,
       runEvents: 0.03,
       toolDetail: 0.02,
       runQueue: 0.01,
@@ -410,6 +412,55 @@ describe('main-thread shares of a measured window', () => {
     })
     expect(window.syncOtherCallers).toEqual([
       { callers: 'writeJsonAdmitted <- writeJson <- updateSettings', share: 0.01 }
+    ])
+  })
+
+  it('names the journal’s checkpoints apart from its appends, wherever one is written', () => {
+    const persist = [js('saveChat'), js('persistIncrementalChatForHostSave'), js('persist')]
+    const rows = spendingTheRest([
+      // The save's terminal checkpoint, the compaction an append forces, and
+      // a new thread's first checkpoint.
+      {
+        stack: [...persist, js('checkpoint'), js('atomicWrite'), js('fsyncDirectory'), ...sync],
+        us: 1_000
+      },
+      {
+        stack: [...persist, js('append'), js('checkpoint'), js('atomicWrite'), ...sync],
+        us: 1_000
+      },
+      {
+        stack: [...persist, js('ensureBaseline'), js('initialize'), js('atomicWrite'), ...sync],
+        us: 1_000
+      },
+      // Checkpoints no save asks for: idle, at quit, prepared off the thread
+      // (one alone, or the idle ones), and the re-anchor.
+      { stack: [js('onTimer'), js('checkpointIdle'), js('checkpoint'), ...sync], us: 1_000 },
+      { stack: [js('quit'), js('checkpointAll'), js('atomicWrite'), ...sync], us: 1_000 },
+      { stack: [js('checkpointDeferred'), js('fsyncDirectory'), ...sync], us: 1_000 },
+      {
+        stack: [js('onTimer'), js('checkpointIdleDeferred'), js('fsyncDirectory'), ...sync],
+        us: 1_000
+      },
+      {
+        stack: [js('recover'), js('replaceAuthoritativeCheckpoint'), js('atomicWrite'), ...sync],
+        us: 1_000
+      },
+      // Another store's checkpoint or initialize is not the journal's.
+      { stack: [js('checkpoint'), js('atomicWrite'), ...sync], us: 1_000 },
+      { stack: [js('initialize'), js('writeJson'), ...sync], us: 1_000 },
+      // The journal's appends stay the journal's.
+      { stack: [...persist, js('append'), js('appendLine'), ...sync], us: 2_000 }
+    ])
+    const [window] = measure({ profile: buildProfile(rows) }).windows
+    expect(window.syncOwners).toMatchObject({
+      // Beside the window's own: an append, and a checkpoint through `checkpointChat`.
+      journal: 0.05,
+      journalCheckpoint: 0.09,
+      other: 0.02
+    })
+    expect(window.syncOtherCallers).toEqual([
+      { callers: 'atomicWrite <- checkpoint', share: 0.01 },
+      { callers: 'writeJson <- initialize', share: 0.01 }
     ])
   })
 
@@ -501,6 +552,7 @@ describe('main-thread shares of a measured window', () => {
     expect(window.syncOwners).toMatchObject({ sessionCheckpoint: 0.01, other: 0 })
     expect(window.plainFileCallOwners).toEqual({
       cataloguePublication: 0.02,
+      journalCheckpoint: 0,
       journal: 0,
       runEvents: 0,
       toolDetail: 0,
@@ -684,7 +736,8 @@ describe('the flusher share and the build', () => {
     expect(result.windows[0].syncOwners).toEqual({
       toolDetail: 0.02,
       cataloguePublication: 0.08,
-      journal: 0.04,
+      journalCheckpoint: 0.01,
+      journal: 0.03,
       runEvents: null,
       runQueue: null,
       usageLedger: null,
@@ -696,6 +749,19 @@ describe('the flusher share and the build', () => {
     })
     expect(result.windows[0].syncOtherCallers).toBeNull()
     expect(result.windows[0].shares.sync).toBe(0.2)
+  })
+
+  it('needs every name of an owner’s lists in the build, as it needs its single names', () => {
+    const lines = BUNDLE_LINES.map((line) => line.replaceAll('initialize(', 'setUp('))
+    const result = measure({ buildScripts: buildScripts(lines) })
+    expect(result.build.missingNames).toEqual(['initialize'])
+    expect(result.windows[0].syncOwners).toMatchObject({
+      toolDetail: 0.02,
+      cataloguePublication: 0.08,
+      journalCheckpoint: null,
+      journal: null,
+      other: null
+    })
   })
 
   it('does the same for the plain file calls’ owners, but still counts the calls', () => {
@@ -711,6 +777,7 @@ describe('the flusher share and the build', () => {
     expect(window.plainFileCallOwners).toEqual({
       toolDetail: 0,
       cataloguePublication: 0,
+      journalCheckpoint: 0,
       journal: 0,
       runEvents: 0,
       runQueue: 0,
@@ -1133,11 +1200,16 @@ describe('the profile clock', () => {
       estimate: { lagMs: 5, lagBoundsMs: [0, 10] }
     }
     const [window] = measure({ windows: [legacy], markers: [], ...estimated }).windows
-    expect(window.syncOwners).toMatchObject({ cataloguePublication: 0.08, journal: 0.08 })
+    expect(window.syncOwners).toMatchObject({
+      cataloguePublication: 0.08,
+      journalCheckpoint: 0.02,
+      journal: 0.06
+    })
     expect(window.syncOwnerBounds).toEqual({
       toolDetail: [0.04, 0.04],
       cataloguePublication: [0, 0.16],
-      journal: [0.06, 0.08],
+      journalCheckpoint: [0.02, 0.02],
+      journal: [0.04, 0.06],
       runEvents: [0.06, 0.06],
       runQueue: [0.02, 0.02],
       usageLedger: [0.04, 0.04],
@@ -1161,7 +1233,12 @@ describe('the profile clock', () => {
       buildScripts: renamed,
       ...estimated
     }).windows
-    expect(unowned.syncOwners).toMatchObject({ journal: 0.08, runEvents: null, other: null })
+    expect(unowned.syncOwners).toMatchObject({
+      journalCheckpoint: 0.02,
+      journal: 0.06,
+      runEvents: null,
+      other: null
+    })
     expect(unowned.syncOwnerBounds).toMatchObject({
       cataloguePublication: [0, 0.16],
       runEvents: null,

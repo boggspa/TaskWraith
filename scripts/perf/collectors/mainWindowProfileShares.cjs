@@ -88,14 +88,34 @@ const PREPARE_UNDER = 'prepareChatForPersistence'
 const HASHING_UNDER = 'computeChatSubRevisions'
 /**
  * Who a sync or a plain file call belongs to, by the functions above it; the
- * first row that matches wins. Tool detail is first because its checkpoint
- * appends a run event of its own. The thread's stores come before the rest,
- * so a store's write made inside other work (a fenced commit, say) stays the
- * store's.
+ * first row that matches wins. A row matches when the stack holds any of its
+ * names, or every name of one of its lists. Tool detail is first because its
+ * checkpoint appends a run event of its own. The thread's stores come before
+ * the rest, so a store's write made inside other work (a fenced commit, say)
+ * stays the store's.
  */
 const OWNERS = Object.freeze([
   ['toolDetail', ['prepareChatForPersistence', 'persistDetailCheckpoint']],
   ['cataloguePublication', ['beginPublication', 'finishPublication', 'settleBurst']],
+  // The journal's checkpoints, apart from its appends: a new thread's first,
+  // the save's terminal one, the compaction an append forces, idle and quit
+  // checkpoints, one prepared off the thread, and the re-anchor. Barrier
+  // durability leaves these synced where they are written. `checkpoint` and
+  // `initialize` are common names, so they count only inside the journal's
+  // own calls.
+  [
+    'journalCheckpoint',
+    [
+      ['persistIncrementalChatForHostSave', 'checkpoint'],
+      ['persistIncrementalChatForHostSave', 'initialize'],
+      ['checkpointChat', 'checkpoint'],
+      'checkpointIdle',
+      'checkpointAll',
+      'checkpointDeferred',
+      'checkpointIdleDeferred',
+      'replaceAuthoritativeCheckpoint'
+    ]
+  ],
   ['journal', ['persistIncrementalChatForHostSave', 'checkpointChat']],
   ['runEvents', ['appendRunEvent']],
   ['runQueue', ['writeRunQueueJobs']],
@@ -134,7 +154,7 @@ const SHARE_NAMES = Object.freeze({
   wholeThreadCopy: [COPY_UNDER, 'canCloneRecord'],
   prepareForSave: [PREPARE_UNDER],
   transcriptHashing: [HASHING_UNDER],
-  syncOwners: OWNERS.flatMap(([, names]) => names)
+  syncOwners: OWNERS.flatMap(([, names]) => names.flat())
 })
 
 /** Frames that say nothing about who called. */
@@ -469,7 +489,9 @@ function createClassifier(timeline, { classRanges, waitLines }) {
       classShare: classShareOf(leaf),
       waitFraction: waitFractionOf(leaf)
     }
-    const owner = OWNERS.find(([, owners]) => owners.some(has))
+    const owner = OWNERS.find(([, names]) =>
+      names.some((name) => (Array.isArray(name) ? name.every(has) : has(name)))
+    )
     if (kind.sync) {
       kind.syncOwner = owner ? owner[0] : 'other'
       if (!owner) {
@@ -651,7 +673,7 @@ function describeInterval(interval, build) {
   const firstUnvouched =
     build.missing === null
       ? -1
-      : OWNERS.findIndex(([, names]) => names.some((name) => build.missing.has(name)))
+      : OWNERS.findIndex(([, names]) => names.flat().some((name) => build.missing.has(name)))
   const vouched = (index) => firstUnvouched < 0 || index < firstUnvouched
   const owned = (byOwner) => {
     const owners = {}

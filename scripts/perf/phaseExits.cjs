@@ -27,9 +27,10 @@
  *
  * Two exits speak about syncs. `mainThreadSyncs` is every sync on the main
  * thread. `threadStoreSyncs` is the part owned by the thread's own stores
- * (the journal, run events, tool detail, catalogue publication), which is
- * what phase 1 moves; the run queue, the usage ledger and the workspace lock
- * files sync on the main thread too and count only in the first.
+ * (the journal, its checkpoints included, run events, tool detail, catalogue
+ * publication), which is what phase 1 moves; the run queue, the usage ledger
+ * and the workspace lock files sync on the main thread too and count only in
+ * the first.
  *
  * Bytes written for the heavy thread: the app counts only the whole-thread
  * bytes it stages for the Host (`checkpoint_prepare` spans), not what the
@@ -50,9 +51,12 @@ const SCHEMA_VERSION = 1
 const THREAD_STORE_OWNERS = Object.freeze([
   'toolDetail',
   'cataloguePublication',
+  'journalCheckpoint',
   'journal',
   'runEvents'
 ])
+/** Owners named apart later: a table from before holds their time in another owner's. */
+const NAMED_APART_LATER = new Set(['journalCheckpoint'])
 /** The span whose bytes are a whole thread record staged for the Host. */
 const STAGED_BYTES_KIND = 'checkpoint_prepare'
 const USAGE =
@@ -208,11 +212,12 @@ function readPhaseBaselineFiles(baselineReportPaths, workload, fsApi = fs) {
   )
 }
 
-/** The four thread-store owners together, or null when one has no figure. */
+/** The thread-store owners together, or null when one has no figure. */
 function threadStoreSum(owners, pick) {
   if (!isPlainObject(owners)) return null
   let sum = 0
   for (const owner of THREAD_STORE_OWNERS) {
+    if (owners[owner] === undefined && NAMED_APART_LATER.has(owner)) continue
     const value = pick(owners[owner])
     if (!Number.isFinite(value)) return null
     sum += value
