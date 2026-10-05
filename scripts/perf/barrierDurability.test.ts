@@ -130,6 +130,7 @@ function sectionOn(n: number) {
       queuedBackground: n % 5,
       startedBackground: 7 * n,
       backgroundFairStarts: n,
+      extraUrgentStarts: n,
       timing: {
         urgent: { requestToStart: syncTimes(n, 1), startToSettle: syncTimes(n, 2) },
         normal: { requestToStart: syncTimes(n, 3), startToSettle: syncTimes(n, 4) },
@@ -393,6 +394,93 @@ describe('what changed between the two fences', () => {
     })
   })
 
+  it('reads the reserved urgent place and the stores saved beside the threads', () => {
+    const extended = (n: number) => ({
+      ...sectionOn(n),
+      usageLog: {
+        appends: 10 * n,
+        spills: n,
+        background: {
+          owed: { files: n, directories: 1 },
+          rounds: 2 * n,
+          failedRounds: 0,
+          syncs: { files: 3 * n, directories: n },
+          quitRounds: 0,
+          quitUnpaid: 0
+        },
+        compactions: { started: n, completed: n, stopped: 0, failed: 0 }
+      },
+      runQueue: {
+        changes: 7 * n,
+        writes: 2 * n,
+        coalesced: 5 * n,
+        failed: 0,
+        superseded: n,
+        inlineWrites: 0,
+        syncs: { files: 2 * n, directories: 2 * n },
+        writing: n % 2 === 0,
+        unwrittenChanges: n,
+        quitUnwritten: 0,
+        userWaits: {
+          waits: 2 * n,
+          overdue: n,
+          rejected: 0,
+          waitMsTotal: 5 * n,
+          longestWaitMs: 10 + n
+        },
+        startWaits: {
+          waits: n,
+          overdue: 0,
+          rejected: 0,
+          waitMsTotal: 4 * n,
+          longestWaitMs: 8 + n
+        }
+      }
+    })
+    const change = (barrierDurabilityChange(extended(2), extended(5)) as { change: any }).change
+    expect(change.port.extraUrgentStarts).toBe(3)
+    expect(change.usageLog).toEqual({
+      appends: 30,
+      spills: 3,
+      background: {
+        owed: { files: { before: 2, after: 5 }, directories: { before: 1, after: 1 } },
+        rounds: 6,
+        failedRounds: 0,
+        syncs: { files: 9, directories: 3 },
+        quitRounds: 0,
+        quitUnpaid: 0
+      },
+      compactions: { started: 3, completed: 3, stopped: 0, failed: 0 }
+    })
+    expect(change.runQueue).toEqual({
+      changes: 21,
+      writes: 6,
+      coalesced: 15,
+      failed: 0,
+      superseded: 3,
+      inlineWrites: 0,
+      syncs: { files: 6, directories: 6 },
+      writing: { before: true, after: false },
+      unwrittenChanges: { before: 2, after: 5 },
+      quitUnwritten: 0,
+      userWaits: {
+        waits: 6,
+        overdue: 3,
+        rejected: 0,
+        waitMsTotal: 15,
+        longestWaitMs: { atMost: 15, exact: true }
+      },
+      startWaits: {
+        waits: 3,
+        overdue: 0,
+        rejected: 0,
+        waitMsTotal: 12,
+        longestWaitMs: { atMost: 13, exact: true }
+      }
+    })
+    expect(change.unread).toEqual([])
+  })
+
   it('reads the staging of tool detail: its levels at both fences and its counters between them', () => {
     const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
     expect(change.staging).toEqual({
@@ -432,6 +520,7 @@ describe('what changed between the two fences', () => {
       delete section.port.queuedBackground
       delete section.port.startedBackground
       delete section.port.backgroundFairStarts
+      delete section.port.extraUrgentStarts
       delete section.debt.barriers.beside
       delete section.debt.barriers.besideFailed
       for (const kind of ['urgent', 'normal']) {
@@ -444,6 +533,8 @@ describe('what changed between the two fences', () => {
     const change = (result as { change: any }).change
     expect(change.staging).toBeNull()
     expect(change.starts).toBeNull()
+    expect(change.usageLog).toBeNull()
+    expect(change.runQueue).toBeNull()
     expect(change.port).toMatchObject({
       started: 27,
       queuedBackground: null,
@@ -464,6 +555,7 @@ describe('what changed between the two fences', () => {
         [...SPLIT].sort().map((figure) => `debt.waits.${kind}.${figure}`)
       ),
       'port.backgroundFairStarts',
+      'port.extraUrgentStarts',
       'port.queuedBackground',
       'port.startedBackground'
     ])

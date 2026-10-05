@@ -35,6 +35,7 @@ const BARRIER_DURABILITY_EXPRESSION =
 
 const COUNTER = 'counter'
 const LEVEL = 'level'
+const BOOLEAN_LEVEL = 'boolean-level'
 const MAXIMUM = 'maximum'
 
 /** One kind of sync time: how many, summed, the longest, and how many fell in each band. */
@@ -118,6 +119,7 @@ const SECTION_FIGURES = Object.freeze({
     queuedBackground: LEVEL,
     startedBackground: COUNTER,
     backgroundFairStarts: COUNTER,
+    extraUrgentStarts: COUNTER,
     // By class: each request's time until the sync that serves it starts, and
     // each sync's time from its start to its settling.
     timing: { each: { requestToStart: SYNC_TIMES, startToSettle: SYNC_TIMES } }
@@ -163,6 +165,33 @@ const SECTION_FIGURES = Object.freeze({
     rows: { swapped: COUNTER, staged: COUNTER, passedOver: COUNTER },
     syncs: { files: COUNTER, directories: COUNTER },
     checkpointEvents: COUNTER
+  },
+  usageLog: {
+    appends: COUNTER,
+    spills: COUNTER,
+    background: {
+      owed: { files: LEVEL, directories: LEVEL },
+      rounds: COUNTER,
+      failedRounds: COUNTER,
+      syncs: { files: COUNTER, directories: COUNTER },
+      quitRounds: COUNTER,
+      quitUnpaid: COUNTER
+    },
+    compactions: { started: COUNTER, completed: COUNTER, stopped: COUNTER, failed: COUNTER }
+  },
+  runQueue: {
+    changes: COUNTER,
+    writes: COUNTER,
+    coalesced: COUNTER,
+    failed: COUNTER,
+    superseded: COUNTER,
+    inlineWrites: COUNTER,
+    syncs: { files: COUNTER, directories: COUNTER },
+    writing: BOOLEAN_LEVEL,
+    unwrittenChanges: LEVEL,
+    quitUnwritten: COUNTER,
+    userWaits: GATE_WAITS,
+    startWaits: GATE_WAITS
   },
   checkpoints: { each: { count: COUNTER, bytes: COUNTER, mainMs: COUNTER } },
   tornTailsRepaired: COUNTER
@@ -223,6 +252,13 @@ async function readBarrierDurability(page, options = {}) {
 
 /** What one figure, or one part of figures, did between the fences. */
 function changeOf(figures, before, after, at, found) {
+  if (figures === BOOLEAN_LEVEL) {
+    if (typeof before !== 'boolean' || typeof after !== 'boolean') {
+      found.unread.push(at)
+      return null
+    }
+    return { before, after }
+  }
   if (typeof figures === 'string') {
     if (!Number.isFinite(before) || !Number.isFinite(after)) {
       found.unread.push(at)
