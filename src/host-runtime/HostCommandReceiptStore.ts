@@ -48,11 +48,13 @@ import { join } from 'node:path'
 
 import {
   decodeHostResultRef,
+  decodeHostThreadRecordCommitEvidence,
   HOST_QUEUED_START_PHASES,
   type HostClientClass,
   type HostCommandName,
   type HostQueuedStartPhase,
-  type HostResultRef
+  type HostResultRef,
+  type HostThreadRecordCommitEvidence
 } from '../shared/hostProtocol'
 import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import type { HostCommandExecutionClass } from './HostCommandExecutionClass'
@@ -169,6 +171,7 @@ export interface HostCommandReceiptRecord {
   resultSummary?: string
   /** Strict opaque setup result locator, retained across Host restart. */
   resultRef?: HostResultRef
+  threadRecordCommit?: HostThreadRecordCommitEvidence
   /**
    * When status is `conflict`: commandId of the original receipt that owns the
    * idempotency key. Never raw args/tool output.
@@ -210,6 +213,7 @@ export type HostCommandReceiptCompleteInput = {
   resultSummary?: string
   /** Accepted only with a successful terminal receipt. */
   resultRef?: HostResultRef
+  threadRecordCommit?: HostThreadRecordCommitEvidence
   /** Optional authority update at completion (e.g. final deny reason). */
   authority?: HostCommandReceiptAuthority
   /**
@@ -1019,6 +1023,19 @@ export class HostCommandReceiptStore {
       input.status === 'succeeded' && input.resultRef !== undefined
         ? normalizeResultRef(input.resultRef)
         : undefined
+    let threadRecordCommit: HostThreadRecordCommitEvidence | undefined
+    if (input.threadRecordCommit !== undefined) {
+      const decoded = decodeHostThreadRecordCommitEvidence(input.threadRecordCommit)
+      if (
+        !decoded.ok ||
+        !decoded.value ||
+        input.status !== 'succeeded' ||
+        current.commandName !== 'thread.record.persist'
+      ) {
+        throw new Error('HostCommandReceiptStore: threadRecordCommit is invalid for this receipt')
+      }
+      threadRecordCommit = decoded.value
+    }
     const next: HostCommandReceiptRecord = {
       ...current,
       status: input.status,
@@ -1035,6 +1052,7 @@ export class HostCommandReceiptStore {
         ? { resultSummary: truncateText(input.resultSummary, MAX_SUMMARY_CHARS) }
         : {}),
       ...(resultRef !== undefined ? { resultRef } : {}),
+      ...(threadRecordCommit !== undefined ? { threadRecordCommit } : {}),
       ...(position !== undefined
         ? { generation: position.generation, cursor: position.cursor }
         : {})
@@ -2057,6 +2075,18 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
       const resultRef = normalizeResultRef(raw.resultRef)
       if (record.status !== 'succeeded') return null
       record.resultRef = resultRef
+    }
+    if (raw.threadRecordCommit !== undefined) {
+      const decoded = decodeHostThreadRecordCommitEvidence(raw.threadRecordCommit)
+      // Legacy receipt success survives damaged optional evidence; it proves no lineage.
+      if (
+        decoded.ok &&
+        decoded.value &&
+        record.status === 'succeeded' &&
+        record.commandName === 'thread.record.persist'
+      ) {
+        record.threadRecordCommit = decoded.value
+      }
     }
     if (typeof raw.conflictCommandId === 'string') {
       record.conflictCommandId = truncateText(raw.conflictCommandId, MAX_ID_CHARS)

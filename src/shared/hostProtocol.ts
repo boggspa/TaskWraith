@@ -981,6 +981,46 @@ export interface HostCommandReceipt {
    */
   conflictCommandId?: string
   resultRef?: HostResultRef
+  /** Actual durable persist result; absent on older or uninstrumented paths. */
+  threadRecordCommit?: HostThreadRecordCommitEvidence
+}
+
+/**
+ * Rewritten records report their revision but do not certify the submitted bytes.
+ * A verified transfer was digest-checked then inode-bound adopted under the
+ * existing immutable O_EXCL artifact protocol. Its digest is not freshly
+ * recomputed at rename, and does not attest against in-place same-UID tampering.
+ */
+export type HostThreadRecordCommitEvidence =
+  | { revision: number; source: 'verified-transfer'; sha256: string }
+  | { revision: number; source: 'rewritten' }
+
+export function decodeHostThreadRecordCommitEvidence(
+  value: unknown
+): HostDecodeResult<HostThreadRecordCommitEvidence | undefined> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (
+    !isRecord(value) ||
+    typeof value.revision !== 'number' ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0
+  )
+    return { ok: false, error: 'threadRecordCommit is invalid' }
+  if (value.source === 'rewritten' && Object.keys(value).length === 2) {
+    return { ok: true, value: { revision: value.revision, source: 'rewritten' } }
+  }
+  if (
+    value.source === 'verified-transfer' &&
+    Object.keys(value).length === 3 &&
+    typeof value.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(value.sha256)
+  ) {
+    return {
+      ok: true,
+      value: { revision: value.revision, source: 'verified-transfer', sha256: value.sha256 }
+    }
+  }
+  return { ok: false, error: 'threadRecordCommit is invalid' }
 }
 
 /** Opaque durable result locator; never a path, URL, credential, or body. */
@@ -2072,6 +2112,17 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (resultRef.value !== undefined && status !== 'succeeded') {
     return { ok: false, error: 'resultRef requires a succeeded receipt' }
   }
+  const threadRecordCommit = decodeHostThreadRecordCommitEvidence(value.threadRecordCommit)
+  if (!threadRecordCommit.ok) return threadRecordCommit
+  if (
+    threadRecordCommit.value !== undefined &&
+    (status !== 'succeeded' || value.name !== 'thread.record.persist')
+  ) {
+    return {
+      ok: false,
+      error: 'threadRecordCommit requires a succeeded thread.record.persist receipt'
+    }
+  }
   let authority: HostAuthorityDecision
   if (value.authority.decision === 'deny') {
     authority = { decision: 'deny', reason: String(value.authority.reason) }
@@ -2117,6 +2168,7 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
     receipt.conflictCommandId = value.conflictCommandId
   }
   if (resultRef.value) receipt.resultRef = resultRef.value
+  if (threadRecordCommit.value) receipt.threadRecordCommit = threadRecordCommit.value
   return { ok: true, value: receipt }
 }
 

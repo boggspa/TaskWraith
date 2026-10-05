@@ -13,7 +13,7 @@
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -26,6 +26,7 @@ import type { ThreadCatalogueProjection } from '../shared/threadCatalogueTypes'
 import type { HostAuthorityCallContext } from './HostAuthority'
 import { HOST_DELTA_JOURNAL_FILENAME } from './HostDeltaStore'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
+import { HostProfileRecordCommandExecutor } from './HostProfileRecordCommandExecutor'
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import {
   createHostStandaloneComposition,
@@ -63,7 +64,12 @@ const CONTEXT: HostAuthorityCallContext = { actor: ACTOR, client: CLIENT }
 
 const roots: string[] = []
 afterEach(() => {
-  while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true })
+  while (roots.length > 0) {
+    const root = roots.pop()!
+    expect(root).not.toBe(tmpdir())
+    expect(root.startsWith(`${tmpdir()}${sep}host-standalone-txn-`)).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 type LooseRecord = Record<string, unknown>
@@ -233,6 +239,42 @@ function persistCommand(
 }
 
 describe('HostStandaloneComposition: transactional persist wiring (M4 slice 12b)', () => {
+  it('flag off: carries exact commit evidence from the real executor through receipt lookup and restart', async () => {
+    const p = profile()
+    p.store.persistThreadRecord({ threadId: THREAD_ID, record: baseRecord(), expectedRevision: 0 })
+    const { descriptor } = p.publish(baseRecord({ persistenceRevision: 1 }))
+    const executor = new HostProfileRecordCommandExecutor({
+      profilePath: p.profilePath,
+      store: p.store
+    })
+    const composition = createHostStandaloneComposition({
+      ...p.base,
+      commandExecutor: (command) => executor.execute(command)
+    })
+    const expected = { revision: 1, source: 'verified-transfer', sha256: descriptor.sha256 }
+    const command = persistCommand('11111111-1111-4111-8111-111111111111', descriptor, 0)
+    try {
+      expect(await composition.authority.command(CONTEXT, command)).toMatchObject({
+        ok: true,
+        value: { status: 'succeeded', threadRecordCommit: expected }
+      })
+      expect(
+        await composition.authority.receipt(CONTEXT, { commandId: command.commandId })
+      ).toMatchObject({ ok: true, outcome: 'found', receipt: { threadRecordCommit: expected } })
+      expect(await composition.authority.command(CONTEXT, command)).toMatchObject({
+        ok: true,
+        value: { status: 'succeeded', threadRecordCommit: expected }
+      })
+    } finally {
+      await composition.shutdown()
+    }
+    const reopened = new HostRuntimeBootstrap({ hostDataDir: p.runtimePath })
+    expect(reopened.receiptStore.getByCommandId(command.commandId, ACTOR)).toMatchObject({
+      kind: 'found',
+      receipt: { threadRecordCommit: expected }
+    })
+  })
+
   it('flag on: a persist through the public command entry commits the transfer, publishes one group and succeeds at its end', async () => {
     const p = profile()
     p.store.persistThreadRecord({ threadId: THREAD_ID, record: baseRecord(), expectedRevision: 0 })
@@ -271,6 +313,7 @@ describe('HostStandaloneComposition: transactional persist wiring (M4 slice 12b)
       value: { status: 'succeeded', resultSummary: 'thread_record_persisted' }
     })
     if (!result.ok) throw new Error('unreachable')
+    expect(result.value).not.toHaveProperty('threadRecordCommit')
     expect(p.executorCalls).toEqual([])
 
     // The chat file is the transfer's bytes; the artifact is gone.

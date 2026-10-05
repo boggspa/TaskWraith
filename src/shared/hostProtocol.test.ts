@@ -98,6 +98,56 @@ function sampleReceipt(overrides: Partial<HostCommandReceipt> = {}): HostCommand
   }
 }
 
+describe('committed thread record receipt evidence', () => {
+  it.each([
+    { revision: 4, source: 'verified-transfer', sha256: FP_A },
+    { revision: 0, source: 'rewritten' }
+  ] as const)('round-trips and detaches %j', (evidence) => {
+    const mutable = { ...evidence }
+    const decoded = decodeHostCommandReceipt({
+      ...sampleReceipt({ name: 'thread.record.persist' }),
+      threadRecordCommit: mutable
+    })
+    expect(decoded).toMatchObject({ ok: true, value: { threadRecordCommit: evidence } })
+    ;(mutable as { revision: number }).revision = 99
+    if (!decoded.ok) throw new Error('Expected valid commit evidence')
+    expect(decoded.value.threadRecordCommit?.revision).toBe(evidence.revision)
+  })
+
+  it.each([
+    { revision: -1, source: 'rewritten' },
+    { revision: Number.MAX_SAFE_INTEGER + 1, source: 'rewritten' },
+    { revision: Infinity, source: 'rewritten' },
+    { revision: 1, source: 'verified-transfer', sha256: 'not-a-digest' },
+    { revision: 1, source: 'verified-transfer', sha256: FP_A.toUpperCase() },
+    { revision: 1, source: 'rewritten', sha256: FP_A },
+    { revision: 1, source: 'unknown' },
+    { revision: 1, source: 'rewritten', body: 'not permitted' }
+  ])('rejects malformed closed evidence %j', (threadRecordCommit) => {
+    expect(
+      decodeHostCommandReceipt({
+        ...sampleReceipt({ name: 'thread.record.persist' }),
+        threadRecordCommit
+      }).ok
+    ).toBe(false)
+  })
+
+  it('accepts old receipts and rejects evidence on another command or unsuccessful status', () => {
+    expect(decodeHostCommandReceipt(sampleReceipt())).toEqual({ ok: true, value: sampleReceipt() })
+    for (const receipt of [
+      sampleReceipt(),
+      sampleReceipt({ name: 'thread.record.persist', status: 'failed' })
+    ]) {
+      expect(
+        decodeHostCommandReceipt({
+          ...receipt,
+          threadRecordCommit: { revision: 1, source: 'rewritten' }
+        }).ok
+      ).toBe(false)
+    }
+  })
+})
+
 function sampleDelta(overrides: Partial<HostDeltaEnvelope> = {}): HostDeltaEnvelope {
   return {
     protocolVersion: HOST_PROTOCOL_VERSION,

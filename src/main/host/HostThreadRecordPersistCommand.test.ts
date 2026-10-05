@@ -1,10 +1,11 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
 import {
   HOST_SCOPE_DELETED_ERROR_CODE,
   HOST_SCOPE_DELETED_MESSAGE,
@@ -104,6 +105,8 @@ const temporaryProfiles: string[] = []
 
 afterEach(() => {
   for (const profile of temporaryProfiles.splice(0)) {
+    expect(profile).not.toBe(tmpdir())
+    expect(profile.startsWith(`${tmpdir()}${sep}tw-persist-`)).toBe(true)
     rmSync(profile, { recursive: true, force: true })
   }
 })
@@ -223,6 +226,120 @@ function createClient(
 }
 
 describe('HostThreadRecordPersistClient command shape', () => {
+  it('correlates committed evidence with the recovered publication input rather than its predecessor', async () => {
+    const observed = vi.fn()
+    const original = {
+      chatId: 'chat-1',
+      record: chatRecord({ appChatId: 'chat-1', persistenceRevision: 7 }),
+      expectedRevision: 6
+    }
+    const recovered = {
+      chatId: 'chat-1',
+      record: chatRecord({ appChatId: 'chat-1', persistenceRevision: 10 }),
+      expectedRevision: 9
+    }
+    let attempts = 0
+    const broker = scriptedBroker((command) => [
+      receiptFor(
+        command,
+        ++attempts === 1 ? 'failed' : 'succeeded',
+        attempts === 1
+          ? { errorCode: 'thread_record_revision_conflict' }
+          : {
+              authority: { decision: 'allow' },
+              commandFingerprint: fingerprintHostCommand(command).fingerprint,
+              threadRecordCommit: {
+                revision: 10,
+                source: 'verified-transfer',
+                sha256: 'a'.repeat(64)
+              }
+            }
+      )
+    ])
+    let id = 0
+    const client = new HostThreadRecordPersistClient({
+      broker,
+      profilePath: PROFILE,
+      transfer: fakeTransfer(),
+      createId: () => `id-${++id}`,
+      recoverConflict: () => recovered,
+      onPersistedEvidence: observed
+    })
+    client.enqueue(original)
+    await client.drain('chat-1')
+    expect(observed).toHaveBeenCalledTimes(1)
+    expect(observed.mock.calls[0][0]).not.toBe(original)
+    expect(observed.mock.calls[0][0].record).toBe(recovered.record)
+    expect(observed.mock.calls[0][0].expectedRevision).toBe(9)
+    expect(observed.mock.calls[0][1]).toMatchObject({ kind: 'exact', revision: 10 })
+  })
+
+  it('delivers independent frozen evidence before legacy callbacks can mutate the receipt', async () => {
+    const observed = vi.fn()
+    const legacy = vi.fn((_input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => {
+      receipt.threadRecordCommit!.revision = 999
+    })
+    const broker = scriptedBroker((command) => [
+      receiptFor(command, 'succeeded', {
+        authority: { decision: 'allow' },
+        commandFingerprint: fingerprintHostCommand(command).fingerprint,
+        threadRecordCommit: { revision: 7, source: 'verified-transfer', sha256: 'a'.repeat(64) }
+      })
+    ])
+    let id = 0
+    const client = new HostThreadRecordPersistClient({
+      broker,
+      profilePath: PROFILE,
+      transfer: fakeTransfer(),
+      createId: () => `id-${++id}`,
+      onPersisted: legacy,
+      onPersistedEvidence: observed
+    })
+    const input = {
+      chatId: 'chat-1',
+      record: chatRecord({ appChatId: 'chat-1', persistenceRevision: 7 }),
+      expectedRevision: 6
+    }
+    await client.persist(input)
+    expect(legacy).toHaveBeenCalledTimes(1)
+    expect(observed.mock.calls[0][0]).toBe(input)
+    expect(observed).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({ kind: 'exact', revision: 7, threadId: 'chat-1' })
+    )
+    expect(Object.isFrozen(observed.mock.calls[0][1])).toBe(true)
+  })
+
+  it('preserves legacy success when stronger evidence is absent, mismatched or its observer throws', async () => {
+    for (const fingerprint of ['absent', 'mismatched']) {
+      const observed = vi.fn((_input: HostThreadRecordPersistInput, _evidence: unknown) => {
+        throw new Error('observer failed')
+      })
+      const broker = scriptedBroker((command) => [
+        receiptFor(command, 'succeeded', {
+          authority: { decision: 'allow' },
+          commandFingerprint:
+            fingerprint === 'absent' ? fingerprintHostCommand(command).fingerprint : 'b'.repeat(64),
+          ...(fingerprint === 'mismatched'
+            ? { threadRecordCommit: { revision: 1, source: 'rewritten' as const } }
+            : {})
+        })
+      ])
+      let id = 0
+      const client = new HostThreadRecordPersistClient({
+        broker,
+        profilePath: PROFILE,
+        transfer: fakeTransfer(),
+        createId: () => `id-${++id}`,
+        onPersistedEvidence: observed
+      })
+      await expect(
+        client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+      ).resolves.toMatchObject({ status: 'succeeded' })
+      expect(observed.mock.calls[0][1]).toMatchObject({ kind: 'unavailable' })
+    }
+  })
+
   it.each(['timeout', 'submit', 'recovered', 'denied'] as const)(
     'preserves reference artifact custody for %s and cleans only proven non-consumption',
     async (outcome) => {

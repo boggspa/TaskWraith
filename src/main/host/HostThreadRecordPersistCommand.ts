@@ -54,6 +54,11 @@ import { createHostProjectionBroker } from './HostProjectionBroker'
 import { recordCheckpointPrepareSpan } from '../perf/checkpointPrepareSpan'
 import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink, type MainWorkSpanSink } from '../perf/mainWorkSpanSink'
+import {
+  captureThreadOwnershipReceiptContext,
+  readThreadOwnershipReceiptEvidence,
+  type ThreadOwnershipReceiptEvidence
+} from './ThreadOwnershipReceiptEvidence'
 
 /**
  * IDENTITY IS LOAD-BEARING — do not give this client its own client id.
@@ -619,6 +624,11 @@ export interface HostThreadRecordPersistClientOptions extends HostPersistenceDia
   readonly timeoutMs?: number
   /** Non-authoritative local acknowledgement after the exact record lands. */
   readonly onPersisted?: (input: HostThreadRecordPersistInput, receipt: HostCommandReceipt) => void
+  /** Optional stronger evidence; never changes legacy success or its callback. */
+  readonly onPersistedEvidence?: (
+    input: HostThreadRecordPersistInput,
+    evidence: ThreadOwnershipReceiptEvidence
+  ) => void
   /** Rebase one revision conflict against the latest Host-owned record. */
   readonly recoverConflict?: (
     input: HostThreadRecordPersistInput,
@@ -736,6 +746,7 @@ export class HostThreadRecordPersistClient
   private readonly pollIntervalMs: number
   private readonly timeoutMs: number
   private readonly onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
+  private readonly onPersistedEvidence?: HostThreadRecordPersistClientOptions['onPersistedEvidence']
   private readonly recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
   private readonly maxConflictRetries: number
   private readonly lanes = new Map<string, PersistLane>()
@@ -769,6 +780,8 @@ export class HostThreadRecordPersistClient
     this.pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250)
     this.timeoutMs = Math.max(this.pollIntervalMs, options.timeoutMs ?? 30_000)
     this.onPersisted = typeof options.onPersisted === 'function' ? options.onPersisted : undefined
+    this.onPersistedEvidence =
+      typeof options.onPersistedEvidence === 'function' ? options.onPersistedEvidence : undefined
     this.recoverConflict =
       typeof options.recoverConflict === 'function' ? options.recoverConflict : undefined
     this.maxConflictRetries =
@@ -846,9 +859,15 @@ export class HostThreadRecordPersistClient
         },
         issuedAt: new Date(this.nowMs()).toISOString()
       }
+      const evidenceContext = this.onPersistedEvidence
+        ? captureThreadOwnershipReceiptContext({ command, descriptor, threadId: input.chatId })
+        : null
 
       try {
         const receipt = await this.execute(command, operation, this.diagnostics?.contextFrom(input))
+        const persistedEvidence = this.onPersistedEvidence
+          ? readThreadOwnershipReceiptEvidence(evidenceContext, receipt)
+          : null
         try {
           this.referenceStaging?.acknowledgeTransfer?.(descriptor.transferId)
         } catch {
@@ -859,6 +878,11 @@ export class HostThreadRecordPersistClient
         } catch {
           // The Host write is already durable. Local rebase bookkeeping must
           // never turn that success into a failed receipt or a duplicate retry.
+        }
+        try {
+          if (persistedEvidence) this.onPersistedEvidence?.(input, persistedEvidence)
+        } catch {
+          // Optional evidence consumers cannot undo a successful persisted command.
         }
         operation?.finish('succeeded', {
           commandId,
@@ -1339,6 +1363,7 @@ export function createDesktopHostThreadRecordPersistClient(
     userDataPath: string
     appVersion: string
     onPersisted?: HostThreadRecordPersistClientOptions['onPersisted']
+    onPersistedEvidence?: HostThreadRecordPersistClientOptions['onPersistedEvidence']
     recoverConflict?: HostThreadRecordPersistClientOptions['recoverConflict']
     spans?: HostThreadRecordPersistClientOptions['spans']
     referenceStaging?: HostThreadRecordPersistClientOptions['referenceStaging']
@@ -1367,6 +1392,7 @@ export function createDesktopHostThreadRecordPersistClient(
     diagnosticNowMs: input.diagnosticNowMs,
     diagnosticCreateId: input.diagnosticCreateId,
     ...(input.onPersisted ? { onPersisted: input.onPersisted } : {}),
+    ...(input.onPersistedEvidence ? { onPersistedEvidence: input.onPersistedEvidence } : {}),
     ...(input.recoverConflict ? { recoverConflict: input.recoverConflict } : {}),
     ...(input.referenceStaging ? { referenceStaging: input.referenceStaging } : {}),
     spans: input.spans ?? mainWorkSpanSink()

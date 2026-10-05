@@ -96,6 +96,9 @@ export function projectHostCommandReceipt(
   if (record.resultRef !== undefined) {
     candidate.resultRef = record.resultRef
   }
+  if (record.threadRecordCommit !== undefined) {
+    candidate.threadRecordCommit = { ...record.threadRecordCommit }
+  }
   if (record.errorCode !== undefined) {
     candidate.errorCode = record.errorCode
   }

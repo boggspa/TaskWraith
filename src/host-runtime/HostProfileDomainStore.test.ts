@@ -13,7 +13,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -58,10 +58,105 @@ function seedMessages(profile: string, threadId: string, messages: readonly unkn
 }
 
 afterEach(() => {
-  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+  while (profiles.length > 0) {
+    const profile = profiles.pop()!
+    expect(profile).not.toBe(tmpdir())
+    expect(
+      profile.startsWith(`${tmpdir()}${sep}host-profile-domain-`) ||
+        profile.startsWith(`${tmpdir()}${sep}host-profile-workspace-`)
+    ).toBe(true)
+    rmSync(profile, { recursive: true, force: true })
+  }
 })
 
 describe('HostProfileDomainStore', () => {
+  it('reports committed evidence for verbatim adoption and same-revision rewritten normalization', () => {
+    const { profile, store } = open()
+    const original = store.createThread({ scope: 'global', title: 'Before' })
+    const next = { ...original, persistenceRevision: 1, updatedAt: 321 }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: profile,
+      transferId: 'evidence-adopt',
+      record: next
+    })
+    const verified = verifyHostThreadRecordTransfer({ profilePath: profile, descriptor })
+    const adopted = store.persistThreadRecordWithCommit({
+      threadId: original.appChatId,
+      record: decodeHostThreadRecordTransferBody(verified.body),
+      expectedRevision: 0,
+      verifiedTransfer: {
+        path: verified.path,
+        identity: verified.identity,
+        byteLength: descriptor.byteLength
+      }
+    })
+    expect(adopted).toMatchObject({
+      commit: { revision: 1, source: 'verified-transfer' },
+      thread: { persistenceRevision: 1, updatedAt: 321 }
+    })
+    expect(
+      readFileSync(
+        join(profile, HOST_PROFILE_CHATS_DIRECTORY, `${original.appChatId}.json`),
+        'utf8'
+      )
+    ).toBe(`${JSON.stringify(next)}\n`)
+    const legacy = { ...next, persistenceRevision: 2 } as Record<string, unknown>
+    delete legacy.runs
+    const rewriteDescriptor = publishHostThreadRecordTransfer({
+      profilePath: profile,
+      transferId: 'evidence-rewrite',
+      record: legacy
+    })
+    const rewrite = verifyHostThreadRecordTransfer({
+      profilePath: profile,
+      descriptor: rewriteDescriptor
+    })
+    const rewritten = store.persistThreadRecordWithCommit({
+      threadId: original.appChatId,
+      record: decodeHostThreadRecordTransferBody(rewrite.body),
+      expectedRevision: 1,
+      verifiedTransfer: {
+        path: rewrite.path,
+        identity: rewrite.identity,
+        byteLength: rewriteDescriptor.byteLength
+      }
+    })
+    expect(rewritten).toMatchObject({
+      commit: { revision: 2, source: 'rewritten' },
+      thread: { persistenceRevision: 2, updatedAt: 100, runs: [] }
+    })
+    expect(existsSync(rewrite.path)).toBe(true)
+  })
+
+  it('reports actual creation zero and legacy base-plus-one rather than the incoming revision', () => {
+    const { store } = open()
+    const created = store.persistThreadRecordWithCommit({
+      threadId: 'created',
+      expectedRevision: 0,
+      record: {
+        appChatId: 'created',
+        title: 'Created',
+        messages: [],
+        updatedAt: 9,
+        persistenceRevision: 77
+      }
+    })
+    expect(created.commit).toEqual({ revision: 0, source: 'rewritten' })
+    const updated = store.persistThreadRecordWithCommit({
+      threadId: 'created',
+      expectedRevision: 0,
+      record: created.thread
+    })
+    expect(updated.commit).toEqual({ revision: 1, source: 'rewritten' })
+    expect(
+      store.persistThreadRecord({
+        threadId: 'created',
+        expectedRevision: 1,
+        record: updated.thread
+      })
+    ).toMatchObject({ persistenceRevision: 2 })
+  })
+
   it('creates complete empty records and preserves their shape through kind changes', () => {
     const { store, workspace, profile } = open()
     const registered = store.registerWorkspace({ path: workspace, displayName: 'Workspace' })

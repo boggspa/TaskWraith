@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { decodeHostCommandReceipt } from '../shared/hostProtocol'
@@ -26,6 +26,8 @@ describe('HostCommandReceiptProjection', () => {
   })
 
   afterEach(() => {
+    expect(dataDir).not.toBe(tmpdir())
+    expect(dataDir.startsWith(`${tmpdir()}${sep}host-receipt-proj-`)).toBe(true)
     rmSync(dataDir, { recursive: true, force: true })
   })
 
@@ -36,6 +38,36 @@ describe('HostCommandReceiptProjection', () => {
       now: () => '2026-08-03T18:00:00.000Z'
     })
   }
+
+  it('projects detached committed-record evidence without exposing record or target bodies', () => {
+    const store = openStore()
+    store.begin({
+      commandId: 'cmd-commit',
+      idempotencyKey: 'commit-key',
+      commandName: 'thread.record.persist',
+      commandFingerprint: 'a'.repeat(64),
+      actor: OWNER,
+      target: { kind: 'thread', id: 'thread-1' },
+      authority: { decision: 'allowed' }
+    })
+    const record = store.complete({
+      commandId: 'cmd-commit',
+      status: 'succeeded',
+      threadRecordCommit: { revision: 4, source: 'verified-transfer', sha256: 'b'.repeat(64) }
+    })!
+    const projected = projectHostCommandReceipt(record)
+    expect(projected).toMatchObject({
+      ok: true,
+      value: {
+        threadRecordCommit: { revision: 4, source: 'verified-transfer', sha256: 'b'.repeat(64) }
+      }
+    })
+    record.threadRecordCommit!.revision = 8
+    if (!projected.ok) throw new Error('Expected projected commit evidence')
+    expect(projected.value.threadRecordCommit?.revision).toBe(4)
+    expect(projected.value).not.toHaveProperty('target')
+    expect(projected.value).not.toHaveProperty('record')
+  })
 
   it('projects a durable receipt to a decode-valid HostCommandReceipt', () => {
     const store = openStore(4)

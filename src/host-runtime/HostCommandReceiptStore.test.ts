@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 
@@ -157,6 +157,8 @@ describe('HostCommandReceiptStore', () => {
     fsFaults.readFileSync = null
     fsFaults.trace = null
     scheduledCompactions.length = 0
+    expect(dataDir).not.toBe(tmpdir())
+    expect(dataDir.startsWith(`${tmpdir()}${sep}host-cmd-receipts-`)).toBe(true)
     rmSync(dataDir, { recursive: true, force: true })
   })
 
@@ -177,6 +179,116 @@ describe('HostCommandReceiptStore', () => {
       scheduleCompaction: (run) => scheduledCompactions.push(run)
     })
   }
+
+  it('retains detached committed-record evidence through journal, compaction, lookup and idempotent replay', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    const input = baseInput({ commandName: 'thread.record.persist' })
+    store.begin(input)
+    const evidence = { revision: 8, source: 'verified-transfer' as const, sha256: 'a'.repeat(64) }
+    const completed = store.complete({
+      commandId: input.commandId,
+      status: 'succeeded',
+      threadRecordCommit: evidence
+    })!
+    evidence.revision = 999
+    expect(completed.threadRecordCommit?.revision).toBe(8)
+    completed.threadRecordCommit!.revision = 77
+    expect(store.getByCommandId(input.commandId, OWNER_ACTOR)).toMatchObject({
+      kind: 'found',
+      receipt: { threadRecordCommit: { revision: 8 } }
+    })
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    const replayed = reopened.begin(input)
+    expect(replayed).toMatchObject({
+      kind: 'existing',
+      receipt: {
+        threadRecordCommit: { revision: 8, source: 'verified-transfer', sha256: 'a'.repeat(64) }
+      }
+    })
+    reopened.compact()
+    const compacted = openStore({ compactAfterRecords: 1000 })
+    expect(compacted.getByCommandId(input.commandId, OWNER_ACTOR)).toMatchObject({
+      kind: 'found',
+      receipt: { threadRecordCommit: { revision: 8 } }
+    })
+    expect(
+      compacted.complete({
+        commandId: input.commandId,
+        status: 'succeeded',
+        threadRecordCommit: { revision: 200, source: 'rewritten' }
+      })?.threadRecordCommit?.revision
+    ).toBe(8)
+  })
+
+  it('accepts legacy absent evidence and does not backfill it on duplicate completion', () => {
+    const store = openStore()
+    store.begin(baseInput({ commandName: 'thread.record.persist' }))
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+    expect(
+      store.complete({
+        commandId: 'cmd-1',
+        status: 'succeeded',
+        threadRecordCommit: { revision: 2, source: 'rewritten' }
+      })
+    ).not.toHaveProperty('threadRecordCommit')
+  })
+
+  it('rejects malformed or wrong-command committed-record evidence before terminal storage', () => {
+    const store = openStore()
+    store.begin(baseInput())
+    expect(() =>
+      store.complete({
+        commandId: 'cmd-1',
+        status: 'succeeded',
+        threadRecordCommit: { revision: 1, source: 'rewritten' }
+      })
+    ).toThrow()
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+    store.begin(
+      baseInput({
+        commandId: 'cmd-persist',
+        idempotencyKey: 'persist-key',
+        commandName: 'thread.record.persist'
+      })
+    )
+    expect(() =>
+      store.complete({
+        commandId: 'cmd-persist',
+        status: 'succeeded',
+        threadRecordCommit: { revision: -1, source: 'rewritten' }
+      })
+    ).toThrow()
+    expect(() =>
+      store.complete({
+        commandId: 'cmd-persist',
+        status: 'failed',
+        threadRecordCommit: { revision: 1, source: 'rewritten' }
+      })
+    ).toThrow()
+    expectFound(store.getByCommandId('cmd-persist', OWNER_ACTOR), 'pending')
+  })
+
+  it('does not expose new evidence when the receipt durability write fails', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput({ commandName: 'thread.record.persist' }))
+    fsFaults.fsyncSync = once(() => {
+      throw new Error('receipt sync failed')
+    })
+    expect(() =>
+      store.complete({
+        commandId: 'cmd-1',
+        status: 'succeeded',
+        threadRecordCommit: { revision: 1, source: 'rewritten' }
+      })
+    ).toThrow()
+    fsFaults.fsyncSync = null
+    expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).not.toHaveProperty(
+      'receipt.threadRecordCommit'
+    )
+    expect(
+      openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-1', OWNER_ACTOR)
+    ).toMatchObject({ kind: 'found', receipt: { status: 'indeterminate' } })
+  })
 
   function expectFound(
     result: ReturnType<HostCommandReceiptStore['getByCommandId']>,

@@ -146,6 +146,53 @@ function openCoordinator(overrides: Partial<Ports> = {}): {
 }
 
 describe('HostMutationCompletionCoordinator', () => {
+  it('forwards detached committed-record evidence only through successful terminal completion', () => {
+    const { coordinator, ports } = openCoordinator()
+    const evidence = { revision: 8, source: 'verified-transfer' as const, sha256: 'a'.repeat(64) }
+    coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: { status: 'succeeded', threadRecordCommit: evidence },
+        effects: []
+      }
+    })
+    expect(ports.completeReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ threadRecordCommit: evidence })
+    )
+    evidence.revision = 9
+    expect(ports.completeReceipt.mock.calls[0][0].threadRecordCommit.revision).toBe(8)
+    const failed = openCoordinator()
+    failed.coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observed',
+        execution: { status: 'failed', threadRecordCommit: evidence },
+        effects: []
+      }
+    })
+    expect(failed.ports.completeReceipt.mock.calls[0][0]).not.toHaveProperty('threadRecordCommit')
+  })
+
+  it('keeps a committed write indeterminate when observation fails instead of publishing its evidence', () => {
+    const { coordinator, ports } = openCoordinator()
+    const result = coordinator.complete({
+      commandId: COMMAND_ID,
+      mutation: {
+        kind: 'observation_failed',
+        reason: 'after_snapshot_capture_failed',
+        execution: {
+          status: 'succeeded',
+          threadRecordCommit: { revision: 8, source: 'rewritten' }
+        },
+        effects: []
+      }
+    })
+    expect(result.kind).toBe('indeterminate')
+    expect(ports.completeReceipt).not.toHaveBeenCalled()
+    expect(ports.markIndeterminate).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects missing options and non-function ports', () => {
     expect(() => new HostMutationCompletionCoordinator(undefined as never)).toThrow(
       /requires options/

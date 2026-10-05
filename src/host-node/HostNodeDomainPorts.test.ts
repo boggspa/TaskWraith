@@ -833,7 +833,11 @@ describe('HostNodeDomainPorts', () => {
 
     await expect(
       domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 1, source: 'rewritten' }
+    })
     expect(store.getThread(thread.appChatId)).toMatchObject({
       title: 'Host-mediated ensemble record',
       persistenceRevision: 1,
@@ -3077,7 +3081,11 @@ describe('HostNodeDomainPorts', () => {
     expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
     await expect(
       domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 1, source: 'rewritten' }
+    })
 
     // It consumed nothing: occupancy is exactly as before, and the 17th is
     // still queued — the unrelated work neither jumped nor drained the queue.
@@ -3171,7 +3179,11 @@ describe('HostNodeDomainPorts', () => {
     expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
     await expect(
       domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
-    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 1, source: 'rewritten' }
+    })
 
     expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
     expect(reserve).toHaveBeenCalledTimes(17)

@@ -2,7 +2,7 @@ import { fork, type ChildProcess, type Serializable } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -80,7 +80,11 @@ beforeAll(async () => {
 afterEach(async () => {
   await Promise.all(workers.splice(0).map((worker) => worker.close()))
 })
-afterAll(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))
+afterAll(() => {
+  expect(directory).not.toBe(tmpdir())
+  expect(directory.startsWith(`${tmpdir()}${sep}checkpoint-worker-`)).toBe(true)
+  rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+})
 
 function fixture(workerEntry = entryPath) {
   const profilePath = mkdtempSync(join(directory, 'profile-'))
@@ -312,7 +316,8 @@ describe('compiled thread-record transfer worker', () => {
     const descriptor = await worker.publish({ profilePath, transferId: 'adopted', record })
     expect(await executor.execute(persistCommand(descriptor, 0))).toEqual({
       status: 'succeeded',
-      resultSummary: 'thread_record_persisted'
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 1, source: 'verified-transfer', sha256: descriptor.sha256 }
     })
     expect(readFileSync(join(profilePath, 'chats', 'thread-1.json'), 'utf8')).toBe(
       `${JSON.stringify(record)}\n`

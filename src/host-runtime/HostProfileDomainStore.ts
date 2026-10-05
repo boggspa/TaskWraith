@@ -859,6 +859,23 @@ function decodeThread(value: unknown): CanonicalHostProfileThread {
   }
 }
 
+export interface HostProfileThreadRecordPersistInput {
+  threadId: string
+  record: unknown
+  expectedRevision: number
+  /** Exact inode and bytes verified before the store may adopt by rename. */
+  verifiedTransfer?: {
+    path: string
+    identity: HostThreadRecordTransferIdentity
+    byteLength: number
+  }
+}
+
+export interface HostProfileThreadRecordCommit {
+  thread: HostProfileThread
+  commit: { revision: number; source: 'verified-transfer' | 'rewritten' }
+}
+
 export class HostProfileDomainStore {
   private readonly profilePath: string
   private readonly chatsPath: string
@@ -1798,24 +1815,14 @@ export class HostProfileDomainStore {
     }
   }
 
-  persistThreadRecord(input: {
-    threadId: string
-    record: unknown
-    expectedRevision: number
-    /**
-     * The already-verified transfer artifact the record arrived in. When the
-     * record is revision-stamped ahead of the CAS base (the desktop fast
-     * path), the artifact bytes ARE the publishable document, so the store
-     * adopts them by inode-bound rename instead of re-serializing megabytes on
-     * its event loop. Callers that never materialize a verified artifact
-     * (tests, legacy fakes) simply omit this.
-     */
-    verifiedTransfer?: {
-      path: string
-      identity: HostThreadRecordTransferIdentity
-      byteLength: number
-    }
-  }): HostProfileThread {
+  persistThreadRecord(input: HostProfileThreadRecordPersistInput): HostProfileThread {
+    return this.persistThreadRecordWithCommit(input).thread
+  }
+
+  /** Reports the actual completed write without changing the legacy record return contract. */
+  persistThreadRecordWithCommit(
+    input: HostProfileThreadRecordPersistInput
+  ): HostProfileThreadRecordCommit {
     this.assertAuthority()
     this.requireId(input.threadId)
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
@@ -1862,14 +1869,18 @@ export class HostProfileDomainStore {
       persistenceRevision = currentRevision + 1
     }
     const adopted = this.tryAdoptVerifiedTransfer(input, decoded, persistenceRevision)
-    if (adopted) return adopted
+    if (adopted)
+      return {
+        thread: adopted,
+        commit: { revision: persistenceRevision, source: 'verified-transfer' }
+      }
     const next: CanonicalHostProfileThread = {
       ...decoded,
       persistenceRevision,
       updatedAt: this.now()
     }
     this.writeThread(next)
-    return next
+    return { thread: next, commit: { revision: persistenceRevision, source: 'rewritten' } }
   }
 
   /**

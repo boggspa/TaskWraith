@@ -19,7 +19,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,7 +27,8 @@ import { withPeopleDonorMutationGate } from '../host-shared/thread-catalogue/Peo
 import {
   HOST_PROTOCOL_VERSION,
   TASKWRAITH_DESKTOP_HOST_ACTOR,
-  type HostCommand
+  type HostCommand,
+  type HostThreadRecordCommitEvidence
 } from '../shared/hostProtocol'
 import {
   HostProfileDomainStore,
@@ -78,7 +79,12 @@ const roots: string[] = []
 
 afterEach(() => {
   substitution.hook = undefined
-  while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true })
+  while (roots.length > 0) {
+    const root = roots.pop()!
+    expect(root).not.toBe(tmpdir())
+    expect(root.startsWith(`${tmpdir()}${sep}host-thread-record-prepare-`)).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 interface Twin {
@@ -245,7 +251,12 @@ function writeRawTwin(
 }
 
 interface Outcome {
-  readonly legacy: { status: string; errorCode?: string; resultSummary?: string }
+  readonly legacy: {
+    status: string
+    errorCode?: string
+    resultSummary?: string
+    threadRecordCommit?: HostThreadRecordCommitEvidence
+  }
   readonly prepared: HostThreadRecordPrepareResult
   readonly legacyCode: string | null
   readonly preparedCode: string | null
@@ -294,13 +305,24 @@ function expectPreparedMatchesLegacy(
   originalBytes: Buffer,
   transferId = TRANSFER_ID
 ): HostThreadRecordPrepared {
-  expect(outcome.legacy).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
   expect(outcome.prepared.kind).toBe('prepared')
   const prepared = outcome.prepared as HostThreadRecordPrepared
   const committed = a.store.getThread(THREAD_ID) as HostProfileThread
   expect(committed).not.toBeNull()
   const legacyBytes = readFileSync(chatPath(a.profilePath))
   const legacyDecision = legacyBytes.equals(originalBytes) ? 'original' : 'normalized'
+  expect(outcome.legacy).toEqual({
+    status: 'succeeded',
+    resultSummary: 'thread_record_persisted',
+    threadRecordCommit:
+      legacyDecision === 'original'
+        ? {
+            revision: committed.persistenceRevision,
+            source: 'verified-transfer',
+            sha256: sha256(originalBytes)
+          }
+        : { revision: committed.persistenceRevision, source: 'rewritten' }
+  })
   expect(prepared.artifact.source).toBe(legacyDecision)
 
   const artifactBytes = readFileSync(prepared.artifact.path)
@@ -797,7 +819,11 @@ describe('prepareHostThreadRecord differential (contract §20.3 items 1, 2, 4)',
     {
       name: 'an inventory-preserving edit legacy writes normally',
       record: baseRecord({ pinned: true, persistenceRevision: 1 }),
-      legacy: { status: 'succeeded', resultSummary: 'thread_record_persisted' }
+      legacy: {
+        status: 'succeeded',
+        resultSummary: 'thread_record_persisted',
+        threadRecordCommit: { revision: 1, source: 'rewritten' }
+      }
     }
   ]
 

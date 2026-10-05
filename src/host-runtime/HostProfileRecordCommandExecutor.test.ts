@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -44,10 +44,75 @@ function command(
 }
 
 afterEach(() => {
-  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+  while (profiles.length > 0) {
+    const profile = profiles.pop()!
+    expect(profile).not.toBe(tmpdir())
+    expect(profile.startsWith(`${tmpdir()}${sep}host-profile-record-executor-`)).toBe(true)
+    rmSync(profile, { recursive: true, force: true })
+  }
 })
 
 describe('HostProfileRecordCommandExecutor', () => {
+  it('keeps a legacy injected store bound and emits no invented commit evidence', () => {
+    const profilePath = profile()
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'legacy-store',
+      record: { appChatId: 'thread-1', title: 'Legacy', messages: [], updatedAt: 100 }
+    })
+    const persist = vi.fn(
+      () =>
+        ({ persistenceRevision: 99 }) as ReturnType<HostProfileDomainStore['persistThreadRecord']>
+    )
+    const store = {
+      persistThreadRecord: persist,
+      upsertWorkspaceRecord: vi.fn(),
+      removeWorkspaceRecord: vi.fn(),
+      clearWorkspaceRecords: vi.fn(),
+      deleteThreadRecord: vi.fn()
+    }
+    const executor = new HostProfileRecordCommandExecutor({ profilePath, store })
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: 'thread-1' },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(persist.mock.contexts[0]).toBe(store)
+  })
+
+  it('returns verified-transfer evidence only when the exact verified bytes were adopted', () => {
+    const profilePath = profile()
+    const store = new HostProfileDomainStore({
+      profilePath,
+      authority: { assertProfileAuthority() {} },
+      now: () => 200
+    })
+    const original = store.createThread({ scope: 'global', title: 'Original' })
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath,
+      transferId: 'evidence-source',
+      record: { ...original, persistenceRevision: 1 }
+    })
+    const executor = new HostProfileRecordCommandExecutor({ profilePath, store })
+    expect(
+      executor.execute(
+        command(
+          'thread.record.persist',
+          { threadId: original.appChatId },
+          { ...descriptor, expectedRevision: 0 }
+        )
+      )
+    ).toMatchObject({
+      status: 'succeeded',
+      threadRecordCommit: { revision: 1, source: 'verified-transfer', sha256: descriptor.sha256 }
+    })
+  })
+
   it('recognizes only the five Host-owned profile record mutations', () => {
     for (const name of [
       'thread.record.persist',
@@ -105,7 +170,11 @@ describe('HostProfileRecordCommandExecutor', () => {
           }
         )
       )
-    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 0, source: 'rewritten' }
+    })
     expect(store.getThread('thread-1')).toMatchObject({
       appChatId: 'thread-1',
       persistenceRevision: 0,
@@ -161,7 +230,11 @@ describe('HostProfileRecordCommandExecutor', () => {
           { ...descriptor, expectedRevision: 0 }
         )
       )
-    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 0, source: 'rewritten' }
+    })
     const snapshot = recorder.snapshot()
     expect(snapshot.spans).toHaveLength(1)
     expect(snapshot.spans[0]).toMatchObject({
@@ -253,7 +326,11 @@ describe('HostProfileRecordCommandExecutor', () => {
           { ...descriptor, expectedRevision: 0 }
         )
       )
-    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 0, source: 'rewritten' }
+    })
   })
 
   it('returns the stable transfer-missing code before touching the store', () => {
@@ -383,7 +460,11 @@ describe('HostProfileRecordCommandExecutor', () => {
           { ...descriptor, expectedRevision: 0 }
         )
       )
-    ).toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    ).toEqual({
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted',
+      threadRecordCommit: { revision: 1, source: 'verified-transfer', sha256: descriptor.sha256 }
+    })
 
     expect(readdirSync(join(profilePath, 'host-thread-record-transfer'))).toEqual([])
     expect(readFileSync(join(profilePath, 'chats', `${created.appChatId}.json`), 'utf8')).toBe(

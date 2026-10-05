@@ -3,7 +3,7 @@
  * observation accepts this injected shape without importing the main-only
  * BridgeAction executor adapter that produces it in desktop composition.
  */
-import type { HostResultRef } from '../shared/hostProtocol'
+import type { HostResultRef, HostThreadRecordCommitEvidence } from '../shared/hostProtocol'
 
 export type HostCommandExecutionResult = {
   readonly status: 'succeeded' | 'failed' | 'cancelled'
@@ -12,4 +12,5 @@ export type HostCommandExecutionResult = {
   readonly errorMessage?: string
   /** Strict opaque locator returned only by a successful setup execution. */
   readonly resultRef?: HostResultRef
+  readonly threadRecordCommit?: HostThreadRecordCommitEvidence
 }

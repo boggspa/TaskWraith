@@ -51,7 +51,8 @@ export type HostProfileRecordCommandStore = Pick<
   | 'clearWorkspaceRecords'
   | 'deleteThreadRecord'
   | 'persistThreadRecord'
->
+> &
+  Partial<Pick<HostProfileDomainStore, 'persistThreadRecordWithCommit'>>
 
 export interface HostProfileRecordCommandExecutorOptions {
   /** Canonical profile directory containing owner-only transfer artifacts. */
@@ -268,7 +269,7 @@ export class HostProfileRecordCommandExecutor {
       } catch {
         startedAt = undefined
       }
-      this.store.persistThreadRecord({
+      const persistInput = {
         threadId: command.target.threadId,
         record,
         expectedRevision: command.arguments.expectedRevision as number,
@@ -282,12 +283,30 @@ export class HostProfileRecordCommandExecutor {
           identity: verified.identity,
           byteLength: descriptor.byteLength
         }
-      })
+      }
+      const committed = this.store.persistThreadRecordWithCommit
+        ? this.store.persistThreadRecordWithCommit(persistInput)
+        : (this.store.persistThreadRecord(persistInput), null)
       removePublishedTransfer(this.profilePath, descriptor.transferId, verified.identity)
       if (startedAt !== undefined) {
         this.recordDurableCommit(command.target.threadId, command.commandId, startedAt)
       }
-      return { status: 'succeeded', resultSummary: 'thread_record_persisted' }
+      return {
+        status: 'succeeded',
+        resultSummary: 'thread_record_persisted',
+        ...(committed
+          ? {
+              threadRecordCommit:
+                committed.commit.source === 'verified-transfer'
+                  ? {
+                      revision: committed.commit.revision,
+                      source: 'verified-transfer' as const,
+                      sha256: descriptor.sha256
+                    }
+                  : { revision: committed.commit.revision, source: 'rewritten' as const }
+            }
+          : {})
+      }
     } catch (error) {
       removePublishedTransfer(this.profilePath, descriptor.transferId, verified.identity)
       const message = error instanceof Error ? error.message : ''

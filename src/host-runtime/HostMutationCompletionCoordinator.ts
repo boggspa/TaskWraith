@@ -20,7 +20,7 @@
 
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
-import type { HostResultRef } from '../shared/hostProtocol'
+import type { HostResultRef, HostThreadRecordCommitEvidence } from '../shared/hostProtocol'
 import {
   HOST_COMMAND_RECEIPT_INDETERMINATE_CODES,
   type HostCommandReceiptCompleteInput,
@@ -358,6 +358,7 @@ export class HostMutationCompletionCoordinator {
       errorMessage?: string
       resultSummary?: string
       resultRef?: HostResultRef
+      threadRecordCommit?: HostThreadRecordCommitEvidence
     },
     options: { consumeEnvelope: boolean }
   ): HostMutationCompletionResult {
@@ -370,7 +371,10 @@ export class HostMutationCompletionCoordinator {
         ...(fields.errorCode !== undefined ? { errorCode: fields.errorCode } : {}),
         ...(fields.errorMessage !== undefined ? { errorMessage: fields.errorMessage } : {}),
         ...(fields.resultSummary !== undefined ? { resultSummary: fields.resultSummary } : {}),
-        ...(fields.resultRef !== undefined ? { resultRef: fields.resultRef } : {})
+        ...(fields.resultRef !== undefined ? { resultRef: fields.resultRef } : {}),
+        ...(fields.threadRecordCommit !== undefined
+          ? { threadRecordCommit: { ...fields.threadRecordCommit } }
+          : {})
       }
       record = this.completeReceipt(completeInput)
     } catch {
@@ -499,6 +503,7 @@ function executionFields(execution: HostCommandExecutionResult): {
   errorMessage?: string
   resultSummary?: string
   resultRef?: HostResultRef
+  threadRecordCommit?: HostThreadRecordCommitEvidence
 } {
   return {
     ...(execution.errorCode !== undefined ? { errorCode: execution.errorCode } : {}),
@@ -506,6 +511,9 @@ function executionFields(execution: HostCommandExecutionResult): {
     ...(execution.resultSummary !== undefined ? { resultSummary: execution.resultSummary } : {}),
     ...(execution.status === 'succeeded' && execution.resultRef !== undefined
       ? { resultRef: execution.resultRef }
+      : {}),
+    ...(execution.status === 'succeeded' && execution.threadRecordCommit !== undefined
+      ? { threadRecordCommit: { ...execution.threadRecordCommit } }
       : {})
   }
 }
