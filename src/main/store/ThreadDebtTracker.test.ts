@@ -5,7 +5,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createThreadDurabilityDebt, type ThreadDurabilityPort } from './ThreadDurabilityDebt'
-import { IDLE_SWEEP_FLOOR_MS, THREAD_IDLE_BARRIER_MS, ThreadDebtTracker } from './ThreadDebtTracker'
+import {
+  IDLE_SWEEP_FLOOR_MS,
+  THREAD_IDLE_BARRIER_MS,
+  THREAD_TRICKLE_MS,
+  ThreadDebtTracker
+} from './ThreadDebtTracker'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -317,5 +322,175 @@ describe('quit', () => {
   it('returns at once when nothing is owed', async () => {
     const { tracker } = tracked()
     expect(await tracker.payAll(5_000)).toEqual({ threads: 0, unpaid: 0 })
+  })
+})
+
+describe('the trickle', () => {
+  /**
+   * A tracker that syncs a thread's growing debt in the background, with each
+   * time it asked the debt for a round.
+   */
+  function trickling() {
+    const time = clock()
+    const disk = port()
+    const debt = createThreadDurabilityDebt({ port: disk.port, now: time.now })
+    const rounds: Array<[string, number]> = []
+    const trickle = debt.trickle
+    debt.trickle = (chatId) => {
+      rounds.push([chatId, time.now()])
+      return trickle(chatId)
+    }
+    const tracker = new ThreadDebtTracker({
+      debt,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+      trickleMs: THREAD_TRICKLE_MS
+    })
+    const write = (chatId: string) =>
+      tracker.note(chatId, {
+        file: `/p/chat-journal-v2/${chatId}.mutations.jsonl`,
+        owner: 'journal'
+      })
+    /** One write every 100 ms from now until `until`, the clock moved to `until`. */
+    const keepWriting = async (chatId: string, until: number) => {
+      for (let at = time.now(); at < until; at += 100) {
+        await time.advance(at - time.now())
+        write(chatId)
+      }
+      await time.advance(until - time.now())
+    }
+    return { time, disk, debt, rounds, tracker, write, keepWriting }
+  }
+
+  it('asks for a round of a thread that keeps writing every 2 s, on the one timer', async () => {
+    const { time, rounds, keepWriting } = trickling()
+
+    await keepWriting('chat-1', 10_050)
+
+    expect(rounds).toEqual([2_000, 4_000, 6_000, 8_000, 10_000].map((at) => ['chat-1', at]))
+    expect(time.pending()).toHaveLength(1)
+  })
+
+  it('pays a growing thread in the background, so that its idle barrier finds nothing', async () => {
+    const { time, disk, debt, tracker, write } = trickling()
+    write('chat-1')
+    await time.advance(1_000)
+    write('chat-1')
+
+    await time.advance(1_000)
+    expect(disk.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
+    expect(debt.snapshot().trickle).toMatchObject({ rounds: 1, started: 1, paid: 1 })
+
+    await time.advance(THREAD_IDLE_BARRIER_MS)
+    expect(disk.asked).toHaveLength(1)
+    expect(tracker.snapshot()).toMatchObject({ idleBarriers: 1, owing: 0, trickles: 1 })
+  })
+
+  it("gives each thread its round once its own debt is a period old, not at another's", async () => {
+    const { time, rounds, write } = trickling()
+    write('chat-1')
+    await time.advance(500)
+    write('chat-2')
+    await time.advance(500)
+    write('chat-1')
+    await time.advance(500)
+    write('chat-2')
+
+    await time.advance(2_000)
+
+    // chat-2's falls due at 2.5 s; the timer, having fired for chat-1 at 2 s,
+    // fires again no sooner than its floor after.
+    expect(rounds).toEqual([
+      ['chat-1', 2_000],
+      ['chat-2', 2_000 + IDLE_SWEEP_FLOOR_MS]
+    ])
+  })
+
+  it('fires no sooner than its floor after the write that made a round fall due', async () => {
+    const { time, rounds, write } = trickling()
+    write('chat-1')
+    await time.advance(1_900)
+    write('chat-1')
+
+    await time.advance(1_000)
+
+    expect(rounds).toEqual([['chat-1', 1_900 + IDLE_SWEEP_FLOOR_MS]])
+  })
+
+  it('asks for a round of a thread that writes on while its idle barrier runs', async () => {
+    const time = clock()
+    const disk = port(() => 'held')
+    const debt = createThreadDurabilityDebt({ port: disk.port, now: time.now })
+    const asked: number[] = []
+    const trickle = debt.trickle
+    debt.trickle = (chatId) => {
+      asked.push(time.now())
+      return trickle(chatId)
+    }
+    const tracker = new ThreadDebtTracker({
+      debt,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+      trickleMs: THREAD_TRICKLE_MS
+    })
+    const write = () =>
+      tracker.note('chat-1', {
+        file: '/p/chat-journal-v2/chat-1.mutations.jsonl',
+        owner: 'journal'
+      })
+    write()
+    await time.advance(THREAD_IDLE_BARRIER_MS)
+    expect(tracker.snapshot().idleBarriers).toBe(1)
+
+    // Its idle barrier is held by the disk; the thread writes again.
+    write()
+    await time.advance(2_000)
+
+    expect(asked).toEqual([THREAD_IDLE_BARRIER_MS + IDLE_SWEEP_FLOOR_MS])
+  })
+
+  it('leaves a thread that wrote only in the first second of its debt to its idle barrier', async () => {
+    const { time, disk, rounds, write } = trickling()
+    write('chat-1')
+    await time.advance(900)
+    write('chat-1')
+
+    await time.advance(THREAD_IDLE_BARRIER_MS + 1_000)
+
+    expect(rounds).toEqual([])
+    expect(disk.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
+  })
+
+  it('arms the timer once for a thread that wrote once, as with no trickle', async () => {
+    const { time, rounds, write } = trickling()
+    write('chat-1')
+
+    await time.advance(THREAD_IDLE_BARRIER_MS)
+
+    expect(rounds).toEqual([])
+    expect(time.timers.map((timer) => timer.ms)).toEqual([THREAD_IDLE_BARRIER_MS])
+  })
+
+  it('asks for no round once quit has begun', async () => {
+    const { time, rounds, tracker, write } = trickling()
+    write('chat-1')
+    await time.advance(1_500)
+    write('chat-1')
+
+    await tracker.payAll(1_000)
+    await time.advance(5_000)
+
+    expect(rounds).toEqual([])
+    expect(time.pending()).toHaveLength(0)
+  })
+
+  it('counts the rounds it asked for', async () => {
+    const { tracker, keepWriting } = trickling()
+
+    await keepWriting('chat-1', 6_050)
+
+    expect(tracker.snapshot()).toMatchObject({ trickles: 3 })
   })
 })

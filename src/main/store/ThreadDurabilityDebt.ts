@@ -67,13 +67,31 @@
  * the port at once, and how many syncs run together, and in what order, is the
  * port's decision.
  *
+ * `trickle(chatId)` syncs what a thread owes in the background, without a
+ * barrier: every file it owes, at the port's background class, then every
+ * directory noted before the round began, once each file sync of the round
+ * has settled and none failed. A path is paid by a barrier's rule: when
+ * nothing was noted for it after its sync was asked for, which is before the
+ * sync began. One noted since, one a barrier took meanwhile and one whose
+ * sync failed are left as they are: owed, or the barrier's to pay. The round
+ * stands outside the thread's barriers: none waits for it or joins it, and a
+ * barrier takes what it needs as it would anyway. When the round's sync of a
+ * path it takes is still waiting in the port, the barrier's own request joins
+ * it there and moves it up to the barrier's class; when that sync is in
+ * flight, the barrier's starts beside it. At most one round runs for a
+ * thread, and at most one trickle sync of a path waits or runs, whichever
+ * thread asked for it. Nobody waits on a round, so it settles without its
+ * failures, which are counted. When to trickle a thread is the caller's
+ * decision (`ThreadDebtTracker`).
+ *
  * The module has no file system and no clock of its own and starts no timer.
  * It also has no way to sync on the thread that calls it: the port has only
  * asynchronous calls.
  *
  * Memory: for each thread that owes something or has a barrier running or
  * queued, one entry per distinct path owed, one more for each run that noted
- * that path, and one set for each run that owes something. A barrier holds
+ * that path, and one set for each run that owes something. The trickle holds
+ * one entry for each path a sync of it is waiting or in flight for. A barrier holds
  * the paths it took until it settles, and a queued one the runs it will pay
  * for. A thread with nothing owed and no barrier has no state at all, nor does
  * a run that owes nothing. There is no cap: a thread that writes many
@@ -193,6 +211,26 @@ export interface ThreadDurabilityWaitCounters {
   ownSyncsLongestMs: number
 }
 
+export interface ThreadDurabilityTrickleCounters {
+  /** Rounds begun. At most one runs for a thread at a time. */
+  rounds: number
+  /** Syncs asked of the port at its background class, at most one waiting or in flight for a path. */
+  started: number
+  /**
+   * Of those, the ones that paid their path, synced or found gone, nothing
+   * having been noted for it since they were asked for.
+   */
+  paid: number
+  /** The ones that settled with their path noted again since: it stays owed. */
+  notedSince: number
+  /** The ones whose path a barrier took, or an erasure dropped, before they settled. */
+  takenOver: number
+  /** The ones that failed: their path stays owed. */
+  failed: number
+  /** Trickle syncs waiting or in flight now. */
+  inFlight: number
+}
+
 export interface ThreadDurabilityDebtSnapshot {
   owners: Record<ThreadDurabilityOwner, ThreadDurabilityOwnerCounters>
   barriers: {
@@ -233,7 +271,17 @@ export interface ThreadDurabilityDebtSnapshot {
     beside: number
     /** Of those, the ones in which a sync failed. The thread's debt is as it was. */
     besideFailed: number
+    /**
+     * Rounds begun for barriers of one or more runs, as a run's final record
+     * raises, and the paths, files and directories, those rounds took:
+     * summed, and the most one took.
+     */
+    runRounds: number
+    runPathsTotal: number
+    runPathsMost: number
   }
+  /** The background syncs of what threads owe, outside their barriers (`trickle`). */
+  trickle: ThreadDurabilityTrickleCounters
   /** Settled barriers the user sat in, and the rest. */
   waits: Record<'urgent' | 'normal', ThreadDurabilityWaitCounters>
   /** Threads holding state right now, and what they owe that no barrier has taken yet. */
@@ -254,6 +302,13 @@ export interface ThreadDurabilityDebt {
   barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
   /** Drop what a thread owes without syncing it: the thread is being erased. */
   forget(chatId: string): void
+  /**
+   * Sync what the thread owes in the background, outside its barriers; see
+   * the top of this file. Resolves when the round has settled, and never
+   * rejects. A thread that owes nothing starts none, and one whose round still
+   * runs is given that round.
+   */
+  trickle(chatId: string): Promise<void>
   snapshot(): ThreadDurabilityDebtSnapshot
 }
 
@@ -267,6 +322,8 @@ export interface ThreadDurabilityDebtOptions {
 interface Owed {
   own: boolean
   runs: Set<string> | null
+  /** When it was last noted, in notes: a sync asked for since covers it. */
+  noted: number
 }
 
 interface OwedFile extends Owed {
@@ -333,9 +390,12 @@ interface ThreadState {
   running: Running | null
   /** The one barrier that follows it, for whoever needs more than it took. */
   next: Queued | null
+  /** The trickle's round, while one runs. */
+  trickle: Promise<void> | null
 }
 
 const URGENT: ThreadDurabilitySyncOptions = { urgent: true }
+const BACKGROUND: ThreadDurabilitySyncOptions = { background: true }
 
 const noPaths = (): Paths => ({ files: new Set(), directories: new Set() })
 
@@ -375,9 +435,17 @@ export function createThreadDurabilityDebt(
     urgent: 0,
     hastened: 0,
     beside: 0,
-    besideFailed: 0
+    besideFailed: 0,
+    runRounds: 0,
+    runPathsTotal: 0,
+    runPathsMost: 0
   }
   const waits = { urgent: waitCounters(), normal: waitCounters() }
+  /** Counts every note, and every path owed again, so that a sync can tell what came after it was asked for. */
+  let notes = 0
+  /** The paths a trickle sync waits or is in flight for, across every thread. */
+  const trickling: Record<Kind, Set<string>> = { files: new Set(), directories: new Set() }
+  const trickled = { rounds: 0, started: 0, paid: 0, notedSince: 0, takenOver: 0, failed: 0 }
 
   const owesNothing = (state: ThreadState): boolean =>
     state.owed.files.size === 0 && state.owed.directories.size === 0
@@ -434,18 +502,20 @@ export function createThreadDurabilityDebt(
     let entry = state.owed.files.get(path)
     if (entry) entry.owner = owner
     else {
-      entry = { owner, own: false, runs: null }
+      entry = { owner, own: false, runs: null, noted: 0 }
       state.owed.files.set(path, entry)
     }
+    entry.noted = ++notes
     owe(state, 'files', path, entry, run)
   }
 
   const oweDirectory = (state: ThreadState, path: string, run?: string): void => {
     let entry = state.owed.directories.get(path)
     if (!entry) {
-      entry = { own: false, runs: null }
+      entry = { own: false, runs: null, noted: 0 }
       state.owed.directories.set(path, entry)
     }
+    entry.noted = ++notes
     owe(state, 'directories', path, entry, run)
   }
 
@@ -470,7 +540,8 @@ export function createThreadDurabilityDebt(
         own: noPaths(),
         runs: new Map(),
         running: null,
-        next: null
+        next: null,
+        trickle: null
       }
       threads.set(chatId, state)
     }
@@ -483,7 +554,8 @@ export function createThreadDurabilityDebt(
         syncing.renamed.set(debt.file, {
           owner: debt.owner,
           own: debt.run === undefined,
-          runs: debt.run === undefined ? null : new Set([debt.run])
+          runs: debt.run === undefined ? null : new Set([debt.run]),
+          noted: notes
         })
         barriers.renamedUnderway += 1
       }
@@ -633,6 +705,12 @@ export function createThreadDurabilityDebt(
   ): Running => {
     const taken = take(state, runs)
     barriers.rounds += 1
+    if (runs !== null && runs.size > 0) {
+      const paths = taken.files.size + taken.directories.size
+      barriers.runRounds += 1
+      barriers.runPathsTotal += paths
+      if (paths > barriers.runPathsMost) barriers.runPathsMost = paths
+    }
     const ownUnsynced = noPaths()
     for (const [path, entry] of taken.files) if (entry.own) ownUnsynced.files.add(path)
     for (const [path, entry] of taken.directories) if (entry.own) ownUnsynced.directories.add(path)
@@ -844,6 +922,95 @@ export function createThreadDurabilityDebt(
     threads.delete(chatId)
   }
 
+  /**
+   * Ask the port for a trickle sync of each path the thread still owes, and
+   * settle each by a barrier's rule. Resolves true when every sync asked for
+   * succeeded and no path was passed over for a sync of it already waiting
+   * or in flight.
+   */
+  const trickleSyncs = async (
+    chatId: string,
+    state: ThreadState,
+    kind: Kind,
+    paths: readonly string[]
+  ): Promise<boolean> => {
+    let whole = true
+    const requests: Array<Promise<boolean>> = []
+    for (const path of paths) {
+      const entry = state.owed[kind].get(path)
+      if (!entry) continue
+      if (trickling[kind].has(path)) {
+        whole = false
+        continue
+      }
+      // A sync that starts after this request covers every note up to here.
+      const asked = notes
+      let request: Promise<ThreadDurabilitySyncOutcome>
+      try {
+        request =
+          kind === 'files' ? port.syncFile(path, BACKGROUND) : port.syncDirectory(path, BACKGROUND)
+      } catch (error) {
+        request = Promise.reject(error)
+      }
+      trickling[kind].add(path)
+      trickled.started += 1
+      requests.push(
+        request.then(
+          () => {
+            trickling[kind].delete(path)
+            if (threads.get(chatId) !== state || state.owed[kind].get(path) !== entry) {
+              trickled.takenOver += 1
+            } else if (entry.noted > asked) {
+              trickled.notedSince += 1
+            } else {
+              state.owed[kind].delete(path)
+              disown(state, kind, path, entry)
+              trickled.paid += 1
+            }
+            return true
+          },
+          () => {
+            trickling[kind].delete(path)
+            trickled.failed += 1
+            return false
+          }
+        )
+      )
+    }
+    const outcomes = await Promise.all(requests)
+    return whole && outcomes.every(Boolean)
+  }
+
+  const trickleRound = async (chatId: string, state: ThreadState): Promise<void> => {
+    trickled.rounds += 1
+    const from = notes
+    const filesPaid = await trickleSyncs(chatId, state, 'files', [...state.owed.files.keys()])
+    // A directory sync makes names durable: only after the files of the
+    // round, and only for a directory noted before the round began, whose
+    // names are those files'.
+    if (!filesPaid || threads.get(chatId) !== state) return
+    const directories: string[] = []
+    for (const [path, entry] of state.owed.directories) {
+      if (entry.noted <= from) directories.push(path)
+    }
+    await trickleSyncs(chatId, state, 'directories', directories)
+  }
+
+  const trickle = (chatId: string): Promise<void> => {
+    const state = threads.get(chatId)
+    if (!state) return Promise.resolve()
+    if (state.trickle) return state.trickle
+    if (owesNothing(state)) return Promise.resolve()
+    const round = trickleRound(chatId, state).finally(() => {
+      state.trickle = null
+      if (threads.get(chatId) === state && owesNothing(state) && !state.running && !state.next) {
+        threads.delete(chatId)
+      }
+    })
+    state.trickle = round
+    return round
+  }
+
   const snapshot = (): ThreadDurabilityDebtSnapshot => {
     let files = 0
     let directories = 0
@@ -858,6 +1025,10 @@ export function createThreadDurabilityDebt(
         THREAD_DURABILITY_OWNERS.map((owner) => [owner, { ...owners[owner] }])
       ) as Record<ThreadDurabilityOwner, ThreadDurabilityOwnerCounters>,
       barriers: { ...barriers },
+      trickle: {
+        ...trickled,
+        inFlight: trickling.files.size + trickling.directories.size
+      },
       waits: { urgent: { ...waits.urgent }, normal: { ...waits.normal } },
       owed: { threads: threads.size, files, directories },
       owingRuns,
@@ -865,5 +1036,5 @@ export function createThreadDurabilityDebt(
     }
   }
 
-  return { note, barrier, forget, snapshot }
+  return { note, barrier, forget, trickle, snapshot }
 }

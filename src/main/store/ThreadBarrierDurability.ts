@@ -19,7 +19,10 @@
  * that thread: an urgent one for what the user sits in, one of the run for a
  * run's final record. What no moment pays is paid by a quiet thread's idle
  * barrier or at quit, and dropped unpaid when the thread is erased
- * (`ThreadDebtTracker`).
+ * (`ThreadDebtTracker`). While a thread keeps writing, what it owes is also
+ * synced in the background every `THREAD_TRICKLE_MS`, outside its barriers,
+ * so that the barrier at a run's end pays about that much of what the run
+ * wrote.
  */
 import {
   ChatDurabilityTickets,
@@ -47,7 +50,11 @@ import {
   createThreadDurabilityDebtFs,
   type ThreadDurabilityDebtFsSnapshot
 } from './ThreadDurabilityDebtFs'
-import { ThreadDebtTracker, type ThreadDebtTrackerSnapshot } from './ThreadDebtTracker'
+import {
+  THREAD_TRICKLE_MS,
+  ThreadDebtTracker,
+  type ThreadDebtTrackerSnapshot
+} from './ThreadDebtTracker'
 import type { RunEventLedgerStagedAppend } from './RunEventLedgerWriter'
 import type { ToolActivityDetailCheckpoint } from './ToolActivityDetailLedger'
 import {
@@ -171,6 +178,8 @@ export interface ThreadBarrierDurabilityOptions {
   /** The idle timer; the real one when omitted. */
   setTimer?: (callback: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
+  /** The trickle's period: `THREAD_TRICKLE_MS` when omitted, none when null. */
+  trickleMs?: number | null
   /** Where a save's tool detail is staged. Without it the layer stages none. */
   detail?: ThreadBarrierDetailOptions
 }
@@ -252,11 +261,13 @@ export function createThreadBarrierDurability(
   const port = options.port ?? built!
   const debt = createThreadDurabilityDebt({ port, now })
   const tickets = new ChatDurabilityTickets({ now })
+  const trickleMs = options.trickleMs === undefined ? THREAD_TRICKLE_MS : options.trickleMs
   const threads = new ThreadDebtTracker({
     debt,
     now,
     setTimer: options.setTimer,
-    clearTimer: options.clearTimer
+    clearTimer: options.clearTimer,
+    ...(trickleMs === null ? {} : { trickleMs })
   })
   const note = threads.note
   const detail = options.detail
