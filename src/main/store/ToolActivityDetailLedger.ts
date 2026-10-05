@@ -39,8 +39,35 @@ export interface ToolActivityDetailCheckpoint {
   activityCount: number
 }
 
+/** One run's segment as a commit's bytes-only half wrote it, and the file it went into. */
+export interface ToolActivityDetailSegment {
+  checkpoint: ToolActivityDetailCheckpoint
+  filePath: string
+}
+
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+/** The size of a file, and 0 for one that is not there. */
+function sizeOf(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return 0
+  }
+}
+
+function checkpointOf(batch: PendingRunBatch, segment: Buffer): ToolActivityDetailCheckpoint {
+  return {
+    runId: batch.runId,
+    relativePath: batch.relativePath,
+    offset: batch.initialSize,
+    byteLength: segment.byteLength,
+    sha256: sha256(segment),
+    activityCount: batch.activityCount
+  }
 }
 
 function runArtifactDirectoryName(runId: string): string {
@@ -76,6 +103,16 @@ function serializeDetail(runId: string, activity: ToolActivity): Buffer | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The sha256 a ref staged for this activity now would carry, or null for an
+ * activity that cannot be staged at all: whether a ref staged earlier still
+ * names exactly these bytes.
+ */
+export function toolActivityDetailSha256(runId: string, activity: ToolActivity): string | null {
+  const bytes = serializeDetail(runId, activity)
+  return bytes ? sha256(bytes) : null
 }
 
 function fsyncDirectory(directory: string): void {
@@ -128,16 +165,10 @@ export class ToolActivityDetailBatchWriter {
     let batch = this.batches.get(runId)
     if (!batch) {
       const paths = detailArtifactPaths(this.runArtifactsDir, runId)
-      let initialSize = 0
-      try {
-        initialSize = fs.statSync(paths.filePath).size
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      }
       batch = {
         runId,
         ...paths,
-        initialSize,
+        initialSize: sizeOf(paths.filePath),
         byteLength: 0,
         chunks: [],
         activityCount: 0
@@ -166,12 +197,7 @@ export class ToolActivityDetailBatchWriter {
       if (batch.chunks.length === 0) continue
       if (this.owed) this.makeOwedDirectory(batch, this.owed)
       else if (!deferred) fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
-      let currentSize = 0
-      try {
-        currentSize = fs.statSync(batch.filePath).size
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      }
+      const currentSize = sizeOf(batch.filePath)
       if (currentSize !== batch.initialSize) {
         throw new Error(`Tool detail artifact changed while staging run ${batch.runId}`)
       }
@@ -209,16 +235,35 @@ export class ToolActivityDetailBatchWriter {
           }
         } else if (!fileExisted) fsyncDirectory(path.dirname(batch.filePath))
       }
-      checkpoints.push({
-        runId: batch.runId,
-        relativePath: batch.relativePath,
-        offset: batch.initialSize,
-        byteLength: segment.byteLength,
-        sha256: sha256(segment),
-        activityCount: batch.activityCount
-      })
+      checkpoints.push(checkpointOf(batch, segment))
     }
     return checkpoints
+  }
+
+  /**
+   * The bytes-only half of a commit: write each run's segment, sync nothing,
+   * note nothing and leave any deferred owner out of it. Whoever calls it
+   * makes the bytes durable, with every name on the path to them, before
+   * anything references them.
+   */
+  writeUnsynced(): ToolActivityDetailSegment[] {
+    const segments: ToolActivityDetailSegment[] = []
+    for (const batch of this.batches.values()) {
+      if (batch.chunks.length === 0) continue
+      fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
+      if (sizeOf(batch.filePath) !== batch.initialSize) {
+        throw new Error(`Tool detail artifact changed while staging run ${batch.runId}`)
+      }
+      const segment = Buffer.concat(batch.chunks)
+      const fd = fs.openSync(batch.filePath, 'a')
+      try {
+        fs.writeFileSync(fd, segment)
+      } finally {
+        fs.closeSync(fd)
+      }
+      segments.push({ checkpoint: checkpointOf(batch, segment), filePath: batch.filePath })
+    }
+    return segments
   }
 
   /**

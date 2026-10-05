@@ -40,6 +40,18 @@ export interface RunEventLedgerAppendOptions {
   storeRawEvents?: boolean
 }
 
+/** What a staged append wrote, for its caller to sync before anything relies on the event. */
+export interface RunEventLedgerStagedAppend {
+  record: RunEventRecord
+  /** The ledger the event went into. */
+  file: string
+  /**
+   * Each directory in which the append made a name: the ledger's folder for a
+   * new ledger, and the folder's parent for a new folder.
+   */
+  directories: string[]
+}
+
 /**
  * The synchronous, single-owner run-event append boundary. AppStore retains
  * settings and history-deletion authorization; this module owns sequence/hash
@@ -90,6 +102,40 @@ export class RunEventLedgerWriter {
   }
 
   append(input: RunEventInput, options: RunEventLedgerAppendOptions = {}): RunEventRecord {
+    return this.write(input, options, this.owedBy(input))
+  }
+
+  /**
+   * An append whose durability is the caller's, for an event that must reach
+   * the disk only after something else did, with nobody waiting on it: it
+   * writes the event without a sync, notes nothing against any thread, and
+   * says which ledger it wrote and each directory that gained a name, for the
+   * caller to sync before anything relies on the event. It writes no raw
+   * output. Refused while the ledgers are kept in the durability flusher,
+   * which leaves no write to its caller.
+   */
+  appendStaged(input: RunEventInput): RunEventLedgerStagedAppend {
+    if (this.descriptors) {
+      throw new Error('A staged run-event append is never made through the durability flusher')
+    }
+    let file = ''
+    const directories: string[] = []
+    const record = this.write(input, {}, (debt) => {
+      if ('file' in debt) file = debt.file
+      else directories.push(debt.directory)
+    })
+    return { record, file, directories }
+  }
+
+  /**
+   * One append. `owed`, when given, is told what the disk is owed for it in
+   * place of the syncs it would otherwise get, and the flusher is not used.
+   */
+  private write(
+    input: RunEventInput,
+    options: RunEventLedgerAppendOptions,
+    owed: ((debt: ThreadDurabilityDebtNote) => void) | undefined
+  ): RunEventRecord {
     const filePath = path.join(this.options.runEventsDir, safeRunEventFileName(input.runId))
     // Seek a cold ledger's head rather than materializing its potentially large
     // history. Advance the cache only after the write and required barriers.
@@ -121,7 +167,6 @@ export class RunEventLedgerWriter {
       this.heads.set(input.runId, { sequence: record.sequence, hash: record.hash || previousHash })
       return record
     }
-    const owed = this.owedBy(input)
     const directoryExisted = fs.existsSync(directoryPath)
     const fileExisted = fs.existsSync(filePath)
     fs.mkdirSync(directoryPath, { recursive: true })
