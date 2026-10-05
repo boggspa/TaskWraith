@@ -111,6 +111,12 @@ const CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint'
 const LINEAGE_REASONS: ReadonlySet<string> = new Set(['recovery', 'initial'])
 /** The journal names files only for ids of this shape. */
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
+
+/** Whether a thread with this id can have a log: the journal names files for no other. */
+export function isFollowableThreadId(chatId: unknown): chatId is string {
+  return typeof chatId === 'string' && CHAT_ID_PATTERN.test(chatId)
+}
+
 /** Seeds one poll may ask for before it hands back, so a thread that keeps moving cannot hold it. */
 const MAX_SEEDS_PER_POLL = 3
 /** Steps one poll may take between files, past which it hands back. */

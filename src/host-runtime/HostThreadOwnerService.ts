@@ -74,6 +74,15 @@ export interface HostThreadOwnerServiceOptions {
   /** Defaults to signal 0 to the writer's process id. */
   liveness?(writer: ThreadAuthorityWriter): ThreadWriterLiveness
   readonly log?: (line: string) => void
+  /** Told what the writers say about their threads; its failures change no answer. */
+  readonly observer?: HostThreadOwnerServiceObserver
+}
+
+export interface HostThreadOwnerServiceObserver {
+  /** A writer's `advanced` was recorded: the thread's log has grown. */
+  advanced?(threadId: string): void
+  /** A grant was released: its writer removed the thread's authority file before it said so. */
+  released?(threadId: string): void
 }
 
 export interface HostThreadOwnerServiceSnapshot {
@@ -116,6 +125,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   readonly mode: HostThreadOwnerServiceMode
   private readonly registry: HostThreadOwnerRegistry | null
   private readonly log: (line: string) => void
+  private readonly observer: HostThreadOwnerServiceObserver | undefined
   private readonly writerOfConnection = new Map<number, string>()
   private readonly connectionsOfWriter = new Map<string, Set<number>>()
 
@@ -123,6 +133,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     const switchedOn = isThreadLogAuthorityEnabled(options.environment)
     this.mode = !switchedOn ? 'off' : options.transactionalPersist ? 'off-txn-persist' : 'on'
     this.log = options.log ?? (() => {})
+    this.observer = options.observer
     if (this.mode === 'off-txn-persist') {
       this.log(
         'taskwraith-host: TASKWRAITH_THREAD_LOG_AUTHORITY=1 ignored: a Host with TASKWRAITH_HOST_TXN_PERSIST=1 takes no thread claims\n'
@@ -196,10 +207,12 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
           const speaksFor = this.writerOfConnection.get(connectionId)
           if (speaksFor === undefined) this.attach(connectionId, writer.writerId)
         }
+        if (recorded) this.tell((observer) => observer.advanced?.(params.threadId))
         return { kind: 'thread.owner', action: 'advanced', recorded }
       }
       case 'release': {
         const released = await registry.release(params)
+        if (released) this.tell((observer) => observer.released?.(params.threadId))
         return { kind: 'thread.owner', action: 'release', released }
       }
     }
@@ -224,6 +237,15 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
         .map(([writerId, connections]) => ({ writerId, connections: connections.size }))
         .sort((a, b) => (a.writerId < b.writerId ? -1 : a.writerId > b.writerId ? 1 : 0)),
       table: this.registry?.snapshot() ?? null
+    }
+  }
+
+  private tell(call: (observer: HostThreadOwnerServiceObserver) => void): void {
+    if (!this.observer) return
+    try {
+      call(this.observer)
+    } catch {
+      // What the observer does with it is its own affair; the writer's answer stands.
     }
   }
 

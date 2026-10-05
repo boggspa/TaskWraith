@@ -56,6 +56,14 @@ export async function readThreadLogHead(directory: string, chatId: string): Prom
   return checkpointHead(files.checkpoint, chatId)
 }
 
+/** The log's checkpoint alone: a record behind it did not come from the log as it is now. */
+export async function readThreadLogCheckpoint(
+  directory: string,
+  chatId: string
+): Promise<ThreadLogHead> {
+  return checkpointHead(threadLogFiles(directory, chatId).checkpoint, chatId)
+}
+
 function errorCode(error: unknown): string | undefined {
   const code = (error as NodeJS.ErrnoException | null)?.code
   return typeof code === 'string' ? code : undefined

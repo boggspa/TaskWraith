@@ -305,4 +305,68 @@ describe('the Host’s thread owner service', () => {
     await writeAuthority('thread-1', 'desk-old', 4242, 5)
     grantOf(await on.answer(1, claim('thread-1', 'desk-new', [5, 7])))
   })
+
+  it('on, tells its observer of each advance recorded and each grant released, and nothing else', async () => {
+    const told: Array<[string, string]> = []
+    const on = service(ON, {
+      observer: {
+        advanced: (threadId) => told.push(['advanced', threadId]),
+        released: (threadId) => told.push(['released', threadId])
+      }
+    })
+    copies.set('thread-1', 3)
+    const epoch = grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    expect(told).toEqual([])
+    await on.answer(1, { action: 'advanced', threadId: 'thread-1', epoch, revision: 4 })
+    // A report on a grant that is not current is not the log growing.
+    await on.answer(1, {
+      action: 'advanced',
+      threadId: 'thread-1',
+      epoch: { ...epoch, grant: 99 },
+      revision: 5
+    })
+    await on.answer(1, {
+      action: 'release',
+      threadId: 'thread-1',
+      epoch: { ...epoch, grant: 99 },
+      revision: 4
+    })
+    expect(told).toEqual([['advanced', 'thread-1']])
+    await on.answer(1, { action: 'release', threadId: 'thread-1', epoch, revision: 4 })
+    expect(told).toEqual([
+      ['advanced', 'thread-1'],
+      ['released', 'thread-1']
+    ])
+  })
+
+  it('tells its observer nothing while it takes no claims, and answers whatever the observer does', async () => {
+    const told: string[] = []
+    const observer = {
+      advanced: (threadId: string) => {
+        told.push(threadId)
+        throw new Error('the observer failed')
+      },
+      released: (threadId: string) => {
+        told.push(threadId)
+        throw new Error('the observer failed')
+      }
+    }
+    const epoch = { host: INCARNATION, grant: 1 }
+    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+      const off = service(environment, { observer })
+      await off.answer(1, { action: 'advanced', threadId: 'thread-1', epoch, revision: 4 })
+      await off.answer(1, { action: 'release', threadId: 'thread-1', epoch, revision: null })
+    }
+    expect(told).toEqual([])
+    const on = service(ON, { observer })
+    copies.set('thread-1', 3)
+    const granted = grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    expect(
+      await on.answer(1, { action: 'advanced', threadId: 'thread-1', epoch: granted, revision: 4 })
+    ).toEqual({ kind: 'thread.owner', action: 'advanced', recorded: true })
+    expect(
+      await on.answer(1, { action: 'release', threadId: 'thread-1', epoch: granted, revision: 4 })
+    ).toEqual({ kind: 'thread.owner', action: 'release', released: true })
+    expect(told).toEqual(['thread-1', 'thread-1'])
+  })
 })

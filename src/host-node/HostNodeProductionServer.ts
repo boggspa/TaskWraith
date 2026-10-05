@@ -61,7 +61,10 @@ import {
 import { HOST_REGISTRY_REFRESH_MS } from '../host-runtime/HostRegistry'
 import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
 import { writeHostStderr } from '../host-runtime/HostStdioGuard'
-import { HostThreadOwnerService } from '../host-runtime/HostThreadOwnerService'
+import { HostThreadHistoryRouter } from '../host-runtime/HostThreadHistoryRouter'
+import { HostThreadLogCatalogueSeed } from '../host-runtime/HostThreadLogCatalogueSeed'
+import type { HostThreadLogSeedPort } from '../host-runtime/HostThreadLogFollower'
+import { HostThreadOwnerService, threadLogDirectory } from '../host-runtime/HostThreadOwnerService'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
@@ -229,6 +232,12 @@ export interface HostNodeProductionServerOptions {
   readonly createDomain?: (options: HostNodeDomainPortsOptions) => HostNodeDomainPorts
   readonly createComposition?: (input: HostStandaloneCompositionInput) => HostStandaloneComposition
   readonly createListener?: (options: HostLocalServerOptions) => HostNodeProductionListener
+  /**
+   * What a followed thread's log is seeded from, with the thread log authority
+   * switch on. Defaults to the thread catalogue's decoder; a Host without a
+   * catalogue serves every thread's history from its full copy.
+   */
+  readonly threadLogSeedPort?: HostThreadLogSeedPort
   /**
    * Machine-wide registry publisher (S1b). Absent means nothing is published
    * and the self-check never runs; the lease lifetime is unaffected.
@@ -432,6 +441,8 @@ export class HostNodeProductionServer {
   private disposeResources: (() => boolean | Promise<boolean>) | null = null
   private permissionConsentAuthority: HostNodePermissionConsentAuthority | null = null
   private threadCatalogue: ThreadCatalogueClient | null = null
+  /** Set only with the thread log authority switch on: app-owned threads' history from their logs. */
+  private threadHistoryRouter: HostThreadHistoryRouter | null = null
   private threadCatalogueMirror: ThreadCatalogueMirror | null = null
   private threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
   private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
@@ -809,7 +820,10 @@ export class HostNodeProductionServer {
         providerOffersProvider: (providerId) => this.domain!.providerOffers(providerId),
         providerAuthFlowsProvider: (providerId) => this.domain!.providerAuthFlows(providerId),
         providerAuthStatusProvider: (providerId) => this.domain!.providerAuthStatus(providerId),
-        threadHistoryProvider: (request) => this.domain!.threadHistory(request),
+        threadHistoryProvider: (request) =>
+          this.threadHistoryRouter
+            ? this.threadHistoryRouter.threadHistory(request)
+            : this.domain!.threadHistory(request),
         ...(this.threadCatalogue
           ? {
               threadCatalogueProvider: (request, options) =>
@@ -819,7 +833,10 @@ export class HostNodeProductionServer {
         ...(this.threadCatalogue
           ? { threadCatalogueMaintenanceProvider: (request) => this.maintainCatalogue(request) }
           : {}),
-        historySinceProvider: (request) => this.domain!.historySince(request),
+        historySinceProvider: (request) =>
+          this.threadHistoryRouter
+            ? this.threadHistoryRouter.historySince(request)
+            : this.domain!.historySince(request),
         ...(threadRecordTransaction ? { threadRecordTransaction } : {})
       })
       // M4 slice 14b (RR-2, R1-M1): every transactional persist a crash left
@@ -894,10 +911,46 @@ export class HostNodeProductionServer {
         incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
         fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
         hostRunActive: (threadId) => !this.domain || this.domain.hasRuntimeWorkForThread(threadId),
-        log: writeHostStderr
+        log: writeHostStderr,
+        // What the writers say reaches the followers of their threads' logs.
+        observer: {
+          advanced: (threadId) => this.threadHistoryRouter?.nudge(threadId),
+          released: (threadId) => this.threadHistoryRouter?.released(threadId)
+        }
       })
       await threadOwners.start()
       if (this.stopRequested) return
+      if (threadOwners.mode === 'on') {
+        const catalogueSeed =
+          !this.options.threadLogSeedPort && this.threadCatalogue
+            ? new HostThreadLogCatalogueSeed({
+                catalogue: this.threadCatalogue,
+                directory: threadLogDirectory(this.lease.path)
+              })
+            : null
+        const seedPort = this.options.threadLogSeedPort ?? catalogueSeed
+        if (seedPort) {
+          this.threadHistoryRouter = new HostThreadHistoryRouter({
+            profilePath: this.lease.path,
+            fullCopy: {
+              threadHistory: (request) => this.domain!.threadHistory(request),
+              historySince: (request) => this.domain!.historySince(request)
+            },
+            seedPort
+          })
+        } else {
+          writeHostStderr(
+            'taskwraith-host: no thread catalogue to seed thread logs from: history is served from the full copy\n'
+          )
+        }
+        hostPerf.registerSections({
+          threadOwners: () => threadOwners.snapshot(),
+          ...(this.threadHistoryRouter
+            ? { threadLogHistory: () => this.threadHistoryRouter?.snapshot() ?? null }
+            : {}),
+          ...(catalogueSeed ? { threadLogSeeds: () => catalogueSeed.stats() } : {})
+        })
+      }
       this.listener = (this.options.createListener ?? ((input) => new HostLocalServer(input)))({
         userDataPath: this.lease.path,
         hostId: this.identity.hostId,
@@ -983,6 +1036,8 @@ export class HostNodeProductionServer {
         listenerFailure = asError(error)
       }
     }
+    this.threadHistoryRouter?.close()
+    this.threadHistoryRouter = null
     this.hostRecovery?.dispose()
     this.threadRecovery?.dispose()
     try {
