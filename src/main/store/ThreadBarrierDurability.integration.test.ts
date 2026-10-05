@@ -18,8 +18,10 @@ import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testuti
 const layers = vi.hoisted(() => ({
   port: null as ThreadDurabilityPort | null,
   built: [] as ThreadBarrierDurability[],
-  /** The idle timers each layer armed, and whether each was cleared. */
-  timers: [] as Array<{ ms: number; cleared: boolean }>
+  /** The idle timers each layer armed, whether each was cleared, and how to fire one now. */
+  timers: [] as Array<{ ms: number; cleared: boolean; fire: () => void }>,
+  /** Added to the layer's clock, so a test can let a thread fall quiet without waiting. */
+  clockOffsetMs: 0
 }))
 
 vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
@@ -31,6 +33,7 @@ vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
     ) => {
       const layer = actual.createThreadBarrierDurability({
         ...options,
+        now: () => Date.now() + layers.clockOffsetMs,
         port: {
           syncFile: (target) => layers.port!.syncFile(target),
           syncDirectory: (target) => layers.port!.syncDirectory(target)
@@ -38,7 +41,7 @@ vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
         setTimer: (callback, ms) => {
           const timer = setTimeout(callback, ms)
           timer.unref()
-          layers.timers.push({ ms, cleared: false })
+          layers.timers.push({ ms, cleared: false, fire: callback })
           return { timer, record: layers.timers[layers.timers.length - 1] }
         },
         clearTimer: (handle) => {
@@ -64,6 +67,7 @@ afterEach(async () => {
   layers.port = null
   layers.built.length = 0
   layers.timers.length = 0
+  layers.clockOffsetMs = 0
   vi.unstubAllEnvs()
   await disposeHostOwnedStores()
 })
@@ -358,7 +362,8 @@ describe('barrier durability, switched on', () => {
     expect(section).toMatchObject({
       enabled: true,
       ignored: null,
-      tickets: { moments: { user_message: { noted: 1 }, run_final: { noted: 1 } } },
+      // The new thread's first message, and the follow-up.
+      tickets: { moments: { user_message: { noted: 2 }, run_final: { noted: 1 } } },
       gates: { waits: 0, overdue: 0, rejected: 0 },
       checkpoints: { initial: { count: 1 }, terminal: { count: 1 } },
       tornTailsRepaired: 0
@@ -559,8 +564,8 @@ describe('the tickets each save takes', () => {
   it('takes one for each moment a save contains, and none for anything else', async () => {
     const { taken, raised } = await takenBy([...STEPS, ...LATER])
     expect(taken).toEqual([
-      // Written as a synced checkpoint where it happens: no batch, no ticket.
-      ['a new thread with its first message', []],
+      // Its first checkpoint is owed like a line, and it holds the user's message.
+      ['a new thread with its first message', ['user_message']],
       ['a run starts', []],
       ['streamed text', []],
       ['a user message', ['user_message']],
@@ -575,6 +580,7 @@ describe('the tickets each save takes', () => {
     ])
     // What the user sits in goes ahead of other syncs; a run's end pays its own run.
     expect(raised.filter(([, kinds]) => kinds.urgent + kinds.scoped > 0)).toEqual([
+      ['a new thread with its first message', { urgent: 1, threadOnly: 1, scoped: 0 }],
       ['a user message', { urgent: 1, threadOnly: 1, scoped: 0 }],
       ['the run ends', { urgent: 0, threadOnly: 0, scoped: 1 }],
       ["an answer to an agent's question", { urgent: 1, threadOnly: 1, scoped: 0 }],
@@ -585,6 +591,7 @@ describe('the tickets each save takes', () => {
   it('takes them on the admitted path too, taken before the Host owned the store', async () => {
     const { taken } = await takenBy([STEPS[0], STEPS[1], STEPS[3], STEPS[7]], { gateOpen: true })
     expect(taken).toEqual([
+      // This path writes the new thread's own record first, synced in place: nothing to wait for.
       ['a new thread with its first message', []],
       ['a run starts', []],
       ['a user message', ['user_message']],
@@ -772,7 +779,7 @@ describe('what pays the debt no moment pays, through the real store', () => {
       expect(disk.paid).toEqual([])
       // Its tickets were the erased thread's: the erasure covers them, so none is a missing gate.
       expect(layer.tickets.snapshot().moments).toMatchObject({
-        user_message: { covered: 1 },
+        user_message: { covered: 2 },
         run_final: { covered: 1 }
       })
       expect(layer.tickets.chatIds()).toEqual([])
@@ -787,7 +794,7 @@ describe('what pays the debt no moment pays, through the real store', () => {
     expect(layer.debt.snapshot().owed.threads).toBe(0)
     expect(layer.snapshot().threads.owing).toBe(0)
     expect(layer.tickets.snapshot().moments).toMatchObject({
-      user_message: { covered: 1 },
+      user_message: { covered: 2 },
       run_final: { covered: 1 }
     })
     disk.paid.length = 0
@@ -1041,7 +1048,8 @@ describe('the dispatch barriers', () => {
 
       release()
       await waiting
-      expect(layers.built[0].tickets.snapshot().moments.user_message.covered).toBe(1)
+      // The new thread's first message and this one.
+      expect(layers.built[0].tickets.snapshot().moments.user_message.covered).toBe(2)
       expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 1, overdue: 0, rejected: 0 })
     }
   )
@@ -1079,5 +1087,206 @@ describe('the dispatch barriers', () => {
     await expect(AppStore.awaitChatRecordDispatchDurable(CHAT)).resolves.toBeUndefined()
     expect(gates.durableMomentGateSnapshot()).toBeNull()
     expect(layers.built).toEqual([])
+  })
+})
+
+describe("a new thread's first save", () => {
+  const CHECKPOINT = `chat-journal-v2/${CHAT}.checkpoint.json`
+
+  /** The store under the switch, over a disk whose syncs the test can hold. */
+  async function creating() {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    const gates = await import('../run/DurableMomentGate')
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    const state = { held: null as Promise<void> | null, release: () => {} }
+    layers.port = {
+      syncFile: async (target) => (await state.held, disk.port.syncFile(target)),
+      syncDirectory: async (target) => (await state.held, disk.port.syncDirectory(target))
+    }
+    return {
+      AppStore,
+      gates,
+      disk,
+      hold() {
+        state.held = new Promise<void>((resolve) => (state.release = resolve))
+      },
+      release: () => state.release(),
+      paid: () => [...disk.paid.map(stable)].sort()
+    }
+  }
+
+  /** The run dispatch facade the app builds, its provider start recorded. */
+  async function dispatchFacade(started: string[]) {
+    const { createRunDispatchFacade } = await import('../run/RunDispatchFacade')
+    const { ScheduledOccurrenceOwnerRegistry } = await import('../ScheduledOccurrenceOwnerRegistry')
+    const dispatch = createRunDispatchFacade({
+      applyFailoverReroutePosture: () => {},
+      repairKnownStaleGeminiMcpBridgeConfigs: async () => {},
+      expandPdfImagePathsForPayload: async () => {},
+      captureFailoverSnapshot: () => ({}) as never,
+      scheduledOccurrenceOwners: new ScheduledOccurrenceOwnerRegistry(),
+      workflowBudgetRegistry: { register: () => {} } as never,
+      failoverSnapshotByRun: new Map(),
+      runCoordinator: {
+        dispatch: async (payload: { appChatId?: string }) => {
+          started.push(payload.appChatId ?? '')
+          return { dispatched: true, appRunId: 'run-first' }
+        }
+      } as never,
+      reserveDispatch: () => ({}),
+      releaseDispatchReservation: () => {},
+      getSettings: () => ({ autoFailoverEnabled: false }) as never,
+      getScheduledTasks: () => [],
+      getWorkflowDefinitions: () => [],
+      wasDurableScheduledRunIdObserved: () => false
+    })
+    return () =>
+      dispatch(
+        {
+          provider: 'codex',
+          scope: 'global',
+          prompt: 'First question',
+          appRunId: 'run-first',
+          appChatId: CHAT
+        } as never,
+        { sender: { id: 'first-save-test' } } as never
+      )
+  }
+
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+
+  it("reports the user's first message done, and starts its run, only once its first checkpoint is on the disk", async () => {
+    const { AppStore, gates, hold, release, paid } = await creating()
+    const started: string[] = []
+    const dispatch = await dispatchFacade(started)
+    hold()
+
+    STEPS[0].act(AppStore)
+    const reply = gates.afterUserMoment(CHAT, { accepted: true })
+    expect(reply).toBeInstanceOf(Promise)
+    let replied = false
+    void (reply as Promise<unknown>).then(() => (replied = true))
+    const dispatching = dispatch()
+    await turn()
+    expect(replied).toBe(false)
+    expect(started).toEqual([])
+
+    release()
+    await expect(reply).resolves.toEqual({ accepted: true })
+    await expect(dispatching).resolves.toMatchObject({ dispatched: true })
+    expect(started).toEqual([CHAT])
+    expect(paid()).toEqual(['directory:chat-journal-v2', `file:${CHECKPOINT}`])
+    expect(layers.built[0].tickets.snapshot().moments.user_message).toMatchObject({
+      noted: 1,
+      covered: 1
+    })
+  })
+
+  it('lets both go at the bound when the disk hangs, and counts the waits overdue', async () => {
+    const { AppStore, gates, hold, release } = await creating()
+    const started: string[] = []
+    const dispatch = await dispatchFacade(started)
+    hold()
+
+    STEPS[0].act(AppStore)
+    const begun = performance.now()
+    await Promise.all([gates.afterUserMoment(CHAT, 'replied'), dispatch()])
+
+    expect(performance.now() - begun).toBeGreaterThanOrEqual(gates.DURABLE_MOMENT_GATE_BOUND_MS - 5)
+    expect(started).toEqual([CHAT])
+    expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 2, overdue: 2 })
+    expect(layers.built[0].tickets.snapshot().moments.user_message.pending).toBe(1)
+    release()
+  })
+
+  const NOT_THE_USERS: Array<[string, (record: ChatRecord) => ChatRecord]> = [
+    ['an empty new thread', (record) => ({ ...record, messages: [] })],
+    [
+      'an imported provider thread',
+      (record) => ({
+        ...record,
+        messages: [
+          {
+            id: 'import-1',
+            role: 'user',
+            content: 'An old prompt',
+            timestamp: AT,
+            metadata: { kind: 'externalProviderThreadImport' }
+          },
+          {
+            id: 'import-2',
+            role: 'assistant',
+            content: 'An old answer',
+            timestamp: AT,
+            metadata: { kind: 'externalProviderThreadImport' }
+          }
+        ]
+      })
+    ],
+    [
+      "a sub-thread created with its agent's prompt",
+      (record) => ({
+        ...record,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Do the sub-task',
+            timestamp: AT,
+            metadata: { kind: 'subThreadDelegation' }
+          }
+        ]
+      })
+    ],
+    [
+      'a thread created as a fork, its rows copied',
+      (record) => ({
+        ...record,
+        forkContext: { kind: 'emulated', createdAt: 1, sourceChatId: 'chat-source' }
+      })
+    ]
+  ]
+
+  it.each(NOT_THE_USERS)(
+    'takes no ticket for %s, and leaves its first checkpoint to the idle barrier',
+    async (_name, shape) => {
+      const { AppStore, gates, paid } = await creating()
+
+      AppStore.saveChat(shape(newThread()))
+
+      const layer = layers.built[0]
+      expect(layer.tickets.snapshot().moments.user_message.noted).toBe(0)
+      expect(gates.awaitUserMoment(CHAT)).toBeNull()
+      expect(layer.debt.snapshot().barriers.raised).toBe(0)
+      expect(layer.debt.snapshot().owed).toMatchObject({ threads: 1, files: 1, directories: 1 })
+
+      // Fifteen quiet seconds later, the idle barrier pays it.
+      layers.clockOffsetMs += 15_000
+      layers.timers.filter((timer) => !timer.cleared && timer.ms >= 1_000).forEach((t) => t.fire())
+      await vi.waitFor(() => expect(layer.debt.snapshot().owed.threads).toBe(0))
+      expect(paid()).toEqual(['directory:chat-journal-v2', `file:${CHECKPOINT}`])
+      expect(layer.snapshot().threads).toMatchObject({ owing: 0, idleBarriers: 1 })
+    }
+  )
+
+  it("takes no ticket for a fork's copied rows, the user's among them, copied in after it was made empty", async () => {
+    const { AppStore, gates } = await creating()
+    AppStore.saveChat({ ...newThread(), messages: [] })
+    const empty = AppStore.getChat(CHAT)!
+
+    AppStore.saveChat({
+      ...empty,
+      forkContext: { kind: 'emulated', createdAt: 1, sourceChatId: 'chat-source' },
+      messages: [
+        { id: 'user-1', role: 'user', content: 'Copied question', timestamp: AT },
+        { id: 'reply-1', role: 'assistant', content: 'Copied answer', timestamp: AT }
+      ]
+    })
+
+    expect(AppStore.getChat(CHAT)!.messages).toHaveLength(2)
+    expect(layers.built[0].tickets.snapshot().moments.user_message.noted).toBe(0)
+    expect(gates.awaitUserMoment(CHAT)).toBeNull()
   })
 })

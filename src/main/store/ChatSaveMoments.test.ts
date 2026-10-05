@@ -5,7 +5,11 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { classifyChatSaveMoments, type ChatSaveMoment } from './ChatSaveMoments'
+import {
+  classifyChatSaveMoments,
+  classifyCreatedChatMoments,
+  type ChatSaveMoment
+} from './ChatSaveMoments'
 import { deriveChatRecordMutationWithProjection } from './ChatRecordMutation'
 import { ChatTranscriptMutationIndex } from './ChatTranscriptMutationAuthoring'
 import type { FlushReason } from './saveCoalescer'
@@ -480,6 +484,98 @@ describe('the moments of one save', () => {
   })
 })
 
+/** A fork's mark, as `ChatService.createForkChat` sets it in the save that copies the rows. */
+const FORK_CONTEXT: NonNullable<ChatRecord['forkContext']> = {
+  kind: 'emulated',
+  createdAt: 1,
+  sourceChatId: 'chat-source',
+  sourceProvider: 'codex',
+  note: 'TaskWraith emulated fork: transcript copied into an isolated sibling chat.'
+}
+
+describe('the moments of a save that creates a thread', () => {
+  const created = (rows: ChatMessage[], overrides: Partial<ChatRecord> = {}): ChatRecord =>
+    thread({ persistenceRevision: 0, messages: rows, runs: [], ...overrides })
+
+  it.each<[string, ChatRecord, ChatSaveMoment[]]>([
+    [
+      "a new thread with the user's first message",
+      created([message('user-1', 'user', 'Hello')]),
+      USER_MESSAGE
+    ],
+    [
+      "a new thread whose rows of the app's come before the user's message",
+      created([
+        message('notice-1', 'system', 'Workspace opened'),
+        message('user-1', 'user', 'Hello')
+      ]),
+      USER_MESSAGE
+    ],
+    ['an empty new thread', created([]), []],
+    [
+      'an imported provider thread',
+      created([
+        message('import-1', 'user', 'Old prompt', { kind: 'externalProviderThreadImport' }),
+        message('import-2', 'assistant', 'Old answer', { kind: 'externalProviderThreadImport' })
+      ]),
+      []
+    ],
+    [
+      "a sub-thread created with its agent's prompt",
+      created([message('prompt-1', 'user', 'Do the sub-task', { kind: 'subThreadDelegation' })]),
+      []
+    ],
+    [
+      'a thread created as a fork, its rows copied',
+      created(
+        [message('user-1', 'user', 'Copied question'), message('reply-1', 'assistant', 'Copied')],
+        { forkContext: FORK_CONTEXT }
+      ),
+      []
+    ],
+    [
+      "a thread created with a collaborator's comment",
+      created([message('comment-1', 'user', 'Looks good', { kind: 'humanCollaboratorComment' })]),
+      []
+    ]
+  ])('%s', (_name, record, expected) => {
+    expect(classifyCreatedChatMoments(record)).toEqual(expected)
+  })
+})
+
+describe("a fork's copy", () => {
+  it("reads the rows copied into a fork as nobody's message, the user's among them", () => {
+    // The fork is created empty, as a side chat, and its rows are copied in by the next save.
+    const empty = thread({ messages: [], runs: [] })
+    const copied = [
+      message('user-1', 'user', 'First question'),
+      message('reply-1', 'assistant', 'An answer'),
+      message('user-2', 'user', 'Second question')
+    ]
+
+    expect(
+      save(empty, (record) => ({ ...record, forkContext: FORK_CONTEXT, messages: copied }))
+    ).toEqual([])
+  })
+
+  it("reads the user's message in a later save that also changes a fork's mark", () => {
+    const fork = thread({ forkContext: FORK_CONTEXT })
+
+    expect(
+      save(fork, (record) => ({
+        ...appended(message('user-3', 'user', 'A new question'))(record),
+        forkContext: { ...FORK_CONTEXT, note: 'Renamed' }
+      }))
+    ).toEqual(USER_MESSAGE)
+  })
+
+  it("still reads the user's message in a fork once it is made", () => {
+    const fork = thread({ forkContext: FORK_CONTEXT })
+
+    expect(save(fork, appended(message('user-3', 'user', 'A new question')))).toEqual(USER_MESSAGE)
+  })
+})
+
 describe('what classifying a save reads of the record', () => {
   /** Counts the elements read from an array, by index or by iteration. */
   function counted<T>(items: T[]): { items: T[]; reads: () => number } {
@@ -541,6 +637,54 @@ describe('what classifying a save reads of the record', () => {
     const result = classifyCounting(long, advanced(long, { ...long, messages: rows.slice(0, 10) }))
 
     expect(result).toEqual({ moments: DESTRUCTIVE, rowsRead: 0, runsRead: 0 })
+  })
+
+  it("reads none of the rows a fork's copy puts in", () => {
+    const empty = thread({ messages: [], runs: [] })
+    const next = advanced(empty, { ...empty, forkContext: FORK_CONTEXT, messages: rows })
+    const { batch, transcriptOps } = deriveChatRecordMutationWithProjection(empty, next)
+    let copiedRead = 0
+    const operations = batch.operations.map((operation) =>
+      operation.type === 'messages_splice'
+        ? {
+            ...operation,
+            messages: new Proxy(operation.messages as ChatMessage[], {
+              get(target, key, receiver) {
+                if (typeof key === 'string' && /^\d+$/.test(key)) copiedRead += 1
+                return Reflect.get(target, key, receiver)
+              }
+            })
+          }
+        : operation
+    )
+
+    expect(
+      classifyChatSaveMoments({
+        previous: empty,
+        next,
+        operations,
+        transcriptOps,
+        flushReason: 'normal'
+      })
+    ).toEqual([])
+    expect(copiedRead).toBe(0)
+  })
+
+  it("reads a created thread's rows only up to the first of the user's", () => {
+    const tail = counted([message('notice-1', 'system', 'Opened'), ...rows])
+    expect(
+      classifyCreatedChatMoments(thread({ persistenceRevision: 0, messages: tail.items }))
+    ).toEqual(USER_MESSAGE)
+    expect(tail.reads()).toBe(2)
+
+    // A fork's rows are copies, and none of them is read.
+    const copies = counted(rows)
+    expect(
+      classifyCreatedChatMoments(
+        thread({ persistenceRevision: 0, messages: copies.items, forkContext: FORK_CONTEXT })
+      )
+    ).toEqual([])
+    expect(copies.reads()).toBe(0)
   })
 
   it('reads only the runs newer than the one that ended', () => {

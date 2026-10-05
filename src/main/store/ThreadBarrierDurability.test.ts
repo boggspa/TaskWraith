@@ -221,21 +221,57 @@ describe('the tickets a save takes', () => {
     expect(layer.debt.snapshot().barriers.raised).toBe(0)
   })
 
-  it('takes none for a save that created the thread or whose append failed', () => {
-    const layer = createThreadBarrierDurability({ port: recordingPort() })
-    const created = thread({ persistenceRevision: 0 })
+  it("takes one for a save that created a thread with the user's message, on the user's barrier", async () => {
+    const port = heldPort()
+    const layer = createThreadBarrierDurability({ port })
+    const created = thread({ persistenceRevision: 0, runs: [] })
+    // What the first checkpoint owes since 0883f8f97, and a run's file the user does not wait for.
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.checkpoint.json', owner: 'journal' })
+    layer.note('chat-1', { directory: '/p/chat-journal-v2' })
+    layer.note('chat-1', { file: '/p/run-events/run-9.jsonl', owner: 'run-events', run: 'run-9' })
 
-    expect(layer.noteSave(null, created, { derived: null }, 'terminal')).toEqual([])
-    // Without the record before it there is nothing to read a batch against.
+    expect(layer.noteSave(null, created, { derived: null }, 'normal')).toEqual([
+      { moment: 'user_message' }
+    ])
+
+    expect(layer.tickets.snapshot().moments.user_message).toMatchObject({ noted: 1, pending: 1 })
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: 1,
+      urgent: 1,
+      threadOnly: 1,
+      scoped: 0
+    })
+    await Promise.resolve()
+    expect(port.asked).toEqual(['/p/chat-journal-v2/chat-1.checkpoint.json'])
+    port.release()
+    await layer.tickets.awaitChat('chat-1')
+    expect(port.asked).toEqual(['/p/chat-journal-v2/chat-1.checkpoint.json', '/p/chat-journal-v2'])
+  })
+
+  it('takes none for a created thread the user wrote nothing in, or a save whose append failed', () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+    const forkContext = { kind: 'emulated' as const, createdAt: 1, sourceChatId: 'chat-0' }
+
     expect(
       layer.noteSave(
         null,
-        created,
-        appended(thread({ messages: [], persistenceRevision: 6 }), thread()),
+        thread({ persistenceRevision: 0, messages: [] }),
+        { derived: null },
         'normal'
       )
     ).toEqual([])
+    expect(
+      layer.noteSave(
+        null,
+        thread({ persistenceRevision: 0, forkContext }),
+        { derived: null },
+        'normal'
+      )
+    ).toEqual([])
+    // An append that failed wrote nothing the barrier pays: the Host's record holds the save.
+    expect(layer.noteSave(null, thread({ persistenceRevision: 0 }), null, 'normal')).toEqual([])
     expect(layer.noteSave(thread(), thread({ persistenceRevision: 8 }), null, 'normal')).toEqual([])
+    expect(layer.tickets.snapshot().moments.user_message.noted).toBe(0)
     expect(layer.debt.snapshot().barriers.raised).toBe(0)
   })
 

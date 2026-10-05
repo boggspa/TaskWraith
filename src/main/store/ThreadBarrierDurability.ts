@@ -21,7 +21,11 @@ import {
   USER_DURABILITY_MOMENTS,
   type ChatDurabilityTicketsSnapshot
 } from './ChatDurabilityTickets'
-import { classifyChatSaveMoments, type ChatSaveMoment } from './ChatSaveMoments'
+import {
+  classifyChatSaveMoments,
+  classifyCreatedChatMoments,
+  type ChatSaveMoment
+} from './ChatSaveMoments'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
 import {
@@ -94,9 +98,11 @@ export interface ThreadBarrierDurability {
   dispose(): void
   /**
    * After a save's append: a ticket for each moment the save contains, at the
-   * revision its batch wrote. A save that created the thread, or whose append
-   * failed (`persisted` null), wrote no batch and takes none. Returns the
-   * moments found.
+   * revision its batch wrote. A save that created the thread wrote its first
+   * checkpoint instead of a batch, owed like a line, and takes a ticket at the
+   * record's revision when it holds the user's message. A save whose append
+   * failed (`persisted` null) wrote nothing a barrier pays and takes none.
+   * Returns the moments found.
    */
   noteSave(
     previous: ChatRecord | null,
@@ -208,18 +214,22 @@ export function createThreadBarrierDurability(
     payAll: (budgetMs) => threads.payAll(budgetMs),
     dispose: () => threads.dispose(),
     noteSave(previous, next, persisted, flushReason) {
-      const derived = persisted?.derived
-      if (!previous || !derived) return []
-      const { chatId, revision, operations } = derived.batch
+      if (!persisted) return []
+      const derived = persisted.derived
+      const chatId = derived?.batch.chatId ?? next.appChatId
+      const revision = derived?.batch.revision ?? next.persistenceRevision ?? 0
       let moments: ChatSaveMoment[]
       try {
-        moments = classifyChatSaveMoments({
-          previous,
-          next,
-          operations,
-          transcriptOps: derived.transcriptOps,
-          flushReason
-        })
+        if (!previous) moments = classifyCreatedChatMoments(next)
+        else if (derived) {
+          moments = classifyChatSaveMoments({
+            previous,
+            next,
+            operations: derived.batch.operations,
+            transcriptOps: derived.transcriptOps,
+            flushReason
+          })
+        } else return []
       } catch (error) {
         // Never fail a save that is already written. What it wrote is paid
         // now instead, with no ticket to wait for it.

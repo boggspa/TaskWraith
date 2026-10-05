@@ -39,9 +39,16 @@
  * barrier the removal already does. A rewrite of a decided plan's metadata is
  * read as the decision again, which costs one barrier.
  *
- * A save that creates a thread, and a save whose append failed, have no batch
- * and are not classified: the first is written as a synced checkpoint and the
- * second as the Host's record, where they happen.
+ * A fork is created empty and its rows are copied in by the save that marks
+ * it a fork (`forkContext`). They are copies, not messages, so the rows that
+ * save puts in are not read at all.
+ *
+ * A save that creates a thread has no batch: its first checkpoint, written
+ * without a sync since 0883f8f97, holds the whole record.
+ * `classifyCreatedChatMoments` reads it as the user's message when one of the
+ * rows it created is one the user wrote, in one pass that stops at the first,
+ * and a thread created as a fork as nothing. A save whose append failed is not
+ * classified: the Host's record holds it.
  */
 import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
 import type { ChatUpdateTranscriptOp } from '../../shared/chatUpdateTransport'
@@ -185,6 +192,20 @@ function sameSet(left: Set<string>, right: Set<string>): boolean {
   return true
 }
 
+/**
+ * The moments of a save that created the thread `record`: the user's message
+ * when a row it created is one the user wrote. Rows are read in order up to
+ * the first of the user's; a fork's rows are copies and are not read.
+ */
+export function classifyCreatedChatMoments(record: ChatRecord): ChatSaveMoment[] {
+  if (record.forkContext) return []
+  const rows = Array.isArray(record.messages) ? record.messages : []
+  for (const row of rows) {
+    if (rowMoment(row) === 'user_message') return [{ moment: 'user_message' }]
+  }
+  return []
+}
+
 export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMoment[] {
   const { previous, next, operations, transcriptOps } = input
   let userMessage = false
@@ -199,6 +220,8 @@ export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMo
   let runSplice: { index: number; deleteCount: number; runs: readonly ChatRun[] } | null = null
   let ensembleChanged = false
   let grantsMayHaveChanged = false
+  /** The save that marks the thread a fork, whose rows it puts in are copies. */
+  let forkCopy = false
 
   for (const operation of operations) {
     switch (operation.type) {
@@ -236,6 +259,9 @@ export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMo
       case 'record_patch':
         if (touches(operation, 'ensemble')) ensembleChanged = true
         if (touches(operation, 'providerMetadata')) grantsMayHaveChanged = true
+        if (touches(operation, 'forkContext') && !previous.forkContext && next.forkContext) {
+          forkCopy = true
+        }
         break
       case 'ensemble_patch':
         ensembleChanged = true
@@ -246,13 +272,20 @@ export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMo
   }
 
   if (segments) {
-    const inserted = segments.flatMap((segment) => ('rows' in segment ? segment.rows : []))
+    const placed = segments
+    let insertedRows: ChatMessage[] | null = null
+    const inserted = (): ChatMessage[] =>
+      (insertedRows ??= placed.flatMap((segment) => ('rows' in segment ? segment.rows : [])))
+    const insertedCount = placed.reduce(
+      (count, segment) => count + ('rows' in segment ? segment.rows.length : 0),
+      0
+    )
     const removedCount = removed.reduce((count, range) => count + range.to - range.from, 0)
     let moved: Set<string> | null = null
-    if (removedCount > inserted.length) {
+    if (removedCount > insertedCount) {
       destructive = true
     } else if (removedCount > 0) {
-      const insertedIds = new Set(inserted.map((row) => row.id))
+      const insertedIds = new Set(inserted().map((row) => row.id))
       moved = new Set()
       for (const range of removed) {
         for (let index = range.from; index < range.to; index += 1) {
@@ -262,7 +295,7 @@ export function classifyChatSaveMoments(input: ChatSaveMomentsInput): ChatSaveMo
         }
       }
     }
-    for (const row of inserted) {
+    for (const row of forkCopy ? [] : inserted()) {
       if (moved?.has(row.id)) continue
       const moment = rowMoment(row)
       if (moment === 'user_message') userMessage = true
