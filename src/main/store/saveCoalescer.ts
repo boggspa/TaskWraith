@@ -47,7 +47,17 @@
  *  3. Discard — CLOSED below. A pending write that fires after its chat was
  *     deleted recreates the file, and `getChats()` enumerates the directory,
  *     so the deleted chat reappears. Deletion must DISCARD, never flush.
+ *
+ * SAVE INTENTS (thread ownership activation): `enqueueIntent` records the
+ * authored save in a `PerChatSaveIntentQueue` BEFORE the caller touches the
+ * cache or the journal, so activation can freeze the admitted head and replay
+ * what Host storage has not yet confirmed. It is bookkeeping only: it never
+ * delays, reorders or replaces a write, so the trailing window and the
+ * max-latency ceiling above are untouched. Deletion forgets a chat's intents
+ * just as it discards its deferred write.
  */
+
+import { PerChatSaveIntentQueue, type ChatSaveIntent } from '../../shared/chatSaveIntentQueue'
 
 /**
  * Why a save is being written. Everything except `'normal'` is a durability
@@ -89,6 +99,20 @@ export interface SaveCoalescer {
    * coalescing disabled).
    */
   schedule(chatId: string, write: () => void, reason: FlushReason, onSettled?: () => void): number
+  /** The queue `enqueueIntent` feeds; activation freezes and drains it. */
+  readonly intentQueue: PerChatSaveIntentQueue
+  /** Record an authored save. Call before any cache or journal mutation. */
+  enqueueIntent(intent: ChatSaveIntent): void
+  /**
+   * `enqueueIntent` then `schedule`, in that order, so the intent is queued
+   * before the write callback can run, including on a synchronous barrier.
+   */
+  scheduleWithIntent(
+    intent: ChatSaveIntent,
+    write: () => void,
+    reason: FlushReason,
+    onSettled?: () => void
+  ): number
   /** Durability barrier for one chat. True when a deferred write was performed. */
   flush(chatId: string): boolean
   /** Durability barrier for every deferred chat — shutdown and global consistency points. */
@@ -128,9 +152,11 @@ export const DEFAULT_MAX_LATENCY_MULTIPLIER = 3
  */
 export function createSaveCoalescer(
   delayMs: number,
-  maxLatencyMs: number = Math.max(delayMs, delayMs * DEFAULT_MAX_LATENCY_MULTIPLIER)
+  maxLatencyMs: number = Math.max(delayMs, delayMs * DEFAULT_MAX_LATENCY_MULTIPLIER),
+  options: { intentQueue?: PerChatSaveIntentQueue } = {}
 ): SaveCoalescer {
   const pending = new Map<string, PendingSave>()
+  const intentQueue = options.intentQueue ?? new PerChatSaveIntentQueue()
   // A ceiling below the trailing window would make the trailing edge
   // unreachable and every write would report as ceiling-forced.
   const ceilingMs = delayMs > 0 ? Math.max(delayMs, maxLatencyMs) : 0
@@ -185,7 +211,18 @@ export function createSaveCoalescer(
     return true
   }
 
-  return {
+  const coalescer: SaveCoalescer = {
+    intentQueue,
+
+    enqueueIntent(intent: ChatSaveIntent): void {
+      intentQueue.enqueue(intent)
+    },
+
+    scheduleWithIntent(intent, write, reason, onSettled): number {
+      intentQueue.enqueue(intent)
+      return coalescer.schedule(intent.chatId, write, reason, onSettled)
+    },
+
     schedule(
       chatId: string,
       write: () => void,
@@ -257,6 +294,8 @@ export function createSaveCoalescer(
     },
 
     discard(chatId: string): boolean {
+      // A deleted chat's intents must not replay into a recreated thread.
+      intentQueue.forget(chatId)
       const entry = pending.get(chatId)
       if (!entry) return false
       if (entry.timer) clearTimeout(entry.timer)
@@ -267,6 +306,7 @@ export function createSaveCoalescer(
     },
 
     discardAll(): number {
+      intentQueue.forgetAll()
       let dropped = 0
       for (const chatId of [...pending.keys()]) {
         const entry = pending.get(chatId)
@@ -293,4 +333,5 @@ export function createSaveCoalescer(
       }
     }
   }
+  return coalescer
 }

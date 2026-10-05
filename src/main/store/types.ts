@@ -57,6 +57,7 @@ export type {
 import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import type { ComposerAttachmentKind } from '../../shared/composerAttachment'
 import type { ApiUsageBillingSettings } from '../../shared/apiUsageBilling'
+import type { ThreadOwnershipReceiptEvidence } from '../host/ThreadOwnershipReceiptEvidence'
 export type {
   HarnessPassthroughMode,
   ProviderHarnessPosture,
@@ -4454,6 +4455,14 @@ export interface FanoutWorktreeCandidate {
 export interface ChatRecord {
   /** Task-scoped agent notes. Main-owned; excluded from chat-list projections. */
   continuityCheckpoints?: Record<string, SeatContinuityCheckpoint>
+  /**
+   * Committed Host receipt evidence for this thread's persist commands, oldest
+   * first. Main-owned: AppStore.saveChat replaces whatever a caller supplied
+   * with the desktop evidence store's copy (or the stored record's own), so a
+   * renderer whole-record save never authors it. Additive evidence for
+   * ownership activation; it grants nothing and a record without it is complete.
+   */
+  readonly threadOwnershipReceipts?: readonly ThreadOwnershipReceiptEvidence[]
 
   appChatId: string
   scope?: ChatScope

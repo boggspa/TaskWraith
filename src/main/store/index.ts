@@ -116,6 +116,10 @@ import { applyLocalAiThreadTitle, applyThreadTitlePolicy } from './ThreadTitlePo
 import { buildContinuationEvidenceSnapshot } from '../ContinuationProposal'
 import { observeComposerContinuationPersisted } from '../services/ComposerContinuationPrefetch'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
+import type {
+  ChatSaveOwnershipPort,
+  PerChatSaveIntentQueue
+} from '../../shared/chatSaveIntentQueue'
 import {
   runLegacyStoreWriteAdmission,
   scheduleLegacyStoreDeferredWrite,
@@ -6521,6 +6525,20 @@ export class AppStore {
   private static orphanSubThreadsReaped = false
   private static threadCatalogueMirror: ThreadCatalogueMirror | null = null
   private static threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
+  private static threadOwnershipSavePort: ChatSaveOwnershipPort | null = null
+
+  /**
+   * I7 stage 3: let ownership activation see each authored save before it
+   * mutates anything. Null (the default) leaves saveChat exactly as it was.
+   */
+  static installThreadOwnershipSavePort(port: ChatSaveOwnershipPort | null): void {
+    this.threadOwnershipSavePort = port
+  }
+
+  /** The queue saveChat feeds; the activation coordinator freezes and drains it. */
+  static getSaveIntentQueue(): PerChatSaveIntentQueue {
+    return saveCoalescer.intentQueue
+  }
 
   static installThreadCataloguePublisher(
     writerId: string,
@@ -8396,6 +8414,12 @@ export class AppStore {
     // visible immediately in every projection.
     chat.title = titledChat.title
     chat.threadTitle = titledChat.threadTitle
+    // I7 stage 3: the authored save is queued BEFORE the cache or the journal
+    // can change, so activation can freeze the admitted head and replay what
+    // Host storage has not confirmed. Bookkeeping only; the paths below still
+    // persist exactly as before.
+    const ownershipSave = this.admitOwnershipSaveIntent(titledChat, previous)
+    const persistedChat = ownershipSave?.record ?? titledChat
     // When the legacy writer gate is open (or a drain is retaining this exact
     // writer), persist through the proven admitted path unchanged. Since the
     // Host cutover the gate is Host-owned and admission throws
@@ -8410,10 +8434,12 @@ export class AppStore {
       saved = legacyStoreCanWrite()
         ? runLegacyStoreWriteAdmission(
             { operation: 'save-chat', pathFamily: 'chats' },
-            (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
+            (writerAdmission) => this.saveChatAdmitted(persistedChat, options, writerAdmission)
           )
-        : this.saveChatThroughHost(titledChat, options)
+        : this.saveChatThroughHost(persistedChat, options)
     } catch (error) {
+      // A save that never reached storage has nothing for Host to confirm.
+      if (ownershipSave) saveCoalescer.intentQueue.settle(chat.appChatId, ownershipSave.commandId)
       if (publication) this.threadCataloguePublisher?.fail(publication)
       throw error
     }
@@ -8423,6 +8449,15 @@ export class AppStore {
         saved,
         awaitCatalogueHeadSources(saved.appChatId)
       )
+    if (ownershipSave?.active) {
+      // Owned: the owned journal's own barrier confirms the save, not a Host
+      // receipt. A failed barrier leaves the intent pending for replay.
+      const { commandId } = ownershipSave
+      void awaitCatalogueHeadSources(saved.appChatId).then(
+        () => saveCoalescer.intentQueue.settle(saved.appChatId, commandId),
+        () => undefined
+      )
+    }
     const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
     if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)
     chat.persistenceRevision = saved.persistenceRevision
@@ -8430,6 +8465,41 @@ export class AppStore {
     observeComposerContinuationPersisted(saved.appChatId)
     this.threadCatalogueMirror?.observe(projectThreadCatalogueRecord(saved))
     return saved
+  }
+
+  /**
+   * Queue the authored save and stamp the desktop's receipt evidence onto the
+   * record it will persist. Without a port, or with local history off, the save
+   * is untouched. A failure here must never block the user's save: it is logged
+   * and the save proceeds as it always did, with no intent recorded.
+   */
+  private static admitOwnershipSaveIntent(
+    chat: ChatRecord,
+    previous: ChatRecord | null
+  ): { record: ChatRecord; commandId: string; active: boolean } | null {
+    const port = this.threadOwnershipSavePort
+    if (!port || !this.getSettings().storeLocalChatHistory) return null
+    try {
+      const chatId = chat.appChatId
+      if (previous?.threadOwnershipReceipts?.length) {
+        port.hydrateReceipts(chatId, previous.threadOwnershipReceipts)
+      }
+      const held = port.receiptsFor(chatId)
+      // The desktop store is the source. Main's own stored record carries
+      // forward while the store has nothing, so a save never drops evidence it
+      // holds. The incoming copy is never trusted: a renderer clone can lag or
+      // forge it, and it would otherwise be hydrated back into the store.
+      const receipts = held.length > 0 ? held : (previous?.threadOwnershipReceipts ?? [])
+      const { threadOwnershipReceipts: _incoming, ...authored } = chat
+      const record =
+        receipts.length > 0 ? { ...authored, threadOwnershipReceipts: receipts } : authored
+      const handle = port.mintHandle()
+      saveCoalescer.enqueueIntent({ chatId, record, authoredAt: Date.now(), ...handle })
+      return { record, commandId: handle.commandId, active: port.isActive(chatId) }
+    } catch (error) {
+      console.error('[thread-ownership] could not admit save intent', error)
+      return null
+    }
   }
 
   /** Atomic, main-owned semantic-title compare-and-swap. */
