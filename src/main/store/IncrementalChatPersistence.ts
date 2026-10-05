@@ -392,7 +392,9 @@ export function createIncrementalChatPersistence(
 
       let checkpointed = false
       const parityVerified: boolean | null = null
-      if (boundary === 'terminal') {
+      // Under the thread barrier a final save is an append like any other:
+      // the journal compacts by bytes, in the worker.
+      if (boundary === 'terminal' && !journal.leavesSyncingToBarrier) {
         if (options.deferTerminalCheckpoint) {
           // The append above is durable; the full checkpoint only bounds
           // replay, and its parity verify costs a whole-record clone+compare
@@ -461,6 +463,8 @@ export function createIncrementalChatPersistence(
 
   const checkpointChat = (chatId: string): boolean => {
     if (!canWrite()) return false
+    // The deferred form of the terminal checkpoint, which the barrier has none of.
+    if (journal.leavesSyncingToBarrier) return false
     // Nothing appended since the last checkpoint: a rewrite would burn a full
     // record write for zero replay-bounding benefit.
     if ((appendsSinceCheckpointByChatId.get(chatId) ?? 0) === 0) return false

@@ -7,6 +7,7 @@ import type { ChatRecord } from './types'
 import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
 import type { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import type { NoteThreadDurabilityDebt } from './ThreadDurabilityDebt'
+import { createThreadDurabilityDebtFs } from './ThreadDurabilityDebtFs'
 import { repairSegmentTornTail } from './IncrementalChatJournalTailRepair'
 import {
   checkpointFileReference,
@@ -119,6 +120,21 @@ export interface IncrementalChatJournalStats {
   segmentsSetAside: number
   /** Chats whose checkpoint did not parse, read as having none; see `noteDurabilityDebt`. */
   checkpointsReadAsAbsent: number
+  /**
+   * Compactions in the worker under `noteDurabilityDebt` without a descriptor
+   * cache: started, adopted, failed (the worker died or replied with an error,
+   * or its output or the directory sync after it did not hold), and refused
+   * (no worker capacity, or a sealed segment the worker cannot fold).
+   */
+  compactionsStarted: number
+  compactionsAdopted: number
+  compactionsFailed: number
+  compactionsRefused: number
+  /** Compactions done on the calling thread because the active segment reached its cap. */
+  compactionCapFallbacks: number
+  /** Time chats' segments spent at or above `maxJournalBytes`: in all, and the longest stretch. */
+  compactionMsAboveTrigger: number
+  compactionLongestMsAboveTrigger: number
 }
 
 /**
@@ -188,6 +204,18 @@ export interface IncrementalChatJournalOptions {
    * It is counted and logged by chat id only. One that parses and is not a
    * checkpoint is still refused.
    *
+   * Without a descriptor cache the journal then compacts by bytes alone, in
+   * the worker (`checkpointPreparation`). When a chat's segments reach
+   * `maxJournalBytes`, the active segment is renamed to the sealed name, its
+   * bytes and the rename owed; the worker folds the checkpoint and the sealed
+   * segment into a new checkpoint, which it writes and syncs; the journal
+   * renames that into place, makes the rename durable through
+   * `syncDirectory`, and only then unlinks the sealed segment, owing the
+   * unlink. The line-count and age bounds do not apply, nothing compacts on
+   * the calling thread while a sealed segment waits for the worker, and a
+   * failed compaction is tried again after a pause, never at once. See
+   * `compactionHardCapBytes` for a worker that cannot keep up.
+   *
    * A power cut can then leave segments that do not chain: a segment that
    * reached the disk while the end of the one before it did not, or segments
    * whose checkpoint did not. No barrier resolved for anything after such a
@@ -214,6 +242,27 @@ export interface IncrementalChatJournalOptions {
    * Without this option a gap throws, as it always has.
    */
   noteDurabilityDebt?: NoteThreadDurabilityDebt
+  /**
+   * Under `noteDurabilityDebt`, without a descriptor cache: the most the
+   * active segment may hold while the compaction it waits for cannot run in
+   * the worker (dead, stuck past its deadline, refusing, or failing). Reaching
+   * it compacts on the calling thread instead, synced and counted as
+   * `compactionCapFallbacks`. Defaults to twice `maxJournalBytes`.
+   */
+  compactionHardCapBytes?: number
+  /**
+   * Under `noteDurabilityDebt`: the first pause after a compaction fails,
+   * doubled for each failure in a row after it, up to 64 times this.
+   */
+  compactionRetryMs?: number
+  /**
+   * Under `noteDurabilityDebt`: makes a directory's names durable without
+   * blocking the calling thread, as the barrier port's `syncDirectory` does.
+   * A compaction awaits it after renaming its checkpoint into place and
+   * before unlinking the sealed segment. Defaults to a port of this journal's
+   * own, which syncs on the thread pool.
+   */
+  syncDirectory?: (directory: string) => Promise<unknown>
   now?: () => number
   maxJournalBytes?: number
   maxJournalEntries?: number
@@ -289,6 +338,20 @@ export interface IncrementalChatJournal {
   purge(chatId: string): void
   clear(): void
   stats(): IncrementalChatJournalStats
+  /** Whether it was told to leave syncing to the thread barrier (`noteDurabilityDebt`). */
+  readonly leavesSyncingToBarrier?: boolean
+}
+
+/**
+ * Under debt compaction, the sealed segment the worker folds: the head the
+ * chain reaches through it, its lines and bytes as counted in the state, and
+ * whether every line in it chains, without which the worker refuses it.
+ */
+interface SealedSegment {
+  revision: number
+  entries: number
+  bytes: number
+  foldable: boolean
 }
 
 interface RuntimeState {
@@ -298,6 +361,10 @@ interface RuntimeState {
   dirtySinceMs: number | null
   lastAppendAtMs: number | null
   tombstoned: boolean
+  /** Debt compaction only: the sealed segment waiting to be folded. */
+  sealed?: SealedSegment | null
+  /** Debt compaction only: when the segments reached `maxJournalBytes`, while they stay there. */
+  aboveTriggerSince?: number | null
 }
 
 interface ParsedJournal {
@@ -321,6 +388,9 @@ const DEFAULT_MAX_JOURNAL_ENTRIES = 1_000
 const DEFAULT_IDLE_CHECKPOINT_MS = 15_000
 const DEFAULT_MAX_UNCHECKPOINTED_MS = 2 * 60 * 1000
 const DEFAULT_MAX_JOURNAL_READ_BYTES = 256 * 1024 * 1024
+const DEFAULT_COMPACTION_RETRY_MS = 1_000
+/** A failed compaction's pause doubles up to this many times the first. */
+const COMPACTION_RETRY_GROWTH = 64
 /** Enough of a checkpoint file to hold every header field before the fat
  *  `record`: format, version, chatId, revision, savedAt, reason all sit in the
  *  first ~200 bytes, so a 4KB probe reaches the top-level revision with room to
@@ -429,6 +499,28 @@ export function createIncrementalChatJournal(
   const scheduleFsync =
     options.scheduleFsync ?? ((fd, done) => fs.fsync(fd, (error) => done(error)))
   const noteDebt = options.noteDurabilityDebt
+  /** Compaction by bytes, in the worker: see `noteDurabilityDebt`. */
+  const debtCompaction = noteDebt !== undefined && !options.descriptorCache
+  const compactionHardCapBytes = positiveInteger(
+    options.compactionHardCapBytes,
+    maxJournalBytes * 2
+  )
+  const compactionRetryMs = positiveInteger(options.compactionRetryMs, DEFAULT_COMPACTION_RETRY_MS)
+  let ownDirectorySync: ((directory: string) => Promise<unknown>) | null = null
+  const syncDirectoryOffThread = (directory: string): Promise<unknown> => {
+    if (options.syncDirectory) return options.syncDirectory(directory)
+    if (!ownDirectorySync) {
+      const port = createThreadDurabilityDebtFs({ maxInFlight: 1 })
+      ownDirectorySync = (target) => port.syncDirectory(target)
+    }
+    return ownDirectorySync(directory)
+  }
+  /** One compaction per chat at a time; a second request joins the first. */
+  const compactions = new Map<string, Promise<DeferredCheckpointResult>>()
+  /** After a failure: not before `at`; `ms` is the pause that set it. */
+  const compactionPauses = new Map<string, { at: number; ms: number }>()
+  /** The same, for a compaction at the cap that failed. */
+  const capPauses = new Map<string, { at: number; ms: number }>()
   let writeSequence = 0
   let appends = 0
   let deferredAppends = 0
@@ -449,6 +541,13 @@ export function createIncrementalChatJournal(
   let corruptSegmentRejects = 0
   let segmentsSetAside = 0
   let checkpointsReadAsAbsent = 0
+  let compactionsStarted = 0
+  let compactionsAdopted = 0
+  let compactionsFailed = 0
+  let compactionsRefused = 0
+  let compactionCapFallbacks = 0
+  let compactionMsAboveTrigger = 0
+  let compactionLongestMsAboveTrigger = 0
   /** Chats whose checkpoint a load read as absent, logged once each. */
   const checkpointsAbsentLogged = new Set<string>()
   /** Chats whose active segment stops at a line that does not chain: no line may follow it. */
@@ -965,6 +1064,7 @@ export function createIncrementalChatJournal(
     aside: SetAsideSegment[]
     broken: boolean
     torn: boolean
+    sealed: SealedSegment | null
   } => {
     const { sealed, active } = parseSegments(chatId)
     let head = checkpointRevision
@@ -974,12 +1074,14 @@ export function createIncrementalChatJournal(
     let entries = 0
     let bytes = 0
     let broken = false
+    let sealedSegment: SealedSegment | null = null
     for (const [filePath, parsed] of [
       [sealedPath(chatId), sealed],
       [journalPath(chatId), active]
     ] as const) {
       let applied = 0
       let chains = true
+      let stopped = false
       if (head === null) chains = parsed.batches.length === 0
       else {
         for (const batch of parsed.batches) {
@@ -990,6 +1092,7 @@ export function createIncrementalChatJournal(
           if (batch.baseRevision !== head) {
             if (applied === 0) chains = false
             else if (filePath === journalPath(chatId)) broken = true
+            stopped = true
             break
           }
           batches.push(batch)
@@ -1000,6 +1103,14 @@ export function createIncrementalChatJournal(
       if (chains) {
         entries += parsed.batches.length
         bytes += parsed.bytes
+        if (filePath === sealedPath(chatId) && head !== null && parsed.bytes > 0) {
+          sealedSegment = {
+            revision: head,
+            entries: parsed.batches.length,
+            bytes: parsed.bytes,
+            foldable: !stopped
+          }
+        }
       } else {
         aside.push({
           filePath,
@@ -1016,7 +1127,8 @@ export function createIncrementalChatJournal(
       bytes,
       aside,
       broken,
-      torn: sealed.torn || active.torn
+      torn: sealed.torn || active.torn,
+      sealed: sealedSegment
     }
   }
 
@@ -1129,6 +1241,8 @@ export function createIncrementalChatJournal(
       tornTailsTruncated += 1
       tornTailBytesTruncated += repair.removedBytes
       state.journalBytes = Math.max(0, state.journalBytes - repair.removedBytes)
+      if (state.sealed && filePath === sealedPath(chatId))
+        state.sealed.bytes = Math.max(0, state.sealed.bytes - repair.removedBytes)
     }
     return true
   }
@@ -1175,7 +1289,9 @@ export function createIncrementalChatJournal(
         journalBytes: chained.bytes,
         dirtySinceMs: chained.entries > 0 ? (Number.isFinite(firstMs) ? firstMs : now()) : null,
         lastAppendAtMs: chained.entries > 0 ? (Number.isFinite(lastMs) ? lastMs : now()) : null,
-        tombstoned
+        tombstoned,
+        sealed: chained.sealed,
+        aboveTriggerSince: null
       }
       skippedDuplicateBatches += chained.skipped
       states.set(chatId, loaded)
@@ -1257,6 +1373,7 @@ export function createIncrementalChatJournal(
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
     state.headRevision = revision
+    state.sealed = null
   }
 
   const replay = (chatId: string): IncrementalChatReplayResult => {
@@ -1291,6 +1408,7 @@ export function createIncrementalChatJournal(
       state.headRevision = recordRevision(record)
       state.journalEntries = chained.entries
       state.journalBytes = chained.bytes
+      state.sealed = chained.sealed
       return {
         record,
         revision: recordRevision(record),
@@ -1459,6 +1577,8 @@ export function createIncrementalChatJournal(
     state.journalBytes = 0
     state.dirtySinceMs = null
     state.lastAppendAtMs = null
+    state.sealed = null
+    settleAboveTrigger(state)
     return true
   }
 
@@ -1500,11 +1620,13 @@ export function createIncrementalChatJournal(
     forgetChainDamage(chatId)
     fsyncDirectory()
     state.headRevision = revision
+    state.sealed = null
     state.journalEntries = 0
     acknowledgeJournalBarrier(chatId)
     state.journalBytes = 0
     state.dirtySinceMs = null
     state.lastAppendAtMs = null
+    settleAboveTrigger(state)
   }
 
   const captureSource = (chatId: string, revision: number): JournalCaptureLease | null => {
@@ -1664,7 +1786,9 @@ export function createIncrementalChatJournal(
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
-    if (!options.rotationEnabled) invalidatePreparation(batch.chatId, false)
+    // A line in the active segment supersedes a fold of that segment, never
+    // one of a sealed segment.
+    if (!options.rotationEnabled && !debtCompaction) invalidatePreparation(batch.chatId, false)
     options.beforeSourceMutation?.(batch.chatId)
     assertWritable()
     assertChatId(batch.chatId)
@@ -1748,6 +1872,10 @@ export function createIncrementalChatJournal(
       throw syncFailure
     }
 
+    if (debtCompaction) {
+      noteCompactionBytes(batch.chatId, state)
+      return
+    }
     if (
       state.journalEntries >= maxJournalEntries ||
       state.journalBytes >= maxJournalBytes ||
@@ -1807,9 +1935,271 @@ export function createIncrementalChatJournal(
     if (failure) throw failure
   }
 
+  /** Bytes in the segment appends go to, the sealed one aside. */
+  const activeBytes = (state: RuntimeState): number =>
+    Math.max(0, state.journalBytes - (state.sealed?.bytes ?? 0))
+
+  /** A stretch at or above the trigger ends, and is counted, when the segments fall below it. */
+  const settleAboveTrigger = (state: RuntimeState): void => {
+    if (state.aboveTriggerSince === null || state.aboveTriggerSince === undefined) return
+    if (state.journalBytes >= maxJournalBytes) return
+    const stretch = Math.max(0, now() - state.aboveTriggerSince)
+    compactionMsAboveTrigger += stretch
+    compactionLongestMsAboveTrigger = Math.max(compactionLongestMsAboveTrigger, stretch)
+    state.aboveTriggerSince = null
+  }
+
+  /** Each failure in a row doubles the pause before the next attempt, up to a limit. */
+  const pause = (pauses: Map<string, { at: number; ms: number }>, chatId: string): void => {
+    const last = pauses.get(chatId)?.ms
+    const ms =
+      last === undefined
+        ? compactionRetryMs
+        : Math.min(last * 2, compactionRetryMs * COMPACTION_RETRY_GROWTH)
+    pauses.set(chatId, { at: now() + ms, ms })
+  }
+  const pauseCompaction = (chatId: string): void => pause(compactionPauses, chatId)
+  const paused = (pauses: Map<string, { at: number; ms: number }>, chatId: string): boolean => {
+    const until = pauses.get(chatId)?.at
+    return until !== undefined && now() < until
+  }
+  const pausedNow = (chatId: string): boolean => paused(compactionPauses, chatId)
+
+  /**
+   * After a line under debt compaction: the byte trigger starts a compaction
+   * in the worker, or joins the one running. Only the active segment's cap,
+   * reached because the worker cannot keep up, compacts here instead.
+   */
+  const noteCompactionBytes = (chatId: string, state: RuntimeState): void => {
+    if (state.journalBytes < maxJournalBytes) return
+    state.aboveTriggerSince ??= now()
+    // Failures are counted where they happen; a later line or request tries
+    // again. The seal happens before this returns, so a sealed segment no
+    // longer counts toward the active one's cap.
+    if (!compactions.has(chatId) && !pausedNow(chatId)) compact(chatId).catch(() => {})
+    if (activeBytes(state) >= compactionHardCapBytes) compactAtCap(chatId, state)
+  }
+
+  /** The counted fallback: one synced compaction on the calling thread, then from nothing again. */
+  const compactAtCap = (chatId: string, state: RuntimeState): void => {
+    if (paused(capPauses, chatId)) return
+    compactionCapFallbacks += 1
+    observeResidual(options.residualObserver, 'forcedSynchronousCheckpoints')
+    try {
+      checkpoint(chatId, 'bounded')
+    } catch (error) {
+      // The line is written. A fallback that fails waits out a pause of its
+      // own, so a full disk is not tried at every line.
+      pause(capPauses, chatId)
+      console.error(`[incremental-chat] compaction at the cap failed for ${chatId}`, error)
+      return
+    }
+    // From nothing again, with the worker given its chance first.
+    compactionPauses.delete(chatId)
+    capPauses.delete(chatId)
+    settleAboveTrigger(state)
+  }
+
+  /**
+   * The source the worker folds: the sealed segment as it stands, when one is
+   * waiting, or the active segment, renamed to the sealed name with its bytes
+   * and the rename owed. Null when the worker cannot be given one now.
+   */
+  const sealForCompaction = (
+    chatId: string,
+    state: RuntimeState
+  ): CheckpointPreparationSource | 'unchanged' | null => {
+    if (brokenChains.has(chatId)) return null
+    if (state.sealed && state.sealed.entries === 0) {
+      // A sealed name a power cut left with no line in it: nothing to fold.
+      try {
+        fs.unlinkSync(sealedPath(chatId))
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      noteDebt!(chatId, { directory: baseDir })
+      suspectTailPaths.delete(sealedPath(chatId))
+      state.journalBytes = Math.max(0, state.journalBytes - state.sealed.bytes)
+      state.sealed = null
+    }
+    if (!state.sealed) {
+      if (state.journalEntries === 0 || state.journalBytes < maxJournalBytes) return 'unchanged'
+      if (fs.existsSync(sealedPath(chatId))) {
+        // A sealed name the load did not count is not this journal's to
+        // replace, unless a power cut left it with no bytes at all.
+        if (fs.statSync(sealedPath(chatId)).size !== 0) return null
+        fs.unlinkSync(sealedPath(chatId))
+        noteDebt!(chatId, { directory: baseDir })
+      }
+      // A tail known to be torn is cut by the next append, never sealed as it is.
+      if (suspectTailPaths.has(journalPath(chatId))) return null
+      fs.renameSync(journalPath(chatId), sealedPath(chatId))
+      noteDebt!(chatId, {
+        file: sealedPath(chatId),
+        owner: 'journal',
+        renamedFrom: journalPath(chatId)
+      })
+      noteDebt!(chatId, { directory: baseDir })
+      state.sealed = {
+        revision: state.headRevision!,
+        entries: state.journalEntries,
+        bytes: state.journalBytes,
+        foldable: true
+      }
+    }
+    if (!state.sealed.foldable || suspectTailPaths.has(sealedPath(chatId))) return null
+    return {
+      chatId,
+      revision: state.sealed.revision,
+      savedAt: new Date(now()).toISOString(),
+      checkpoint: checkpointFileReference(checkpointPath(chatId)),
+      journal: checkpointFileReference(sealedPath(chatId))
+    }
+  }
+
+  /** Under debt compaction: one compaction per chat at a time, which a second request joins. */
+  const compact = (chatId: string): Promise<DeferredCheckpointResult> => {
+    const running = compactions.get(chatId)
+    if (running) return running
+    const started = compactOnce(chatId)
+    compactions.set(chatId, started)
+    const forget = (): void => {
+      if (compactions.get(chatId) === started) compactions.delete(chatId)
+    }
+    started.then(forget, forget)
+    return started
+  }
+
+  /**
+   * One compaction in the worker, and where a crash or power cut at each step
+   * leaves the chat (the M5 kill points KJ1 to KJ9, as they read without a
+   * sync on the calling thread):
+   * 1. Rename the active segment to the sealed name; its bytes and the rename
+   *    are owed. KJ1: either name holds a prefix. A power cut can keep the new
+   *    active segment and lose the end of the sealed one (KJ8, reachable here
+   *    because no barrier resolved for either): the load sets the active
+   *    segment aside, and no barrier had promised a line in it.
+   * 2. The worker folds the checkpoint and the sealed segment into a file it
+   *    writes and syncs. KJ2, KJ3: a crash leaves that file, which the next
+   *    journal to open removes once its process is gone; the sealed segment
+   *    is folded again later.
+   * 3. Rename the file over the checkpoint, after the checks that it is the
+   *    worker's and that nothing it read has changed. KJ4: the old checkpoint
+   *    or the new one, each beside the sealed segment, replays the same chain;
+   *    the new one's bytes are on the disk, since the worker synced them.
+   * 4. Make that rename durable with the off-thread directory sync. Until it
+   *    settles, the sealed segment stays: no state can have the new
+   *    checkpoint's name undone and the sealed segment gone. If it fails, the
+   *    sealed segment stays, and the next compaction folds it again.
+   * 5. Unlink the sealed segment on the thread pool, where its blocks are
+   *    freed, and owe the directory. KJ5, KJ6: a power cut may bring it
+   *    back, and every line in it is one the checkpoint holds.
+   * KJ7, a torn active tail, is cut before the next append. KJ9 has no sync
+   * append to precede here: a barrier pays the sealed segment, the new
+   * active one and the directory together.
+   */
+  const compactOnce = async (chatId: string): Promise<DeferredCheckpointResult> => {
+    const state = states.get(chatId)
+    if (!state || state.tombstoned || state.headRevision === null) return 'unchanged'
+    if (!options.checkpointPreparation) return 'unavailable'
+    if (pausedNow(chatId)) return 'unavailable'
+    options.beforeSourceMutation?.(chatId)
+    if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return 'superseded'
+    moveUnmovedSetAside(chatId)
+    const source = sealForCompaction(chatId, state)
+    if (source === 'unchanged') return 'unchanged'
+    const refuse = (): DeferredCheckpointResult => {
+      compactionsRefused += 1
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      pauseCompaction(chatId)
+      return 'unavailable'
+    }
+    if (!source) return refuse()
+    const sealed = state.sealed!
+    const epoch = preparationEpochs.get(chatId) ?? 0
+    const job = options.checkpointPreparation.start(source)
+    if (!job) return refuse()
+    compactionsStarted += 1
+    preparations.set(chatId, job)
+    const current = (installed?: CheckpointPreparationSource['checkpoint']): boolean =>
+      canWrite() &&
+      preparations.get(chatId) === job &&
+      states.get(chatId) === state &&
+      state.sealed === sealed &&
+      !state.tombstoned &&
+      !fs.existsSync(tombstonePath(chatId)) &&
+      (preparationEpochs.get(chatId) ?? 0) === epoch &&
+      checkpointReferenceIsCurrent(source.journal) &&
+      checkpointReferenceIsCurrent(installed ?? source.checkpoint)
+    try {
+      const prepared = await job.result
+      if (preparations.get(chatId) !== job) return 'superseded'
+      options.beforeSourceMutation?.(chatId)
+      if (!current()) return 'superseded'
+      if (
+        prepared.chatId !== chatId ||
+        prepared.revision !== source.revision ||
+        !/^[a-f0-9]{64}$/.test(prepared.sha256) ||
+        prepared.identity.dev !== job.output.identity.dev ||
+        prepared.identity.ino !== job.output.identity.ino ||
+        prepared.identity.size <= 0 ||
+        prepared.identity.size > 128 * 1024 * 1024 ||
+        !checkpointReferenceIsCurrent({ path: job.output.path, identity: prepared.identity })
+      )
+        throw new Error('Prepared checkpoint ownership mismatch')
+      fs.renameSync(job.output.path, checkpointPath(chatId))
+      const installed = checkpointFileReference(checkpointPath(chatId))
+      if (
+        installed.identity.dev !== prepared.identity.dev ||
+        installed.identity.ino !== prepared.identity.ino ||
+        installed.identity.size !== prepared.identity.size ||
+        installed.identity.mtimeNs !== prepared.identity.mtimeNs
+      )
+        throw new Error('Installed checkpoint identity mismatch')
+      checkpointsWritten += 1
+      checkpointBytesWritten += prepared.identity.size
+      await syncDirectoryOffThread(baseDir)
+      options.beforeSourceMutation?.(chatId)
+      if (!current(installed)) return 'superseded'
+      // Off this thread too: a large segment's blocks take milliseconds to free.
+      await fs.promises.unlink(sealedPath(chatId)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+      noteDebt!(chatId, { directory: baseDir })
+      // A checkpoint, re-anchor or erasure while the unlink ran has reset the chat.
+      if (
+        preparations.get(chatId) !== job ||
+        states.get(chatId) !== state ||
+        state.sealed !== sealed
+      )
+        return 'superseded'
+      removeSetAside(chatId)
+      preparationEpochs.set(chatId, epoch + 1)
+      captureEpochs.set(chatId, (captureEpochs.get(chatId) ?? 0) + 1)
+      // The active segment's accounting is kept without reading it.
+      state.journalEntries = Math.max(0, state.journalEntries - sealed.entries)
+      state.journalBytes = Math.max(0, state.journalBytes - sealed.bytes)
+      state.sealed = null
+      compactionsAdopted += 1
+      compactionPauses.delete(chatId)
+      settleAboveTrigger(state)
+      return 'checkpointed'
+    } catch (error) {
+      // Erasure, a re-anchor or a checkpoint cancelled it: not a failure.
+      if (preparations.get(chatId) !== job) return 'superseded'
+      compactionsFailed += 1
+      pauseCompaction(chatId)
+      throw error
+    } finally {
+      if (preparations.get(chatId) === job) preparations.delete(chatId)
+      job.release()
+    }
+  }
+
   const checkpointDeferred = async (chatId: string): Promise<DeferredCheckpointResult> => {
     assertWritable()
     assertChatId(chatId)
+    if (debtCompaction) return compact(chatId)
     // Existing worker protocol reads one active segment. Do not hand it an
     // incomplete source until the separate rotation/capture slice extends it.
     if (!options.rotationEnabled && fs.existsSync(sealedPath(chatId))) return 'unavailable'
@@ -2073,6 +2463,8 @@ export function createIncrementalChatJournal(
 
   const deleteChat = (chatId: string): void => {
     cancelCheckpointPreparations(chatId)
+    compactionPauses.delete(chatId)
+    capPauses.delete(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -2104,6 +2496,8 @@ export function createIncrementalChatJournal(
 
   const purge = (chatId: string): void => {
     cancelCheckpointPreparations(chatId)
+    compactionPauses.delete(chatId)
+    capPauses.delete(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -2152,6 +2546,8 @@ export function createIncrementalChatJournal(
     states.clear()
     brokenChains.clear()
     unmovedSetAside.clear()
+    compactionPauses.clear()
+    capPauses.clear()
   }
 
   const stats = (): IncrementalChatJournalStats => ({
@@ -2174,7 +2570,14 @@ export function createIncrementalChatJournal(
     corruptSegmentRejects,
     tombstoneRejects,
     segmentsSetAside,
-    checkpointsReadAsAbsent
+    checkpointsReadAsAbsent,
+    compactionsStarted,
+    compactionsAdopted,
+    compactionsFailed,
+    compactionsRefused,
+    compactionCapFallbacks,
+    compactionMsAboveTrigger,
+    compactionLongestMsAboveTrigger
   })
 
   return {
@@ -2199,6 +2602,7 @@ export function createIncrementalChatJournal(
     delete: deleteChat,
     purge,
     clear,
-    stats
+    stats,
+    leavesSyncingToBarrier: noteDebt !== undefined
   }
 }

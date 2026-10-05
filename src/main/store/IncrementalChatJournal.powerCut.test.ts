@@ -396,8 +396,11 @@ const append = (count: number): Step => ({
   name: `append ${count}`,
   run: (live) => {
     for (let index = 0; index < count; index += 1) {
+      const started = live.journal.stats().compactionsStarted
       live.journal.append(batches[live.head! - 1])
       live.head! += 1
+      // This line reached the byte trigger: the segment it ends was sealed for the worker.
+      if (live.journal.stats().compactionsStarted > started) live.rotated = live.head!
     }
   }
 })
@@ -464,6 +467,18 @@ const adopt: Step = {
   }
 }
 
+const fold: Step = {
+  name: 'fold in the worker',
+  run: async (live) => {
+    const adopted = live.journal.checkpointDeferred!(CHAT)
+    live.preparation!.complete()
+    await expect(adopted).resolves.toBe('checkpointed')
+    // Synced by the worker, and its name by the directory sync before the unlink.
+    live.covered = Math.max(live.covered ?? 0, live.rotated!)
+    live.rotated = undefined
+  }
+}
+
 const reanchor = (ahead: number): Step => ({
   name: `re-anchor ${ahead} ahead`,
   run: (live) => {
@@ -494,7 +509,10 @@ describe.skipIf(process.platform === 'win32')(
      */
     const everyPowerCut = async (
       steps: Step[],
-      options: (directory: string) => IncrementalChatJournalOptions = () => ({}),
+      options: (
+        directory: string,
+        recorder: PowerCutRecorder
+      ) => IncrementalChatJournalOptions = () => ({}),
       preparation = false
     ): Promise<{ states: number; failures: string[] }> => {
       const liveDirectory = path.join(root, 'live')
@@ -507,7 +525,7 @@ describe.skipIf(process.platform === 'win32')(
         journal: createIncrementalChatJournal(liveDirectory, {
           noteDurabilityDebt: debt.note,
           ...(prepared ? { checkpointPreparation: prepared } : {}),
-          ...options(liveDirectory)
+          ...options(liveDirectory, recorder)
         }),
         debt,
         head: null,
@@ -625,6 +643,35 @@ describe.skipIf(process.platform === 'win32')(
 
       expect(failures).toEqual([])
       expect(states).toBeGreaterThan(40)
+    })
+
+    it('loads every state of compactions by bytes in the worker, adopted or not', async () => {
+      const { states, failures } = await everyPowerCut(
+        [
+          initialize,
+          append(1),
+          barrier,
+          // The third line reaches the trigger: its segment is sealed and the fold starts.
+          append(3),
+          append(1),
+          barrier,
+          fold,
+          append(1),
+          // Again, and this fold never returns.
+          append(3),
+          barrier,
+          append(1)
+        ],
+        (_directory, recorder) => ({
+          maxJournalBytes: 800,
+          compactionHardCapBytes: 1024 * 1024,
+          syncDirectory: (directory) => recorder.port().syncDirectory(directory)
+        }),
+        true
+      )
+
+      expect(failures).toEqual([])
+      expect(states).toBeGreaterThan(100)
     })
 
     it('loads every state of a rotation, and of a compaction adopted or not', async () => {

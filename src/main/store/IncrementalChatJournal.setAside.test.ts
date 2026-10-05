@@ -359,7 +359,8 @@ describe('a journal that leaves syncing to the barrier, loading segments that do
           const preparation = new ControlledPreparation(baseDir)
           const journal = owing({
             checkpointPreparation: preparation,
-            ...(cache ? { descriptorCache: cache, rotationEnabled: true } : {})
+            // Without a descriptor cache, compaction is by bytes: this line reaches it.
+            ...(cache ? { descriptorCache: cache, rotationEnabled: true } : { maxJournalBytes: 1 })
           })
           journal.append(batches[0])
 

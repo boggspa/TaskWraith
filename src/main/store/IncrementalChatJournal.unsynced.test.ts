@@ -429,25 +429,27 @@ describe('a journal that leaves syncing to the thread barrier', () => {
     expect(replayed()).toMatchObject({ record: records[2], appliedBatches: 2 })
   })
 
-  it('through the persistence coordinator, only the terminal checkpoint still syncs', () => {
+  it('through the persistence coordinator, syncs nothing, a final save included', () => {
     const { records } = chain(3)
     const persistence = createIncrementalChatPersistence({
       journal: writer(),
       logger: { error: () => {}, warn: () => {} }
     })
     persistence.persist(null, records[0], 'normal')
-    fromHere()
-
     persistence.persist(records[0], records[1], 'normal')
     persistence.persist(records[1], records[2], 'approval')
-    expect(syncs.issued).toEqual([])
 
+    // A final save is an append like any other: no checkpoint follows it.
     expect(persistence.persist(records[2], records[3], 'terminal')).toMatchObject({
-      checkpointed: true
+      checkpointed: false
     })
-    // The checkpoint file and its directory: the line before them owed its own.
-    expect(syncs.issued).toEqual(['fsyncSync', 'fsyncSync'])
-    expect(persistence.stats().journal).toMatchObject({ appends: 3, unsyncedAppends: 3 })
+    expect(syncs.issued).toEqual([])
+    expect(persistence.stats().journal).toMatchObject({
+      appends: 3,
+      unsyncedAppends: 3,
+      checkpointsWritten: 1
+    })
+    expect(replayed()).toMatchObject({ record: records[3], appliedBatches: 3 })
   })
 
   describe('with a descriptor cache', () => {
@@ -809,12 +811,19 @@ describe.skipIf(process.platform === 'win32')(
       expect(fs.existsSync(activePath)).toBe(false)
     })
 
-    it('adopts a prepared checkpoint with the one sync that makes it safe, and owes the removal after it', async () => {
+    it('adopts a folded checkpoint once the directory that names it is synced off the calling thread, and owes the removal after it', async () => {
       const { records, batches } = chain(2)
       const preparation = new ControlledPreparation(baseDir)
-      const journal = writer({ checkpointPreparation: preparation })
+      const journal = writer({
+        checkpointPreparation: preparation,
+        maxJournalBytes: 1,
+        compactionHardCapBytes: 1024 * 1024,
+        syncDirectory: (directory) => disk.port.syncDirectory(directory)
+      })
       journal.initialize(CHAT, records[0])
+      // The first line reaches the trigger: its segment is sealed and handed to the worker.
       journal.append(batches[0])
+      expect(fs.existsSync(sealedPath)).toBe(true)
       journal.append(batches[1])
       await debt.barrier(CHAT)
       fromHere()
@@ -823,15 +832,18 @@ describe.skipIf(process.platform === 'win32')(
       preparation.complete()
       await expect(adopted).resolves.toBe('checkpointed')
 
-      // The prepared file's own sync, then the directory that now names it.
-      expect(disk.issued.map((entry) => entry.split(':')[0])).toEqual(['file', 'directory'])
-      expect(fs.existsSync(activePath)).toBe(false)
+      // The worker's own sync of the file it wrote, and none on the calling
+      // thread: the directory that now names it is synced through the port.
+      expect(disk.issued.map((entry) => entry.split(':')[0])).toEqual(['file'])
+      expect(disk.paid).toEqual(['directory:.'])
+      expect(fs.existsSync(sealedPath)).toBe(false)
       expect(debt.snapshot().owed).toEqual({ threads: 1, files: 0, directories: 1 })
 
+      fromHere()
       await debt.barrier(CHAT)
       expect(disk.paid).toEqual(['directory:.'])
       expect(afterPowerLoss()).toMatchObject({ record: records[2], skippedBatches: 0 })
-      expect(fs.existsSync(activePath)).toBe(false)
+      expect(fs.existsSync(sealedPath)).toBe(false)
     })
 
     describe('the first checkpoint', () => {
