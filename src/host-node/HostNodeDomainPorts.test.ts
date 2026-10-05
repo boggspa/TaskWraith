@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -234,7 +234,15 @@ function open(options: { credential?: boolean; manual?: boolean; killReleases?: 
 }
 
 afterEach(() => {
-  while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
+  while (paths.length) {
+    const root = paths.pop()!
+    const temporary = tmpdir()
+    const prefixes = ['host-node-domain-', 'host-node-domain-workspace-']
+    expect(root).not.toBe(temporary)
+    expect(dirname(root)).toBe(temporary)
+    expect(prefixes.some((prefix) => root.startsWith(temporary + sep + prefix))).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 describe('HostNodeDomainPorts', () => {

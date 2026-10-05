@@ -42,10 +42,61 @@ function canonicalRealpath(input: string): string {
   return realpath(input)
 }
 
-afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) {
-    fs.rmSync(root, { recursive: true, force: true })
+const authorities = new Set<WorkspaceLockAuthority>()
+const authorityOperations = new Set<Promise<unknown>>()
+
+function trackAuthorityOperation<T>(work: () => Promise<T>): () => Promise<T> {
+  return () => {
+    const pending = work()
+    authorityOperations.add(pending)
+    void pending.then(
+      () => authorityOperations.delete(pending),
+      () => authorityOperations.delete(pending)
+    )
+    return pending
   }
+}
+
+async function openAuthority(
+  options: Parameters<typeof WorkspaceLockAuthority.open>[0]
+): Promise<WorkspaceLockAuthority> {
+  const authority = await WorkspaceLockAuthority.open(options)
+  authorities.add(authority)
+  authority.writeHolderHeartbeat = trackAuthorityOperation(
+    authority.writeHolderHeartbeat.bind(authority)
+  )
+  authority.runPeriodicRecovery = trackAuthorityOperation(
+    authority.runPeriodicRecovery.bind(authority)
+  )
+  authority.renewDerivedMarkers = trackAuthorityOperation(
+    authority.renewDerivedMarkers.bind(authority)
+  )
+  return authority
+}
+
+function removeTemporaryRoot(root: string): void {
+  const temporary = os.tmpdir()
+  expect(root).not.toBe(temporary)
+  expect(path.dirname(root)).toBe(temporary)
+  expect(root.startsWith(temporary + path.sep + 'taskwraith-lock-authority-')).toBe(true)
+  fs.rmSync(root, { recursive: true, force: true })
+}
+
+afterEach(async () => {
+  // Disposal stops future beats; a write already in flight still needs joining.
+  for (const authority of authorities) authority.dispose()
+  const errors: unknown[] = []
+  while (authorityOperations.size) {
+    const settled = await Promise.allSettled([...authorityOperations])
+    for (const result of settled) {
+      if (result.status === 'rejected') errors.push(result.reason)
+    }
+  }
+  // A renewal finishing during the drain can have rearmed its timer.
+  for (const authority of authorities) authority.dispose()
+  authorities.clear()
+  for (const root of temporaryRoots.splice(0)) removeTemporaryRoot(root)
+  if (errors.length) throw new AggregateError(errors, 'Authority fixture work failed during cleanup')
 })
 
 function harness(instanceId = 'instance-a') {
@@ -111,7 +162,7 @@ describe('WorkspaceLockAuthority', () => {
   it('reuses decoded WAL state until an external durable journal append changes its revision', async () => {
     const h = harness()
     const readEvents = vi.spyOn(h.persistence, 'readEvents')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -122,7 +173,7 @@ describe('WorkspaceLockAuthority', () => {
     expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
 
     const beforeExternalAppend = h.persistence.readEvents()
-    const external = await WorkspaceLockAuthority.open({
+    const external = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -143,7 +194,7 @@ describe('WorkspaceLockAuthority', () => {
   it('does not replay the full WAL for self-authored transitions and verification', async () => {
     const h = harness()
     const readEvents = vi.spyOn(h.persistence, 'readEvents')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -176,7 +227,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('acquires deterministic batches atomically and permits the exact owner to continue', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -232,7 +283,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('contains untrusted presentation before WAL preparation without weakening owner ids', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -311,7 +362,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('allows disjoint same-baseline hunks but rejects overlap and baseline drift', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -361,7 +412,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('makes caller-stable acquire replay idempotent and rejects changed or inactive reuse', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -391,7 +442,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('atomically refreshes and operation-releases an exact acquisition token set', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -473,7 +524,7 @@ describe('WorkspaceLockAuthority', () => {
     fs.writeFileSync(path.join(second, 'target.ts'), 'second\n')
     fs.symlinkSync(first, alias, process.platform === 'win32' ? 'junction' : 'dir')
 
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -511,7 +562,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('atomically transfers a native lease to the exact spawned child incarnation', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -590,7 +641,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('keeps launching and transferred child leases blocked across guardian/leader death', async () => {
     const h = harness()
-    let authority = await WorkspaceLockAuthority.open({
+    let authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -612,7 +663,7 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
 
     h.observations.set(201, { state: 'dead' })
-    authority = await WorkspaceLockAuthority.open({
+    authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -687,7 +738,7 @@ describe('WorkspaceLockAuthority', () => {
 
     h.observations.set(201, { state: 'dead' })
     h.observations.set(203, { state: 'dead' })
-    authority = await WorkspaceLockAuthority.open({
+    authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -721,7 +772,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('durably exposes one exact closed child to recovery without restarting', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -822,7 +873,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('releases parent leases while retaining managed children and replays the typed result', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -887,7 +938,7 @@ describe('WorkspaceLockAuthority', () => {
     fs.mkdirSync(path.join(other, 'src'))
     fs.linkSync(path.join(h.workspace, 'src', 'a.ts'), path.join(other, 'src', 'alias.ts'))
     fs.writeFileSync(path.join(other, 'src', 'independent.ts'), 'independent\n')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -950,7 +1001,7 @@ describe('WorkspaceLockAuthority', () => {
       const h = harness()
       const unusual = path.join(h.workspace, 'src', 'line\nname.ts ')
       fs.writeFileSync(unusual, 'unusual\n')
-      const authority = await WorkspaceLockAuthority.open({
+      const authority = await openAuthority({
         persistence: h.persistence,
         dependencies: h.dependencies
       })
@@ -972,7 +1023,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('rejects dead, reused, and uninspectable owner acquisition', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -997,7 +1048,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('replays restart recovery as orphan_live, recovery_blocked, and recovered', async () => {
     const h = harness('instance-a')
-    const first = await WorkspaceLockAuthority.open({
+    const first = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1012,7 +1063,7 @@ describe('WorkspaceLockAuthority', () => {
       ...h.dependencies,
       instance: { ...h.dependencies.instance, instanceId: 'instance-b' }
     }
-    const second = await WorkspaceLockAuthority.open({
+    const second = await openAuthority({
       persistence: h.persistence,
       dependencies: secondDependencies
     })
@@ -1025,7 +1076,7 @@ describe('WorkspaceLockAuthority', () => {
     second.dispose()
 
     h.observations.set(201, { state: 'identity_unavailable' })
-    const third = await WorkspaceLockAuthority.open({
+    const third = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -1044,7 +1095,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('recovers a dead lease before projecting onto a recreated workspace root', async () => {
     const h = harness('instance-a')
-    const first = await WorkspaceLockAuthority.open({
+    const first = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1064,7 +1115,7 @@ describe('WorkspaceLockAuthority', () => {
     fs.writeFileSync(path.join(h.workspace, 'src', 'a.ts'), 'replacement\n')
     h.observations.set(201, { state: 'dead' })
 
-    const restarted = await WorkspaceLockAuthority.open({
+    const restarted = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -1083,7 +1134,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('fences direct release tokens and protects exact-live orphans from terminal cleanup', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1108,7 +1159,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('repairs a torn WAL tail, rejects committed corruption, and projects marker lifecycle', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1129,7 +1180,7 @@ describe('WorkspaceLockAuthority', () => {
     )
     fs.appendFileSync(walPath, Buffer.from([0x7b, 0x22, 0xc3]))
     h.observations.set(201, { state: 'dead' })
-    const restarted = await WorkspaceLockAuthority.open({
+    const restarted = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -1142,7 +1193,7 @@ describe('WorkspaceLockAuthority', () => {
 
     fs.appendFileSync(walPath, '{not-json}\n')
     await expect(
-      WorkspaceLockAuthority.open({
+      openAuthority({
         persistence: h.persistence,
         dependencies: {
           ...h.dependencies,
@@ -1170,7 +1221,7 @@ describe('WorkspaceLockAuthority', () => {
         return h.persistence.removeDerivedMarker(root, name, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1209,10 +1260,13 @@ describe('WorkspaceLockAuthority', () => {
 
   it('retires a marker under a deleted inactive worktree without blocking unrelated work', async () => {
     const h = harness()
-    const disposableWorkspace = path.join(h.root, 'disposable-worktree')
+    const disposableWorkspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'taskwraith-lock-authority-')
+    )
+    temporaryRoots.push(disposableWorkspace)
     fs.mkdirSync(path.join(disposableWorkspace, 'src'), { recursive: true })
     fs.writeFileSync(path.join(disposableWorkspace, 'src', 'gone.ts'), 'gone\n')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1226,7 +1280,7 @@ describe('WorkspaceLockAuthority', () => {
       { transitionId: 'deleted-root-acquire' }
     )
     if (!acquired.ok) throw new Error('fixture acquisition failed')
-    fs.rmSync(disposableWorkspace, { recursive: true })
+    removeTemporaryRoot(disposableWorkspace)
     expect(
       await authority.releaseAcquisition('deleted-root-run', acquired.transitionId, {
         transitionId: 'deleted-root-release'
@@ -1282,7 +1336,7 @@ describe('WorkspaceLockAuthority', () => {
       writeDerivedMarker: h.persistence.writeDerivedMarker.bind(h.persistence),
       removeDerivedMarker: h.persistence.removeDerivedMarker.bind(h.persistence)
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1337,7 +1391,7 @@ describe('WorkspaceLockAuthority', () => {
         throw new Error('disk denied marker')
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: failingPersistence,
       dependencies: h.dependencies
     })
@@ -1360,7 +1414,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('measures the recovered-lease visibility window against the injected clock', async () => {
     const h = harness('instance-a')
-    const first = await WorkspaceLockAuthority.open({
+    const first = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1375,7 +1429,7 @@ describe('WorkspaceLockAuthority', () => {
     const recoveredVisibilityMs = 1_000
     // Bracket the whole restart recovery: the recovered stamp is written during `open()`.
     const recoveredFloor = globalTime
-    const second = await WorkspaceLockAuthority.open({
+    const second = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -1427,7 +1481,7 @@ describe('WorkspaceLockAuthority', () => {
         h.persistence.writeDerivedMarker(root, name, content, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1529,7 +1583,7 @@ describe('WorkspaceLockAuthority', () => {
         h.persistence.writeDerivedMarker(root, name, content, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1613,7 +1667,7 @@ describe('WorkspaceLockAuthority', () => {
         h.persistence.writeDerivedMarker(root, name, content, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1648,7 +1702,7 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
 
     failExactProjection = false
-    const reopened = await WorkspaceLockAuthority.open({
+    const reopened = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1701,7 +1755,7 @@ describe('WorkspaceLockAuthority', () => {
         h.persistence.writeDerivedMarker(root, name, content, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1738,7 +1792,7 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
 
     failCleanup = false
-    const reopened = await WorkspaceLockAuthority.open({
+    const reopened = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1785,7 +1839,7 @@ describe('WorkspaceLockAuthority', () => {
         h.persistence.writeDerivedMarker(root, name, content, identity)
       }
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1810,7 +1864,7 @@ describe('WorkspaceLockAuthority', () => {
 
     failAcquireAppend = false
     failCleanup = false
-    const reopened = await WorkspaceLockAuthority.open({
+    const reopened = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1852,7 +1906,7 @@ describe('WorkspaceLockAuthority', () => {
       removeDerivedMarker: h.persistence.removeDerivedMarker.bind(h.persistence),
       writeDerivedMarker: h.persistence.writeDerivedMarker.bind(h.persistence)
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence,
       dependencies: h.dependencies
     })
@@ -1878,7 +1932,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('returns authority_busy when an exact-live transition mutex remains held', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1902,7 +1956,7 @@ describe('WorkspaceLockAuthority', () => {
 
   it('exposes busy errors for marker renewal rather than silently extending authority state', async () => {
     const h = harness()
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -1981,7 +2035,7 @@ async function lapseFixture(
     pid: 201,
     processBirthIdentity: 'owner-a-birth'
   }
-  const holder = await WorkspaceLockAuthority.open({
+  const holder = await openAuthority({
     persistence: h.persistence,
     dependencies: { ...h.dependencies, instance: holderInstance },
     holderLease: { enabled: false }
@@ -1996,7 +2050,7 @@ async function lapseFixture(
   if (!acquired.ok) throw new Error('fixture acquisition failed')
   const liveAtScan = h.observations.get(201)!
   if (options.observationAtBoot) h.observations.set(201, options.observationAtBoot)
-  const reclaimer = await WorkspaceLockAuthority.open({
+  const reclaimer = await openAuthority({
     persistence: h.persistence,
     dependencies: {
       ...h.dependencies,
@@ -2072,7 +2126,7 @@ async function lapseFixture(
 describe('WorkspaceLockAuthority holder leases', () => {
   it('writes a heartbeat sidecar on open, beats on its cadence, and removes it on dispose', async () => {
     const h = harness('instance-a')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies,
       holderLease: { heartbeatIntervalMs: 25, scanIntervalMs: 60_000 }
@@ -2124,7 +2178,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
   it('never retires its own live leases, however long its own beats fail to land', async () => {
     const h = harness('instance-a')
     let monotonicMs = 0
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -2168,7 +2222,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
   it('retires a lease another incarnation of its own pid holds, and never its own', async () => {
     const h = harness('instance-a')
     let monotonicMs = 0
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -2178,7 +2232,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
       holderLease: { heartbeatIntervalMs: 3_600_000, scanIntervalMs: 3_600_000 }
     })
     // Opened before any lease exists, so its boot relabels nothing.
-    const injector = await WorkspaceLockAuthority.open({
+    const injector = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -2297,7 +2351,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
         // A peer boots now and cannot observe the holder (a resolver timeout,
         // say), so its boot quarantines the lease as recovery_blocked.
         peers.push(
-          await WorkspaceLockAuthority.open({
+          await openAuthority({
             persistence: f.h.persistence,
             dependencies: {
               ...f.h.dependencies,
@@ -2352,7 +2406,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
       if (calls === 2) throw new Error('synthetic sidecar failure')
       return write(record)
     }
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies,
       holderLease: { heartbeatIntervalMs: 20, scanIntervalMs: 60_000 }
@@ -2364,7 +2418,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
 
   it('runs on the design timing table by default and refuses a suspend gap no wider than a scan', async () => {
     const h = harness('instance-a')
-    const authority = await WorkspaceLockAuthority.open({
+    const authority = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -2379,7 +2433,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
     })
     authority.dispose()
     await expect(
-      WorkspaceLockAuthority.open({
+      openAuthority({
         persistence: h.persistence,
         dependencies: h.dependencies,
         holderLease: { scanIntervalMs: 30_000, suspendGapMs: 30_000 }
@@ -2389,7 +2443,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
 
   it('reclaims a dead owner from the periodic pass without any open()', async () => {
     const h = harness('instance-a')
-    const holder = await WorkspaceLockAuthority.open({
+    const holder = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies,
       holderLease: { scanIntervalMs: 60_000, heartbeatIntervalMs: 60_000 }
@@ -2402,7 +2456,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
     const held = await holder.acquire(owner({ lockOwnerId: 'owner-a', runId: 'run-a' }), request)
     expect(held).toMatchObject({ ok: true })
 
-    const reclaimer = await WorkspaceLockAuthority.open({
+    const reclaimer = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -2469,12 +2523,12 @@ describe('WorkspaceLockAuthority holder leases', () => {
 
   it("never relabels a live peer's held lease from the periodic pass", async () => {
     const h = harness('instance-b')
-    const reclaimer = await WorkspaceLockAuthority.open({
+    const reclaimer = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies,
       holderLease: { scanIntervalMs: 60_000, heartbeatIntervalMs: 60_000 }
     })
-    const holder = await WorkspaceLockAuthority.open({
+    const holder = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -2505,7 +2559,7 @@ describe('WorkspaceLockAuthority holder leases', () => {
     ).toMatchObject({ ok: true, acquiredTransitionId: acquired.transitionId })
 
     // The boot-time relabel is unchanged and stays a boot-only behaviour.
-    const third = await WorkspaceLockAuthority.open({
+    const third = await openAuthority({
       persistence: h.persistence,
       dependencies: {
         ...h.dependencies,
@@ -3081,7 +3135,7 @@ describe('WorkspaceLockAuthority boot recovery truth table', () => {
 
   it.each(rows)('$name', async (row) => {
     const h = harness('instance-a')
-    const first = await WorkspaceLockAuthority.open({
+    const first = await openAuthority({
       persistence: h.persistence,
       dependencies: h.dependencies
     })
@@ -3100,7 +3154,7 @@ describe('WorkspaceLockAuthority boot recovery truth table', () => {
     expect(acquired).toMatchObject({ ok: true })
     if (row.priorOrphan) {
       first.dispose()
-      const foreign = await WorkspaceLockAuthority.open({
+      const foreign = await openAuthority({
         persistence: h.persistence,
         dependencies: {
           ...h.dependencies,
@@ -3118,7 +3172,7 @@ describe('WorkspaceLockAuthority boot recovery truth table', () => {
       await first.recoverStaleClaims()
       after = first
     } else {
-      after = await WorkspaceLockAuthority.open({
+      after = await openAuthority({
         persistence: h.persistence,
         dependencies: {
           ...h.dependencies,
@@ -3157,7 +3211,7 @@ describe('WorkspaceLockAuthority boot recovery truth table', () => {
     'never reclaims a %s lease from the periodic pass, even once its process is gone',
     async (lifecycle) => {
       const h = harness('instance-a')
-      const authority = await WorkspaceLockAuthority.open({
+      const authority = await openAuthority({
         persistence: h.persistence,
         dependencies: h.dependencies,
         holderLease: { scanIntervalMs: 60_000, heartbeatIntervalMs: 60_000 }
