@@ -66,7 +66,7 @@ const {
   summariseManyAgents
 } = require('./manyAgentMetrics.cjs')
 const { createManyAgentLanes } = require('./manyAgentRounds.cjs')
-const { readMainPerfWindow, readMainWorkSpanWindow } = require('./t2LiveLanes.cjs')
+const { askForWindowEnd, readMainPerfWindow, readMainWorkSpanWindow } = require('./t2LiveLanes.cjs')
 
 const DEFAULT_OPTIONS = Object.freeze({
   windowMs: 120_000,
@@ -81,11 +81,6 @@ const DEFAULT_OPTIONS = Object.freeze({
   hostCaptureWaitMs: 7_000,
   callTimeoutMs: 60_000
 })
-// Main ends its window on its own timer, which a busy loop runs late; asked
-// before then it has no receipt. Ten seconds of asking, then the window is
-// reported as main left it.
-const END_PROBE_TRIES = 40
-const END_PROBE_RETRY_MS = 250
 const WINDOW_ROLE = 'many-agents'
 /** As many chats as main's span handle and the Host fold take in one call. */
 const BATCH_SIZE = 8
@@ -596,11 +591,8 @@ async function runT2ManyAgents(options) {
     await sleepUntil(endedAtMs)
     let probeEnd = probeBegin
     if (probeBegin.status === 'started') {
-      for (let asked = 1; ; asked += 1) {
-        probeEnd = await probeMain({ action: 'end', id: windowId })
-        if (probeEnd.reason !== 'window_incomplete' || asked === END_PROBE_TRIES) break
-        await sleep(END_PROBE_RETRY_MS)
-      }
+      // Main ends its window on its own timer, which a busy loop runs late.
+      probeEnd = await askForWindowEnd(() => probeMain({ action: 'end', id: windowId }), sleep)
       await mark(windowId, 'window_end_marker_failed')
     }
     const mainAtEnd = await readMainAt(endedAtMs)

@@ -5,14 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 
 type Verdict = { ok: boolean; reasons: string[] }
-function windowProbeFixture(nowMs: () => number) {
+function windowProbeFixture(nowMs: () => number, late = 0, endAsks: number[] = []) {
   let startedAtMs = 0
   let durationMs = 0
   return (request: { action: string; id: string; durationMs?: number }) => {
     if (request.action === 'begin') {
       startedAtMs = nowMs()
       durationMs = request.durationMs ?? 0
+      endAsks.push(0)
       return { status: 'started', id: request.id, startedAtMs }
+    }
+    // Asked before main's own timer has run: no receipt yet.
+    endAsks[endAsks.length - 1] += 1
+    if (endAsks[endAsks.length - 1] <= late) {
+      return { status: 'unavailable', reason: 'window_incomplete' }
     }
     return {
       status: 'complete',
@@ -160,9 +166,15 @@ function world(
     pageFails?: boolean
     cancelHangs?: boolean
     cancelRejects?: boolean
+    /** How many times main answers each window's end with no receipt yet. */
+    probeLate?: number
+    /** Main answers a window's end with a snapshot that has no window. */
+    endNoWindow?: boolean
   } = {}
 ) {
   let now = T0
+  const markers: number[] = []
+  const endAsks: number[] = []
   const events: string[] = []
   const mainSpans: Span[] = []
   const mainPosts: Array<{ method: string; sendOptions: unknown }> = []
@@ -288,13 +300,13 @@ function world(
     heavy: { rounds: heavyRounds.map((round) => ({ ...round })), idle: [], failure: heavyFailure }
   })
   // The page's window: the app's cancel, and the observer global the lanes install.
-  const probeWindow = windowProbeFixture(() => now)
+  const probeWindow = windowProbeFixture(() => now, options.probeLate ?? 0, endAsks)
   const pageWindow: Record<string, unknown> = {
     api: {
-      getMainPerfSnapshot: async (options: { window: Parameters<typeof probeWindow>[0] }) => ({
-        window: probeWindow(options.window),
-        sections: {}
-      }),
+      getMainPerfSnapshot: async (request: { window: Parameters<typeof probeWindow>[0] }) =>
+        options.endNoWindow && request.window.action === 'end'
+          ? { sections: {} }
+          : { window: probeWindow(request.window), sections: {} },
       cancelEnsembleRound: (chatId: string) => {
         events.push(`cancel:${chatId}`)
         if (options.cancelHangs) return new Promise(() => {})
@@ -408,6 +420,22 @@ function world(
   }
   const mainSession = {
     post: async (method: string, params: { expression: string }, sendOptions: unknown) => {
+      if (params.expression.includes('tw_calibration_')) {
+        markers.push(now - T0)
+        return {
+          result: {
+            value: {
+              tag: `tw_calibration_${markers.length}`,
+              beforeMs: now - T0,
+              afterMs: now - T0 + 40,
+              pid: 4242,
+              clockId: 'node.performance.now',
+              timeOrigin: T0,
+              identity: `main:4242:performance.timeOrigin:${T0}`
+            }
+          }
+        }
+      }
       mainPosts.push({ method, sendOptions })
       const handle = (query: {
         lanes: Record<string, string>
@@ -472,6 +500,8 @@ function world(
   return {
     events,
     mainPosts,
+    markers,
+    endAsks,
     daemonReads,
     pageWindow,
     clock: () => now,
@@ -745,6 +775,52 @@ describe('runT2LiveLanes', () => {
     ).toEqual([
       ['censored', 'host_evidence_unavailable'],
       ['censored', 'host_evidence_unavailable']
+    ])
+  })
+
+  // The quarter-second waits of a run whose windows main ends on time (opening the light chat).
+  const quarterWaits = (events: string[]) => events.filter((event) => event === 'sleep:250').length
+  const onTime = async () => {
+    const w = world()
+    await w.run()
+    expect(w.endAsks).toEqual([1, 1])
+    return quarterWaits(w.events)
+  }
+
+  it('asks main again for a window whose timer had not yet run, and marks its end after', async () => {
+    const waitsOnTime = await onTime()
+    const w = world({ probeLate: 2 })
+    const result = await w.run({ onCalibrationMarker: () => {} })
+    expect(result.verdict).toEqual({ ok: true, reasons: [] })
+    // Each window's end asked three times, a quarter of a second apart.
+    expect(w.endAsks).toEqual([3, 3])
+    expect(quarterWaits(w.events)).toBe(waitsOnTime + 4)
+    // Each window's start is marked as it begins, its end once main has answered.
+    const windows = result.windows as unknown as Array<{ startedAtMs: number; endedAtMs: number }>
+    expect(w.markers).toEqual(
+      windows.flatMap((window) => [window.startedAtMs - T0, window.endedAtMs - T0 + 500])
+    )
+  })
+
+  it('gives up on a window main never finishes timing, and says so', async () => {
+    const waitsOnTime = await onTime()
+    const w = world({ probeLate: 1_000 })
+    const result = await w.run()
+    expect(result.windows.map((window) => window.reasons)).toEqual([
+      ['window_incomplete'],
+      ['window_incomplete']
+    ])
+    // Forty asks a window: ten seconds, no more.
+    expect(w.endAsks).toEqual([40, 40])
+    expect(quarterWaits(w.events)).toBe(waitsOnTime + 78)
+  })
+
+  it('does not ask again when main answers a window’s end with no window at all', async () => {
+    const w = world({ endNoWindow: true })
+    const result = await w.run()
+    expect(result.windows.map((window) => window.reasons)).toEqual([
+      ['main_probe_invalid'],
+      ['main_probe_invalid']
     ])
   })
 

@@ -54,6 +54,11 @@ const DEFAULT_OPTIONS = Object.freeze({
 })
 /** How long past its own bound a main read may take before the runner gives up. */
 const MAIN_READ_BACKSTOP_MS = 1_000
+// Main ends a window on its own timer, which a busy loop runs late; asked
+// before then it has no receipt. Ten seconds of asking, then the window is
+// reported as main left it.
+const END_PROBE_TRIES = 40
+const END_PROBE_RETRY_MS = 250
 /** The sidebar's Recents rows (`SidebarCompactChatRow`); each names its chat id. */
 const RECENTS_ROW_CLASS = 'sidebar-recents-item'
 /** The main pane's title for its current chat (`MainAppLayout`). */
@@ -103,6 +108,25 @@ async function readMainPerfWindow(page, request, timeoutMs) {
     return snapshot && snapshot.window ? snapshot.window : null;
   })()`
   return awaitWithTimeout(page.evaluate(expression), timeoutMs, 'main window probe')
+}
+
+/**
+ * Ask main for a window's end until it has one: `ask` again while main says
+ * the window is incomplete, a quarter of a second apart, at most forty times.
+ * Resolves with the last answer; a thrown ask is not asked again.
+ */
+async function askForWindowEnd(ask, sleep) {
+  for (let asked = 1; ; asked += 1) {
+    const answer = await ask()
+    if (
+      !isPlainObject(answer) ||
+      answer.reason !== 'window_incomplete' ||
+      asked === END_PROBE_TRIES
+    ) {
+      return answer
+    }
+    await sleep(END_PROBE_RETRY_MS)
+  }
 }
 
 /** The one model every seat of a chat runs, or null when they differ or none is named. */
@@ -420,7 +444,10 @@ async function runT2LiveLanes(options) {
               options.onCalibrationFailure?.('window_start_marker_failed')
             }
           }
-          const receipt = await readMainPerfWindow(page, request, settings.callTimeoutMs)
+          const read = () => readMainPerfWindow(page, request, settings.callTimeoutMs)
+          const receipt =
+            request.action === 'end' ? await askForWindowEnd(read, sleep) : await read()
+          // The end is marked once main has answered for it, as it ends late.
           if (request.action === 'end' && options.onCalibrationMarker) {
             try {
               const marker = await captureProfileMarker(mainSession, {
@@ -545,6 +572,7 @@ function withLiveLanesVerdict(roundsVerdict, lanes) {
 
 module.exports = {
   DEFAULT_T2_LIVE_LANE_OPTIONS: DEFAULT_OPTIONS,
+  askForWindowEnd,
   clickRecentsRowExpression,
   liveLaneChatsOf,
   liveLanesTeardownFailures,
