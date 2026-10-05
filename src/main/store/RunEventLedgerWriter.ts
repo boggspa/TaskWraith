@@ -15,6 +15,7 @@ import type { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import type { RunEventArtifactRef, RunEventInput, RunEventRecord } from './types'
 import { observeResidual, type ResidualObserver } from './MainDurabilityResiduals'
+import type { NoteThreadDurabilityDebt, ThreadDurabilityDebtNote } from './ThreadDurabilityDebt'
 
 export interface RunEventLedgerWriterOptions {
   residualObserver?: ResidualObserver
@@ -22,6 +23,16 @@ export interface RunEventLedgerWriterOptions {
   runArtifactsDir: string
   durabilityFlusher?: MainDurabilityFlusher
   directoryLeases?: MainDurabilityDirectoryLeases
+  /**
+   * Explicit opt-in; nothing passes it yet. With it, an append for an event
+   * that names its thread only writes: the sync a strict append, a lifecycle
+   * event or every 25th event would get is not issued, nor is the sync of a
+   * directory that gained the ledger or its folder. This callback is told what
+   * the disk is owed instead, and for which run, and the thread's barrier pays
+   * it. The flusher above is then not used at all. An event that names no
+   * thread has no barrier to pay for it, and is synced as it always was.
+   */
+  noteDurabilityDebt?: NoteThreadDurabilityDebt
 }
 
 export interface RunEventLedgerAppendOptions {
@@ -42,7 +53,7 @@ export class RunEventLedgerWriter {
   private readonly descriptors?: RunEventLedgerDescriptorCache
 
   constructor(private readonly options: RunEventLedgerWriterOptions) {
-    if (options.durabilityFlusher)
+    if (options.durabilityFlusher && !options.noteDurabilityDebt)
       this.descriptors = new RunEventLedgerDescriptorCache(
         options.durabilityFlusher,
         128,
@@ -110,11 +121,13 @@ export class RunEventLedgerWriter {
       this.heads.set(input.runId, { sequence: record.sequence, hash: record.hash || previousHash })
       return record
     }
+    const owed = this.owedBy(input)
     const directoryExisted = fs.existsSync(directoryPath)
     const fileExisted = fs.existsSync(filePath)
     fs.mkdirSync(directoryPath, { recursive: true })
-    if (options.durability === 'strict' && !directoryExisted) {
-      fsyncDirectory(path.dirname(directoryPath))
+    if (!directoryExisted) {
+      if (owed) owed({ directory: path.dirname(directoryPath) })
+      else if (options.durability === 'strict') fsyncDirectory(path.dirname(directoryPath))
     }
     const fd = fs.openSync(filePath, 'a+')
     try {
@@ -128,7 +141,10 @@ export class RunEventLedgerWriter {
         if (prefix) fs.writeSync(fd, prefix)
       }
       fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
-      if (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0) {
+      if (
+        !owed &&
+        (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0)
+      ) {
         if (options.durability === 'strict')
           observeResidual(this.options.residualObserver, 'strictRunEventFsyncs')
         fs.fsyncSync(fd)
@@ -142,13 +158,29 @@ export class RunEventLedgerWriter {
       fs.closeSync(fd)
     }
     try {
-      if (options.durability === 'strict' && !fileExisted) fsyncDirectory(directoryPath)
+      if (!owed && options.durability === 'strict' && !fileExisted) fsyncDirectory(directoryPath)
     } catch (error) {
       this.heads.delete(input.runId)
       throw error
     }
+    if (owed) {
+      owed({ file: filePath, owner: 'run-events' })
+      if (!fileExisted) owed({ directory: directoryPath })
+    }
     this.heads.set(input.runId, { sequence: record.sequence, hash: record.hash || previousHash })
     return record
+  }
+
+  /**
+   * How this event's write is noted as owed, or undefined when it is to be
+   * synced here as before: no callback was given, or the event names no
+   * thread whose barrier would pay.
+   */
+  private owedBy(input: RunEventInput): ((debt: ThreadDurabilityDebtNote) => void) | undefined {
+    const note = this.options.noteDurabilityDebt
+    const chatId = input.chatId
+    if (!note || !chatId) return undefined
+    return (debt) => note(chatId, { ...debt, run: input.runId })
   }
 
   private appendRunStreamArtifact(

@@ -52,15 +52,19 @@ export const THREAD_DURABILITY_OWNERS = [
 export type ThreadDurabilityOwner = (typeof THREAD_DURABILITY_OWNERS)[number]
 export type ThreadDurabilityFileOwner = Exclude<ThreadDurabilityOwner, 'directory'>
 
-/** One thing a write left owing. */
+/**
+ * One thing a write left owing. `run` is the run it was written for, when the
+ * file or the name is that run's own. Barriers do not tell runs apart: each
+ * pays everything its thread owes.
+ */
 export type ThreadDurabilityDebtNote =
   /**
    * A file whose bytes were written and not synced. `renamedFrom` is the name
    * those bytes were under until now, when the file has just been renamed.
    */
-  | { file: string; owner: ThreadDurabilityFileOwner; renamedFrom?: string }
+  | { file: string; owner: ThreadDurabilityFileOwner; renamedFrom?: string; run?: string }
   /** A directory in which a name was created, renamed or removed. */
-  | { directory: string }
+  | { directory: string; run?: string }
 
 export type NoteThreadDurabilityDebt = (chatId: string, debt: ThreadDurabilityDebtNote) => void
 
