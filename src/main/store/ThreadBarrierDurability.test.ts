@@ -65,7 +65,8 @@ describe('the barrier durability layer', () => {
 
   it('reports the debt, the tickets, the threads owing and, for the port it built, the port', () => {
     const built = createThreadBarrierDurability()
-    expect(built.snapshot()).toEqual({
+    // The fields this layer promises; the debt and the port may report more.
+    expect(built.snapshot()).toMatchObject({
       debt: built.debt.snapshot(),
       port: { started: 0, inFlight: 0, queued: 0, joined: 0, peakInFlight: 0 },
       tickets: built.tickets.snapshot(),
