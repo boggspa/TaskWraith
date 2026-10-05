@@ -488,6 +488,14 @@ const reanchor = (ahead: number): Step => ({
   }
 })
 
+/**
+ * The longer enumerations load 200 states and more, each by four journals:
+ * 4.7 to 6 s on a machine at a load average of 4 to 7, past vitest's 5 s
+ * default. Every state is distinct, so the work is the coverage itself; the
+ * limit leaves room for a machine running much else.
+ */
+const ENUMERATION_TIMEOUT_MS = 30_000
+
 describe.skipIf(process.platform === 'win32')(
   'a journal that leaves syncing to the thread barrier, after a power cut',
   () => {
@@ -645,68 +653,76 @@ describe.skipIf(process.platform === 'win32')(
       expect(states).toBeGreaterThan(40)
     })
 
-    it('loads every state of compactions by bytes in the worker, adopted or not', async () => {
-      const { states, failures } = await everyPowerCut(
-        [
-          initialize,
-          append(1),
-          barrier,
-          // The third line reaches the trigger: its segment is sealed and the fold starts.
-          append(3),
-          append(1),
-          barrier,
-          fold,
-          append(1),
-          // Again, and this fold never returns.
-          append(3),
-          barrier,
-          append(1)
-        ],
-        (_directory, recorder) => ({
-          maxJournalBytes: 800,
-          compactionHardCapBytes: 1024 * 1024,
-          syncDirectory: (directory) => recorder.port().syncDirectory(directory)
-        }),
-        true
-      )
-
-      expect(failures).toEqual([])
-      expect(states).toBeGreaterThan(100)
-    })
-
-    it('loads every state of a rotation, and of a compaction adopted or not', async () => {
-      const cache = new IncrementalChatJournalDescriptorCache(flusher())
-      try {
+    it(
+      'loads every state of compactions by bytes in the worker, adopted or not',
+      async () => {
         const { states, failures } = await everyPowerCut(
           [
             initialize,
             append(1),
             barrier,
-            append(1),
-            rotate,
-            append(1),
-            barrier,
-            append(1),
-            startCompaction,
-            append(1),
-            adopt,
+            // The third line reaches the trigger: its segment is sealed and the fold starts.
+            append(3),
             append(1),
             barrier,
+            fold,
             append(1),
-            startCompaction,
-            append(1),
-            prepare,
+            // Again, and this fold never returns.
+            append(3),
+            barrier,
             append(1)
           ],
-          () => ({ descriptorCache: cache, rotationEnabled: true }),
+          (_directory, recorder) => ({
+            maxJournalBytes: 800,
+            compactionHardCapBytes: 1024 * 1024,
+            syncDirectory: (directory) => recorder.port().syncDirectory(directory)
+          }),
           true
         )
 
         expect(failures).toEqual([])
-        expect(states).toBeGreaterThan(200)
-      } finally {
-        cache.retireSync()
-      }
-    })
+        expect(states).toBeGreaterThan(100)
+      },
+      ENUMERATION_TIMEOUT_MS
+    )
+
+    it(
+      'loads every state of a rotation, and of a compaction adopted or not',
+      async () => {
+        const cache = new IncrementalChatJournalDescriptorCache(flusher())
+        try {
+          const { states, failures } = await everyPowerCut(
+            [
+              initialize,
+              append(1),
+              barrier,
+              append(1),
+              rotate,
+              append(1),
+              barrier,
+              append(1),
+              startCompaction,
+              append(1),
+              adopt,
+              append(1),
+              barrier,
+              append(1),
+              startCompaction,
+              append(1),
+              prepare,
+              append(1)
+            ],
+            () => ({ descriptorCache: cache, rotationEnabled: true }),
+            true
+          )
+
+          expect(failures).toEqual([])
+          expect(states).toBeGreaterThan(200)
+        } finally {
+          cache.retireSync()
+        }
+      },
+      ENUMERATION_TIMEOUT_MS
+    )
   }
 )
