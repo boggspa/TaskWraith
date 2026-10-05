@@ -1361,9 +1361,22 @@ export class WorkspaceLockAuthority {
     if (!runId?.trim()) {
       return { ok: false, reason: 'foreign_owner', message: 'Run id is required.' }
     }
-    const observed = this.readWal(false).state.activeLeases.filter(
-      (lease) => lease.owner.runId === runId
-    )
+    const current = this.readWal(false).state
+    const observed = current.activeLeases.filter((lease) => lease.owner.runId === runId)
+    // A run that holds nothing has nothing to release, and taking the fence for
+    // it would only sync three times and append nothing. This is the committed
+    // log, read as the periodic pass reads it; a transition id the log already
+    // holds still goes under the fence, where it replays or is refused.
+    if (
+      !observed.length &&
+      !(options.transitionId && current.transitionIds.includes(options.transitionId))
+    ) {
+      return {
+        ok: true,
+        transitionId: options.transitionId || current.lastTransitionId,
+        released: []
+      }
+    }
     const observations = new Map<number, WorkspaceLockProcessObservation>()
     await Promise.all(
       [...new Set(observed.map((lease) => lease.owner.pid))].map(async (pid) => {
