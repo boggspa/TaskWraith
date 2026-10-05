@@ -81,6 +81,7 @@ import {
   type CurrentChatAuthorityMetadata
 } from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
+import { USER_DURABILITY_MOMENTS } from './ChatDurabilityTickets'
 import { createThreadBarrierDurability } from './ThreadBarrierDurability'
 import {
   readThreadBarrierDurabilityPerf,
@@ -1179,14 +1180,19 @@ const durableMomentGate = threadBarrierDurability
 if (durableMomentGate) installDurableMomentGate(durableMomentGate)
 /**
  * What the dispatch barriers wait for before the journal holds a revision on
- * the disk. The journal syncs nothing itself under barrier durability, so it
- * is the thread's barrier and the user's tickets, bounded; otherwise the
- * journal's own deferred syncs.
+ * the disk. Under barrier durability the journal syncs nothing itself, and a
+ * dispatch needs only the user's moments durable: each save holding one raised
+ * its urgent barrier, so a dispatch waits for their tickets, bounded, and
+ * raises no barrier of its own. With none pending it goes at once, and is not
+ * counted as a wait. Otherwise the journal's own deferred syncs.
  */
 function awaitThreadJournalDurable(chatId: string): Promise<void> {
-  return threadBarrierDurability && durableMomentGate
+  if (!threadBarrierDurability || !durableMomentGate) {
+    return incrementalChatPersistence.awaitDeferredDurability(chatId)
+  }
+  return threadBarrierDurability.tickets.holds(chatId, USER_DURABILITY_MOMENTS)
     ? durableMomentGate.bound(threadBarrierDurability.awaitDurable(chatId))
-    : incrementalChatPersistence.awaitDeferredDurability(chatId)
+    : Promise.resolve()
 }
 /**
  * What a save's catalogue head waits for before it settles: the journal's own
@@ -9224,7 +9230,8 @@ export class AppStore {
    * A save whose journal or detail write failed instead needs the full Host
    * acknowledgement: enqueueing that sole durable copy is not a barrier.
    * Still rejects fail-closed on an unacknowledged journal flush and still
-   * waits out a catalogue recovery hold.
+   * waits out a catalogue recovery hold. Under barrier durability the journal
+   * part is the user's moments alone (`awaitThreadJournalDurable`).
    */
   static awaitChatRecordDispatchDurable(chatId: string): Promise<void> {
     if (threadCatalogueWriteGate.isHeld(chatId))

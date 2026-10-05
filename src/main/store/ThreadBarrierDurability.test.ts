@@ -434,11 +434,11 @@ describe('the tickets a save takes', () => {
       'directory:/p/chat-journal-v2'
     ])
 
-    // A dispatch's barrier is the same: what the runs owe stays theirs.
+    // A dispatch raises no barrier of its own: the line written since stays owed.
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
     await layer.awaitDurable('chat-1')
-    expect(port.paid.slice(2)).toEqual(['file:/p/chat-journal-v2/chat-1.mutations.jsonl'])
-    expect(layer.debt.snapshot().owed).toMatchObject({ files: 2, directories: 1 })
+    expect(port.paid.slice(2)).toEqual([])
+    expect(layer.debt.snapshot().owed).toMatchObject({ files: 3, directories: 1 })
   })
 
   it('takes none, and raises no barrier, for a save with no moment', () => {
@@ -654,7 +654,7 @@ describe('the barriers for the moments of one save', () => {
 })
 
 describe('what a dispatch waits for', () => {
-  it("waits for an urgent barrier of the thread and the tickets of the user's moments", async () => {
+  it("waits for the tickets of the user's moments, on their saves' barriers, and raises none of its own", async () => {
     const port = heldPort()
     const layer = createThreadBarrierDurability({ port })
     const previous = thread()
@@ -672,12 +672,35 @@ describe('what a dispatch waits for', () => {
     let settled = false
     const waiting = layer.awaitDurable('chat-1').then(() => (settled = true))
     await Promise.resolve()
-    expect(layer.debt.snapshot().barriers).toMatchObject({ urgent: 2, threadOnly: 2, scoped: 0 })
+    // The save's barrier, and none of the dispatch's.
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: 1,
+      urgent: 1,
+      threadOnly: 1,
+      scoped: 0
+    })
     expect(settled).toBe(false)
 
     port.release()
     await waiting
     expect(layer.tickets.snapshot().moments.user_message.covered).toBe(1)
+  })
+
+  it("raises no barrier and asks for no sync with nothing of the user's pending, and resolves at once", async () => {
+    const port = heldPort()
+    const layer = createThreadBarrierDurability({ port })
+    // What streaming wrote, owed by the thread and a run: no moment of the user's.
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+
+    let settled = false
+    void layer.awaitDurable('chat-1').then(() => (settled = true))
+    await Promise.resolve()
+
+    expect(settled).toBe(true)
+    expect(layer.debt.snapshot().barriers.raised).toBe(0)
+    expect(port.asked).toEqual([])
+    expect(layer.debt.snapshot().owed.files).toBe(2)
   })
 
   it("never waits for a run's final record, whose own barrier pays it", async () => {
@@ -688,7 +711,7 @@ describe('what a dispatch waits for', () => {
     expect(layer.tickets.snapshot().moments.run_final).toMatchObject({ pending: 1, covered: 0 })
   })
 
-  it('rejects when the disk refused a sync the dispatch depends on', async () => {
+  it("rejects when the disk refused the sync of a moment of the user's, and for nothing else", async () => {
     const failure = new Error('EIO: the disk refused')
     const layer = createThreadBarrierDurability({
       port: {
@@ -697,7 +720,19 @@ describe('what a dispatch waits for', () => {
       }
     })
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    // Nothing asks the disk for what streaming wrote, so nothing is refused yet.
+    await expect(layer.awaitDurable('chat-1')).resolves.toBeUndefined()
 
+    const previous = thread()
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      messages: [
+        ...previous.messages,
+        { id: 'user-2', role: 'user' as const, content: 'Go on', timestamp: AT }
+      ]
+    }
+    layer.noteSave(previous, next, appended(previous, next), 'normal')
     await expect(layer.awaitDurable('chat-1')).rejects.toBe(failure)
   })
 })

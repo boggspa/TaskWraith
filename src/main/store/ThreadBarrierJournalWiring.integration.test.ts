@@ -248,6 +248,28 @@ describe("a save's catalogue head", () => {
   })
 })
 
+describe("a dispatch's wait for the journal", () => {
+  it("waits for the journal's own deferred syncs with barrier durability off, as before", async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    built.deferredWait = () => held
+    const { AppStore } = await storeWith({})
+    AppStore.saveChat(chatRecord('chat-dispatch', 0))
+    const waits = built.deferredWaits
+
+    let done = false
+    const waiting = AppStore.awaitChatRecordDispatchDurable('chat-dispatch').then(
+      () => (done = true)
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(done).toBe(false)
+    expect(built.deferredWaits).toBe(waits + 1)
+
+    release()
+    await waiting
+  })
+})
+
 describe("the store's idle sweep, at quit", () => {
   /** A store whose legacy gate is open, so that its idle timer sweeps the journal. */
   async function sweeping(env: Record<string, string>) {

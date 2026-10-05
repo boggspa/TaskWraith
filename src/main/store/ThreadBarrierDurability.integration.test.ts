@@ -1326,9 +1326,11 @@ describe('the dispatch barriers', () => {
     const state = {
       held: null as Promise<void> | null,
       release: () => {},
-      refusal: null as Error | null
+      refusal: null as Error | null,
+      asked: 0
     }
     const through = async <T>(sync: () => Promise<T>): Promise<T> => {
+      state.asked += 1
       await state.held
       if (state.refusal) throw state.refusal
       return sync()
@@ -1349,14 +1351,18 @@ describe('the dispatch barriers', () => {
       release: () => state.release(),
       refuse(error: Error) {
         state.refusal = error
-      }
+      },
+      /** The syncs the layer has asked for. */
+      asked: () => state.asked
     }
   }
 
   it.each(['awaitChatRecordDispatchDurable', 'awaitChatRecordPersisted'] as const)(
-    "make %s wait for the thread's barrier and the user's message",
+    "make %s wait for the user's message, on its save's barrier and none of their own",
     async (barrier) => {
       const { AppStore, gates, hold, release } = await dispatching()
+      const urgent = () => layers.built[0].debt.snapshot().barriers.urgent
+      const before = urgent()
       hold()
       STEPS[3].act(AppStore)
 
@@ -1370,6 +1376,134 @@ describe('the dispatch barriers', () => {
       // The new thread's first message and this one.
       expect(layers.built[0].tickets.snapshot().moments.user_message.covered).toBe(2)
       expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 1, overdue: 0, rejected: 0 })
+      // One urgent barrier in all: the save's.
+      expect(urgent() - before).toBe(1)
+    }
+  )
+
+  it.each(['awaitChatRecordDispatchDurable', 'awaitChatRecordPersisted'] as const)(
+    'make %s raise no barrier and ask for no sync on a thread owing only what streaming wrote',
+    async (barrier) => {
+      const { AppStore, gates, hold, release, asked } = await dispatching()
+      const layer = layers.built[0]
+      // The new thread's message is paid and told: nothing of the user's is left.
+      await layer.tickets.awaitChat(CHAT)
+      STEPS[2].act(AppStore)
+      hold()
+      const before = { barriers: layer.debt.snapshot().barriers, asked: asked() }
+      expect(layer.debt.snapshot().owed.files).toBeGreaterThan(0)
+
+      let done = false
+      const waiting = AppStore[barrier](CHAT).then(() => (done = true))
+      // Done while the disk is held: nothing was asked of it.
+      await vi.waitFor(() => expect(done).toBe(true), { timeout: 500 })
+      await waiting
+
+      expect(layer.debt.snapshot().barriers).toEqual(before.barriers)
+      expect(asked()).toBe(before.asked)
+      expect(layer.debt.snapshot().owed.files).toBeGreaterThan(0)
+      // Nothing to wait for is no wait.
+      expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 0, overdue: 0 })
+      release()
+    }
+  )
+
+  it("lets a dispatch go past a run's final record still syncing, which is not the user's", async () => {
+    const { AppStore, gates, hold, release, asked } = await dispatching()
+    const layer = layers.built[0]
+    await layer.tickets.awaitChat(CHAT)
+    hold()
+    STEPS[7].act(AppStore)
+    expect(layer.tickets.snapshot().moments.run_final.pending).toBe(1)
+    const before = { barriers: layer.debt.snapshot().barriers, asked: asked() }
+
+    let done = false
+    const waiting = AppStore.awaitChatRecordDispatchDurable(CHAT).then(() => (done = true))
+    await vi.waitFor(() => expect(done).toBe(true), { timeout: 500 })
+    await waiting
+
+    expect(layer.debt.snapshot().barriers).toEqual(before.barriers)
+    expect(asked()).toBe(before.asked)
+    expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 0 })
+    release()
+  })
+
+  it("lets a dispatch go at once with nothing of the user's pending", async () => {
+    const { AppStore, hold } = await dispatching()
+    await layers.built[0].tickets.awaitChat(CHAT)
+    STEPS[2].act(AppStore)
+    hold()
+
+    let done = false
+    void AppStore.awaitChatRecordDispatchDurable(CHAT).then(() => (done = true))
+    await Promise.resolve()
+
+    expect(done).toBe(true)
+  })
+
+  const GRANT = {
+    id: 'runtime-dispatch-1',
+    provider: 'codex' as const,
+    path: '/Users/someone/elsewhere',
+    kind: 'directory' as const,
+    access: 'read' as const,
+    duration: 'thisThread' as const,
+    createdAt: AT
+  }
+
+  it.each([
+    [
+      "an answer to an agent's question",
+      (chat: ChatRecord): ChatRecord => ({
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id: 'agent-question-reply-q2',
+            role: 'user',
+            content: 'The first option',
+            timestamp: AT,
+            metadata: { kind: 'agentQuestionReply', questionId: 'q2' }
+          }
+        ]
+      })
+    ],
+    [
+      'a path an approval grants',
+      (chat: ChatRecord): ChatRecord => ({
+        ...chat,
+        providerMetadata: { ...chat.providerMetadata, externalPathGrants: [GRANT] }
+      })
+    ]
+  ])(
+    'tell the agent of %s once its own barrier is paid, as before, and a dispatch then waits for it',
+    async (_decision, decide) => {
+      const { AppStore, gates, hold, release } = await dispatching()
+      const layer = layers.built[0]
+      await layer.tickets.awaitChat(CHAT)
+      const before = layer.debt.snapshot().barriers
+      hold()
+      AppStore.saveChat(decide(AppStore.getChat(CHAT)!))
+
+      // Where the agent is told of the decision.
+      const told = gates.awaitUserMoment(CHAT)
+      expect(told).not.toBeNull()
+      const settled = { told: false, dispatched: false }
+      void told!.then(() => (settled.told = true))
+      const dispatched = AppStore.awaitChatRecordDispatchDurable(CHAT).then(
+        () => (settled.dispatched = true)
+      )
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(settled).toEqual({ told: false, dispatched: false })
+
+      release()
+      await Promise.all([told, dispatched])
+      expect(layer.tickets.snapshot().moments.decision).toMatchObject({ noted: 1, covered: 1 })
+      // One urgent barrier in all: the decision's.
+      expect(layer.debt.snapshot().barriers).toMatchObject({
+        raised: before.raised + 1,
+        urgent: before.urgent + 1
+      })
     }
   )
 

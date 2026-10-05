@@ -104,10 +104,13 @@ export interface ThreadBarrierDurability {
   /** A barrier for the thread, as every barrier the app raises for one is. */
   barrier(chatId: string): Promise<void>
   /**
-   * What a dispatch waits for: the thread's `userWaitBarrier`, and the chat's
-   * tickets for the user's moments. Rejects when the disk refused a sync of
-   * either. A run's final record is not waited for here: its own barrier pays
-   * what it wrote, and its ticket belongs to the work that follows the run.
+   * What a dispatch waits for: the chat's tickets for the user's moments. Each
+   * save that held one raised its urgent barrier already, so a dispatch raises
+   * none of its own, and with none pending it resolves at once: what streaming
+   * wrote is no moment, and its idle barrier pays it. Rejects when the disk
+   * refused the sync of one of them. A run's final record is not waited for
+   * here: its own barrier pays what it wrote, and its ticket belongs to the
+   * work that follows the run.
    */
   awaitDurable(chatId: string): Promise<void>
   /**
@@ -182,10 +185,10 @@ type RaisesBarriers = {
 
 /**
  * The barrier of every wait the user sits in: the moments of a save that are
- * theirs, and a dispatch. It pays the thread's own debt alone: the message,
- * the decision, the destructive batch and the record a dispatch reads are all
- * journal lines, and what streaming runs wrote is left to their own barriers.
- * Urgent, so the port starts its syncs ahead of every sync that is not.
+ * theirs. It pays the thread's own debt alone: the message, the decision and
+ * the destructive batch are journal lines, and what streaming runs wrote is
+ * left to their own barriers. Urgent, so the port starts its syncs ahead of
+ * every sync that is not.
  */
 export function userWaitBarrier(debt: RaisesBarriers, chatId: string): Promise<void> {
   return debt.barrier(chatId, { threadOnly: true, urgent: true })
@@ -288,11 +291,7 @@ export function createThreadBarrierDurability(
     },
     catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),
-    awaitDurable: (chatId) =>
-      Promise.all([
-        userWaitBarrier(threads, chatId),
-        tickets.awaitChat(chatId, USER_DURABILITY_MOMENTS)
-      ]).then(() => undefined),
+    awaitDurable: (chatId) => tickets.awaitChat(chatId, USER_DURABILITY_MOMENTS),
     forget(chatId) {
       threads.forget(chatId)
       staging?.forget(chatId)
