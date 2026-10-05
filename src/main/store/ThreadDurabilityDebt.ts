@@ -13,32 +13,51 @@
  * rejects, and what failed, with every directory it had not reached, is owed
  * again for the next barrier.
  *
+ * A note may name the run it was written for. `barrier(chatId, { run })` pays
+ * the thread's own debt, noted without a run, and that run's, and leaves what
+ * other runs owe to their own barriers. A barrier without a run pays all of
+ * it, so a run that never gets a barrier of its own is paid by the thread's
+ * next one. A path noted by several runs, or by a run and by the thread, is
+ * synced once, by the first barrier that takes it, for all of them.
+ *
+ * `barrier(chatId, { urgent: true })` is for a wait the user is sitting in.
+ * It asks the port for its syncs as urgent, which the port starts ahead of
+ * every sync that is not urgent and has not started, and it keeps the port's
+ * urgency open until it settles. When it has to wait for a barrier already
+ * running or queued on its thread, it raises that one: a queued barrier asks
+ * for its syncs as urgent when it starts, and a running one asks for the rest
+ * of its syncs as urgent and has the port move the ones still waiting ahead.
+ *
  * One barrier runs for a thread at a time. A barrier raised while one is
- * running joins it when nothing has been noted since that one began; otherwise
- * it joins the single barrier that follows, which starts when the running one
- * ends and pays whatever is owed then, including what the running one failed
- * to sync. What is noted while a barrier runs is never taken by that barrier:
- * a sync already asked for may have begun before the later write.
+ * running joins it when nothing it would pay has been noted since that one
+ * began; otherwise it joins the single barrier that follows, which starts when
+ * the running one ends and pays whatever is owed then for every caller that
+ * joined it, including what the running one failed to sync. What is noted
+ * while a barrier runs is never taken by that barrier: a sync already asked
+ * for may have begun before the later write.
  *
  * One thing noted while a barrier runs does change what it pays. Files are
  * synced by name, and a sync that was asked for may reach the name only after
  * the file has been renamed, and find nothing there, or a newer file. So a
  * writer that renames a file with unsynced bytes says where it came from, and
  * a barrier that was asked for the old name and is still syncing files syncs
- * the new name too before it settles.
+ * the new name too before it settles, whichever run the file belongs to.
  *
  * Threads do not wait for each other here. A barrier hands all its files to
- * the port at once, and how many syncs run together is the port's decision.
+ * the port at once, and how many syncs run together, and in what order, is the
+ * port's decision.
  *
  * The module has no file system and no clock of its own and starts no timer.
  * It also has no way to sync on the thread that calls it: the port has only
  * asynchronous calls.
  *
- * Memory: for each thread that owes something or has a barrier running, one
- * entry per distinct path noted since that thread's last barrier began. A
- * thread with nothing owed and no barrier running has no state at all. There
- * is no cap: a thread that writes many different files and is never given a
- * barrier holds one entry for each of them.
+ * Memory: for each thread that owes something or has a barrier running or
+ * queued, one entry per distinct path owed, one more for each run that noted
+ * that path, and one set for each run that owes something. A barrier holds
+ * the paths it took until it settles, and a queued one the runs it will pay
+ * for. A thread with nothing owed and no barrier has no state at all, nor does
+ * a run that owes nothing. There is no cap: a thread that writes many
+ * different files and is never given a barrier holds an entry for each.
  */
 
 export const THREAD_DURABILITY_OWNERS = [
@@ -54,8 +73,8 @@ export type ThreadDurabilityFileOwner = Exclude<ThreadDurabilityOwner, 'director
 
 /**
  * One thing a write left owing. `run` is the run it was written for, when the
- * file or the name is that run's own. Barriers do not tell runs apart: each
- * pays everything its thread owes.
+ * file or the name is that run's own: a barrier for that run pays it, and a
+ * barrier for another run does not.
  */
 export type ThreadDurabilityDebtNote =
   /**
@@ -71,13 +90,44 @@ export type NoteThreadDurabilityDebt = (chatId: string, debt: ThreadDurabilityDe
 /** `missing` is a path with nothing at it any more: there is nothing left to sync. */
 export type ThreadDurabilitySyncOutcome = 'synced' | 'missing'
 
+/** How soon a sync has to run. */
+export interface ThreadDurabilitySyncOptions {
+  /** Start it ahead of every sync that is not urgent and has not started. */
+  urgent?: boolean
+}
+
+/** Opened by an urgent barrier when it is raised, and ended when it settles. */
+export interface ThreadDurabilityUrgency {
+  /** Move the syncs of these paths that have not started ahead of every sync that is not urgent. */
+  raise(files: Iterable<string>, directories: Iterable<string>): void
+  end(): void
+}
+
 /**
  * How one path is synced. Both calls are asynchronous and reject for any
- * failure other than the path being gone.
+ * failure other than the path being gone. A port that keeps no queue of its
+ * own may ignore `options`, and leave out the two optional calls.
  */
 export interface ThreadDurabilityPort {
-  syncFile(path: string): Promise<ThreadDurabilitySyncOutcome>
-  syncDirectory(path: string): Promise<ThreadDurabilitySyncOutcome>
+  syncFile(
+    path: string,
+    options?: ThreadDurabilitySyncOptions
+  ): Promise<ThreadDurabilitySyncOutcome>
+  syncDirectory(
+    path: string,
+    options?: ThreadDurabilitySyncOptions
+  ): Promise<ThreadDurabilitySyncOutcome>
+  /** Opens an urgency; see the port's own description of what it does while one is open. */
+  urgent?(): ThreadDurabilityUrgency
+  /** How many syncs are running, or would start before a sync asked for now as urgent or not. */
+  ahead?(urgent: boolean): number
+}
+
+export interface ThreadDurabilityBarrierOptions {
+  /** Pay only the thread's own debt and this run's. */
+  run?: string
+  /** A wait the user is sitting in. */
+  urgent?: boolean
 }
 
 export interface ThreadDurabilityOwnerCounters {
@@ -89,12 +139,23 @@ export interface ThreadDurabilityOwnerCounters {
   failed: number
 }
 
+export interface ThreadDurabilityWaitCounters {
+  /** Barriers of this kind that have settled. */
+  count: number
+  /** From each call to `barrier` to its settling, summed and at its longest. */
+  totalMs: number
+  longestMs: number
+  /** Syncs running or ahead of it in the port when each was raised, summed and at most. */
+  aheadTotal: number
+  aheadMost: number
+}
+
 export interface ThreadDurabilityDebtSnapshot {
   owners: Record<ThreadDurabilityOwner, ThreadDurabilityOwnerCounters>
   barriers: {
     /** Calls to `barrier`. */
     raised: number
-    /** Raised for a thread that owed nothing and had no barrier running. */
+    /** Raised when nothing it would pay was owed and no barrier was running. */
     idle: number
     /** Raised while one was running or queued, and joined to it. */
     shared: number
@@ -107,17 +168,30 @@ export interface ThreadDurabilityDebtSnapshot {
     /** From each call to `barrier` to its settling, summed and at its longest. */
     waitMsTotal: number
     longestWaitMs: number
+    /** Raised with a run. */
+    scoped: number
+    /** Raised as urgent. */
+    urgent: number
+    /** Barriers running or queued that an urgent one raised, because it had to wait for them. */
+    hastened: number
   }
+  /** Settled barriers the user sat in, and the rest. */
+  waits: Record<'urgent' | 'normal', ThreadDurabilityWaitCounters>
   /** Threads holding state right now, and what they owe that no barrier has taken yet. */
   owed: { threads: number; files: number; directories: number }
+  /** Runs that owe something no barrier has taken yet. */
+  owingRuns: number
   /** Always zero: see the note on the port at the top of this file. */
   syncsOnCallingThread: 0
 }
 
 export interface ThreadDurabilityDebt {
   note: NoteThreadDurabilityDebt
-  /** Resolves when everything the thread owed at this call is synced. */
-  barrier(chatId: string): Promise<void>
+  /**
+   * Resolves when everything the thread owed at this call is synced: with a
+   * run, the thread's own debt and that run's.
+   */
+  barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
   /** Drop what a thread owes without syncing it: the thread is being erased. */
   forget(chatId: string): void
   snapshot(): ThreadDurabilityDebtSnapshot
@@ -129,20 +203,72 @@ export interface ThreadDurabilityDebtOptions {
   now?: () => number
 }
 
-interface ThreadState {
-  files: Map<string, ThreadDurabilityFileOwner>
-  directories: Set<string>
-  /** The barrier paying what was owed when it began. */
-  running: Promise<void> | null
-  /** The one barrier that follows it, for whoever needs more than it took. */
-  next: Promise<void> | null
-  /**
-   * Set while the running barrier is still syncing files: every name it has
-   * been asked for, and the names it has yet to be asked for because a file
-   * it was asked for was renamed.
-   */
-  syncing: { asked: Set<string>; renamed: Map<string, ThreadDurabilityFileOwner> } | null
+/** Who owes a path: the thread itself, the runs that noted it, or both. */
+interface Owed {
+  own: boolean
+  runs: Set<string> | null
 }
+
+interface OwedFile extends Owed {
+  owner: ThreadDurabilityFileOwner
+}
+
+type Kind = 'files' | 'directories'
+
+interface Paths {
+  files: Set<string>
+  directories: Set<string>
+}
+
+interface Debt {
+  files: Map<string, OwedFile>
+  directories: Map<string, Owed>
+}
+
+interface Running {
+  promise: Promise<void>
+  /** Asks for its syncs as urgent. */
+  urgent: boolean
+  /** The paths it has asked the port for that have not settled. */
+  unsettled: Paths
+  /**
+   * Set while it is still syncing files: every name it has been asked for,
+   * and the names it has yet to ask for because a file it was asked for was
+   * renamed, with who owes each.
+   */
+  syncing: { asked: Set<string>; renamed: Map<string, OwedFile> } | null
+}
+
+interface Queued {
+  promise: Promise<void>
+  /** The runs it pays for besides the thread's own debt; null for everything. */
+  runs: Set<string> | null
+  urgent: boolean
+}
+
+interface ThreadState {
+  owed: Debt
+  /** The paths the thread owes itself. */
+  own: Paths
+  /** The paths each run owes. */
+  runs: Map<string, Paths>
+  /** The barrier paying what was owed when it began. */
+  running: Running | null
+  /** The one barrier that follows it, for whoever needs more than it took. */
+  next: Queued | null
+}
+
+const URGENT: ThreadDurabilitySyncOptions = { urgent: true }
+
+const noPaths = (): Paths => ({ files: new Set(), directories: new Set() })
+
+const waitCounters = (): ThreadDurabilityWaitCounters => ({
+  count: 0,
+  totalMs: 0,
+  longestMs: 0,
+  aheadTotal: 0,
+  aheadMost: 0
+})
 
 export function createThreadDurabilityDebt(
   options: ThreadDurabilityDebtOptions
@@ -161,115 +287,244 @@ export function createThreadDurabilityDebt(
     renamedUnderway: 0,
     failed: 0,
     waitMsTotal: 0,
-    longestWaitMs: 0
+    longestWaitMs: 0,
+    scoped: 0,
+    urgent: 0,
+    hastened: 0
   }
+  const waits = { urgent: waitCounters(), normal: waitCounters() }
 
   const owesNothing = (state: ThreadState): boolean =>
-    state.files.size === 0 && state.directories.size === 0
+    state.owed.files.size === 0 && state.owed.directories.size === 0
+
+  /** Whether anything a barrier paying for these runs would take is owed; null is every run. */
+  const owesFor = (state: ThreadState, runs: ReadonlySet<string> | null): boolean => {
+    if (runs === null) return !owesNothing(state)
+    if (state.own.files.size > 0 || state.own.directories.size > 0) return true
+    for (const run of runs) if (state.runs.has(run)) return true
+    return false
+  }
+
+  /** Record that the thread, or a run, owes a path. */
+  const owe = (state: ThreadState, kind: Kind, path: string, entry: Owed, run?: string): void => {
+    if (run === undefined) {
+      if (!entry.own) {
+        entry.own = true
+        state.own[kind].add(path)
+      }
+      return
+    }
+    entry.runs ??= new Set()
+    if (entry.runs.has(run)) return
+    entry.runs.add(run)
+    let paths = state.runs.get(run)
+    if (!paths) {
+      paths = noPaths()
+      state.runs.set(run, paths)
+    }
+    paths[kind].add(path)
+  }
+
+  /** Forget who owed a path a barrier has taken. */
+  const disown = (state: ThreadState, kind: Kind, path: string, entry: Owed): void => {
+    if (entry.own) state.own[kind].delete(path)
+    for (const run of entry.runs ?? []) {
+      const paths = state.runs.get(run)
+      if (!paths) continue
+      paths[kind].delete(path)
+      if (paths.files.size === 0 && paths.directories.size === 0) state.runs.delete(run)
+    }
+  }
+
+  const oweFile = (
+    state: ThreadState,
+    path: string,
+    owner: ThreadDurabilityFileOwner,
+    run?: string
+  ): void => {
+    let entry = state.owed.files.get(path)
+    if (entry) entry.owner = owner
+    else {
+      entry = { owner, own: false, runs: null }
+      state.owed.files.set(path, entry)
+    }
+    owe(state, 'files', path, entry, run)
+  }
+
+  const oweDirectory = (state: ThreadState, path: string, run?: string): void => {
+    let entry = state.owed.directories.get(path)
+    if (!entry) {
+      entry = { own: false, runs: null }
+      state.owed.directories.set(path, entry)
+    }
+    owe(state, 'directories', path, entry, run)
+  }
+
+  /** A path a barrier took and did not pay is owed again, by whoever owed it. */
+  const oweAgain = (
+    state: ThreadState,
+    path: string,
+    entry: Owed,
+    owner?: ThreadDurabilityFileOwner
+  ): void => {
+    const again = (run?: string): void =>
+      owner === undefined ? oweDirectory(state, path, run) : oweFile(state, path, owner, run)
+    if (entry.own) again()
+    for (const run of entry.runs ?? []) again(run)
+  }
 
   const note: NoteThreadDurabilityDebt = (chatId, debt) => {
     let state = threads.get(chatId)
     if (!state) {
       state = {
-        files: new Map(),
-        directories: new Set(),
+        owed: { files: new Map(), directories: new Map() },
+        own: noPaths(),
+        runs: new Map(),
         running: null,
-        next: null,
-        syncing: null
+        next: null
       }
       threads.set(chatId, state)
     }
     if ('file' in debt) {
       owners[debt.owner].noted += 1
-      state.files.set(debt.file, debt.owner)
-      const { syncing } = state
+      oweFile(state, debt.file, debt.owner, debt.run)
+      const syncing = state.running?.syncing
       if (debt.renamedFrom !== undefined && syncing?.asked.has(debt.renamedFrom)) {
         syncing.asked.add(debt.file)
-        syncing.renamed.set(debt.file, debt.owner)
+        syncing.renamed.set(debt.file, {
+          owner: debt.owner,
+          own: debt.run === undefined,
+          runs: debt.run === undefined ? null : new Set([debt.run])
+        })
         barriers.renamedUnderway += 1
       }
     } else {
       owners.directory.noted += 1
-      state.directories.add(debt.directory)
+      oweDirectory(state, debt.directory, debt.run)
     }
+  }
+
+  /** Take what a barrier paying for these runs pays: the thread's own debt and theirs, or, for null, all of it. */
+  const take = (state: ThreadState, runs: ReadonlySet<string> | null): Debt => {
+    if (runs === null) {
+      const taken = state.owed
+      state.owed = { files: new Map(), directories: new Map() }
+      state.own = noPaths()
+      state.runs = new Map()
+      return taken
+    }
+    const taken: Debt = { files: new Map(), directories: new Map() }
+    const sources = [state.own]
+    for (const run of runs) {
+      const paths = state.runs.get(run)
+      if (paths) sources.push(paths)
+    }
+    for (const paths of sources) {
+      for (const path of [...paths.files]) {
+        const entry = state.owed.files.get(path)
+        if (!entry) continue
+        state.owed.files.delete(path)
+        disown(state, 'files', path, entry)
+        taken.files.set(path, entry)
+      }
+      for (const path of [...paths.directories]) {
+        const entry = state.owed.directories.get(path)
+        if (!entry) continue
+        state.owed.directories.delete(path)
+        disown(state, 'directories', path, entry)
+        taken.directories.set(path, entry)
+      }
+    }
+    return taken
   }
 
   /** Ask the port for every path at once; a port that throws has failed that sync. */
   const syncAll = (
-    paths: Iterable<string>,
-    sync: (path: string) => Promise<ThreadDurabilitySyncOutcome>
+    running: Running,
+    kind: Kind,
+    paths: readonly string[]
   ): Promise<PromiseSettledResult<ThreadDurabilitySyncOutcome>[]> =>
     Promise.allSettled(
-      [...paths].map((path) => {
+      paths.map((path) => {
+        let request: Promise<ThreadDurabilitySyncOutcome>
         try {
-          return sync(path)
+          // Asked as it stands at this moment: an urgent caller may raise it later.
+          if (kind === 'files')
+            request = running.urgent ? port.syncFile(path, URGENT) : port.syncFile(path)
+          else
+            request = running.urgent ? port.syncDirectory(path, URGENT) : port.syncDirectory(path)
         } catch (error) {
           return Promise.reject(error)
         }
+        running.unsettled[kind].add(path)
+        const settledPath = (): void => {
+          running.unsettled[kind].delete(path)
+        }
+        request.then(settledPath, settledPath)
+        return request
       })
     )
 
   const pay = async (
     chatId: string,
     state: ThreadState,
-    files: Map<string, ThreadDurabilityFileOwner>,
-    directories: Set<string>
+    running: Running,
+    taken: Debt
   ): Promise<void> => {
     const failures: unknown[] = []
-    const unpaidFiles = new Map<string, ThreadDurabilityFileOwner>()
-    const syncing = {
-      asked: new Set(files.keys()),
-      renamed: new Map<string, ThreadDurabilityFileOwner>()
-    }
-    state.syncing = syncing
-    let index = 0
+    const unpaidFiles = new Map<string, OwedFile>()
+    const syncing = { asked: new Set(taken.files.keys()), renamed: new Map<string, OwedFile>() }
+    running.syncing = syncing
     // The files owed when the barrier began, then any of them renamed since.
     // A file renamed under a barrier that has already failed waits for the
     // next one, where the note that named it has put it.
-    for (let asked = files; asked.size > 0 && failures.length === 0; asked = syncing.renamed) {
+    for (
+      let asked = taken.files;
+      asked.size > 0 && failures.length === 0;
+      asked = syncing.renamed
+    ) {
       syncing.renamed = new Map()
-      const outcomes = await syncAll(asked.keys(), (path) => port.syncFile(path))
-      index = 0
-      for (const [path, owner] of asked) {
+      const paths = [...asked.keys()]
+      const outcomes = await syncAll(running, 'files', paths)
+      paths.forEach((path, index) => {
+        const entry = asked.get(path)!
         const outcome = outcomes[index]
-        index += 1
         if (outcome.status === 'fulfilled') {
-          owners[owner][outcome.value === 'missing' ? 'missing' : 'synced'] += 1
+          owners[entry.owner][outcome.value === 'missing' ? 'missing' : 'synced'] += 1
         } else {
-          owners[owner].failed += 1
-          unpaidFiles.set(path, owner)
+          owners[entry.owner].failed += 1
+          unpaidFiles.set(path, entry)
           failures.push(outcome.reason)
         }
-      }
+      })
     }
     // From here every sync this barrier asked for has run, each before any
     // rename still to come.
-    state.syncing = null
+    running.syncing = null
 
-    let unpaidDirectories = directories
+    let unpaidDirectories = taken.directories
     if (failures.length === 0) {
-      unpaidDirectories = new Set()
-      const outcomes = await syncAll(directories, (path) => port.syncDirectory(path))
-      index = 0
-      for (const path of directories) {
+      unpaidDirectories = new Map()
+      const paths = [...taken.directories.keys()]
+      const outcomes = await syncAll(running, 'directories', paths)
+      paths.forEach((path, index) => {
         const outcome = outcomes[index]
-        index += 1
         if (outcome.status === 'fulfilled') {
           owners.directory[outcome.value === 'missing' ? 'missing' : 'synced'] += 1
         } else {
           owners.directory.failed += 1
-          unpaidDirectories.add(path)
+          unpaidDirectories.set(path, taken.directories.get(path)!)
           failures.push(outcome.reason)
         }
-      }
+      })
     }
 
     state.running = null
     // A thread forgotten meanwhile has had its debt dropped, this part included.
     if (threads.get(chatId) === state) {
-      for (const [path, owner] of unpaidFiles) state.files.set(path, owner)
-      for (const path of unpaidDirectories) state.directories.add(path)
-      if (owesNothing(state)) threads.delete(chatId)
+      for (const [path, entry] of unpaidFiles) oweAgain(state, path, entry, entry.owner)
+      for (const [path, entry] of unpaidDirectories) oweAgain(state, path, entry)
+      if (owesNothing(state) && !state.next) threads.delete(chatId)
     }
     if (failures.length > 0) {
       barriers.failed += 1
@@ -277,54 +532,139 @@ export function createThreadDurabilityDebt(
     }
   }
 
-  /** Take what the thread owes now and start paying it. */
-  const run = (chatId: string, state: ThreadState): Promise<void> => {
-    const { files, directories } = state
-    state.files = new Map()
-    state.directories = new Set()
+  /** Take what the thread owes now for these runs, and start paying it. */
+  const begin = (
+    chatId: string,
+    state: ThreadState,
+    runs: ReadonlySet<string> | null,
+    urgent: boolean
+  ): Running => {
+    const taken = take(state, runs)
     barriers.rounds += 1
-    state.running = pay(chatId, state, files, directories)
-    return state.running
+    const running: Running = {
+      promise: Promise.resolve(),
+      urgent,
+      unsettled: noPaths(),
+      syncing: null
+    }
+    state.running = running
+    running.promise = pay(chatId, state, running, taken)
+    return running
   }
 
-  const follow = (chatId: string, state: ThreadState): Promise<void> => {
-    state.next = null
+  /**
+   * Join the barrier queued behind the running one, widened to these runs, or
+   * queue one. `caller` is false when a queued barrier is put behind a running
+   * one again.
+   */
+  const queue = (
+    chatId: string,
+    state: ThreadState,
+    runs: ReadonlySet<string> | null,
+    urgent: boolean,
+    caller: boolean
+  ): Promise<void> => {
+    const queued = state.next
+    if (queued) {
+      if (caller) barriers.shared += 1
+      if (runs === null) queued.runs = null
+      else if (queued.runs) for (const each of runs) queued.runs.add(each)
+      if (urgent && !queued.urgent) {
+        queued.urgent = true
+        if (caller) barriers.hastened += 1
+      }
+      return queued.promise
+    }
+    const next: Queued = {
+      promise: Promise.resolve(),
+      runs: runs === null ? null : new Set(runs),
+      urgent
+    }
+    const afterRunning = (): Promise<void> => follow(chatId, state, next)
+    next.promise = state.running!.promise.then(afterRunning, afterRunning)
+    state.next = next
+    return next.promise
+  }
+
+  const follow = (chatId: string, state: ThreadState, queued: Queued): Promise<void> => {
+    if (state.next === queued) state.next = null
     // Forgotten while it waited: what it was queued to pay has been dropped.
     if (threads.get(chatId) !== state) return Promise.resolve()
-    // A barrier raised in the moment since the last one ended is already
+    // A barrier raised in the moment since the last one ended may already be
     // paying everything this one was queued for.
-    if (state.running) return state.running
-    return run(chatId, state)
+    if (!owesFor(state, queued.runs)) {
+      if (state.running) return state.running.promise
+      if (!state.next && owesNothing(state)) threads.delete(chatId)
+      return Promise.resolve()
+    }
+    if (state.running) return queue(chatId, state, queued.runs, queued.urgent, false)
+    return begin(chatId, state, queued.runs, queued.urgent).promise
   }
 
-  const settled = (chatId: string): Promise<void> => {
+  /** An urgent caller has to wait for this barrier: the rest of its syncs are asked as urgent, and the waiting ones move ahead. */
+  const hasten = (running: Running, urgency: ThreadDurabilityUrgency | undefined): void => {
+    if (running.urgent) return
+    running.urgent = true
+    barriers.hastened += 1
+    urgency?.raise(running.unsettled.files, running.unsettled.directories)
+  }
+
+  const settled = (
+    chatId: string,
+    runs: ReadonlySet<string> | null,
+    urgent: boolean,
+    urgency: ThreadDurabilityUrgency | undefined
+  ): Promise<void> => {
     const state = threads.get(chatId)
     if (!state) {
       barriers.idle += 1
       return Promise.resolve()
     }
-    if (!state.running) return run(chatId, state)
-    if (owesNothing(state)) {
-      barriers.shared += 1
-      return state.running
+    const { running } = state
+    if (!running) {
+      if (!owesFor(state, runs)) {
+        barriers.idle += 1
+        return Promise.resolve()
+      }
+      // In the moment between a barrier's end and the start of the one queued
+      // behind it, a caller joins the queued one.
+      if (state.next) return queue(chatId, state, runs, urgent, true)
+      return begin(chatId, state, runs, urgent).promise
     }
-    if (state.next) {
+    // Whatever this caller waits for comes after the running barrier.
+    if (urgent) hasten(running, urgency)
+    if (!owesFor(state, runs)) {
       barriers.shared += 1
-      return state.next
+      return running.promise
     }
-    const afterRunning = (): Promise<void> => follow(chatId, state)
-    state.next = state.running.then(afterRunning, afterRunning)
-    return state.next
+    return queue(chatId, state, runs, urgent, true)
   }
 
-  const barrier = (chatId: string): Promise<void> => {
+  const barrier = (chatId: string, options: ThreadDurabilityBarrierOptions = {}): Promise<void> => {
+    const urgent = options.urgent === true
     barriers.raised += 1
+    if (options.run !== undefined) barriers.scoped += 1
+    if (urgent) barriers.urgent += 1
+    const kind = urgent ? waits.urgent : waits.normal
+    const ahead = port.ahead?.(urgent) ?? 0
+    kind.aheadTotal += ahead
+    if (ahead > kind.aheadMost) kind.aheadMost = ahead
+    const urgency = urgent ? port.urgent?.() : undefined
     const raisedAt = now()
-    const promise = settled(chatId)
+    const promise = settled(
+      chatId,
+      options.run === undefined ? null : new Set([options.run]),
+      urgent,
+      urgency
+    )
     const timed = (): void => {
       const waited = now() - raisedAt
       barriers.waitMsTotal += waited
       if (waited > barriers.longestWaitMs) barriers.longestWaitMs = waited
+      kind.count += 1
+      kind.totalMs += waited
+      if (waited > kind.longestMs) kind.longestMs = waited
+      urgency?.end()
     }
     promise.then(timed, timed)
     return promise
@@ -337,16 +677,20 @@ export function createThreadDurabilityDebt(
   const snapshot = (): ThreadDurabilityDebtSnapshot => {
     let files = 0
     let directories = 0
+    let owingRuns = 0
     for (const state of threads.values()) {
-      files += state.files.size
-      directories += state.directories.size
+      files += state.owed.files.size
+      directories += state.owed.directories.size
+      owingRuns += state.runs.size
     }
     return {
       owners: Object.fromEntries(
         THREAD_DURABILITY_OWNERS.map((owner) => [owner, { ...owners[owner] }])
       ) as Record<ThreadDurabilityOwner, ThreadDurabilityOwnerCounters>,
       barriers: { ...barriers },
+      waits: { urgent: { ...waits.urgent }, normal: { ...waits.normal } },
       owed: { threads: threads.size, files, directories },
+      owingRuns,
       syncsOnCallingThread: 0
     }
   }

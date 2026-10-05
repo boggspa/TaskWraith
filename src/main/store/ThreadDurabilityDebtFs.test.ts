@@ -248,7 +248,13 @@ describe('thread durability port', () => {
         inFlight: 2,
         queued: 3,
         joined: 0,
-        peakInFlight: 2
+        peakInFlight: 2,
+        queuedUrgent: 0,
+        queuedNormal: 3,
+        startedUrgent: 0,
+        promoted: 0,
+        fairStarts: 0,
+        urgencies: 0
       })
 
       await calls.finish('/p/b')
@@ -265,7 +271,13 @@ describe('thread durability port', () => {
         inFlight: 0,
         queued: 0,
         joined: 0,
-        peakInFlight: 2
+        peakInFlight: 2,
+        queuedUrgent: 0,
+        queuedNormal: 0,
+        startedUrgent: 0,
+        promoted: 0,
+        fairStarts: 0,
+        urgencies: 0
       })
     })
 
