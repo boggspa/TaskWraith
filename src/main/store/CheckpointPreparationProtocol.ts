@@ -125,6 +125,14 @@ export interface CheckpointPreparationJob {
 export interface CheckpointPreparationPort {
   /** No waiting payload queue. null means capacity is unavailable; keep the journal. */
   start(source: CheckpointPreparationSource): CheckpointPreparationJob | null
+  /**
+   * Whether `start` would take this source with nothing else running. A port
+   * that answers this and `onCapacity` lets a caller it refused wait for room
+   * instead of trying again later.
+   */
+  admits?(source: CheckpointPreparationSource): boolean
+  /** Calls `listener` each time a job's reservation returns. The result stops it. */
+  onCapacity?(listener: () => void): () => void
 }
 
 export type DeferredCheckpointResult = 'checkpointed' | 'unchanged' | 'superseded' | 'unavailable'

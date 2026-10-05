@@ -11,6 +11,7 @@ import type {
   IncrementalChatJournal,
   IncrementalChatJournalStats,
   IncrementalChatPendingReplayState,
+  IncrementalChatReanchorCause,
   IncrementalChatReplayResult
 } from './IncrementalChatJournal'
 import type { ChatMessage, ChatRecord } from './types'
@@ -280,11 +281,16 @@ export function createIncrementalChatPersistence(
   }
   journal.setHeadRecordResolver?.(takeHead)
 
-  const replaceAuthoritative = (chatId: string, record: ChatRecord): void => {
+  /** The re-anchor, counted by the journal under its cause: `direct` from outside. */
+  const replaceAuthoritative = (
+    chatId: string,
+    record: ChatRecord,
+    cause: IncrementalChatReanchorCause = 'direct'
+  ): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     // The journal serializes immediately; a JSON clone first was a second
     // whole-record parse+stringify for no isolation it did not already get.
-    journal.replaceAuthoritativeCheckpoint(chatId, record)
+    journal.replaceAuthoritativeCheckpoint(chatId, record, cause)
     rememberHead(record)
     baselineVerifiedChatIds.add(chatId)
     lastPersistedRevisionByChatId.set(chatId, recordRevision(record))
@@ -307,7 +313,7 @@ export function createIncrementalChatPersistence(
         `[incremental-chat] replay parity mismatch for ${chatId}; ` +
           'restoring the canonical AppStore record'
       )
-      replaceAuthoritative(chatId, expected)
+      replaceAuthoritative(chatId, expected, 'parity-repair')
     }
     return false
   }
@@ -326,7 +332,7 @@ export function createIncrementalChatPersistence(
       // baseline from the authoritative pre-save record when that happens —
       // one in-memory revision compare, no disk read, no transcript clone.
       if (lastPersistedRevisionByChatId.get(chatId) !== recordRevision(previous)) {
-        replaceAuthoritative(chatId, previous)
+        replaceAuthoritative(chatId, previous, 'revision-behind')
       }
       return
     }
@@ -335,7 +341,7 @@ export function createIncrementalChatPersistence(
       lastPersistedRevisionByChatId.set(chatId, recordRevision(previous))
     } catch (error) {
       if (!baselineMismatch(error)) throw error
-      replaceAuthoritative(chatId, previous)
+      replaceAuthoritative(chatId, previous, 'baseline-mismatch')
     }
     baselineChecks += 1
     observeResidual(options.residualObserver, 'baselineVerifies')

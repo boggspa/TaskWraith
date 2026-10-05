@@ -11,11 +11,16 @@ import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import { prepareCheckpoint } from './CheckpointPreparationCore'
 import {
   checkpointFileReference,
+  type CheckpointPreparationReply,
+  type CheckpointPreparationRequest,
   type CheckpointPreparationSource
 } from './CheckpointPreparationProtocol'
 import {
   CheckpointPreparationWorker,
-  isCheckpointPreparationWorkerEnabled
+  checkpointPreparationReservationBytes,
+  DEFAULT_CHECKPOINT_PREPARATION_BUDGET_BYTES,
+  isCheckpointPreparationWorkerEnabled,
+  type CheckpointPreparationProcess
 } from './CheckpointPreparationWorker'
 import type { ChatRecord } from './types'
 
@@ -28,12 +33,29 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, fsyncSync: vi.fn(actual.fsyncSync) }
 })
 
+/** The prefix of the one folder this file makes in the system's temporary folder. */
+const TEMPORARY_PREFIX = 'itp-checkpoint-worker-'
+
+/** Remove, with all it holds, the folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(made: string): void {
+  const temporary = tmpdir()
+  const prefix = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    made === temporary ||
+    !made.startsWith(prefix) ||
+    made.length <= prefix.length ||
+    path.dirname(made) !== temporary
+  )
+    throw new Error(`Refusing to remove ${made}: not the folder this file made`)
+  fs.rmSync(made, { recursive: true, force: true })
+}
+
 let directory: string
 let entryPath: string
 let actualFs: typeof import('node:fs')
 beforeAll(async () => {
   actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
-  directory = fs.mkdtempSync(path.join(tmpdir(), 'itp-checkpoint-worker-'))
+  directory = fs.mkdtempSync(path.join(tmpdir(), TEMPORARY_PREFIX))
   entryPath = path.join(directory, 'checkpointPreparationWorker.cjs')
   await build({
     entryPoints: ['src/main/workers/checkpointPreparationWorker.ts'],
@@ -44,7 +66,7 @@ beforeAll(async () => {
     logLevel: 'silent'
   })
 })
-afterAll(() => fs.rmSync(directory, { recursive: true, force: true }))
+afterAll(() => removeTemporaryDirectory(directory))
 afterEach(() => {
   vi.mocked(fs.fsyncSync).mockImplementation(actualFs.fsyncSync)
   vi.mocked(electronUtilityProcess).mockReset()
@@ -302,5 +324,175 @@ describe('checkpoint preparation process', () => {
     fs.appendFileSync(source.journal.path, '\n')
     expect(() => prepareCheckpoint(next)).toThrow('changed before')
     expect(fs.statSync(outputPath).size).toBe(0)
+  })
+})
+
+const MiB = 1024 * 1024
+
+/** A child that folds on this thread when the test says so, and exits when the pool kills it. */
+class HeldProcess implements CheckpointPreparationProcess {
+  request: CheckpointPreparationRequest | null = null
+  private reply: ((reply: CheckpointPreparationReply) => void) | null = null
+  private exit: (() => void) | null = null
+  private exited = false
+
+  post(request: CheckpointPreparationRequest): void {
+    this.request = request
+  }
+  onMessage(listener: (reply: CheckpointPreparationReply) => void): void {
+    this.reply = listener
+  }
+  onExit(listener: () => void): void {
+    this.exit = listener
+  }
+  onError(): void {
+    // A held child never fails to start.
+  }
+  kill(): void {
+    if (this.exited) return
+    this.exited = true
+    this.exit?.()
+  }
+  fold(): void {
+    this.reply!({ ok: true, prepared: prepareCheckpoint(this.request!) })
+  }
+}
+
+const sourceBytes = (source: CheckpointPreparationSource): number =>
+  source.checkpoint.identity.size + source.journal.identity.size
+
+/** The same source, said to hold `bytes`: admission reads the sizes alone. */
+const sized = (
+  source: CheckpointPreparationSource,
+  bytes: number
+): CheckpointPreparationSource => ({
+  ...source,
+  journal: {
+    ...source.journal,
+    identity: { ...source.journal.identity, size: bytes - source.checkpoint.identity.size }
+  }
+})
+
+describe('admission to the checkpoint preparation pool', () => {
+  const spawn = (): HeldProcess => new HeldProcess()
+
+  it('reserves each fold the peak its child was measured at: 100 MiB and nine times its source', () => {
+    const { source } = fixture()
+    const worker = new CheckpointPreparationWorker({ spawn })
+    const job = worker.start(source)!
+    job.result.catch(() => {})
+
+    expect(checkpointPreparationReservationBytes(sourceBytes(source))).toBe(
+      100 * MiB + 9 * sourceBytes(source)
+    )
+    expect(worker.stats()).toEqual({
+      activeJobs: 1,
+      reservedBytes: 100 * MiB + 9 * sourceBytes(source)
+    })
+    job.cancel()
+    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+  })
+
+  it('runs two folds of up to 31 MiB of source together within the default budget of 768 MiB, and one of 32 MiB alone', () => {
+    const a = fixture('a').source
+    const b = fixture('b').source
+    expect(DEFAULT_CHECKPOINT_PREPARATION_BUDGET_BYTES).toBe(768 * MiB)
+    const worker = new CheckpointPreparationWorker({ spawn })
+
+    const both = [worker.start(sized(a, 31 * MiB)), worker.start(sized(b, 31 * MiB))]
+    expect(both.every((job) => job !== null)).toBe(true)
+    for (const job of both) {
+      job!.result.catch(() => {})
+      job!.cancel()
+    }
+
+    const first = worker.start(sized(a, 32 * MiB))!
+    first.result.catch(() => {})
+    expect(worker.start(sized(b, 32 * MiB))).toBeNull()
+    expect(worker.admits(sized(b, 32 * MiB))).toBe(true)
+    first.cancel()
+    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+  })
+
+  it('never admits an empty source, one that holds more than 64 MiB, or one whose reservation alone passes the budget', () => {
+    const { source } = fixture()
+    const worker = new CheckpointPreparationWorker({ spawn })
+    expect(worker.admits(sized(source, 64 * MiB))).toBe(true)
+    expect(worker.admits(sized(source, 64 * MiB + 1))).toBe(false)
+    expect(worker.start(sized(source, 64 * MiB + 1))).toBeNull()
+    expect(worker.admits({ ...source, chatId: '../escape' })).toBe(false)
+    expect(worker.admits(sized(source, 0))).toBe(false)
+
+    const reservation = checkpointPreparationReservationBytes(sourceBytes(source))
+    const exact = new CheckpointPreparationWorker({ spawn, maxReservedBytes: reservation })
+    const short = new CheckpointPreparationWorker({ spawn, maxReservedBytes: reservation - 1 })
+    expect(exact.admits(source)).toBe(true)
+    expect(short.admits(source)).toBe(false)
+    expect(short.start(source)).toBeNull()
+    expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+  })
+
+  it('tells its listeners when a reservation returns: once its child has exited and its caller released it', async () => {
+    const a = fixture('a').source
+    const b = fixture('b').source
+    const children: HeldProcess[] = []
+    const worker = new CheckpointPreparationWorker({
+      maxJobs: 1,
+      spawn: () => {
+        const child = new HeldProcess()
+        children.push(child)
+        return child
+      }
+    })
+    let heard = 0
+    const room: Array<ReturnType<CheckpointPreparationWorker['stats']>> = []
+    const stop = worker.onCapacity(() => {
+      heard += 1
+      room.push(worker.stats())
+    })
+
+    const first = worker.start(a)!
+    expect(worker.start(b)).toBeNull()
+    children[0].fold()
+    await first.result
+    expect(heard).toBe(0)
+    first.release()
+    expect(heard).toBe(1)
+    // The room is there when they hear of it.
+    expect(room).toEqual([{ activeJobs: 0, reservedBytes: 0 }])
+
+    const second = worker.start(b)!
+    second.result.catch(() => {})
+    stop()
+    second.cancel()
+    expect(heard).toBe(1)
+  })
+
+  it('stops each subscription alone, and a listener that throws stops neither the others nor the release', () => {
+    const { source } = fixture()
+    const worker = new CheckpointPreparationWorker({ spawn })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      let heard = 0
+      const listener = (): void => {
+        heard += 1
+      }
+      worker.onCapacity(() => {
+        throw new Error('a listener failed')
+      })
+      const stopFirst = worker.onCapacity(listener)
+      worker.onCapacity(listener)
+      stopFirst()
+
+      const job = worker.start(source)!
+      job.result.catch(() => {})
+      job.cancel()
+
+      expect(heard).toBe(1)
+      expect(errors).toHaveBeenCalledTimes(1)
+      expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+    } finally {
+      errors.mockRestore()
+    }
   })
 })

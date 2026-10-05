@@ -14,6 +14,25 @@ import {
   type PreparedCheckpoint
 } from './CheckpointPreparationProtocol'
 
+const MiB = 1024 * 1024
+/** The most source, checkpoint and segment together, a fold is given. */
+const MAX_SOURCE_BYTES = 64 * MiB
+
+/**
+ * What a fold is reserved: its child's peak resident memory as measured, a
+ * fixed 100 MiB and nine times its source. Measured on macOS arm64 with 11,
+ * 23, 47 and 63 MiB of source: 172, 247, 450 to 487, and 577 MiB.
+ */
+export function checkpointPreparationReservationBytes(sourceBytes: number): number {
+  return 100 * MiB + 9 * sourceBytes
+}
+
+/**
+ * The most the pool's folds may be reserved at once: two of up to 31 MiB of
+ * source each, or one of up to the 64 MiB a source may hold.
+ */
+export const DEFAULT_CHECKPOINT_PREPARATION_BUDGET_BYTES = 768 * MiB
+
 export function isCheckpointPreparationWorkerEnabled(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
@@ -75,10 +94,21 @@ function spawnPreparationProcess(entryPath: string): CheckpointPreparationProces
   }
 }
 
-/** Bounded, payload-free admission. Rejection leaves the durable journal for a later idle pass. */
+/**
+ * Bounded, payload-free admission. Rejection leaves the durable journal for a later idle pass.
+ *
+ * Each job is a child process of its own. `start` takes one while fewer than
+ * `maxJobs` (2) run and the reservations of those running and this one stay
+ * within `maxReservedBytes` (768 MiB), a reservation being the child's
+ * measured peak (`checkpointPreparationReservationBytes`). Otherwise it
+ * returns null and makes nothing. A source above 64 MiB is never taken. A
+ * reservation returns when its child has exited and its caller released it,
+ * and `onCapacity` listeners hear of each one.
+ */
 export class CheckpointPreparationWorker implements CheckpointPreparationPort {
   private active = 0
   private bytes = 0
+  private readonly capacityListeners = new Set<() => void>()
 
   constructor(
     private readonly options: {
@@ -94,17 +124,38 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
     return { activeJobs: this.active, reservedBytes: this.bytes }
   }
 
+  admits(source: CheckpointPreparationSource): boolean {
+    const sourceBytes = source.checkpoint.identity.size + source.journal.identity.size
+    return (
+      /^[A-Za-z0-9_-]{1,256}$/.test(source.chatId) &&
+      Number.isSafeInteger(sourceBytes) &&
+      sourceBytes > 0 &&
+      sourceBytes <= MAX_SOURCE_BYTES &&
+      checkpointPreparationReservationBytes(sourceBytes) <= this.budgetBytes()
+    )
+  }
+
+  onCapacity(listener: () => void): () => void {
+    // Its own entry, so that each subscription stops only itself.
+    const entry = (): void => listener()
+    this.capacityListeners.add(entry)
+    return () => {
+      this.capacityListeners.delete(entry)
+    }
+  }
+
+  private budgetBytes(): number {
+    return this.options.maxReservedBytes ?? DEFAULT_CHECKPOINT_PREPARATION_BUDGET_BYTES
+  }
+
   start(source: CheckpointPreparationSource): CheckpointPreparationJob | null {
     const sourceBytes = source.checkpoint.identity.size + source.journal.identity.size
     const maxOutputBytes = Math.min(128 * 1024 * 1024, sourceBytes * 2 + 4096)
-    const reserved = sourceBytes + maxOutputBytes
+    const reserved = checkpointPreparationReservationBytes(sourceBytes)
     if (
-      !/^[A-Za-z0-9_-]{1,256}$/.test(source.chatId) ||
-      !Number.isSafeInteger(sourceBytes) ||
-      sourceBytes <= 0 ||
-      sourceBytes > 64 * 1024 * 1024 ||
+      !this.admits(source) ||
       this.active >= (this.options.maxJobs ?? 2) ||
-      this.bytes + reserved > (this.options.maxReservedBytes ?? 256 * 1024 * 1024)
+      this.bytes + reserved > this.budgetBytes()
     )
       return null
 
@@ -161,6 +212,14 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
         this.active -= 1
         this.bytes -= reserved
         activePreparedCheckpointPaths.delete(outputPath)
+        for (const listener of [...this.capacityListeners]) {
+          try {
+            listener()
+          } catch (error) {
+            // A listener's failure is its own; the release that returned the room stands.
+            console.error('[checkpoint-preparation] a capacity listener failed', error)
+          }
+        }
       }
     }
     const fail = (error: Error): void => {

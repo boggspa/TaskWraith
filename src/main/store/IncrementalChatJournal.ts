@@ -1,6 +1,7 @@
 import { randomInt } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
+import { performance } from 'perf_hooks'
 import { applyChatRecordMutations, type ChatRecordMutationBatch } from './ChatRecordMutation'
 import { isThreadLogBatch } from '../../host-shared/thread-log/ThreadLogBatch'
 import type { ChatRecord } from './types'
@@ -46,6 +47,38 @@ export type IncrementalChatCheckpointReason =
   | 'shutdown'
   | 'manual'
   | 'recovery'
+
+/**
+ * What a re-anchor (`replaceAuthoritativeCheckpoint`) was for:
+ * - `baseline-mismatch`: a save starts from a record the journal's head is not;
+ * - `revision-behind`: the record moved past the journal without it, as a
+ *   whole-record save moves it;
+ * - `parity-repair`: the journal replays a different record than the one
+ *   it was checked against;
+ * - `direct`: a caller outside the persistence coordinator, as history
+ *   truncation is.
+ */
+export type IncrementalChatReanchorCause =
+  | 'baseline-mismatch'
+  | 'revision-behind'
+  | 'parity-repair'
+  | 'direct'
+
+export const INCREMENTAL_CHAT_REANCHOR_CAUSES: readonly IncrementalChatReanchorCause[] = [
+  'baseline-mismatch',
+  'revision-behind',
+  'parity-repair',
+  'direct'
+]
+
+export interface IncrementalChatReanchorCounts {
+  count: number
+  /** Bytes of the checkpoints written. */
+  bytes: number
+  /** Milliseconds the calling thread spent writing them, and the longest one. */
+  mainMs: number
+  longestMainMs: number
+}
 
 export interface IncrementalChatCheckpoint {
   format: typeof INCREMENTAL_CHAT_CHECKPOINT_FORMAT
@@ -135,6 +168,18 @@ export interface IncrementalChatJournalStats {
   /** Time chats' segments spent at or above `maxJournalBytes`: in all, and the longest stretch. */
   compactionMsAboveTrigger: number
   compactionLongestMsAboveTrigger: number
+  /**
+   * Compactions the worker had no room for when asked, which waited for the
+   * ones before them to end (`CheckpointPreparationPort.onCapacity`): counted
+   * once for each wait.
+   */
+  compactionsQueued: number
+  /** Under debt compaction: folds the idle sweep asked the worker for. */
+  idleCompactionsRequested: number
+  /** Under `noteDurabilityDebt`: chats with lines `checkpointAll` left to their log. */
+  shutdownCheckpointsSkipped: number
+  /** Re-anchors by cause, each synced on the calling thread, with or without the option. */
+  reanchors: Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>
 }
 
 /**
@@ -214,7 +259,18 @@ export interface IncrementalChatJournalOptions {
    * unlink. The line-count and age bounds do not apply, nothing compacts on
    * the calling thread while a sealed segment waits for the worker, and a
    * failed compaction is tried again after a pause, never at once. See
-   * `compactionHardCapBytes` for a worker that cannot keep up.
+   * `compactionHardCapBytes` for a worker that cannot keep up. When the
+   * worker has no room for a compaction and says when it has
+   * (`CheckpointPreparationPort.onCapacity`), the compaction waits without a
+   * pause, and the waiting ones start oldest first as room returns.
+   *
+   * Idle and quit then write no checkpoint on the calling thread. The idle
+   * sweep asks the worker to fold each chat that has written nothing for
+   * `idleCheckpointMs` once its lines reach `idleCompactionBytes`, the same
+   * way. `checkpointAll` writes nothing: the barriers raised at quit pay what
+   * each chat owes, its lines are replayed at the next start, and a fold
+   * running at quit is stopped, its sealed segment folded later. Each chat
+   * it leaves with lines is counted as `shutdownCheckpointsSkipped`.
    *
    * A power cut can then leave segments that do not chain: a segment that
    * reached the disk while the end of the one before it did not, or segments
@@ -267,6 +323,12 @@ export interface IncrementalChatJournalOptions {
   maxJournalBytes?: number
   maxJournalEntries?: number
   idleCheckpointMs?: number
+  /**
+   * Under `noteDurabilityDebt` without a descriptor cache: the least bytes of
+   * lines for which the idle sweep asks the worker to fold a quiet chat.
+   * Below it a cold load replays the lines instead. Defaults to 1 MiB.
+   */
+  idleCompactionBytes?: number
   maxUncheckpointedMs?: number
   maxJournalReadBytes?: number
   /** Test-only crash-window seam. Throwing leaves checkpoint + journal together. */
@@ -306,7 +368,16 @@ export interface IncrementalChatJournal {
   /** Cheap probe (stat + checkpoint-header peek) of whether `replay` could lead
    *  the legacy record; see {@link IncrementalChatPendingReplayState}. */
   pendingReplayState(chatId: string): IncrementalChatPendingReplayState
-  replaceAuthoritativeCheckpoint(chatId: string, record: ChatRecord): void
+  /**
+   * Re-anchor: the record becomes the chat's checkpoint and its segments are
+   * removed, synced on the calling thread whatever the options. Counted by
+   * `cause`, `direct` when none is given.
+   */
+  replaceAuthoritativeCheckpoint(
+    chatId: string,
+    record: ChatRecord,
+    cause?: IncrementalChatReanchorCause
+  ): void
   /**
    * Compact the journal into a full checkpoint. `headRecord`, when it is the
    * in-memory record at exactly the journal head revision, is written as-is;
@@ -324,11 +395,20 @@ export interface IncrementalChatJournal {
   setHeadRecordResolver?(
     resolve: ((chatId: string, headRevision: number) => ChatRecord | null) | null
   ): void
+  /**
+   * Checkpoints each chat quiet for `idleCheckpointMs`, or unfolded for
+   * `maxUncheckpointedMs`, and returns how many it wrote. Under debt
+   * compaction it writes nothing: it asks the worker to fold each quiet chat
+   * whose lines reach `idleCompactionBytes`, and returns how many folds it
+   * started or left waiting for the worker.
+   */
   checkpointIdle(nowMs?: number): number
   checkpointDeferred?(chatId: string): Promise<DeferredCheckpointResult>
+  /** The same in the worker, waited for: how many checkpoints it adopted. */
   checkpointIdleDeferred?(nowMs?: number): Promise<number>
   /** Erasure routes that directly remove journal files must retire private preparations first. */
   cancelCheckpointPreparations?(chatId?: string): void
+  /** Checkpoints every chat; under `noteDurabilityDebt`, none: see there. */
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
   /** Synchronously fsync every journal file with an unsettled deferred flush. */
   drainDeferredDurability(): number
@@ -389,6 +469,7 @@ const DEFAULT_IDLE_CHECKPOINT_MS = 15_000
 const DEFAULT_MAX_UNCHECKPOINTED_MS = 2 * 60 * 1000
 const DEFAULT_MAX_JOURNAL_READ_BYTES = 256 * 1024 * 1024
 const DEFAULT_COMPACTION_RETRY_MS = 1_000
+const DEFAULT_IDLE_COMPACTION_BYTES = 1024 * 1024
 /** A failed compaction's pause doubles up to this many times the first. */
 const COMPACTION_RETRY_GROWTH = 64
 /** Enough of a checkpoint file to hold every header field before the fat
@@ -506,6 +587,10 @@ export function createIncrementalChatJournal(
     maxJournalBytes * 2
   )
   const compactionRetryMs = positiveInteger(options.compactionRetryMs, DEFAULT_COMPACTION_RETRY_MS)
+  const idleCompactionBytes = positiveInteger(
+    options.idleCompactionBytes,
+    DEFAULT_IDLE_COMPACTION_BYTES
+  )
   let ownDirectorySync: ((directory: string) => Promise<unknown>) | null = null
   const syncDirectoryOffThread = (directory: string): Promise<unknown> => {
     if (options.syncDirectory) return options.syncDirectory(directory)
@@ -521,6 +606,13 @@ export function createIncrementalChatJournal(
   const compactionPauses = new Map<string, { at: number; ms: number }>()
   /** The same, for a compaction at the cap that failed. */
   const capPauses = new Map<string, { at: number; ms: number }>()
+  /**
+   * Chats whose compaction the worker had no room for, in the order they
+   * first waited. Each sealed what it folds when it asked.
+   */
+  const waitingForWorker = new Set<string>()
+  /** Set while chats wait: stops the worker telling this journal it has room. */
+  let stopWaitingForWorker: (() => void) | null = null
   let writeSequence = 0
   let appends = 0
   let deferredAppends = 0
@@ -548,6 +640,15 @@ export function createIncrementalChatJournal(
   let compactionCapFallbacks = 0
   let compactionMsAboveTrigger = 0
   let compactionLongestMsAboveTrigger = 0
+  let compactionsQueued = 0
+  let idleCompactionsRequested = 0
+  let shutdownCheckpointsSkipped = 0
+  const reanchors = Object.fromEntries(
+    INCREMENTAL_CHAT_REANCHOR_CAUSES.map((cause) => [
+      cause,
+      { count: 0, bytes: 0, mainMs: 0, longestMainMs: 0 }
+    ])
+  ) as Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>
   /** Chats whose checkpoint a load read as absent, logged once each. */
   const checkpointsAbsentLogged = new Set<string>()
   /** Chats whose active segment stops at a line that does not chain: no line may follow it. */
@@ -1582,7 +1683,23 @@ export function createIncrementalChatJournal(
     return true
   }
 
-  const replaceAuthoritativeCheckpoint = (chatId: string, record: ChatRecord): void => {
+  const replaceAuthoritativeCheckpoint = (
+    chatId: string,
+    record: ChatRecord,
+    cause: IncrementalChatReanchorCause = 'direct'
+  ): void => {
+    const started = performance.now()
+    const bytes = reanchor(chatId, record)
+    const ms = performance.now() - started
+    const counts = reanchors[cause]
+    counts.count += 1
+    counts.bytes += bytes
+    counts.mainMs += ms
+    counts.longestMainMs = Math.max(counts.longestMainMs, ms)
+  }
+
+  /** The re-anchor itself; returns the bytes of the checkpoint it wrote. */
+  const reanchor = (chatId: string, record: ChatRecord): number => {
     invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
@@ -1627,6 +1744,7 @@ export function createIncrementalChatJournal(
     state.dirtySinceMs = null
     state.lastAppendAtMs = null
     settleAboveTrigger(state)
+    return bytes
   }
 
   const captureSource = (chatId: string, revision: number): JournalCaptureLease | null => {
@@ -1976,7 +2094,8 @@ export function createIncrementalChatJournal(
     // Failures are counted where they happen; a later line or request tries
     // again. The seal happens before this returns, so a sealed segment no
     // longer counts toward the active one's cap.
-    if (!compactions.has(chatId) && !pausedNow(chatId)) compact(chatId).catch(() => {})
+    if (!compactions.has(chatId) && !waitingForWorker.has(chatId) && !pausedNow(chatId))
+      compact(chatId).catch(() => {})
     if (activeBytes(state) >= compactionHardCapBytes) compactAtCap(chatId, state)
   }
 
@@ -2007,7 +2126,8 @@ export function createIncrementalChatJournal(
    */
   const sealForCompaction = (
     chatId: string,
-    state: RuntimeState
+    state: RuntimeState,
+    minimumBytes: number
   ): CheckpointPreparationSource | 'unchanged' | null => {
     if (brokenChains.has(chatId)) return null
     if (state.sealed && state.sealed.entries === 0) {
@@ -2023,7 +2143,7 @@ export function createIncrementalChatJournal(
       state.sealed = null
     }
     if (!state.sealed) {
-      if (state.journalEntries === 0 || state.journalBytes < maxJournalBytes) return 'unchanged'
+      if (state.journalEntries === 0 || state.journalBytes < minimumBytes) return 'unchanged'
       if (fs.existsSync(sealedPath(chatId))) {
         // A sealed name the load did not count is not this journal's to
         // replace, unless a power cut left it with no bytes at all.
@@ -2057,11 +2177,32 @@ export function createIncrementalChatJournal(
     }
   }
 
-  /** Under debt compaction: one compaction per chat at a time, which a second request joins. */
-  const compact = (chatId: string): Promise<DeferredCheckpointResult> => {
+  /**
+   * Under debt compaction: one compaction per chat at a time, which a second
+   * request joins. A new one seals the active segment only once the chat's
+   * lines hold `minimumBytes`: `maxJournalBytes` for the byte trigger, less at
+   * idle. When the worker has no room for it, the chat waits its turn.
+   */
+  const compact = (
+    chatId: string,
+    minimumBytes = maxJournalBytes
+  ): Promise<DeferredCheckpointResult> => {
     const running = compactions.get(chatId)
     if (running) return running
-    const started = compactOnce(chatId)
+    let begun: ReturnType<typeof beginCompaction>
+    try {
+      begun = beginCompaction(chatId, minimumBytes)
+    } catch (error) {
+      waitingForWorker.delete(chatId)
+      return Promise.reject(error)
+    }
+    if (begun === 'waiting') {
+      waitForWorker(chatId)
+      return Promise.resolve('unavailable')
+    }
+    waitingForWorker.delete(chatId)
+    if (typeof begun === 'string') return Promise.resolve(begun)
+    const started = finishCompaction(chatId, begun)
     compactions.set(chatId, started)
     const forget = (): void => {
       if (compactions.get(chatId) === started) compactions.delete(chatId)
@@ -2071,9 +2212,87 @@ export function createIncrementalChatJournal(
   }
 
   /**
-   * One compaction in the worker, and where a crash or power cut at each step
-   * leaves the chat (the M5 kill points KJ1 to KJ9, as they read without a
-   * sync on the calling thread):
+   * A chat the worker had no room for waits its turn, keeping the place it
+   * first took, and this journal listens for room while any chat waits.
+   */
+  const waitForWorker = (chatId: string): void => {
+    if (!waitingForWorker.has(chatId)) {
+      compactionsQueued += 1
+      waitingForWorker.add(chatId)
+    }
+    // Started after the release that made the room has finished.
+    stopWaitingForWorker ??= options.checkpointPreparation!.onCapacity!(() =>
+      queueMicrotask(startWaiting)
+    )
+  }
+
+  /** The worker has room again: start waiting compactions, oldest first, while it has. */
+  const startWaiting = (): void => {
+    for (const chatId of waitingForWorker) {
+      compact(chatId).catch(() => {})
+      // Still waiting: no room for it, and so none for those after it.
+      if (waitingForWorker.has(chatId)) return
+    }
+    stopWaitingForWorker?.()
+    stopWaitingForWorker = null
+  }
+
+  interface BegunCompaction {
+    state: RuntimeState
+    source: CheckpointPreparationSource
+    sealed: SealedSegment
+    epoch: number
+    job: CheckpointPreparationJob
+  }
+
+  /**
+   * A compaction's first steps, on the calling thread: seal, and hand the
+   * worker its source. 'waiting' when the worker has no room for it now, can
+   * take it, and says when it has room.
+   */
+  const beginCompaction = (
+    chatId: string,
+    minimumBytes: number
+  ): BegunCompaction | DeferredCheckpointResult | 'waiting' => {
+    const state = states.get(chatId)
+    if (!state || state.tombstoned || state.headRevision === null) return 'unchanged'
+    const port = options.checkpointPreparation
+    if (!port) return 'unavailable'
+    if (pausedNow(chatId)) return 'unavailable'
+    options.beforeSourceMutation?.(chatId)
+    if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return 'superseded'
+    moveUnmovedSetAside(chatId)
+    const source = sealForCompaction(chatId, state, minimumBytes)
+    if (source === 'unchanged') return 'unchanged'
+    const refuse = (): DeferredCheckpointResult => {
+      compactionsRefused += 1
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      pauseCompaction(chatId)
+      return 'unavailable'
+    }
+    if (!source) return refuse()
+    const sealed = state.sealed!
+    const epoch = preparationEpochs.get(chatId) ?? 0
+    let job: CheckpointPreparationJob | null
+    try {
+      job = port.start(source)
+    } catch (error) {
+      // A worker that cannot be started fails as one that died does.
+      compactionsFailed += 1
+      pauseCompaction(chatId)
+      throw error
+    }
+    if (!job) return port.onCapacity && port.admits?.(source) ? 'waiting' : refuse()
+    compactionsStarted += 1
+    preparations.set(chatId, job)
+    return { state, source, sealed, epoch, job }
+  }
+
+  /**
+   * The rest of one compaction in the worker, after `beginCompaction`, and
+   * where a crash or power cut at each step of the two leaves the chat (the
+   * M5 kill points KJ1 to KJ9, as they read without a sync on the calling
+   * thread):
    * 1. Rename the active segment to the sealed name; its bytes and the rename
    *    are owed. KJ1: either name holds a prefix. A power cut can keep the new
    *    active segment and lose the end of the sealed one (KJ8, reachable here
@@ -2098,29 +2317,10 @@ export function createIncrementalChatJournal(
    * append to precede here: a barrier pays the sealed segment, the new
    * active one and the directory together.
    */
-  const compactOnce = async (chatId: string): Promise<DeferredCheckpointResult> => {
-    const state = states.get(chatId)
-    if (!state || state.tombstoned || state.headRevision === null) return 'unchanged'
-    if (!options.checkpointPreparation) return 'unavailable'
-    if (pausedNow(chatId)) return 'unavailable'
-    options.beforeSourceMutation?.(chatId)
-    if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return 'superseded'
-    moveUnmovedSetAside(chatId)
-    const source = sealForCompaction(chatId, state)
-    if (source === 'unchanged') return 'unchanged'
-    const refuse = (): DeferredCheckpointResult => {
-      compactionsRefused += 1
-      observeResidual(options.residualObserver, 'preparationRefusals')
-      pauseCompaction(chatId)
-      return 'unavailable'
-    }
-    if (!source) return refuse()
-    const sealed = state.sealed!
-    const epoch = preparationEpochs.get(chatId) ?? 0
-    const job = options.checkpointPreparation.start(source)
-    if (!job) return refuse()
-    compactionsStarted += 1
-    preparations.set(chatId, job)
+  const finishCompaction = async (
+    chatId: string,
+    { state, source, sealed, epoch, job }: BegunCompaction
+  ): Promise<DeferredCheckpointResult> => {
     const current = (installed?: CheckpointPreparationSource['checkpoint']): boolean =>
       canWrite() &&
       preparations.get(chatId) === job &&
@@ -2360,10 +2560,42 @@ export function createIncrementalChatJournal(
     }
   }
 
+  /**
+   * Under debt compaction, the idle sweep: a fold in the worker for each chat
+   * quiet for `idleCheckpointMs` whose lines reach `idleCompactionBytes`. It
+   * reads no file for a chat it passes over. Returns the folds started, or
+   * waiting for room in the worker.
+   */
+  const requestIdleCompactions = (nowMs: number): Promise<DeferredCheckpointResult>[] => {
+    const requested: Promise<DeferredCheckpointResult>[] = []
+    for (const [chatId, state] of states) {
+      // An erased chat holds no lines.
+      if (
+        state.journalBytes < idleCompactionBytes ||
+        state.lastAppendAtMs === null ||
+        nowMs - state.lastAppendAtMs < idleCheckpointMs ||
+        compactions.has(chatId) ||
+        waitingForWorker.has(chatId)
+      )
+        continue
+      const folding = compact(chatId, idleCompactionBytes)
+      // Failures are counted where they happen.
+      folding.catch(() => {})
+      if (compactions.has(chatId) || waitingForWorker.has(chatId)) requested.push(folding)
+    }
+    idleCompactionsRequested += requested.length
+    return requested
+  }
+
   let deferredIdleCursor: MapIterator<[string, RuntimeState]> | undefined
   const checkpointIdleDeferred = async (nowMs = now()): Promise<number> => {
     assertWritable()
     let count = 0
+    if (debtCompaction) {
+      for (const result of await Promise.allSettled(requestIdleCompactions(nowMs)))
+        if (result.status === 'fulfilled' && result.value === 'checkpointed') count += 1
+      return count
+    }
     // References only, and admission refuses saturation immediately. No
     // pending records or snapshots accumulate behind an occupied worker.
     const jobs: Promise<void>[] = []
@@ -2403,6 +2635,7 @@ export function createIncrementalChatJournal(
 
   const checkpointIdle = (nowMs = now()): number => {
     assertWritable()
+    if (debtCompaction) return requestIdleCompactions(nowMs).length
     let count = 0
     for (const chatId of knownChatIds()) {
       // One corrupt/gapped chat must not abort the sweep for every chat after
@@ -2443,6 +2676,15 @@ export function createIncrementalChatJournal(
       // Preparations were fenced before cleanup. An optional temp unlink
       // failure must not skip the pre-existing D1 drain or healthy checkpoints.
       preparationCleanupFailure = error
+    }
+    if (noteDebt) {
+      // The barriers raised at quit pay what each chat owes; its lines are
+      // replayed at the next start, and folded in the worker after it.
+      waitingForWorker.clear()
+      for (const state of states.values())
+        if (state.journalEntries > 0) shutdownCheckpointsSkipped += 1
+      if (preparationCleanupFailure) throw preparationCleanupFailure
+      return 0
     }
     // A shutdown/manual sweep must not leave D1 appends riding the kernel:
     // settle the deferred flushes first, then supersede them with checkpoints.
@@ -2498,6 +2740,7 @@ export function createIncrementalChatJournal(
     cancelCheckpointPreparations(chatId)
     compactionPauses.delete(chatId)
     capPauses.delete(chatId)
+    waitingForWorker.delete(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -2548,6 +2791,7 @@ export function createIncrementalChatJournal(
     unmovedSetAside.clear()
     compactionPauses.clear()
     capPauses.clear()
+    waitingForWorker.clear()
   }
 
   const stats = (): IncrementalChatJournalStats => ({
@@ -2577,7 +2821,13 @@ export function createIncrementalChatJournal(
     compactionsRefused,
     compactionCapFallbacks,
     compactionMsAboveTrigger,
-    compactionLongestMsAboveTrigger
+    compactionLongestMsAboveTrigger,
+    compactionsQueued,
+    idleCompactionsRequested,
+    shutdownCheckpointsSkipped,
+    reanchors: Object.fromEntries(
+      INCREMENTAL_CHAT_REANCHOR_CAUSES.map((cause) => [cause, { ...reanchors[cause] }])
+    ) as Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>
   })
 
   return {

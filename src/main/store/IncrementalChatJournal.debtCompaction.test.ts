@@ -20,10 +20,15 @@ import {
   checkpointFileReference,
   type CheckpointPreparationJob,
   type CheckpointPreparationPort,
+  type CheckpointPreparationReply,
   type CheckpointPreparationRequest,
   type CheckpointPreparationSource,
   type PreparedCheckpoint
 } from './CheckpointPreparationProtocol'
+import {
+  CheckpointPreparationWorker,
+  type CheckpointPreparationProcess
+} from './CheckpointPreparationWorker'
 import {
   createIncrementalChatJournal,
   type IncrementalChatJournal,
@@ -140,6 +145,37 @@ class HeldWorker implements CheckpointPreparationPort {
     )
   }
 }
+
+/** A child of the real pool that folds on this thread when the test says so, and exits when killed. */
+class HeldProcess implements CheckpointPreparationProcess {
+  request: CheckpointPreparationRequest | null = null
+  private reply: ((reply: CheckpointPreparationReply) => void) | null = null
+  private exit: (() => void) | null = null
+  private exited = false
+
+  post(request: CheckpointPreparationRequest): void {
+    this.request = request
+  }
+  onMessage(listener: (reply: CheckpointPreparationReply) => void): void {
+    this.reply = listener
+  }
+  onExit(listener: () => void): void {
+    this.exit = listener
+  }
+  onError(): void {
+    // A held child never fails to start.
+  }
+  kill(): void {
+    if (this.exited) return
+    this.exited = true
+    this.exit?.()
+  }
+  fold(): void {
+    this.reply!({ ok: true, prepared: prepareCheckpoint(this.request!) })
+  }
+}
+
+const MiB = 1024 * 1024
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
@@ -624,6 +660,29 @@ describe('compaction in the worker, under the barrier, without a descriptor cach
     expect(lines(ACTIVE)).toEqual([2, 3, 4])
   })
 
+  it('counts a worker that cannot be started as a failure, and tries again after a pause, not at the next line', () => {
+    let starts = 0
+    const journal = open({
+      checkpointPreparation: {
+        start: () => {
+          starts += 1
+          throw new Error('spawn failed')
+        }
+      }
+    })
+    journal.initialize(CHAT, records[0])
+    let head = 1
+    while (starts === 0) journal.append(batches[head++ - 1])
+
+    journal.append(batches[head++ - 1])
+    expect(starts).toBe(1)
+    expect(journal.stats()).toMatchObject({ compactionsFailed: 1, compactionsStarted: 0 })
+
+    clock += 1_000
+    journal.append(batches[head++ - 1])
+    expect(starts).toBe(2)
+  })
+
   it('without the option still compacts in line at the bound, as it always has', () => {
     const journal = createIncrementalChatJournal(baseDir, {
       checkpointPreparation: worker,
@@ -654,6 +713,272 @@ describe('compaction in the worker, under the barrier, without a descriptor cach
       // Nor does the trailing flush a deferred one would have waited for.
       expect(persistence.checkpointChat(CHAT)).toBe(false)
       expect(journal.stats()).toMatchObject({ checkpointsWritten: 1 })
+    })
+  })
+
+  describe('a burst across many threads, through the pool', () => {
+    const THREADS = 12
+    const ids = Array.from({ length: THREADS }, (_unused, index) => `thread-${index}`)
+    const threadRecord = (id: string, revision: number): ChatRecord => ({
+      ...chat(revision),
+      appChatId: id,
+      title: id
+    })
+    const nextLine = (id: string, head: number): ChatRecordMutationBatch =>
+      deriveChatRecordMutation(threadRecord(id, head), threadRecord(id, head + 1))
+
+    /** The real pool, each child of which folds on this thread when the test says so. */
+    const pooled = (
+      maxReservedBytes?: number
+    ): {
+      pool: CheckpointPreparationWorker
+      port: CheckpointPreparationPort
+      children: HeldProcess[]
+      counts: () => { starts: number; subscriptions: number; stops: number }
+    } => {
+      const children: HeldProcess[] = []
+      const pool = new CheckpointPreparationWorker({
+        maxReservedBytes,
+        spawn: () => {
+          const child = new HeldProcess()
+          children.push(child)
+          return child
+        }
+      })
+      let starts = 0
+      let subscriptions = 0
+      let stops = 0
+      const port: CheckpointPreparationPort = {
+        start: (source) => {
+          starts += 1
+          return pool.start(source)
+        },
+        admits: (source) => pool.admits(source),
+        onCapacity: (listener) => {
+          subscriptions += 1
+          const stop = pool.onCapacity(listener)
+          return () => {
+            stops += 1
+            stop()
+          }
+        }
+      }
+      return { pool, port, children, counts: () => ({ starts, subscriptions, stops }) }
+    }
+
+    /** Each thread in turn appends until its segments reach the trigger. Returns each one's head. */
+    const burst = (journal: IncrementalChatJournal): Map<string, number> => {
+      const heads = new Map<string, number>()
+      ids.forEach((id, index) => {
+        journal.initialize(id, threadRecord(id, 1))
+        let head = 1
+        while (journal.stats().compactionsStarted + journal.stats().compactionsQueued <= index) {
+          journal.append(nextLine(id, head))
+          head += 1
+          if (head > 40) throw new Error(`${id} never started a fold nor waited for one`)
+        }
+        heads.set(id, head)
+      })
+      return heads
+    }
+    const readThread = (id: string): ReturnType<IncrementalChatJournal['replay']> =>
+      createIncrementalChatJournal(baseDir, {
+        noteDurabilityDebt: () => {},
+        canWrite: () => false
+      }).replay(id)
+
+    it.each([
+      { budget: 'the default budget', maxReservedBytes: undefined, most: 2 },
+      { budget: 'a budget with room for one fold', maxReservedBytes: 150 * MiB, most: 1 }
+    ])(
+      'queues what the pool has no room for under $budget, runs $most at once at most, and folds every thread in the order it asked',
+      async ({ maxReservedBytes, most }) => {
+        const { pool, port, children, counts } = pooled(maxReservedBytes)
+        const journal = open({ checkpointPreparation: port, idleCompactionBytes: 100 })
+
+        const heads = burst(journal)
+
+        expect(journal.stats()).toMatchObject({
+          compactionsStarted: most,
+          compactionsQueued: THREADS - most,
+          compactionsRefused: 0
+        })
+        expect(pool.stats().activeJobs).toBe(most)
+        // A thread waiting its turn asks nothing more of the pool at its next line, nor at idle.
+        const last = ids[THREADS - 1]
+        const startsBefore = counts().starts
+        journal.append(nextLine(last, heads.get(last)!))
+        heads.set(last, heads.get(last)! + 1)
+        // A quiet thread below the trigger asks at idle, and waits its turn too.
+        const quiet = 'thread-quiet'
+        journal.initialize(quiet, threadRecord(quiet, 1))
+        journal.append(nextLine(quiet, 1))
+        heads.set(quiet, 2)
+        clock += 60_000
+        expect(journal.checkpointIdle(clock)).toBe(1)
+        expect(counts().starts).toBe(startsBefore + 1)
+        const order = [...ids, quiet]
+
+        let busiest = 0
+        for (let folded = 0; folded < order.length; folded += 1) {
+          busiest = Math.max(busiest, pool.stats().activeJobs)
+          children[folded].fold()
+          await expect.poll(() => journal.stats().compactionsAdopted).toBe(folded + 1)
+        }
+
+        expect(busiest).toBe(most)
+        expect(children.map((child) => child.request!.chatId)).toEqual(order)
+        expect(journal.stats()).toMatchObject({
+          compactionsStarted: order.length,
+          compactionsAdopted: order.length,
+          compactionsQueued: order.length - most,
+          compactionsRefused: 0,
+          compactionsFailed: 0,
+          idleCompactionsRequested: 1
+        })
+        expect(pool.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+        // It listened for room once, and stopped once no thread was left waiting.
+        expect(counts()).toMatchObject({ subscriptions: 1, stops: 1 })
+        for (const id of order) expect(readThread(id)).toMatchObject({ revision: heads.get(id) })
+      }
+    )
+
+    it('keeps a fold the pool has no room for yet at the head of the queue, ahead of smaller ones behind it, and counts each wait once', async () => {
+      const huge = 'x'.repeat(10 * MiB)
+      const big = (revision: number): ChatRecord => {
+        const record = threadRecord('thread-big', revision)
+        return {
+          ...record,
+          messages: [
+            ...record.messages,
+            { id: 'huge', role: 'assistant', content: huge, timestamp: '2026-10-05T00:00:00.000Z' }
+          ]
+        }
+      }
+      // Room for two small folds, or for the big one alone.
+      const { pool, port, children } = pooled(250 * MiB)
+      const journal = open({ checkpointPreparation: port })
+      const order = ['thread-a', 'thread-b', 'thread-big', 'thread-c']
+      for (const [index, id] of order.entries()) {
+        const at =
+          id === 'thread-big' ? big : (revision: number): ChatRecord => threadRecord(id, revision)
+        journal.initialize(id, at(1))
+        let head = 1
+        while (journal.stats().compactionsStarted + journal.stats().compactionsQueued <= index) {
+          journal.append(deriveChatRecordMutation(at(head), at(head + 1)))
+          head += 1
+          if (head > 40) throw new Error(`${id} never started a fold nor waited for one`)
+        }
+      }
+      expect(journal.stats()).toMatchObject({ compactionsStarted: 2, compactionsQueued: 2 })
+
+      let mostReserved = 0
+      for (let folded = 0; folded < order.length; folded += 1) {
+        mostReserved = Math.max(mostReserved, pool.stats().reservedBytes)
+        children[folded].fold()
+        await expect.poll(() => journal.stats().compactionsAdopted).toBe(folded + 1)
+      }
+
+      expect(children.map((child) => child.request!.chatId)).toEqual(order)
+      expect(mostReserved).toBeLessThanOrEqual(250 * MiB)
+      expect(journal.stats()).toMatchObject({ compactionsAdopted: 4, compactionsQueued: 2 })
+    })
+
+    it('takes a waiting thread whose fold cannot be started out of the queue, pauses it, and starts the next', async () => {
+      const { port, children } = pooled()
+      const failing = new Set<string>()
+      const journal = open({
+        checkpointPreparation: {
+          ...port,
+          start: (source) => {
+            if (failing.has(source.chatId)) throw new Error('spawn failed')
+            return port.start(source)
+          }
+        }
+      })
+      burst(journal)
+      failing.add('thread-2')
+
+      children[0].fold()
+      await expect.poll(() => children.length).toBe(3)
+
+      expect(children[2].request!.chatId).toBe('thread-3')
+      expect(journal.stats()).toMatchObject({ compactionsFailed: 1 })
+      journal.checkpointAll('shutdown')
+    })
+
+    it.each(['purge', 'clear'] as const)(
+      'forgets a thread waiting its turn when it is erased by %s, so the same id starts afresh',
+      (erase) => {
+        const { port, counts } = pooled()
+        const journal = open({ checkpointPreparation: port })
+        burst(journal)
+        const waiting = ids[THREADS - 1]
+        if (erase === 'purge') journal.purge(waiting)
+        else journal.clear()
+
+        const queuedBefore = journal.stats().compactionsQueued
+        const startsBefore = counts().starts
+        journal.initialize(waiting, threadRecord(waiting, 1))
+        let head = 1
+        while (counts().starts === startsBefore) {
+          journal.append(nextLine(waiting, head))
+          head += 1
+          if (head > 40) throw new Error(`${waiting} never asked for a fold`)
+        }
+
+        expect(journal.stats().compactionsQueued).toBe(
+          erase === 'purge' ? queuedBefore + 1 : queuedBefore
+        )
+        journal.checkpointAll('shutdown')
+      }
+    )
+
+    it('starts nothing that waited once quit has stopped the folds', async () => {
+      const { pool, port, children, counts } = pooled()
+      const journal = open({ checkpointPreparation: port })
+      burst(journal)
+      const startsBefore = counts().starts
+
+      expect(journal.checkpointAll('shutdown')).toBe(0)
+      await settle()
+
+      expect(children).toHaveLength(2)
+      expect(counts()).toMatchObject({ starts: startsBefore, stops: 1 })
+      expect(pool.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+      expect(journal.stats()).toMatchObject({
+        compactionsStarted: 2,
+        compactionsAdopted: 0,
+        shutdownCheckpointsSkipped: THREADS
+      })
+    })
+
+    it.each([
+      {
+        port: 'a pool with no fold that fits its budget',
+        make: (): CheckpointPreparationPort => pooled(50 * MiB).port
+      },
+      {
+        port: 'a port that cannot say when it has room',
+        make: (): CheckpointPreparationPort => ({ start: () => null, admits: () => true })
+      },
+      {
+        port: 'a port that cannot say whether it would take the source',
+        make: (): CheckpointPreparationPort => ({
+          start: () => null,
+          onCapacity: () => () => {}
+        })
+      }
+    ])('pauses, rather than waits, when refused by $port', ({ make }) => {
+      const journal = open({ checkpointPreparation: make() })
+      journal.initialize(CHAT, records[0])
+      let head = 1
+      while (journal.stats().compactionsRefused === 0) {
+        journal.append(batches[head++ - 1])
+        if (head > 40) throw new Error('never refused')
+      }
+
+      expect(journal.stats()).toMatchObject({ compactionsQueued: 0, compactionsStarted: 0 })
     })
   })
 })
