@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { isSafeChatId } from '../ChatPath'
 import {
   ThreadCatalogue,
+  isDamagedCatalogueFileDebt,
   type ThreadCatalogueProjection,
   type ThreadCatalogueWriter
 } from './ThreadCatalogue'
@@ -72,6 +73,16 @@ interface PreparationJob {
 }
 type CatalogueJob = ImportJob | PreparationJob
 
+/**
+ * The first wait before importing again a thread an import could not settle
+ * (a publication still live, a file it could not read, the sources moving
+ * under it), and the longest. The wait doubles from one to the other, so a
+ * thread that stays unsettled costs one import every THREAD_CATALOGUE_RETRY_MAX_MS.
+ * A change to the thread's files starts it again from the first.
+ */
+export const THREAD_CATALOGUE_RETRY_BASE_MS = 100
+export const THREAD_CATALOGUE_RETRY_MAX_MS = 5_000
+
 /** Storage-process actor. Decoding is in a separate isolate; no request falls back to main. */
 export class ThreadCatalogueWorkerService {
   readonly catalogue: ThreadCatalogue
@@ -83,6 +94,9 @@ export class ThreadCatalogueWorkerService {
   private readonly viewContexts = new Map<string, string>()
   private readonly failed = new Set<string>()
   private readonly refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Retries in a row for each thread that is waiting to settle. */
+  private readonly retryAttempts = new Map<string, number>()
+  private readonly retries = { scheduled: 0, longestWaitMs: 0 }
   private readonly known = new Set<string>()
   private readonly indexed = new Set<string>()
   private readonly changedWhileImporting = new Set<string>()
@@ -296,15 +310,44 @@ export class ThreadCatalogueWorkerService {
       (error instanceof ThreadCatalogueRequestError && error.retryable) ||
       /outstanding work|changed during|changed before|being erased/.test(message)
     ) {
-      this.notifyChanged(chatId)
+      this.retryLater(chatId)
     } else {
+      this.retryAttempts.delete(chatId)
       this.failed.add(chatId)
     }
     this.reportProgress()
   }
 
+  /**
+   * Retries scheduled so far, the threads waiting on one now, and the longest
+   * wait set. A thread waits from an import that could not settle it until an
+   * import settles it, fails for good, or the thread changes.
+   */
+  retryStats(): { scheduled: number; waiting: number; longestWaitMs: number } {
+    return { ...this.retries, waiting: this.retryAttempts.size }
+  }
+
+  /** The thread's files changed: import it soon, and forget any backoff. */
   notifyChanged(chatId: string): void {
     if (!isSafeChatId(chatId) || this.closed) return
+    this.retryAttempts.delete(chatId)
+    this.scheduleImport(chatId, THREAD_CATALOGUE_RETRY_BASE_MS)
+  }
+
+  private retryLater(chatId: string): void {
+    if (!isSafeChatId(chatId) || this.closed) return
+    const attempt = this.retryAttempts.get(chatId) ?? 0
+    const wait = Math.min(
+      THREAD_CATALOGUE_RETRY_BASE_MS * 2 ** attempt,
+      THREAD_CATALOGUE_RETRY_MAX_MS
+    )
+    this.retryAttempts.set(chatId, attempt + 1)
+    this.retries.scheduled += 1
+    this.retries.longestWaitMs = Math.max(this.retries.longestWaitMs, wait)
+    this.scheduleImport(chatId, wait)
+  }
+
+  private scheduleImport(chatId: string, wait: number): void {
     this.failed.delete(chatId)
     if (this.jobs.has(chatId)) this.changedWhileImporting.add(chatId)
     const previous = this.refreshTimers.get(chatId)
@@ -312,8 +355,11 @@ export class ThreadCatalogueWorkerService {
     const timer = setTimeout(() => {
       this.refreshTimers.delete(chatId)
       if (this.closed) return
-      void this.ensureIndexed(chatId, 'metadata').catch((error) => this.importFailed(chatId, error))
-    }, 100)
+      void this.ensureIndexed(chatId, 'metadata').then(
+        () => this.retryAttempts.delete(chatId),
+        (error) => this.importFailed(chatId, error)
+      )
+    }, wait)
     timer.unref?.()
     this.refreshTimers.set(chatId, timer)
   }
@@ -526,23 +572,34 @@ export class ThreadCatalogueWorkerService {
         .sourceDurabilityDebts(job.chatId)
         .filter((id) => !this.database.sourceDurabilityProven(job.chatId, epoch, id))
       if (debts.length) {
-        const assertAuthority = this.options.assertSourceAuthority
-        if (!assertAuthority) throw new Error('Source durability repair authority is unavailable')
-        const witness = await flushThreadCatalogueSources(
-          this.options.reader,
-          job.chatId,
-          assertAuthority
-        )
-        if (this.closed) throw new Error('History index is shutting down')
-        if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
-          throw new ThreadCatalogueRequestError('lease_erased')
-        if (
-          JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId)) ||
-          witness !== captureThreadCatalogueWitness(this.options.reader, job.chatId).witness
-        )
-          throw new ThreadCatalogueRequestError('source_changed')
-        assertAuthority()
-        this.database.recordSourceDurabilityProofs(job.chatId, epoch, debts)
+        try {
+          const assertAuthority = this.options.assertSourceAuthority
+          if (!assertAuthority) throw new Error('Source durability repair authority is unavailable')
+          const witness = await flushThreadCatalogueSources(
+            this.options.reader,
+            job.chatId,
+            assertAuthority
+          )
+          if (this.closed) throw new Error('History index is shutting down')
+          if (JSON.stringify(epoch) !== JSON.stringify(this.catalogue.epoch(job.chatId)))
+            throw new ThreadCatalogueRequestError('lease_erased')
+          if (
+            JSON.stringify(heads) !== JSON.stringify(this.catalogue.sourceHeads(job.chatId)) ||
+            witness !== captureThreadCatalogueWitness(this.options.reader, job.chatId).witness
+          )
+            throw new ThreadCatalogueRequestError('source_changed')
+          assertAuthority()
+          this.database.recordSourceDurabilityProofs(job.chatId, epoch, debts)
+        } catch (error) {
+          // A damaged head or ticket this worker cannot prove now is still an
+          // unsettled publication, as it was before it could be proven at all.
+          if (
+            debts.every(isDamagedCatalogueFileDebt) &&
+            !(error instanceof ThreadCatalogueRequestError)
+          )
+            throw new ThreadCatalogueRequestError('source_unsettled')
+          throw error
+        }
       }
       if (job.mode === 'metadata' && this.catalogue.publicationPending(job.chatId))
         throw new ThreadCatalogueRequestError('source_unsettled')

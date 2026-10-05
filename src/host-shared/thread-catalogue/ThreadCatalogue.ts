@@ -28,6 +28,13 @@ export const THREAD_CATALOGUE_VERSION = 1
 export const THREAD_CATALOGUE_MAX_HEAD_BYTES = 256 * 1024
 export type ThreadCatalogueWriter = 'desktop' | 'host'
 
+const DAMAGED_FILE_DEBT = 'damaged:'
+
+/** A durability debt that stands for a head or ticket left without its bytes. */
+export function isDamagedCatalogueFileDebt(debt: string): boolean {
+  return debt.startsWith(DAMAGED_FILE_DEBT)
+}
+
 interface PublicationHead {
   version: typeof THREAD_CATALOGUE_VERSION
   ticket: ThreadCatalogueTicket
@@ -55,6 +62,21 @@ interface EpochRecord {
   generation: string
   erasing: boolean
 }
+
+interface SourceSlot {
+  writer: ThreadCatalogueWriter
+  head: PublicationHead | null
+  /** The debt that names this writer's head file, when it is damaged. */
+  damaged?: string
+  tickets: Array<{ file: string; ticket: ThreadCatalogueTicket | null; damaged?: string }>
+}
+
+type CatalogueFile =
+  | { state: 'parsed'; value: unknown }
+  /** Read whole, and not JSON at all. `identity` names this file and these bytes. */
+  | { state: 'damaged'; identity: string }
+  /** Missing, or not read: it could not be opened or read, or it is not a small regular file. */
+  | { state: 'unread' }
 
 export type ThreadCatalogueRead =
   | {
@@ -206,19 +228,34 @@ export class ThreadCatalogue {
     }
   }
 
-  /** Read a fixed byte budget even if the file is replaced after it is opened. */
   private readJson<T>(filePath: string): T | null {
+    const file = this.readFile(filePath)
+    return file.state === 'parsed' ? (file.value as T) : null
+  }
+
+  /**
+   * Read a fixed byte budget even if the file is replaced after it is opened.
+   * A file read whole that is not JSON at all is told apart as damaged: every
+   * write here renames a whole file into place, so only a power loss or disk
+   * damage leaves one, and no running writer is still writing it.
+   */
+  private readFile(filePath: string): CatalogueFile {
     let fd: number | undefined
     try {
       fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
       const stat = fs.fstatSync(fd)
-      if (!stat.isFile() || stat.size > THREAD_CATALOGUE_MAX_HEAD_BYTES) return null
+      if (!stat.isFile() || stat.size > THREAD_CATALOGUE_MAX_HEAD_BYTES) return { state: 'unread' }
       const bytes = Buffer.alloc(stat.size + 1)
       const count = fs.readSync(fd, bytes, 0, bytes.length, 0)
-      if (count !== stat.size) return null
-      return JSON.parse(bytes.toString('utf8', 0, count)) as T
+      if (count !== stat.size) return { state: 'unread' }
+      try {
+        return { state: 'parsed', value: JSON.parse(bytes.toString('utf8', 0, count)) }
+      } catch {
+        const exact = fs.fstatSync(fd, { bigint: true })
+        return { state: 'damaged', identity: `${exact.dev}:${exact.ino}:${count}:${exact.mtimeNs}` }
+      }
     } catch {
-      return null
+      return { state: 'unread' }
     } finally {
       if (fd !== undefined) {
         try {
@@ -344,10 +381,11 @@ export class ThreadCatalogue {
     return path.join(this.directory, 'pending', writer, chatId)
   }
 
+  /** `damaged` is set for a ticket file left without its bytes, and names it. */
   private repairTickets(
     writer: ThreadCatalogueWriter,
     chatId: string
-  ): Array<{ file: string; ticket: ThreadCatalogueTicket | null }> {
+  ): Array<{ file: string; ticket: ThreadCatalogueTicket | null; damaged?: string }> {
     const directory = this.repairDirectory(writer, chatId)
     let names: string[]
     try {
@@ -360,7 +398,11 @@ export class ThreadCatalogue {
       .filter((name) => name.endsWith('.json'))
       .map((name) => {
         const file = path.join(directory, name)
-        const ticket = this.readJson<ThreadCatalogueTicket>(file)
+        const read = this.readFile(file)
+        if (read.state === 'damaged') {
+          return { file, ticket: null, damaged: this.damagedDebt(writer, name, read.identity) }
+        }
+        const ticket = read.state === 'parsed' ? (read.value as ThreadCatalogueTicket | null) : null
         return {
           file,
           ticket:
@@ -879,7 +921,44 @@ export class ThreadCatalogue {
   }
 
   private head(writer: ThreadCatalogueWriter, chatId: string): PublicationHead | null {
-    const head = this.readJson<PublicationHead>(this.slot(writer, chatId))
+    return this.headSlot(writer, chatId).head
+  }
+
+  /** A writer's head, and when the file holding it is damaged, the debt that names it. */
+  private headSlot(
+    writer: ThreadCatalogueWriter,
+    chatId: string
+  ): { head: PublicationHead | null; damaged?: string } {
+    const file = this.readFile(this.slot(writer, chatId))
+    if (file.state === 'damaged')
+      return { head: null, damaged: this.damagedDebt(writer, 'head', file.identity) }
+    const head = file.state === 'parsed' ? (file.value as PublicationHead | null) : null
+    return { head: this.validHead(head, writer, chatId) }
+  }
+
+  /**
+   * A head or ticket left without its bytes is settled as a dead writer's
+   * pending head is: by a proof that the thread's sources are durable. The
+   * debt names the file and its bytes, so a file damaged again needs a proof
+   * of its own.
+   */
+  private damagedDebt(writer: ThreadCatalogueWriter, name: string, identity: string): string {
+    return `${DAMAGED_FILE_DEBT}${writer}:${name}:${identity}`
+  }
+
+  private debtProven(chatId: string, debt: string): boolean {
+    try {
+      return this.options.isSourceDurabilityProven?.(chatId, this.epoch(chatId), debt) === true
+    } catch {
+      return false
+    }
+  }
+
+  private validHead(
+    head: PublicationHead | null,
+    writer: ThreadCatalogueWriter,
+    chatId: string
+  ): PublicationHead | null {
     return head?.version === THREAD_CATALOGUE_VERSION &&
       head.ticket?.chatId === chatId &&
       head.ticket.writer === writer &&
@@ -904,19 +983,28 @@ export class ThreadCatalogue {
     return { desktop: identity('desktop'), host: identity('host') }
   }
 
+  /** One read of each writer's head and tickets, so that one check sees each file once. */
+  private sourceSlots(chatId: string): SourceSlot[] {
+    return (['desktop', 'host'] as const).map((writer) => ({
+      writer,
+      ...this.headSlot(writer, chatId),
+      tickets: this.repairTickets(writer, chatId)
+    }))
+  }
+
   private hasLivePublication(chatId: string): boolean {
-    for (const debt of this.sourceDurabilityDebts(chatId)) {
-      try {
-        if (this.options.isSourceDurabilityProven?.(chatId, this.epoch(chatId), debt) !== true)
-          return true
-      } catch {
-        return true
-      }
+    const slots = this.sourceSlots(chatId)
+    for (const debt of this.debtsOf(slots)) {
+      if (!this.debtProven(chatId, debt)) return true
     }
-    for (const writer of ['desktop', 'host'] as const) {
-      const head = this.head(writer, chatId)
-      if (!head && this.filePresence(this.slot(writer, chatId)) !== 'missing') return true
-      for (const { ticket } of this.repairTickets(writer, chatId)) {
+    for (const { writer, head, damaged, tickets } of slots) {
+      // A damaged head or ticket counts here once its debt is proven, above.
+      // A head that could not be read at all, or does not parse as one, still
+      // holds the thread.
+      if (!head && !damaged && this.filePresence(this.slot(writer, chatId)) !== 'missing')
+        return true
+      for (const { ticket, damaged: damagedTicket } of tickets) {
+        if (damagedTicket) continue
         if (!ticket) return true
         if (this.lifecycle(writer, ticket.writerId) === 'retired') continue
         if (
@@ -980,13 +1068,18 @@ export class ThreadCatalogue {
   }
 
   sourceDurabilityDebts(chatId: string): string[] {
+    return this.debtsOf(this.sourceSlots(chatId))
+  }
+
+  private debtsOf(slots: readonly SourceSlot[]): string[] {
     const debts = new Set<string>()
-    for (const writer of ['desktop', 'host'] as const) {
-      const head = this.head(writer, chatId)
+    for (const { writer, head, damaged, tickets } of slots) {
+      if (damaged) debts.add(damaged)
       if (head?.durabilityDebtId) debts.add(head.durabilityDebtId)
       if (head?.phase === 'pending' && this.lifecycle(writer, head.ticket.writerId) === 'retired')
         debts.add(`pending:${head.ticket.writerId}:${head.ticket.operationId}`)
-      for (const { ticket } of this.repairTickets(writer, chatId)) {
+      for (const { ticket, damaged: damagedTicket } of tickets) {
+        if (damagedTicket) debts.add(damagedTicket)
         if (!ticket || this.lifecycle(writer, ticket.writerId) !== 'retired') continue
         if (
           head?.ticket.writerId === ticket.writerId &&
@@ -1053,13 +1146,16 @@ export class ThreadCatalogue {
     const row = this.readJson<ResolvedHead>(this.slot('resolved', chatId))
     if (row?.publicationId !== publicationId || !row.coveredWriters) return false
     for (const writer of ['desktop', 'host'] as const) {
-      for (const { file, ticket } of this.repairTickets(writer, chatId)) {
-        if (!ticket) continue
+      for (const { file, ticket, damaged } of this.repairTickets(writer, chatId)) {
         const covered = row.coveredWriters[writer]
         if (
-          this.lifecycle(writer, ticket.writerId) === 'retired' ||
-          (covered?.writerId === ticket.writerId &&
-            ticket.operationOrdinal <= covered.operationOrdinal)
+          // A damaged ticket's proof is what this resolution waited for, and
+          // no writer ever writes a ticket's name a second time.
+          (damaged && this.debtProven(chatId, damaged)) ||
+          (ticket &&
+            (this.lifecycle(writer, ticket.writerId) === 'retired' ||
+              (covered?.writerId === ticket.writerId &&
+                ticket.operationOrdinal <= covered.operationOrdinal)))
         ) {
           try {
             fs.unlinkSync(file)

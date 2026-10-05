@@ -141,7 +141,7 @@ function resolve({ catalogue }: Resolver, revision: number, chatId = CHAT): bool
  * terms (`ThreadCatalogueWorkerService.importChat`): it flushes the thread's
  * sources to prove any durability debt it finds, gives up with
  * `source_unsettled` while a publication is still live (and tries again
- * 100 ms later, for as long as that lasts), and otherwise publishes a
+ * after a wait that doubles from 100 ms to 5 s), and otherwise publishes a
  * resolution and acknowledges it, which removes the tickets it covers.
  */
 function index(
@@ -540,7 +540,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(resolver.catalogue.repairChatIds()).toEqual([])
     })
 
-    it('documents current behaviour: a head whose name another thread’s barrier made safe without its bytes holds the thread in repair until it is published again', async () => {
+    it('settles a head whose name another thread’s barrier made safe without its bytes, without waiting for that thread to be published again', async () => {
       for (const chatId of [CHAT, OTHER]) {
         publish(source, 1, chatId)
         await debt.barrier(chatId)
@@ -559,20 +559,13 @@ describe.skipIf(process.platform === 'win32')(
         status: 'repair-pending',
         summary: { title: 'History at 1' }
       })
-      // An unreadable head names no debt the worker could prove, and counts
-      // as a live publication: every import gives up, for as long as it lasts.
-      expect(resolver.catalogue.sourceDurabilityDebts(OTHER)).toEqual([])
-      expect(index(resolver, 1, OTHER)).toBe('source_unsettled')
-      expect(index(resolver, 1, OTHER)).toBe('source_unsettled')
+      // The damaged head is a debt the worker proves by flushing the sources.
+      expect(resolver.catalogue.sourceDurabilityDebts(OTHER)).toHaveLength(1)
+      expect(index(resolver, 1, OTHER)).toBe('ready')
       expect(index(resolver, 2)).toBe('ready')
-
-      // Only the source writer's next publication of that thread replaces it.
-      publish(source, 3, OTHER)
-      await debt.barrier(OTHER)
-      expect(index(resolver, 3, OTHER)).toBe('ready')
     })
 
-    it('documents current behaviour: a head replaced while the barrier that covered the one before it was syncing directories is lost with it', async () => {
+    it('loses a head replaced while the barrier that covered the one before it was syncing directories, and derives the thread again from its sources', async () => {
       publish(source, 1)
       await debt.barrier(CHAT)
       expect(index(resolver, 1)).toBe('ready')
@@ -600,10 +593,11 @@ describe.skipIf(process.platform === 'win32')(
       const tickets = fs.readdirSync(ticketDirectory())
       expect(tickets).toHaveLength(1)
       expect(fs.readFileSync(path.join(ticketDirectory(), tickets[0]))).toHaveLength(0)
-      expect(index(resolver, 3)).toBe('source_unsettled')
+      expect(index(resolver, 3)).toBe('ready')
+      expect(resolver.catalogue.repairChatIds()).toEqual([])
     })
 
-    it('documents current behaviour: a ticket whose name reached the disk without its bytes keeps the thread in repair for good', async () => {
+    it('settles a ticket whose name reached the disk without its bytes, and removes it', async () => {
       publish(source, 1)
       await debt.barrier(CHAT)
       expect(index(resolver, 1)).toBe('ready')
@@ -619,15 +613,10 @@ describe.skipIf(process.platform === 'win32')(
       const file = path.join(ticketDirectory(), `${ticket.operationId}.json`)
       expect(fs.readFileSync(file)).toHaveLength(0)
       expect(resolver.catalogue.read(CHAT)).toMatchObject({ status: 'repair-pending' })
-      // A ticket anywhere counts as unresolved work for the whole catalogue.
       expect(resolver.catalogue.repairChatIds()).toEqual([CHAT])
-      expect(index(resolver, 1)).toBe('source_unsettled')
-      // Neither a new publication nor its resolution removes an unreadable ticket.
-      publish(source, 3)
-      await debt.barrier(CHAT)
-      expect(index(resolver, 3)).toBe('source_unsettled')
-      expect(fs.existsSync(file)).toBe(true)
-      expect(resolver.catalogue.repairChatIds()).toEqual([CHAT])
+      expect(index(resolver, 1)).toBe('ready')
+      expect(fs.existsSync(file)).toBe(false)
+      expect(resolver.catalogue.repairChatIds()).toEqual([])
     })
   }
 )
