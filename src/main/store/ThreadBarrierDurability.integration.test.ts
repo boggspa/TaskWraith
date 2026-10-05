@@ -282,34 +282,6 @@ const EVENTS = `run-events/${RUN}.jsonl`
 const DETAIL = `run-artifacts/${RUN}/tool-activity-details.jsonl`
 
 /**
- * The two ways the save that ends the run may be written under the switch,
- * and nothing else: with the terminal checkpoint of its small record, synced
- * on the calling thread and owing the folder its old segment left; or, once
- * the journal compacts by bytes in its worker, as an append like any other,
- * owing its segment and taking no checkpoint. Both are accepted until then.
- */
-const RUN_END_WAYS = [
-  {
-    issued: [`file:${CHECKPOINT_TEMPORARY}`, 'directory:chat-journal-v2'],
-    owed: ['directory:chat-journal-v2', `file:${EVENTS}`],
-    terminalCheckpoints: 1
-  },
-  { issued: [], owed: [`file:${JOURNAL}`, `file:${EVENTS}`], terminalCheckpoints: 0 }
-]
-
-/** The save that ended the run, checked to be exactly one of `RUN_END_WAYS`, and which. */
-function runEnd(step: { name: string; issued: string[]; paid: string[] }) {
-  expect(step.name).toBe('the run ends')
-  const written = { issued: step.issued, owed: [...step.paid].sort() }
-  expect(written).toBeOneOf(RUN_END_WAYS.map(({ issued, owed }) => ({ issued, owed })))
-  return RUN_END_WAYS.find(
-    (way) =>
-      JSON.stringify(way.issued) === JSON.stringify(written.issued) &&
-      JSON.stringify(way.owed) === JSON.stringify(written.owed)
-  )!
-}
-
-/**
  * What each save synced on the calling thread before the switch existed,
  * captured from the store at the commit before it was wired. With the switch
  * off, nothing may differ.
@@ -366,25 +338,25 @@ describe('barrier durability, switched off', () => {
 })
 
 describe('barrier durability, switched on', () => {
-  it('makes no thread store sync on the calling thread: only checkpoints still sync there', async () => {
+  it('makes no thread store sync on the calling thread, a checkpoint included', async () => {
     const { steps } = await drive(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
     expect(firstCheckpoint(steps[0])).toEqual(FIRST_CHECKPOINT_OWED)
-    expect(steps.slice(1, -1).map((step) => [step.name, step.issued])).toEqual([
+    expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
       ['a user message', []],
       ['an approval opens', []],
       ['the approval is answered', []],
-      ['a tool result whose detail is moved out', []]
+      ['a tool result whose detail is moved out', []],
+      ['the run ends', []]
     ])
-    runEnd(steps[steps.length - 1])
     expect(layers.built).toHaveLength(1)
   })
 
   it('reports the layer in the perf section: its debt, tickets, gates and threads', async () => {
-    const { AppStore, steps } = await drive(true)
+    const { AppStore } = await drive(true)
 
     const section = AppStore.getThreadBarrierDurabilityPerf()
     expect(section).toMatchObject({
@@ -393,10 +365,8 @@ describe('barrier durability, switched on', () => {
       // The new thread's first message, and the follow-up.
       tickets: { moments: { user_message: { noted: 2 }, run_final: { noted: 1 } } },
       gates: { waits: 0, overdue: 0, rejected: 0 },
-      checkpoints: {
-        initial: { count: 1 },
-        terminal: { count: runEnd(steps[steps.length - 1]).terminalCheckpoints }
-      },
+      // The new thread's first checkpoint; the run's end takes none.
+      checkpoints: { initial: { count: 1 }, terminal: { count: 0 } },
       tornTailsRepaired: 0
     })
     expect(section.debt?.barriers.raised).toBeGreaterThan(0)
@@ -409,7 +379,7 @@ describe('barrier durability, switched on', () => {
     expect(steps[0].name).toBe('a new thread with its first message')
     expect(firstCheckpoint(steps[0])).toEqual(FIRST_CHECKPOINT_OWED)
     // In any order: a barrier hands the port every file at once, then every directory.
-    expect(steps.slice(1, -1).map((step) => [step.name, [...step.paid].sort()])).toEqual([
+    expect(steps.slice(1).map((step) => [step.name, [...step.paid].sort()])).toEqual([
       [
         'a run starts',
         [
@@ -434,9 +404,9 @@ describe('barrier durability, switched on', () => {
           `file:${DETAIL}`,
           `file:${EVENTS}`
         ]
-      ]
+      ],
+      ['the run ends', [`file:${JOURNAL}`, `file:${EVENTS}`]]
     ])
-    runEnd(steps[steps.length - 1])
   })
 })
 
@@ -764,20 +734,20 @@ describe('the tickets each save takes', () => {
 
 describe("the journal's checkpoints, counted by trigger", () => {
   it.each([false, true])(
-    'are counted where they are written, and the switch (on: %s) changes none of them',
+    'are counted where they are written; with the switch on, a run ends without one (on: %s)',
     async (switchOn) => {
-      const { AppStore, steps } = await drive(switchOn)
+      const { AppStore } = await drive(switchOn)
 
       const counts = AppStore.getJournalCheckpointCounts()
       const written = Object.entries(counts)
         .filter(([, entry]) => entry.count > 0)
         .map(([trigger, entry]) => [trigger, entry.count, entry.bytes > 0, entry.mainMs >= 0])
-      // The new thread's first checkpoint, and the terminal one of its small
-      // record, which the switch leaves out once the journal compacts by bytes.
-      const terminal = switchOn ? runEnd(steps[steps.length - 1]).terminalCheckpoints : 1
+      // The new thread's first checkpoint, and with the switch off the terminal
+      // one of its small record. With it on, the save that ends the run is an
+      // append like any other, and the journal compacts by bytes in its worker.
       expect(written).toEqual([
         ['initial', 1, true, true],
-        ...(terminal ? [['terminal', 1, true, true]] : [])
+        ...(switchOn ? [] : [['terminal', 1, true, true]])
       ])
     }
   )
@@ -996,7 +966,7 @@ describe("the catalogue's heads and tickets", () => {
     expect(layers.built).toEqual([])
   })
 
-  it('switched on, writes them without a sync: only new directories and checkpoints sync', async () => {
+  it('switched on, writes them without a sync: only new directories sync', async () => {
     const steps = await driveWithCatalogue(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
@@ -1009,15 +979,15 @@ describe("the catalogue's heads and tickets", () => {
       'directory:thread-catalogue-v1'
     ]
     expect(firstCheckpoint(steps[0], catalogueFolders)).toEqual(FIRST_CHECKPOINT_OWED)
-    expect(steps.slice(1, -1).map((step) => [step.name, step.issued])).toEqual([
+    expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
       ['a user message', []],
       ['an approval opens', []],
       ['the approval is answered', []],
-      ['a tool result whose detail is moved out', []]
+      ['a tool result whose detail is moved out', []],
+      ['the run ends', []]
     ])
-    runEnd(steps[steps.length - 1])
   })
 
   it('switched on, owes no barrier anything for them', async () => {
