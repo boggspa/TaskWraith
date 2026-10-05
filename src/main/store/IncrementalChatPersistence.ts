@@ -236,10 +236,10 @@ export function createIncrementalChatPersistence(
    * journal's own replay. Taken on use, so a chat's record is retained only
    * until its next checkpoint.
    */
-  const headRecordByChatId = new Map<
-    string,
-    { record: ChatRecord; revision: number; fingerprint: HeadFingerprint }
-  >()
+  type HeadRecord = { record: ChatRecord; revision: number; fingerprint: HeadFingerprint }
+  const headRecordByChatId = new Map<string, HeadRecord>()
+  /** Offered only during an append; the journal checks it after advancing its head. */
+  let appendingHead: HeadRecord | null = null
   // Identity and O(1) fields only: the hot append path must never index into
   // (or clone) verified history.
   type HeadFingerprint = {
@@ -273,6 +273,11 @@ export function createIncrementalChatPersistence(
     })
   }
   const takeHead = (chatId: string, headRevision: number): ChatRecord | null => {
+    if (appendingHead?.record.appChatId === chatId && appendingHead.revision === headRevision) {
+      return sameFingerprint(headFingerprint(appendingHead.record), appendingHead.fingerprint)
+        ? appendingHead.record
+        : null
+    }
     const entry = headRecordByChatId.get(chatId)
     if (!entry) return null
     headRecordByChatId.delete(chatId)
@@ -389,7 +394,21 @@ export function createIncrementalChatPersistence(
       const mutationBytes = estimateChatRecordMutationBytes(batch)
       const durability: IncrementalChatAppendDurability =
         boundary === 'normal' && isDeferrableStreamingMutation(batch) ? 'deferred' : 'immediate'
-      journal.append(batch, { durability })
+      const outerHead = appendingHead
+      try {
+        if (journal.leavesSyncingToBarrier) {
+          // A cap checkpoint runs inside append, before rememberHead below.
+          // Offer the exact candidate without retaining an unsuccessful save.
+          appendingHead = {
+            record: next,
+            revision: batch.revision,
+            fingerprint: headFingerprint(next)
+          }
+        }
+        journal.append(batch, { durability })
+      } finally {
+        appendingHead = outerHead
+      }
       rememberHead(next)
       mutationBatchesAppended += 1
       mutationBytesAppended += mutationBytes
