@@ -31,6 +31,16 @@
  *
  * Clock. A window main timed on `performance.now` is placed in the profile by
  * the calibration markers captured around it (`mainProfileCalibration.cjs`).
+ * A marker is a 40 ms loop the profiler is asked to sample every millisecond;
+ * on a loaded machine the samples spread out and an anchor can be wider than
+ * the 2 ms the calibration accepts (2.6 and 2.8 ms in one capture of
+ * 4 October). Such a window is still placed at the middle of the markers'
+ * bounds, and is measured again at both ends of them: each share and sync
+ * owner carries the least and most of the three, and the window is refused
+ * only when they are more than `LOOSE_CLOCK_SHARE_TOLERANCE` apart. Moving a
+ * window moves a share by at most the distance over the window, so no
+ * placement in between lies further outside them than a quarter of the
+ * bounds' width over the window: a few millionths on a two-minute window.
  * A capture older than the markers timed its windows on the wall clock; its
  * profile is placed by taking its end as the moment the runner asked for the
  * stop plus a nominal lag, and each share and sync owner is then also reported
@@ -105,6 +115,15 @@ const MIN_WINDOW_COVERAGE = 0.99
  * slow to answer.
  */
 const ESTIMATED_PROFILE_END = Object.freeze({ lagMs: 500, lagBoundsMs: Object.freeze([0, 3000]) })
+/**
+ * How far the markers' bounds may move a share before the window is refused:
+ * a tenth of a percentage point, a fifth of the half-point differences the
+ * shares are read at, and the limit the phase exits give "no syncs". A share
+ * moves by at most the bounds' width over the window, so only a window
+ * shorter than a thousand times that width can be refused: under 3 s for the
+ * 2.8 ms seen, where the windows measured are 30 s and 120 s.
+ */
+const LOOSE_CLOCK_SHARE_TOLERANCE = 0.001
 /** A frame of the app's bundled main process, by its script's URL. */
 const BUNDLED_MAIN_SCRIPT = /^file:\/\/.*\/out\/main\/[^/]+\.js$/
 
@@ -524,6 +543,35 @@ function boundsAcross(candidates) {
   return bounds
 }
 
+/** The share, or sync owner, its bounds move the most, with how far. */
+function largestMove(shareBounds, syncOwnerBounds) {
+  const rows = [
+    ...Object.entries(shareBounds),
+    ...Object.entries(syncOwnerBounds ?? {}).map(([owner, bounds]) => [
+      `syncOwners.${owner}`,
+      bounds
+    ])
+  ]
+  let largest = null
+  for (const [share, bounds] of rows) {
+    if (bounds === null) continue
+    const by = round(bounds[1] - bounds[0], 5)
+    if (largest === null || by > largest.by) largest = { share, bounds, by }
+  }
+  return largest
+}
+
+/**
+ * Whether a calibration failed only on the width of its anchors: looser
+ * markers still place the window, within bounds that are reported.
+ */
+function onlyTooLoose(calibration) {
+  return (
+    !calibration.qualified &&
+    calibration.reasons.every((reason) => reason === 'marker_uncertainty_exceeded')
+  )
+}
+
 function measureWindow(window, context) {
   const head = {
     id: isPlainObject(window) && typeof window.id === 'string' ? window.id : null,
@@ -545,10 +593,17 @@ function measureWindow(window, context) {
 
   if (isPlainObject(window.clock)) {
     // Timed by main on performance.now: placed by the markers around it.
-    const calibration = calibrateMainProfile(
-      timeline.monotonic,
-      context.markers.filter((marker) => isPlainObject(marker) && marker.windowId === head.id)
+    const markers = context.markers.filter(
+      (marker) => isPlainObject(marker) && marker.windowId === head.id
     )
+    let calibration = calibrateMainProfile(timeline.monotonic, markers)
+    const loose = onlyTooLoose(calibration)
+    if (loose) {
+      // Placed whatever its anchors' width: how far that width moves a share decides.
+      calibration = calibrateMainProfile(timeline.monotonic, markers, {
+        maximumUncertaintyMs: Number.MAX_VALUE
+      })
+    }
     if (!calibration.qualified) {
       return unmeasured(`profile_calibration_unqualified:${calibration.reasons.join(',')}`)
     }
@@ -558,17 +613,53 @@ function measureWindow(window, context) {
     // The envelope of both markers' offsets, as the calibration maps a time.
     const lower = Math.min(...calibration.anchors.map((anchor) => anchor.offsetLowerMs))
     const upper = Math.max(...calibration.anchors.map((anchor) => anchor.offsetUpperMs))
-    const fromUs = (window.startedAtMs - (lower + upper) / 2) * 1000
+    const fromUsAt = (offsetMs) => (window.startedAtMs - offsetMs) * 1000
+    const fromUs = fromUsAt((lower + upper) / 2)
     if (!mapProfileIntervalBounds(calibration, fromUs, fromUs + windowMs * 1000)) {
       return unmeasured('window_outside_calibrated_interval')
     }
     // Both markers were sampled, so the profile covers everything between them.
+    const described = describeInterval(sum(fromUs), build)
+    if (!loose) {
+      return {
+        ...head,
+        measured: true,
+        clock: { basis: 'markers', uncertaintyMs: (upper - lower) / 2 },
+        windowMs: round(windowMs, 3),
+        ...described
+      }
+    }
+    const clock = {
+      basis: 'loose_markers',
+      uncertaintyMs: (upper - lower) / 2,
+      markerUncertaintyMs: calibration.anchors.map((anchor) => anchor.uncertaintyMs)
+    }
+    // The window at either end of the bounds as well as at their middle.
+    const candidates = [
+      described,
+      ...[lower, upper].map((offset) => describeInterval(sum(fromUsAt(offset)), build))
+    ]
+    const shareBounds = boundsAcross(candidates.map((candidate) => candidate.shares))
+    const syncOwnerBounds =
+      described.syncOwners === null
+        ? null
+        : boundsAcross(candidates.map((candidate) => candidate.syncOwners))
+    const moved = largestMove(shareBounds, syncOwnerBounds)
+    if (moved !== null && moved.by > LOOSE_CLOCK_SHARE_TOLERANCE) {
+      return {
+        ...unmeasured('loose_clock_moves_share'),
+        clock,
+        moved: { ...moved, tolerance: LOOSE_CLOCK_SHARE_TOLERANCE }
+      }
+    }
     return {
       ...head,
       measured: true,
-      clock: { basis: 'markers', uncertaintyMs: (upper - lower) / 2 },
+      clock,
       windowMs: round(windowMs, 3),
-      ...describeInterval(sum(fromUs), build)
+      ...described,
+      shareBounds,
+      syncOwnerBounds
     }
   }
 
@@ -769,6 +860,7 @@ function mainWindowProfileSharesForReport({ report, profilePath, calibrationMark
 
 module.exports = {
   ESTIMATED_PROFILE_END,
+  LOOSE_CLOCK_SHARE_TOLERANCE,
   mainWindowsOfReport,
   mainWindowProfileSharesForCapture,
   mainWindowProfileSharesForReport,

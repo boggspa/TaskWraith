@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   ESTIMATED_PROFILE_END,
+  LOOSE_CLOCK_SHARE_TOLERANCE,
   measureMainWindowProfileShares,
   mainWindowProfileSharesForCapture,
   mainWindowProfileSharesForReport
@@ -550,6 +551,191 @@ describe('the profile clock', () => {
     const [window] = measure({ markers: [MARKERS[0]] }).windows
     expect(window.measured).toBe(false)
     expect(window.reason).toMatch(/^profile_calibration_unqualified:/)
+  })
+
+  /**
+   * Markers of a real capture's shape: 40 ms brackets sampled about every
+   * 1.3 ms, so each anchor is 2.6 to 2.8 ms wide, more than the calibration's
+   * own 2 ms. The window opens 350 ms after the first marker and closes 3.2 s
+   * before the second. The profile clock is performance.now plus 1000 ms.
+   */
+  function looseRows(windowMs: number): Row[] {
+    const save = js('saveChat')
+    const read = [
+      js('reconcile'),
+      js('getChat'),
+      js('readChatRecordCached'),
+      js('readJson$7', 0, 17)
+    ]
+    return [
+      { stack: [native('(idle)')], us: 10_000 },
+      // Start marker 10..50 ms: samples end 11.3 and 48.7 ms into the window's clock.
+      { stack: [markerFrame('start')], us: 1_300 },
+      { stack: [markerFrame('start')], us: 37_400 },
+      { stack: [native('(idle)')], us: 1_300 },
+      { stack: [native('(idle)')], us: 348_600 },
+      // A read of the thread that ends as the window opens.
+      { stack: read, us: 1_400 },
+      // The window, from 400 ms: a tenth in catalogue syncs, then a twentieth
+      // in journal syncs, a fifth idle, 15% reading the thread, the rest busy.
+      {
+        stack: [save, js('begin'), js('beginPublication'), js('writeJson'), ...sync],
+        us: windowMs * 0.1 * 1000
+      },
+      {
+        stack: [save, js('persistIncrementalChatForHostSave'), js('appendLine'), ...sync],
+        us: windowMs * 0.05 * 1000
+      },
+      { stack: [native('(idle)')], us: windowMs * 0.2 * 1000 },
+      { stack: read, us: windowMs * 0.15 * 1000 },
+      { stack: [js('handleProviderOutput', 1)], us: windowMs * 0.5 * 1000 },
+      { stack: [native('(idle)')], us: 3_200_000 },
+      // End marker: samples end 1.4 ms after it began and 1.4 ms before it ended.
+      { stack: [markerFrame('end')], us: 1_400 },
+      { stack: [markerFrame('end')], us: 37_200 },
+      { stack: [native('(idle)')], us: 1_400 }
+    ]
+  }
+  const looseMarkers = (windowMs: number) => {
+    const endBeforeMs = 400 + windowMs + 3_200
+    return [marker('start', 10, 50), marker('end', endBeforeMs, endBeforeMs + 40)]
+  }
+  const looseWindow = (windowMs: number) => ({
+    ...WINDOW,
+    startedAtMs: 400,
+    endedAtMs: 400 + windowMs
+  })
+  const measureLoose = (windowMs: number) =>
+    measure({
+      profile: buildProfile(looseRows(windowMs)),
+      windows: [looseWindow(windowMs)],
+      markers: looseMarkers(windowMs)
+    }).windows[0]
+
+  it('measures a window whose markers are looser than the calibration allows, within their bounds', () => {
+    const window = measureLoose(120_000)
+    expect(window).toMatchObject({
+      measured: true,
+      clock: { basis: 'loose_markers' },
+      windowMs: 120_000,
+      sampledMs: 120_000
+    })
+    // The envelope of the two anchors is 2.8 ms wide: 1.4 ms either way.
+    expect(window.clock.uncertaintyMs).toBeCloseTo(1.4, 6)
+    expect(window.clock.markerUncertaintyMs.map((ms: number) => Math.round(ms * 10) / 10)).toEqual([
+      2.6, 2.8
+    ])
+    expect(window.shares).toMatchObject({ idle: 0.2, busy: 0.8, sync: 0.15, wholeThreadRead: 0.15 })
+    expect(window.syncOwners).toMatchObject({ cataloguePublication: 0.1, journal: 0.05 })
+    // Placed 1.4 ms later it loses that much catalogue sync at its start and
+    // gains idle at its end; placed earlier it gains the read before it and
+    // loses busy time at its end.
+    expect(window.shareBounds).toMatchObject({
+      idle: [0.2, 0.20001],
+      busy: [0.79999, 0.8],
+      sync: [0.14999, 0.15],
+      wholeThreadRead: [0.15, 0.15001]
+    })
+    expect(window.syncOwnerBounds).toMatchObject({
+      cataloguePublication: [0.09999, 0.1],
+      journal: [0.05, 0.05],
+      other: [0, 0]
+    })
+    // An owner the build cannot vouch for has no bounds either.
+    const renamed = buildScripts(
+      BUNDLE_LINES.map((line) => line.replace('appendRunEvent', 'appendEvent'))
+    )
+    const [unowned] = measure({
+      profile: buildProfile(looseRows(120_000)),
+      windows: [looseWindow(120_000)],
+      markers: looseMarkers(120_000),
+      buildScripts: renamed
+    }).windows
+    expect(unowned).toMatchObject({ measured: true, syncOwners: null, syncOwnerBounds: null })
+  })
+
+  it('refuses a loose window only when its bounds move a share by more than the tolerance', () => {
+    expect(LOOSE_CLOCK_SHARE_TOLERANCE).toBe(0.001)
+    // 1.4 ms either way on 1,400 ms moves a share by exactly the tolerance.
+    const accepted = measureLoose(1_400)
+    expect(accepted.measured).toBe(true)
+    expect(accepted.shareBounds.idle).toEqual([0.2, 0.201])
+    // On 1,300 ms it moves it by more.
+    const refused = measureLoose(1_300)
+    expect(refused).toEqual({
+      id: 'light_beside_0',
+      repetition: 0,
+      measured: false,
+      reason: 'loose_clock_moves_share',
+      clock: {
+        basis: 'loose_markers',
+        uncertaintyMs: refused.clock.uncertaintyMs,
+        markerUncertaintyMs: refused.clock.markerUncertaintyMs
+      },
+      moved: { share: 'idle', bounds: [0.2, 0.20108], by: 0.00108, tolerance: 0.001 }
+    })
+    expect(refused.clock.uncertaintyMs).toBeCloseTo(1.4, 6)
+  })
+
+  it('refuses a loose window when its bounds move a sync owner, though no share moves', () => {
+    // The window opens on a catalogue sync and closes on a journal sync, with a
+    // journal sync either side of it: placed later it trades catalogue sync
+    // for journal sync, placed earlier journal for journal.
+    const save = js('saveChat')
+    const catalogue = [save, js('begin'), js('beginPublication'), js('writeJson'), ...sync]
+    const journal = [save, js('persistIncrementalChatForHostSave'), js('appendLine'), ...sync]
+    const windowMs = 1_300
+    const rows: Row[] = [
+      ...looseRows(windowMs).slice(0, 4),
+      { stack: [native('(idle)')], us: 348_600 },
+      { stack: journal, us: 1_400 },
+      { stack: catalogue, us: 130_000 },
+      { stack: [native('(idle)')], us: 260_000 },
+      { stack: [js('handleProviderOutput', 1)], us: 845_000 },
+      { stack: journal, us: 65_000 },
+      { stack: journal, us: 1_400 },
+      { stack: [native('(idle)')], us: 3_198_600 },
+      ...looseRows(windowMs).slice(-3)
+    ]
+    const [window] = measure({
+      profile: buildProfile(rows),
+      windows: [looseWindow(windowMs)],
+      markers: looseMarkers(windowMs)
+    }).windows
+    expect(window).toMatchObject({
+      measured: false,
+      reason: 'loose_clock_moves_share',
+      moved: {
+        share: 'syncOwners.cataloguePublication',
+        bounds: [0.09892, 0.1],
+        by: 0.00108,
+        tolerance: 0.001
+      }
+    })
+  })
+
+  it('still refuses loose markers that fail the calibration in any other way', () => {
+    const windowMs = 120_000
+    const [start, end] = looseMarkers(windowMs)
+    const mismatched = { ...end, pid: 43, identity: 'main:43:performance.timeOrigin:5000' }
+    const other = measure({
+      profile: buildProfile(looseRows(windowMs)),
+      windows: [looseWindow(windowMs)],
+      markers: [start, mismatched]
+    }).windows[0]
+    expect(other).toMatchObject({ measured: false })
+    expect(other.reason).toMatch(/^profile_calibration_unqualified:/)
+    expect(other.reason).toContain('marker_uncertainty_exceeded')
+    expect(other.reason).not.toBe('profile_calibration_unqualified:marker_uncertainty_exceeded')
+    // A marker whose samples outlast its bracket is no placement at all.
+    const outlasted = measure({
+      profile: buildProfile(looseRows(windowMs)),
+      windows: [looseWindow(windowMs)],
+      markers: [marker('start', 12, 48), end]
+    }).windows[0]
+    expect(outlasted).toMatchObject({ measured: false })
+    expect(outlasted.reason).toMatch(/^profile_calibration_unqualified:/)
+    expect(outlasted.reason).toContain('marker_uncertainty_exceeded')
   })
 
   it('does not measure a window that reaches outside its markers', () => {

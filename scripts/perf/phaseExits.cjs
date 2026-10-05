@@ -20,7 +20,10 @@
  * window the lanes ruled out, shares the profile could not give, a function
  * the build no longer has (a renamed function reads as an absence), or a
  * window placed by an estimated clock, which can show a failure and never a
- * pass. Overall an exit passes only when every window passes.
+ * pass. A window placed within loose markers carries the least and most each
+ * share was measured at across its markers' bounds: it passes only when the
+ * most does, and fails only when the least does. Overall an exit passes only
+ * when every window passes.
  *
  * Two exits speak about syncs. `mainThreadSyncs` is every sync on the main
  * thread. `threadStoreSyncs` is the part owned by the thread's own stores
@@ -242,6 +245,16 @@ function judgeWindow(lane, share, { buildVerified, baseline, thresholds }) {
     if (value === null) return unmeasured('function_not_in_build')
     const limit = limitOf(exit)
     const extra = isBounds(bounds) ? { bounds } : undefined
+    if (basis === 'loose_markers') {
+      // Placed within the markers' bounds: settled only where every placement agrees.
+      if (extra === undefined) return unmeasured('profile_clock_loose', value)
+      if (!within(exit.passes, bounds[0], limit)) return row('fail', value, ['over_limit'], extra)
+      if (!within(exit.passes, bounds[1], limit)) {
+        return unmeasured('profile_clock_loose', value, extra)
+      }
+      if (named && !buildVerified) return unmeasured('build_names_unverified', value, extra)
+      return row('pass', value, [], extra)
+    }
     if (basis !== 'markers') {
       // Placed by an estimate: a failure only if no placement could pass.
       return extra !== undefined && !within(exit.passes, bounds[0], limit)

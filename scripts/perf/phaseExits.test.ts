@@ -577,6 +577,145 @@ describe('a window placed by an estimated clock', () => {
   })
 })
 
+describe('a window placed within loose markers', () => {
+  /** A window measured at these shares and owners, each the same at both ends unless bounded. */
+  const loose = (shares: Dict, owners: Dict, shareBounds: Dict = {}, ownerBounds: Dict = {}) =>
+    shareWindow({
+      clock: { basis: 'loose_markers', uncertaintyMs: 1.4, markerUncertaintyMs: [2.6, 2.8] },
+      shares,
+      syncOwners: owners,
+      shareBounds: {
+        ...Object.fromEntries(
+          Object.entries(shares).map(([name, value]) => [name, [value, value]])
+        ),
+        ...shareBounds
+      },
+      syncOwnerBounds: {
+        ...Object.fromEntries(
+          Object.entries(owners).map(([name, value]) => [name, [value, value]])
+        ),
+        ...ownerBounds
+      }
+    })
+  // Under every limit wherever the markers allow the window to be placed.
+  const quietLoose = () =>
+    loose(
+      SHARES_QUIET,
+      OWNERS_QUIET,
+      { sync: [0.0005, 0.0007], wholeThreadRead: [0.0003, 0.0005], busy: [0.19, 0.21] },
+      { journal: [0.0001, 0.0003] }
+    )
+  const unread = { scripts: 0, unavailable: 'build_scripts_unreadable' }
+
+  it('fails an exit only where every placement fails, and names the bounds', () => {
+    const result = evaluate(
+      [laneWindow()],
+      [
+        loose(SHARES_TODAY, OWNERS_TODAY, {
+          sync: [0.2441, 0.2443],
+          wholeThreadRead: [0.2448, 0.245],
+          busy: [0.9284, 0.9286]
+        })
+      ]
+    )
+    expect(rowOf(result, 'mainThreadSyncs')).toEqual({
+      repetition: 0,
+      verdict: 'fail',
+      value: 0.2442,
+      reasons: ['over_limit'],
+      bounds: [0.2441, 0.2443]
+    })
+    expect(rowOf(result, 'threadStoreSyncs')).toMatchObject({
+      verdict: 'fail',
+      value: 0.2184,
+      bounds: [0.2184, 0.2184]
+    })
+    expect(rowOf(result, 'mainWholeThreadReads')).toMatchObject({ verdict: 'fail' })
+    expect(rowOf(result, 'mainThreadBusy')).toMatchObject({ verdict: 'fail' })
+    expect(result.windows[0].clock).toBe('loose_markers')
+  })
+
+  it('passes an exit only where every placement passes', () => {
+    const quiet = evaluate([quietLane()], [quietLoose()])
+    for (const id of SHARE_EXITS) expect(rowOf(quiet, id).verdict).toBe('pass')
+    expect(rowOf(quiet, 'mainThreadSyncs')).toEqual({
+      repetition: 0,
+      verdict: 'pass',
+      value: 0.0006,
+      reasons: [],
+      bounds: [0.0005, 0.0007]
+    })
+    // The four thread stores at their least together, and at their most.
+    expect(rowOf(quiet, 'threadStoreSyncs')).toMatchObject({
+      value: 0.0004,
+      bounds: [0.0003, 0.0005]
+    })
+    expect(verdicts(quiet)).toMatchObject({ mainThreadSyncs: 'pass', mainThreadBusy: 'pass' })
+  })
+
+  it('cannot settle an exit whose limit lies inside the bounds', () => {
+    // At each limit where it was measured, and over it at one end of the bounds.
+    const straddling = evaluate(
+      [quietLane()],
+      [
+        loose(
+          { ...SHARES_QUIET, sync: 0.001, wholeThreadRead: 0.001, busy: 0.25 },
+          { ...OWNERS_QUIET, journal: 0.0008 },
+          { sync: [0.0009, 0.0011], wholeThreadRead: [0.0009, 0.0011], busy: [0.2499, 0.2501] },
+          { journal: [0.0007, 0.0009] }
+        )
+      ]
+    )
+    for (const id of SHARE_EXITS) {
+      expect(rowOf(straddling, id)).toMatchObject({
+        verdict: 'not_measured',
+        reasons: ['profile_clock_loose']
+      })
+      expect(rowOf(straddling, id)).toHaveProperty('bounds')
+    }
+    // Bounds it was not given cannot settle anything either.
+    const unbounded = evaluate(
+      [quietLane()],
+      [{ ...quietLoose(), shareBounds: undefined, syncOwnerBounds: null }]
+    )
+    for (const id of SHARE_EXITS) {
+      expect(rowOf(unbounded, id)).toMatchObject({
+        verdict: 'not_measured',
+        reasons: ['profile_clock_loose']
+      })
+      expect(rowOf(unbounded, id)).not.toHaveProperty('bounds')
+    }
+  })
+
+  it('still needs a build that vouches for the names before it passes an absence', () => {
+    const quiet = evaluatePhaseExits({
+      windows: [quietLane()],
+      shares: sharesOf([quietLoose()], unread)
+    })
+    expect(rowOf(quiet, 'mainWholeThreadReads')).toEqual({
+      repetition: 0,
+      verdict: 'not_measured',
+      value: 0.0004,
+      reasons: ['build_names_unverified'],
+      bounds: [0.0003, 0.0005]
+    })
+    expect(rowOf(quiet, 'threadStoreSyncs')).toMatchObject({
+      verdict: 'not_measured',
+      reasons: ['build_names_unverified']
+    })
+    expect(verdicts(quiet)).toMatchObject({ mainThreadSyncs: 'pass', mainThreadBusy: 'pass' })
+    // A presence fails all the same.
+    const busy = evaluatePhaseExits({
+      windows: [laneWindow()],
+      shares: sharesOf([loose(SHARES_TODAY, OWNERS_TODAY)], unread)
+    })
+    expect(verdicts(busy)).toMatchObject({
+      mainWholeThreadReads: 'fail',
+      threadStoreSyncs: 'fail'
+    })
+  })
+})
+
 describe('bytes written for the heavy thread against a baseline', () => {
   const baseline = {
     given: true,
