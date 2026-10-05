@@ -51,6 +51,10 @@ import {
   type ThreadWriterLiveness
 } from '../host-shared/thread-log/ThreadAuthorityFile'
 import {
+  retireOrphanThreadAuthority,
+  type ThreadAuthorityRetirementOutcome
+} from '../host-shared/thread-log/ThreadAuthorityRetirement'
+import {
   HostThreadOwnerTable,
   type HostDesktopPresence,
   type HostThreadOwnerTableSnapshot,
@@ -329,6 +333,54 @@ export class HostThreadOwnerRegistry {
         return BUSY
       }
       return decision
+    })
+  }
+
+  /**
+   * Retire an orphaned authority mark: a writer's mark whose writer has
+   * ended and whose log the Host has folded into its full copy. The orphan
+   * pathway is the only one that may retire a mark when no live desktop is
+   * attached; ordinary routes cannot borrow this method to skip the
+   * live-desktop exemption. Directory sync is awaited inside `files.remove`,
+   * and the witness is read again after the sync so a racing recreate is
+   * caught and reported as uncertain retirement, not durable success.
+   *
+   * The reservation must match the mark's recorded epoch: a writer cannot
+   * ask for retirement on a mark it never captured, and a future Host
+   * incarnation cannot retire a mark by an older host's grant.
+   */
+  async retireOrphanAuthority(
+    threadId: string,
+    reservation: ThreadOwnerEpoch
+  ): Promise<ThreadAuthorityRetirementOutcome> {
+    requireThreadId(threadId)
+    if (!this.options.enabled) return { kind: 'busy', reason: 'damaged' }
+    return this.serial(threadId, async () => {
+      const read = await this.options.files.read(threadId)
+      if (read.kind === 'none') return { kind: 'retired' }
+      if (read.kind === 'damaged') return { kind: 'busy', reason: 'damaged' }
+      const record = read.record
+      if (record.epoch.host !== reservation.host || record.epoch.grant !== reservation.grant) {
+        return { kind: 'busy', reason: 'damaged' }
+      }
+      if (!this.writerEnded(record.writer)) return { kind: 'busy', reason: 'live_writer' }
+      const witness = this.options.publicationWitness?.(threadId)
+      if (!witness || !witness()) return { kind: 'busy', reason: 'damaged' }
+      return retireOrphanThreadAuthority(threadId, {
+        reservation,
+        observation: {
+          reservation: record.epoch,
+          exactMarkWitness: witness,
+          writerEnded: true,
+          erasing: false
+        },
+        removeAndSync: async () => {
+          // The unlinked file + temp sibling + directory sync are awaited
+          // together: the orphan hold stays open across the await, so a power
+          // loss during the sync cannot resurrect the mark.
+          await this.options.files.remove(threadId)
+        }
+      })
     })
   }
 

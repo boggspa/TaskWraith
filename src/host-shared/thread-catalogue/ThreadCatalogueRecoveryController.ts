@@ -9,6 +9,7 @@ import type { PreparedThreadMutation } from '../../shared/threadCatalogueTypes'
 import { adoptPreparedThreadRecord } from './ThreadCatalogueAdoption'
 import type { ThreadCatalogueRecoveryHold, ThreadCatalogueProjection } from './ThreadCatalogue'
 import { ThreadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
+import { ORPHAN_RETIREMENT_TOKEN } from '../thread-log/ThreadAuthorityRetirement'
 
 /**
  * How long a recovery hold survives with no token-bearing request naming it.
@@ -282,6 +283,71 @@ export class ThreadCatalogueRecoveryController {
     if (pending?.timer) clearTimeout(pending.timer)
     pending?.release()
     return true
+  }
+
+  /**
+   * Orphan keep-custody end: release a recovery hold whose holder is no
+   * longer live, while keeping the in-memory admission open across the
+   * catalogue's directory sync. A failure to release or sync returns
+   * `uncertain` and leaves the pending entry in place, so a later retry or
+   * restart can finish the retirement without an immortal strand.
+   *
+   * The orphan pathway is the only one allowed to release without a live
+   * desktop or active work in progress. `ORPHAN_RETIREMENT_TOKEN` is the
+   * marker that distinguishes it; ordinary routes do not carry the token and
+   * cannot use this method to skip the live-desktop exemption. The type
+   * signature does the enforcement: callers that fail to pass the constant
+   * from `ThreadAuthorityRetirement` see a `busy/wrong_token` result and
+   * the hold is not touched.
+   */
+  async endOrphan(
+    chatId: string,
+    token: string,
+    orphanToken: symbol
+  ): Promise<
+    | { readonly kind: 'released' }
+    | { readonly kind: 'uncertain'; readonly reason: 'sync_failed' | 'release_refused' }
+    | {
+        readonly kind: 'busy'
+        readonly reason:
+          | 'wrong_token'
+          | 'token_mismatch'
+          | 'not_host_writer'
+          | 'live_desktop'
+          | 'live_work'
+      }
+  > {
+    this.options.assertAuthority()
+    if (orphanToken !== ORPHAN_RETIREMENT_TOKEN)
+      return { kind: 'busy', reason: 'wrong_token' }
+    const pending = this.pending.get(chatId)
+    const held = pending?.hold ?? this.options.publisher.catalogue.recoveryHold(chatId)
+    if (!held || held === 'unreadable' || held.token !== token)
+      return { kind: 'busy', reason: 'token_mismatch' }
+    if (!held.hostWriterId) return { kind: 'busy', reason: 'not_host_writer' }
+    try {
+      this.assertNoLiveDesktop()
+    } catch {
+      // A desktop whose pid is unresolved, or one that is alive, is the
+      // same outcome from the orphan pathway's point of view: the hold
+      // cannot be released while a live recovery identity exists.
+      return { kind: 'busy', reason: 'live_desktop' }
+    }
+    if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
+    // The release is synchronous on the catalogue side (unlink + sync). The
+    // call throws if the directory sync fails; we treat that as uncertain
+    // retirement and leave the pending entry in place.
+    let released = false
+    try {
+      released = this.options.publisher.catalogue.releaseRecoveryHold(chatId, token)
+    } catch {
+      return { kind: 'uncertain', reason: 'sync_failed' }
+    }
+    if (!released) return { kind: 'uncertain', reason: 'release_refused' }
+    this.pending.delete(chatId)
+    if (pending?.timer) clearTimeout(pending.timer)
+    pending?.release()
+    return { kind: 'released' }
   }
 
   async adopt(
