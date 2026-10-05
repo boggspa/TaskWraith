@@ -22,6 +22,14 @@
  *     immediately so a barrier cannot serialize behind an unrelated
  *     deferred fsync, and an unacknowledged journal flush rejects
  *     fail-closed.
+ *     Under barrier durability (TASKWRAITH_THREAD_BARRIER_DURABILITY) a save
+ *     syncs nothing, and the guarantee is the user's moments only: the
+ *     barrier waits for the tickets of the saves that held a user's message,
+ *     decision or destructive change, bounded at 1,000 ms. The rest of the
+ *     revision, streamed output above all, can be lost to a crash after the
+ *     barrier resolves; the thread's idle barrier or quit pays it. A queued
+ *     start's run row has a barrier of its own
+ *     (`AppStore.awaitChatRecordStartDurable`).
  *  2. No duplicate full-record re-serialization. The staged checkpoint is
  *     enqueued only when it is not already covered by a fresh artifact:
  *     with a submission in flight the barrier drains instead of forcing a
@@ -34,7 +42,10 @@
  */
 
 export interface HostMaterializationBarrierDeps {
-  /** Await the journal fsync of the current revision's appended delta. */
+  /**
+   * Await the journal fsync of the current revision's appended delta; under
+   * barrier durability, the user's moments in it alone.
+   */
   readonly awaitJournalDurability: (chatId: string) => Promise<void>
   readonly compatibility: {
     /** True when staged or submitted work exists for the chat. */
