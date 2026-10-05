@@ -777,13 +777,21 @@ function argumentValue(argv, name) {
 }
 
 /** Why the drill came to no judgement. */
-function whyNotJudged(record) {
+function whyNotJudged(record, firstGuard) {
   if (record === null) return 'first_launch_unrecorded'
   if (record.outcome !== 'killed') return record.outcome
   if (record.kill === null || record.kill.ok !== true) {
     return `kill_${record.kill ? record.kill.reason : 'not_made'}`
   }
+  if (!noBrowserStarted(firstGuard)) {
+    return `first_launch_browsers_${firstGuard ? firstGuard.browsers : 'unwatched'}`
+  }
   return 'read_back_not_run'
+}
+
+/** A launch's browser guard saw its listings through and no browser start. */
+function noBrowserStarted(guard) {
+  return isPlainObject(guard) && guard.browsers === 'none_started'
 }
 
 /** The drill's own failure, as the run's error would read. */
@@ -858,6 +866,8 @@ async function runKillDrill(options) {
   const temporaryBefore = listNames(temporaryFolder)
   const daemon = createSharedDaemon({ start: options.startDaemon, dir: dirs.model })
   const seen = { first: null, second: null }
+  // What each launch's browser guard saw, told by the runner as it cleans up.
+  const guards = { first: null, second: null }
   let record = null
   let judged = null
   // The drill stops the Host itself, by its identity: no launch's cleanup may
@@ -873,6 +883,9 @@ async function runKillDrill(options) {
       seen[name] = session
     },
     terminateOptions: { ...(runnerOptions.terminateOptions || {}), ...keepHost },
+    onBrowserGuard: (guard) => {
+      guards[name] = guard
+    },
     runManyAgents
   })
   try {
@@ -905,7 +918,14 @@ async function runKillDrill(options) {
     report.firstLaunch.childPid = seen.first ? seen.first.childPid : null
     report.firstLaunch.host = seen.first ? seen.first.serverInstance : null
     report.record = record
-    if (record !== null && record.kill !== null && record.kill.ok === true) {
+    // A browser that started, or a guard that cannot say, stops the drill
+    // before its relaunch.
+    if (
+      record !== null &&
+      record.kill !== null &&
+      record.kill.ok === true &&
+      noBrowserStarted(guards.first)
+    ) {
       try {
         const result = await options.runner(
           [...argv, '--reuse-instance-userdata', `--artifact-dir=${dirs.second}`],
@@ -1012,7 +1032,16 @@ async function runKillDrill(options) {
     report.endedAt = nowIso()
     report.verdict = report.judgement
       ? { ok: report.judgement.ok, reasons: report.judgement.reasons }
-      : { ok: false, reasons: [whyNotJudged(record)] }
+      : { ok: false, reasons: [whyNotJudged(record, guards.first)] }
+    // A launch that reached its child says what its guard saw; one that never
+    // did has no guard, and opened nothing.
+    report.browserGuard = {
+      ok: ['first', 'second'].every((name) =>
+        guards[name] === null ? seen[name] === null : noBrowserStarted(guards[name])
+      ),
+      firstLaunch: guards.first,
+      secondLaunch: guards.second
+    }
     const groupsEmpty = Object.values(report.processGroupsLeft).every(
       (left) => left === null || (Array.isArray(left) && left.length === 0)
     )
@@ -1027,7 +1056,7 @@ async function runKillDrill(options) {
       processGroupsEmpty: groupsEmpty,
       modelStopped
     }
-    report.ok = report.verdict.ok && report.cleanup.ok
+    report.ok = report.verdict.ok && report.cleanup.ok && report.browserGuard.ok
     fs.writeFileSync(
       path.join(drillDir, 'kill-drill-report.json'),
       `${JSON.stringify(report, null, 2)}\n`

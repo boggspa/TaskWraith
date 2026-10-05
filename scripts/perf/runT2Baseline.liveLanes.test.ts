@@ -377,6 +377,7 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
     mkdirSync(homesRoot, { recursive: true })
     const home = makeDirectory(homesRoot)
     const artifacts = makeDirectory(tmpdir())
+    const spawnEnvs: Array<Record<string, string>> = []
     const lanesCalls: LanesCall[] = []
     const snapshotReads: Array<Record<string, unknown>> = []
     const roundCalls: Array<{ prompt: string; timeoutMs: number | undefined }> = []
@@ -424,7 +425,12 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
         externalHostAdapters: { exists: () => true },
         spawnAdapters: {
           resolveElectronPath: () => '/virtual/Electron',
-          spawn: () => {
+          spawn: (
+            _command: string,
+            _args: string[],
+            spawnOptions: { env: Record<string, string> }
+          ) => {
+            spawnEnvs.push(spawnOptions.env)
             const child = new EventEmitter()
             return Object.assign(child, {
               pid: 9292,
@@ -542,18 +548,27 @@ describe('runT2Baseline --live-lanes launch wiring', () => {
           waitMs: 20,
           sleep: async () => {},
           killProcessGroup: () => {}
-        }
+        },
+        browserGuardAdapters: { listProcesses: async () => [] }
       }
     ).then(
       (result) => ({ result: result as Record<string, unknown>, error: null }),
       (error: unknown) => ({ result: null, error: error as Error })
     )
-    return { ...outcome, lanesCalls, snapshotReads, roundCalls, artifacts }
+    return { ...outcome, lanesCalls, snapshotReads, roundCalls, artifacts, spawnEnvs }
   }
 
   it('runs the lanes once the smoke settled, on the fixture’s two chats', async () => {
-    const { result, error, lanesCalls, snapshotReads, artifacts } = await launchLanes(true)
+    const { result, error, lanesCalls, snapshotReads, artifacts, spawnEnvs } =
+      await launchLanes(true)
     expect(error).toBeNull()
+    // Its child opens no browser and starts no provider login (browserGuard.cjs).
+    expect(spawnEnvs).toEqual([
+      expect.objectContaining({
+        TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
+        BROWSER: path.join(artifacts, 'browser-stand-in.sh')
+      })
+    ])
     expect(lanesCalls).toHaveLength(1)
     const [call] = lanesCalls
     expect(call.lightChatId).toBe('perf-light_beside_large_live-chat-01')

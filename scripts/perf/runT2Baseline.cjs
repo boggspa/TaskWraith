@@ -54,6 +54,7 @@ const {
   runIsolatedBuild
 } = require('./electronChildSession.cjs')
 const { resolveRolloutFlags, pinRolloutFlagsOnSpawnPlan } = require('./rolloutFlags.cjs')
+const { guardSpawnPlan, startBrowserGuard } = require('./browserGuard.cjs')
 const {
   buildScriptedDaemonConfig,
   daemonStopFailures,
@@ -2030,8 +2031,16 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     unpinnedSpawnPlan,
     options.env || process.env
   )
+  // A measured launch opens no browser and starts no provider login: no
+  // Grok usage probe, and BROWSER is a stand-in in the capture's folder.
+  const browserGuardPlan = willLaunch
+    ? guardSpawnPlan(ollamaEnvironment.spawnPlan, artifactDir)
+    : null
   // The measured child and its external Host run exactly the pinned state.
-  const spawnPlan = pinRolloutFlagsOnSpawnPlan(ollamaEnvironment.spawnPlan, rolloutFlags)
+  const spawnPlan = pinRolloutFlagsOnSpawnPlan(
+    browserGuardPlan ? browserGuardPlan.spawnPlan : ollamaEnvironment.spawnPlan,
+    rolloutFlags
+  )
 
   const generatedFixture = generatePerfFixture({
     workload,
@@ -2282,6 +2291,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     userDataPath: userDataResolved.userDataPath,
     home,
     profileReused: Boolean(args.reuseInstanceUserData),
+    // Set because it changes startup a little: no Grok usage probe runs.
+    browserGuard: browserGuardPlan ? browserGuardPlan.record : null,
     // Provenance of the armed Host perf snapshot transport (null unless a
     // real launch carries TASKWRAITH_PERF_HOST_SNAPSHOT_PATH into the child).
     hostPerfSnapshotPath: willLaunch ? hostSnapshotPath : null,
@@ -2377,6 +2388,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
   /** @type {object|null} */
   let childSession = null
+  /** @type {{ standIn: string, finish: () => Promise<object> }|null} */
+  let browserGuard = null
   // Sticky: an abort that arrives before the spawn has no child to kill, and
   // the listener is `{ once: true }`, so without this the signal is consumed
   // and forgotten and the launch proceeds as if it never happened.
@@ -2628,6 +2641,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
         report.isolation = isolationVerification
       }
+
+      // Written and listed last before the spawn, so a browser that starts
+      // after this is one the launch started.
+      browserGuard = await startBrowserGuard({
+        captureDir: artifactDir,
+        ...(options.browserGuardAdapters || {})
+      })
 
       setCapturePhase('launch', {}, { log: true })
       // A SIGTERM during fixture build or preflight fired the abort listener
@@ -3593,6 +3613,23 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           })
         }
       }
+      // Read once everything the launch started is down. What the guard saw
+      // goes to the report, the progress journal, a failed launch's error and
+      // onBrowserGuard; a browser that started is reported, never signalled.
+      if (browserGuard) {
+        report.browserGuard = await browserGuard.finish()
+        if (launchError) launchError.browserGuard = report.browserGuard
+        if (typeof options.onBrowserGuard === 'function') {
+          try {
+            options.onBrowserGuard(report.browserGuard)
+          } catch (error) {
+            cleanupFailures.push({
+              phase: 'onBrowserGuard',
+              error: String(error && error.message ? error.message : error)
+            })
+          }
+        }
+      }
       if (cleanupFailures.length) {
         report.cleanupFailures = cleanupFailures
         if (launchError) {
@@ -3609,7 +3646,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
                 childTerminationSucceeded,
                 ...(childTermination == null ? {} : { childTermination }),
                 failures: cleanupFailures
-              }
+              },
+              ...(report.browserGuard ? { browserGuard: report.browserGuard } : {})
             },
             { log: false }
           )

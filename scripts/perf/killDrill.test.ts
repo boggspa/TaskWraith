@@ -943,18 +943,41 @@ describe('the drill', () => {
     `--instance-id=${INSTANCE}`
   ]
 
+  /** What a launch's browser guard says when no browser started. */
+  const noBrowser = (launch: number) => ({
+    browser: `/drill/launch-${launch}/browser-stand-in.sh`,
+    requestsFile: `/drill/launch-${launch}/browser-requests.txt`,
+    requests: [],
+    browsers: 'none_started',
+    browsersStarted: [],
+    processListing: { before: 700, after: 700, error: null }
+  })
+  const firefoxStarted = (launch: number) => ({
+    ...noBrowser(launch),
+    requests: ['https://accounts.example.test/oauth2/auth?…'],
+    browsers: 'started',
+    browsersStarted: [{ pid: 12287, command: 'firefox', browser: 'firefox' }],
+    processListing: { before: 700, after: 714, error: null }
+  })
+
   /**
    * A runner that does what the drill needs of the real one: the first
    * launch materializes the profile, reports the session it verified, starts
-   * the model, runs the phase and unwinds through its own cleanup; the
-   * relaunch runs the read-back on the threads the profile holds.
+   * the model, runs the phase and unwinds through its own cleanup, which
+   * tells what its browser guard saw (`guards`, a launch each, or none when
+   * null); the relaunch runs the read-back on the threads the profile holds.
    */
-  function fakeRunner(w: ReturnType<typeof world>, chats: Record<string, unknown>) {
+  function fakeRunner(
+    w: ReturnType<typeof world>,
+    chats: Record<string, unknown>,
+    guards: Array<Record<string, unknown> | null> = [noBrowser(1), noBrowser(2)]
+  ) {
     const calls: Array<{ argv: string[]; options: Record<string, any> }> = []
     const daemonStops: unknown[] = []
     const runner = async (argv: string[], options: Record<string, any>) => {
       calls.push({ argv, options })
       const first = calls.length === 1
+      const guard = guards[calls.length - 1]
       if (first) mkdirSync(w.profile, { recursive: true })
       const socketNamespace = path.join(w.temporary, 'twh2-501-aaaa')
       mkdirSync(socketNamespace, { recursive: true })
@@ -978,6 +1001,7 @@ describe('the drill', () => {
         return { ok: agents.verdict.ok }
       } finally {
         daemonStops.push(await daemon.stop())
+        if (guard) options.onBrowserGuard(guard)
       }
     }
     return { calls, daemonStops, runner }
@@ -1053,9 +1077,11 @@ describe('the drill', () => {
       ['--reuse-instance-userdata', `--artifact-dir=${path.join(w.drillDir, 'launch-2-read-back')}`]
     ])
     for (const { options: launch } of fake.calls) {
-      // No capture steps, the operator's options kept, and no launch's
-      // cleanup may reap the Host by its command line.
+      // No capture steps, the operator's options kept, what each launch's
+      // browser guard saw told back, and no launch's cleanup may reap the
+      // Host by its command line.
       expect(launch).toMatchObject({ maxCapturePhaseMs: 0, allowDirtyLaunch: true })
+      expect(launch.onBrowserGuard).toEqual(expect.any(Function))
       expect(launch.terminateOptions.waitMs).toBe(20)
       expect(await launch.terminateOptions.listPidsMatchingCommandNeedle('anything')).toEqual([])
     }
@@ -1080,6 +1106,7 @@ describe('the drill', () => {
       judgement: { counts: { acknowledged: 6, acknowledgedPresent: 6, seenToEnd: 4 } },
       modelStop: { pid: 99, exit: { code: 0 }, forced: false, summary: true },
       processGroupsLeft: { first: [], second: [] },
+      browserGuard: { ok: true, firstLaunch: noBrowser(1), secondLaunch: noBrowser(2) },
       profilePath: w.profile
     })
     // The Hosts are stopped by the identities recorded, on the drill's own profile.
@@ -1156,6 +1183,46 @@ describe('the drill', () => {
       ok: false,
       verdict: { ok: false, reasons: ['kill_group_survived'] },
       secondLaunch: { ended: 'not_launched' }
+    })
+  })
+
+  it('never relaunches unless the first launch’s guard saw no browser start, and still stops what it left', async () => {
+    const cases: Array<[Record<string, unknown> | null, string]> = [
+      [firefoxStarted(1), 'first_launch_browsers_started'],
+      [
+        { ...noBrowser(1), browsers: 'unknown', processListing: { error: 'ps timed out' } },
+        'first_launch_browsers_unknown'
+      ],
+      [null, 'first_launch_browsers_unwatched']
+    ]
+    for (const [guard, reason] of cases) {
+      const w = world()
+      const fake = fakeRunner(w, keptChats(), [guard])
+      const { options, kills, hostStops } = drillOptions(w, fake.runner)
+      const report = await drill.runKillDrill(options)
+      expect(kills).toEqual([4321])
+      expect(fake.calls).toHaveLength(1)
+      expect(hostStops).toHaveLength(1)
+      expect(report).toMatchObject({
+        ok: false,
+        verdict: { ok: false, reasons: [reason] },
+        secondLaunch: { ended: 'not_launched' },
+        browserGuard: { ok: false, firstLaunch: guard, secondLaunch: null },
+        cleanup: { ok: true }
+      })
+    }
+  })
+
+  it('is not ok when a browser started during the relaunch, though nothing was lost', async () => {
+    const w = world()
+    const fake = fakeRunner(w, keptChats(), [noBrowser(1), firefoxStarted(2)])
+    const report = await drill.runKillDrill(drillOptions(w, fake.runner).options)
+    expect(fake.calls).toHaveLength(2)
+    expect(report).toMatchObject({
+      ok: false,
+      verdict: { ok: true, reasons: [] },
+      cleanup: { ok: true },
+      browserGuard: { ok: false, firstLaunch: noBrowser(1), secondLaunch: firefoxStarted(2) }
     })
   })
 

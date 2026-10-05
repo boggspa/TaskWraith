@@ -1,6 +1,15 @@
+import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -125,13 +134,24 @@ type PhaseCall = { priorRounds: Array<Record<string, unknown>>; threads: unknown
  * One launch whose child, sockets and isolation proof are fakes, so the run
  * reaches the live-round block as a real one does. The smoke's rounds and
  * the many-agent phase are the seams; the capture phases after the phase
- * are skipped by a spent budget, as a real overrun would skip them.
+ * are skipped by a spent budget, as a real overrun would skip them. `onSpawn`
+ * sees the child's environment as it is spawned; any other `extra` replaces
+ * the runner option of its name.
  */
-async function launch(home: string, args: string[], withPhase = true) {
+async function launch(
+  home: string,
+  args: string[],
+  withPhase = true,
+  extra: Record<string, unknown> = {}
+) {
+  const { onSpawn, ...extraOptions } = extra as {
+    onSpawn?: (env: Record<string, string>) => void
+  }
   const artifacts = makeDirectory(tmpdir())
   const phaseCalls: PhaseCall[] = []
   const roundCalls: Array<{ prompt: string; chatId: string }> = []
   const daemonStarts: unknown[] = []
+  const spawnEnvs: Array<Record<string, string>> = []
   const outcome = await runT2BaselineCli(
     [
       '--workload=many_agents_live',
@@ -178,7 +198,13 @@ async function launch(home: string, args: string[], withPhase = true) {
       externalHostAdapters: { exists: () => true },
       spawnAdapters: {
         resolveElectronPath: () => '/virtual/Electron',
-        spawn: () => {
+        spawn: (
+          _command: string,
+          _args: string[],
+          spawnOptions: { env: Record<string, string> }
+        ) => {
+          spawnEnvs.push(spawnOptions.env)
+          if (onSpawn) onSpawn(spawnOptions.env)
           const child = new EventEmitter()
           return Object.assign(child, {
             pid: 9294,
@@ -257,13 +283,16 @@ async function launch(home: string, args: string[], withPhase = true) {
             }
           }
         : {}),
-      terminateOptions: { waitMs: 20, sleep: async () => {}, killProcessGroup: () => {} }
+      terminateOptions: { waitMs: 20, sleep: async () => {}, killProcessGroup: () => {} },
+      // Nothing on this machine is listed: a test that looks says what it sees.
+      browserGuardAdapters: { listProcesses: async () => [] },
+      ...extraOptions
     }
   ).then(
     (result) => ({ result: result as Record<string, any>, error: null }),
-    (error: unknown) => ({ result: null, error: error as Error })
+    (error: unknown) => ({ result: null, error: error as Error & Record<string, any> })
   )
-  return { ...outcome, phaseCalls, roundCalls, daemonStarts }
+  return { ...outcome, artifacts, spawnEnvs, phaseCalls, roundCalls, daemonStarts }
 }
 
 const CHATS = ['perf-many_agents_live-chat-01', 'perf-many_agents_live-chat-02']
@@ -334,6 +363,125 @@ describe('a relaunch on the profile an earlier launch left', () => {
       )
     ).rejects.toThrow(
       '--reuse-instance-userdata relaunches a profile: pass it with --launch, never --dry-run'
+    )
+  })
+})
+
+describe('what a launch may open', () => {
+  it('gives the child of each launch the empty Grok usage override and the stand-in as BROWSER', async () => {
+    const home = makeHome()
+    // The stand-in is there to be run by the time the child is.
+    const runnableAtSpawn: number[] = []
+    const atSpawn = {
+      onSpawn: (env: Record<string, string>) =>
+        runnableAtSpawn.push(statSync(env.BROWSER).mode & 0o111)
+    }
+    const runs = [
+      await launch(home, ['--materialize-instance-userdata'], true, atSpawn),
+      await launch(home, ['--reuse-instance-userdata'], true, atSpawn)
+    ]
+    expect(runnableAtSpawn).toEqual([0o111, 0o111])
+    // A dry run launches nothing and keeps the plan it had.
+    const dry = (await runT2BaselineCli(
+      ['--workload=dual_run', '--dry-run', `--artifact-dir=${makeDirectory(tmpdir())}`],
+      { repoRoot, provenance: PROVENANCE }
+    )) as Record<string, any>
+    expect(dry.spawnPlan.env).not.toHaveProperty('BROWSER')
+    expect(dry.spawnPlan.env).not.toHaveProperty('TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE')
+    expect(dry.report.launchPlan.browserGuard).toBeNull()
+    for (const run of runs) {
+      expect(run.error).toBeNull()
+      const standIn = path.join(run.artifacts, 'browser-stand-in.sh')
+      expect(run.spawnEnvs).toHaveLength(1)
+      expect(run.spawnEnvs[0]).toMatchObject({
+        TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
+        BROWSER: standIn
+      })
+      const launchPlan = run.result!.report.launchPlan
+      expect(launchPlan.browserGuard).toEqual({
+        grokUsageBinaryOverride: '',
+        browser: standIn,
+        requestsFile: path.join(run.artifacts, 'browser-requests.txt')
+      })
+      expect(launchPlan.shellCommand).toContain(
+        `TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE= BROWSER=${standIn} `
+      )
+    }
+  })
+
+  it('reports what the stand-in was asked and any browser that started, whether the launch returns or throws', async () => {
+    const home = makeHome()
+    const firefox = '/Applications/Firefox.app/Contents/MacOS/firefox'
+    const listings = () => {
+      const left = [
+        [{ pid: 10, command: '/usr/sbin/cfprefsd' }],
+        [
+          { pid: 10, command: '/usr/sbin/cfprefsd' },
+          { pid: 20, command: firefox }
+        ]
+      ]
+      return { listProcesses: async () => left.shift() }
+    }
+    // The child asks for a login page, as a provider's CLI would.
+    const asksForALogin = (env: Record<string, string>) => {
+      const asked = spawnSync(env.BROWSER, ['https://accounts.example.test/oauth2/auth?state=s1'])
+      expect(asked.status).toBe(0)
+    }
+    const caught = (artifacts: string) => ({
+      browser: path.join(artifacts, 'browser-stand-in.sh'),
+      requestsFile: path.join(artifacts, 'browser-requests.txt'),
+      requests: ['https://accounts.example.test/oauth2/auth?…'],
+      browsers: 'started',
+      browsersStarted: [{ pid: 20, command: 'firefox', browser: 'firefox' }],
+      processListing: { before: 1, after: 2, error: null }
+    })
+
+    const returned = await launch(home, ['--materialize-instance-userdata'], true, {
+      onSpawn: asksForALogin,
+      browserGuardAdapters: listings()
+    })
+    expect(returned.error).toBeNull()
+    expect(returned.result!.report.browserGuard).toEqual(caught(returned.artifacts))
+    // What a run measured is still judged by its own verdict.
+    expect(returned.result!.ok).toBe(true)
+
+    const told: unknown[] = []
+    const thrown = await launch(home, ['--reuse-instance-userdata'], true, {
+      onSpawn: asksForALogin,
+      browserGuardAdapters: listings(),
+      onBrowserGuard: (record: unknown) => told.push(record),
+      runManyAgents: async () => {
+        throw new Error('the phase took the app down')
+      }
+    })
+    expect(thrown.error?.message).toBe('the phase took the app down')
+    expect(thrown.error?.browserGuard).toEqual(caught(thrown.artifacts))
+    expect(told).toEqual([caught(thrown.artifacts)])
+    const progress = JSON.parse(
+      readFileSync(path.join(thrown.artifacts, 'perf-t2-progress.json'), 'utf8')
+    )
+    expect(progress.browserGuard).toEqual(caught(thrown.artifacts))
+
+    // A caller whose callback throws loses nothing the launch recorded.
+    const broken = await launch(home, ['--reuse-instance-userdata'], true, {
+      onBrowserGuard: () => {
+        throw new Error('the caller broke')
+      }
+    })
+    expect(broken.error).toBeNull()
+    expect(broken.result!.report.browserGuard.browsers).toBe('none_started')
+    expect(broken.result!.report.cleanupFailures).toEqual([
+      { phase: 'onBrowserGuard', error: 'the caller broke' }
+    ])
+  })
+
+  it('reaches the child of every launch through the one spawn, with the guarded plan', () => {
+    const source = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')
+    expect(source.match(/spawnExactElectronChild\(/g)).toHaveLength(1)
+    expect(source).toMatch(/childSession = spawnExactElectronChild\(\{\s+spawnPlan,/)
+    expect(source.match(/const spawnPlan = /g)).toHaveLength(1)
+    expect(source).toMatch(
+      /const spawnPlan = pinRolloutFlagsOnSpawnPlan\(\s+browserGuardPlan \? browserGuardPlan\.spawnPlan : ollamaEnvironment\.spawnPlan,/
     )
   })
 })
