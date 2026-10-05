@@ -33,6 +33,7 @@ type Lanes = {
 const roundsModule = require('./manyAgentRounds.cjs') as {
   DEFAULT_MANY_AGENT_LANE_OPTIONS: Record<string, number>
   createManyAgentLanes: (options: Record<string, unknown>) => Lanes
+  manyAgentPrompt: (place: number, index: number) => string
 }
 const { THREAD_OBSERVER_GLOBAL } = require('./liveThreadObserver.cjs') as {
   THREAD_OBSERVER_GLOBAL: string
@@ -634,6 +635,10 @@ describe('what crosses to the runner, and what is refused', () => {
       'Many agents, thread 3, round 1: answer briefly.',
       'Many agents, thread 4, round 1: answer briefly.'
     ])
+    // Named once, so whoever finds a send again by its text asks for the same.
+    expect(app.sends.map((send) => send.prompt)).toEqual(
+      [0, 1, 2, 3].map((place) => roundsModule.manyAgentPrompt(place, 1))
+    )
   })
 
   it('gives copies, not its own records', async () => {

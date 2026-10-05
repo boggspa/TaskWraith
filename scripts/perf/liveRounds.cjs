@@ -638,6 +638,11 @@ function liveRoundsVerdict(rounds) {
  * The warm-up round (a model's first use writes settings on main), then the
  * smoke round, each sent only once the one before it settled.
  */
+/** The prompt of the live round sent for `purpose`, one of LIVE_ROUND_PURPOSES. */
+function liveRoundPrompt(purpose) {
+  return `M1 live ${purpose} round: answer briefly.`
+}
+
 async function runLiveRoundSequence(options) {
   const runRound = options.runRound || runLiveSmokeRound
   const rounds = []
@@ -667,7 +672,7 @@ async function runLiveRoundSequence(options) {
   for (const purpose of LIVE_ROUND_PURPOSES) {
     const round = await runRound({
       ...options.roundOptions,
-      prompt: `M1 live ${purpose} round: answer briefly.`,
+      prompt: liveRoundPrompt(purpose),
       previousRoundId
     })
     rounds.push({ ...round, purpose })
@@ -722,6 +727,7 @@ module.exports = {
   daemonStopFailures,
   liveRoundsVerdict,
   liveModelsOf,
+  liveRoundPrompt,
   liveSeatsOf,
   neutralizeOllamaEnvironmentOnSpawnPlan,
   readD1Counters,

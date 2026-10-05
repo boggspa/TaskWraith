@@ -41,6 +41,14 @@ const DEFAULT_OPTIONS = Object.freeze({
   roundGapMs: 0
 })
 
+/**
+ * The prompt a thread's lane sends as its round `index` (counted from 1):
+ * no two sends of a run share one, so each is found again by its text.
+ */
+function manyAgentPrompt(place, index) {
+  return `Many agents, thread ${place + 1}, round ${index}: answer briefly.`
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -200,7 +208,7 @@ function createManyAgentLanes(options) {
   }
 
   async function sendRound(place, index) {
-    const prompt = `Many agents, thread ${place + 1}, round ${index}: answer briefly.`
+    const prompt = manyAgentPrompt(place, index)
     const sentAtMs = nowMs()
     try {
       const reply = await call(
@@ -330,5 +338,6 @@ function createManyAgentLanes(options) {
 
 module.exports = {
   DEFAULT_MANY_AGENT_LANE_OPTIONS: DEFAULT_OPTIONS,
-  createManyAgentLanes
+  createManyAgentLanes,
+  manyAgentPrompt
 }

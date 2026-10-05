@@ -1513,6 +1513,24 @@ function claimsAuthoritativeBaseline({ skipBuild, provenanceAuthoritative, liveR
   return !skipBuild && Boolean(provenanceAuthoritative) && !liveRounds
 }
 
+/** Whether `target` is a directory, by its own path or where it leads. */
+function isDirectory(target) {
+  try {
+    return fs.statSync(target).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The warm-up and smoke a relaunch on a reused profile does without: its
+ * first launch warmed the profile, and a round now would add to the record
+ * the caller's phase reads.
+ */
+async function skippedLiveRoundSequence() {
+  return { rounds: [], heavyWarmups: [], verdict: { ok: true, reasons: [] } }
+}
+
 /** Replay events a fixture schedules; a live-round fixture schedules none. */
 function scheduledReplayEvents(fixture) {
   return Array.isArray(fixture.replaySchedule) ? fixture.replaySchedule.length : 0
@@ -1525,6 +1543,7 @@ function parseArgs(argv) {
     launch: false,
     acceptIsolatedLaunch: false,
     materializeInstanceUserData: false,
+    reuseInstanceUserData: false,
     smokePlan: false,
     pretty: false,
     help: false,
@@ -1542,6 +1561,7 @@ function parseArgs(argv) {
     else if (arg === '--launch') out.launch = true
     else if (arg === '--i-accept-isolated-launch') out.acceptIsolatedLaunch = true
     else if (arg === '--materialize-instance-userdata') out.materializeInstanceUserData = true
+    else if (arg === '--reuse-instance-userdata') out.reuseInstanceUserData = true
     else if (arg === '--smoke-plan') out.smokePlan = true
     else if (arg === '--pretty') out.pretty = true
     else if (arg === '--lean') out.lean = true
@@ -1661,6 +1681,10 @@ Options:
   --artifact-dir=<path>             Report/profile output dir (default: out-dir or tmp)
   --home=<absolute>                 Synthetic isolated HOME (required for --launch; must be under worktree/perf-homes/)
   --materialize-instance-userdata   Write legacy_v1 into <home>/…/TaskWraith Dev <id>
+  --reuse-instance-userdata         Launch again on the profile an earlier launch with the same
+                                    --home and --instance-id left, never writing it: the kill
+                                    drill's relaunch. Sends no warm-up or smoke round, and only a
+                                    caller's own --live-agents phase may run on it
   --launch                          Opt-in spawn (still requires --i-accept-isolated-launch)
   --i-accept-isolated-launch        Explicit acceptance of isolated Electron spawn
   --instance-id=<id>                Unique id (sanitized to 16 chars for userData)
@@ -1852,6 +1876,27 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
   const willLaunch = Boolean(args.launch && args.acceptIsolatedLaunch)
 
+  // The kill drill's relaunch: the profile an earlier launch left, launched
+  // again as it is. Nothing may write it first, and a round sent before the
+  // caller's phase would add to the very record that phase reads.
+  if (args.reuseInstanceUserData) {
+    if (!willLaunch || args.dryRun) {
+      throw new Error(
+        '--reuse-instance-userdata relaunches a profile: pass it with --launch, never --dry-run'
+      )
+    }
+    if (args.materializeInstanceUserData || args.outDir != null) {
+      throw new Error(
+        '--reuse-instance-userdata launches the profile as it is; refuse --materialize-instance-userdata and --out-dir with it'
+      )
+    }
+    if (!args.liveAgents || typeof options.runManyAgents !== 'function') {
+      throw new Error(
+        "--reuse-instance-userdata keeps the first launch's state, its model daemon among it, so only a caller's own --live-agents phase may run on it"
+      )
+    }
+  }
+
   // Every programme rollout flag is pinned for the measured child: ON only
   // when declared with --flag, its OFF token otherwise (whatever the runner
   // inherited), and stated in the environment record either way.
@@ -1935,6 +1980,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       ...isolatedHomeEnvironment({ home, platform: launchPlatform })
     }
   })
+  if (args.reuseInstanceUserData && !isDirectory(userDataResolved.userDataPath)) {
+    throw new Error(
+      `Refusing --reuse-instance-userdata: there is no profile at ${userDataResolved.userDataPath} to launch again`
+    )
+  }
 
   /** @type {object|null} */
   let homeContainment = homeResolved.containment
@@ -2146,6 +2196,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     })
   } else if (args.dryRun) {
     materializeDir = path.join(artifactDir, 'dry-userdata')
+  } else if (args.reuseInstanceUserData) {
+    // Launched as the first launch left it: nothing is written here.
   } else if (willLaunch) {
     throw new Error(
       'Launch requires fixture materialize into exact instance userData. Pass --materialize-instance-userdata (or --out-dir for non-instance dry paths).'
@@ -2229,6 +2281,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     mainInspectorPort: spawnPlan.mainInspectorPort,
     userDataPath: userDataResolved.userDataPath,
     home,
+    profileReused: Boolean(args.reuseInstanceUserData),
     // Provenance of the armed Host perf snapshot transport (null unless a
     // real launch carries TASKWRAITH_PERF_HOST_SNAPSHOT_PATH into the child).
     hostPerfSnapshotPath: willLaunch ? hostSnapshotPath : null,
@@ -2836,7 +2889,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         setCapturePhase('live_rounds', {}, { log: true })
         const readDaemonState =
           options.liveDaemonState || (() => readScriptedDaemonState(liveDaemon.baseUrl))
-        const { rounds, heavyWarmups, verdict } = await runLiveRoundSequence({
+        const { rounds, heavyWarmups, verdict } = await (
+          args.reuseInstanceUserData ? skippedLiveRoundSequence : runLiveRoundSequence
+        )({
           // Every chat after the first is warmed up one at a time, as a heavy
           // chat's first save must be. A many-agent fixture's threads are all
           // light, and a round on each in turn would be most of the run.
@@ -2861,7 +2916,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               { log: true }
             )
         })
-        report.liveRounds = { ...report.liveRounds, rounds, heavyWarmups, verdict }
+        report.liveRounds = {
+          ...report.liveRounds,
+          rounds,
+          heavyWarmups,
+          verdict,
+          ...(args.reuseInstanceUserData ? { warmUpAndSmoke: 'skipped_profile_reused' } : {})
+        }
         if (args.liveLanes) {
           // M1 S5d: the measured live windows, started only once the warm-up
           // and the smoke settled. The Host window sampler feeds the S3b
@@ -2925,6 +2986,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             agents = await (options.runManyAgents || runT2ManyAgents)({
               page,
               mainSession: mainInspector,
+              // What the run sent before the phase, each round with its chat.
+              priorRounds: rounds.map((round) => ({
+                ...round,
+                chatId: round.chatId ?? fixture.chats[0].appChatId
+              })),
               onCalibrationMarker: (marker) => calibrationMarkers.push(marker),
               onCalibrationFailure: (reason) => calibrationFailures.push(reason),
               threads: plan.threads,

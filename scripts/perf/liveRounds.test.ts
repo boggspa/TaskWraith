@@ -12,6 +12,7 @@ const live = require('./liveRounds.cjs') as {
   NEUTRALIZED_OLLAMA_ENV_KEYS: string[]
   buildScriptedDaemonConfig: (fixture: unknown, options?: Record<string, unknown>) => unknown
   liveSeatsOf: (fixture: unknown) => { provider: string; model: string }
+  liveRoundPrompt: (purpose: string) => string
   neutralizeOllamaEnvironmentOnSpawnPlan: (
     plan: unknown,
     inherited: unknown
@@ -905,6 +906,11 @@ describe('the live-round verdict and sequence', () => {
         previousRoundId: 'round-warm_up'
       }
     ])
+
+    // Named once, so whoever finds a send again by its text asks for the same.
+    expect(calls.map((call) => call.prompt)).toEqual(
+      ['warm_up', 'smoke'].map((purpose) => live.liveRoundPrompt(purpose))
+    )
 
     calls.length = 0
     const stuck = await run(['timeout'])
