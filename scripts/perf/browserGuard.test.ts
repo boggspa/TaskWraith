@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import {
+  accessSync,
   appendFileSync,
+  constants,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -108,29 +110,36 @@ describe('the measured child’s environment', () => {
 })
 
 describe('the browser stand-in', () => {
-  it('writes down what it was asked to open, opens nothing and exits 0', () => {
-    const dir = makeDirectory()
-    const paths = guard.writeBrowserStandIn(dir)
-    expect(paths).toEqual({
-      standIn: path.join(dir, 'browser-stand-in.sh'),
-      requests: path.join(dir, 'browser-requests.txt')
-    })
-    expect(statSync(paths.standIn).mode & 0o777).toBe(0o755)
-    const env = { PATH: '/usr/bin:/bin' }
-    const first = spawnSync(paths.standIn, [LOGIN], { encoding: 'utf8', env })
-    const second = spawnSync(paths.standIn, ['--new-window', 'https://example.test/next'], {
-      encoding: 'utf8',
-      env
-    })
-    for (const run of [first, second]) {
-      expect(run.status).toBe(0)
-      expect(run.stdout).toBe('')
-      expect(run.stderr).toBe('')
+  // The stand-in is a /bin/sh script that a reader of BROWSER runs as it is.
+  // The harness runs only on macOS: Windows has neither the shell nor an
+  // execute bit, and the guard refuses a Windows path.
+  it.skipIf(process.platform === 'win32')(
+    'writes down what it was asked to open, opens nothing and exits 0',
+    () => {
+      const dir = makeDirectory()
+      const paths = guard.writeBrowserStandIn(dir)
+      expect(paths).toEqual({
+        standIn: path.join(dir, 'browser-stand-in.sh'),
+        requests: path.join(dir, 'browser-requests.txt')
+      })
+      // Runnable as it is, which is all a reader of BROWSER needs of it.
+      expect(() => accessSync(paths.standIn, constants.X_OK)).not.toThrow()
+      const env = { PATH: '/usr/bin:/bin' }
+      const first = spawnSync(paths.standIn, [LOGIN], { encoding: 'utf8', env })
+      const second = spawnSync(paths.standIn, ['--new-window', 'https://example.test/next'], {
+        encoding: 'utf8',
+        env
+      })
+      for (const run of [first, second]) {
+        expect(run.status).toBe(0)
+        expect(run.stdout).toBe('')
+        expect(run.stderr).toBe('')
+      }
+      expect(readFileSync(paths.requests, 'utf8')).toBe(
+        `${LOGIN}\n--new-window https://example.test/next\n`
+      )
     }
-    expect(readFileSync(paths.requests, 'utf8')).toBe(
-      `${LOGIN}\n--new-window https://example.test/next\n`
-    )
-  })
+  )
 
   it('reads back only what was asked after a given point, without queries or fragments', () => {
     const dir = makeDirectory()

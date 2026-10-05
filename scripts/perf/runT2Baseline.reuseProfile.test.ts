@@ -2,12 +2,13 @@ import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
+  accessSync,
+  constants,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -367,47 +368,63 @@ describe('a relaunch on the profile an earlier launch left', () => {
   })
 })
 
+/** What running `file` as a program would be refused with, or null when it would not be. */
+function runRefusal(file: string): string | null {
+  try {
+    accessSync(file, constants.X_OK)
+    return null
+  } catch (failure) {
+    return (failure as NodeJS.ErrnoException).code ?? String(failure)
+  }
+}
+
 describe('what a launch may open', () => {
-  it('gives the child of each launch the empty Grok usage override and the stand-in as BROWSER', async () => {
-    const home = makeHome()
-    // The stand-in is there to be run by the time the child is.
-    const runnableAtSpawn: number[] = []
-    const atSpawn = {
-      onSpawn: (env: Record<string, string>) =>
-        runnableAtSpawn.push(statSync(env.BROWSER).mode & 0o111)
+  // The stand-in is a /bin/sh script, and the guard refuses any path that is
+  // not a plain POSIX one. The harness runs only on macOS: Windows has
+  // neither the shell nor an execute bit to check.
+  it.skipIf(process.platform === 'win32')(
+    'gives the child of each launch the empty Grok usage override and the stand-in as BROWSER',
+    async () => {
+      const home = makeHome()
+      // The stand-in is there to be run by the time the child is: nothing
+      // would refuse to run it at either spawn.
+      const refusedAtSpawn: Array<string | null> = []
+      const atSpawn = {
+        onSpawn: (env: Record<string, string>) => refusedAtSpawn.push(runRefusal(env.BROWSER))
+      }
+      const runs = [
+        await launch(home, ['--materialize-instance-userdata'], true, atSpawn),
+        await launch(home, ['--reuse-instance-userdata'], true, atSpawn)
+      ]
+      expect(refusedAtSpawn).toEqual([null, null])
+      // A dry run launches nothing and keeps the plan it had.
+      const dry = (await runT2BaselineCli(
+        ['--workload=dual_run', '--dry-run', `--artifact-dir=${makeDirectory(tmpdir())}`],
+        { repoRoot, provenance: PROVENANCE }
+      )) as Record<string, any>
+      expect(dry.spawnPlan.env).not.toHaveProperty('BROWSER')
+      expect(dry.spawnPlan.env).not.toHaveProperty('TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE')
+      expect(dry.report.launchPlan.browserGuard).toBeNull()
+      for (const run of runs) {
+        expect(run.error).toBeNull()
+        const standIn = path.join(run.artifacts, 'browser-stand-in.sh')
+        expect(run.spawnEnvs).toHaveLength(1)
+        expect(run.spawnEnvs[0]).toMatchObject({
+          TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
+          BROWSER: standIn
+        })
+        const launchPlan = run.result!.report.launchPlan
+        expect(launchPlan.browserGuard).toEqual({
+          grokUsageBinaryOverride: '',
+          browser: standIn,
+          requestsFile: path.join(run.artifacts, 'browser-requests.txt')
+        })
+        expect(launchPlan.shellCommand).toContain(
+          `TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE= BROWSER=${standIn} `
+        )
+      }
     }
-    const runs = [
-      await launch(home, ['--materialize-instance-userdata'], true, atSpawn),
-      await launch(home, ['--reuse-instance-userdata'], true, atSpawn)
-    ]
-    expect(runnableAtSpawn).toEqual([0o111, 0o111])
-    // A dry run launches nothing and keeps the plan it had.
-    const dry = (await runT2BaselineCli(
-      ['--workload=dual_run', '--dry-run', `--artifact-dir=${makeDirectory(tmpdir())}`],
-      { repoRoot, provenance: PROVENANCE }
-    )) as Record<string, any>
-    expect(dry.spawnPlan.env).not.toHaveProperty('BROWSER')
-    expect(dry.spawnPlan.env).not.toHaveProperty('TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE')
-    expect(dry.report.launchPlan.browserGuard).toBeNull()
-    for (const run of runs) {
-      expect(run.error).toBeNull()
-      const standIn = path.join(run.artifacts, 'browser-stand-in.sh')
-      expect(run.spawnEnvs).toHaveLength(1)
-      expect(run.spawnEnvs[0]).toMatchObject({
-        TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
-        BROWSER: standIn
-      })
-      const launchPlan = run.result!.report.launchPlan
-      expect(launchPlan.browserGuard).toEqual({
-        grokUsageBinaryOverride: '',
-        browser: standIn,
-        requestsFile: path.join(run.artifacts, 'browser-requests.txt')
-      })
-      expect(launchPlan.shellCommand).toContain(
-        `TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE= BROWSER=${standIn} `
-      )
-    }
-  })
+  )
 
   it('reports what the stand-in was asked and any browser that started, whether the launch returns or throws', async () => {
     const home = makeHome()
