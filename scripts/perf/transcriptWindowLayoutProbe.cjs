@@ -6,9 +6,10 @@
 // Add --baseline=<git-ref> to exercise the same fixture against an older hook.
 // Add --paging to render the full panel over heavily grouped history.
 const { execFileSync, spawn } = require('node:child_process')
-const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
+const { mkdtempSync, readFileSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const path = require('node:path')
+const { removeOwnTempDir } = require('./ownTempDir.cjs')
 
 async function runParent() {
   const child = spawn(require('electron'), [__filename, ...process.argv.slice(2)], {
@@ -131,7 +132,7 @@ async function runElectron() {
     window.destroy()
     exitCode = report.ok ? 0 : 1
   } finally {
-    rmSync(fixtureDir, { recursive: true, force: true })
+    removeOwnTempDir(fixtureDir, 'taskwraith-transcript-window-')
   }
   app.exit(exitCode)
 }

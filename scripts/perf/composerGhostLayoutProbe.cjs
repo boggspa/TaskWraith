@@ -2,9 +2,10 @@
 'use strict'
 
 const { spawn } = require('node:child_process')
-const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
+const { mkdtempSync, readFileSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const path = require('node:path')
+const { removeOwnTempDir } = require('./ownTempDir.cjs')
 
 const STYLES = [
   'default',
@@ -127,7 +128,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   ipcMain.once('composer-ghost-layout-result', (_event, result) => {
     process.stdout.write(`COMPOSER_GHOST_LAYOUT_RESULT=${JSON.stringify(result)}\n`)
     window.destroy()
-    rmSync(fixtureDir, { recursive: true, force: true })
+    removeOwnTempDir(fixtureDir, 'taskwraith-composer-ghost-')
     app.exit(0)
   })
   await window.loadFile(fixturePath)

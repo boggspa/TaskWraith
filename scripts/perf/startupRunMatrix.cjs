@@ -37,6 +37,14 @@
  *   node scripts/perf/startupRunMatrix.cjs --instance-id=perf-startup-<you> \
  *     [--port=9379] [--cold=3] [--warm=5] [--out=/tmp/startup-matrix.jsonl] \
  *     [--authority-root=/abs/path] [--seed-wal=<file.jsonl>]
+ *
+ * What it removes, and nothing else: the instance's own profile
+ * (~/Library/Application Support/TaskWraith Dev <id>) before each cold run and
+ * at the end, and, for --seed-wal, the authority root. That root must be a
+ * folder that is not there yet, which the run creates, or one directly in
+ * <repo>/perf-homes named startup-authority-<name>. A home, an Application
+ * Support folder, a folder above either or anything inside Application
+ * Support is refused before anything runs.
  */
 
 const { spawn } = require('child_process')
@@ -48,6 +56,118 @@ const path = require('path')
 const REPO = path.resolve(__dirname, '..', '..')
 const ELECTRON = path.join(REPO, 'node_modules', '.bin', 'electron')
 const PROBE = path.join(__dirname, 'startupMilestoneProbe.cjs')
+const { perfHomesBoundary } = require('./isolatedHome.cjs')
+
+/**
+ * Where an authority root that is already there may be wiped for --seed-wal:
+ * directly in the harness's isolated homes, named by this prefix and more.
+ */
+const ISOLATED_HOMES = perfHomesBoundary(REPO)
+const AUTHORITY_ROOT_PREFIX = 'startup-authority-'
+const DEV_PROFILE_NAME = /^TaskWraith Dev [a-zA-Z0-9][a-zA-Z0-9._-]*$/
+
+function realpathOr(target, fallback) {
+  try {
+    return fs.realpathSync(target)
+  } catch {
+    return fallback
+  }
+}
+
+function isThere(target) {
+  try {
+    fs.lstatSync(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Whether `dir` is `ancestor` or lies inside it. */
+function isWithin(dir, ancestor) {
+  const relative = path.relative(ancestor, dir)
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+}
+
+const plainAbsolute = (value) =>
+  typeof value === 'string' && path.isAbsolute(value) && path.resolve(value) === value
+
+/**
+ * Why --seed-wal may not wipe `root`, or null when it may. A root that is not
+ * there yet is created by the run, so nothing is removed. One that is there
+ * must sit directly in the isolated homes, named by the prefix, and be no
+ * link. Never the home, an Application Support folder or a folder above
+ * either, by its own path or where it leads, nor anything inside Application
+ * Support.
+ *
+ * @param {string} root
+ * @param {{ home?: string, homesRoot?: string }} [context] the machine; the real one when omitted
+ * @returns {string | null}
+ */
+function authorityRootRefusal(root, context = {}) {
+  if (!plainAbsolute(root)) return 'not_a_plain_absolute_path'
+  const home = context.home || os.homedir()
+  const appSupport = path.join(home, 'Library', 'Application Support')
+  const appSupports = [appSupport, realpathOr(appSupport, appSupport)]
+  const guarded = [home, realpathOr(home, home), ...appSupports]
+  const real = realpathOr(root, null)
+  const forms = real ? [root, real] : [root]
+  if (forms.some((form) => guarded.some((dir) => isWithin(dir, form)))) {
+    return 'home_or_application_support_or_above'
+  }
+  if (forms.some((form) => appSupports.some((dir) => isWithin(form, dir)))) {
+    return 'inside_application_support'
+  }
+  if (!isThere(root)) return null
+  const homes = realpathOr(context.homesRoot || ISOLATED_HOMES, null)
+  const name = path.basename(root)
+  if (realpathOr(path.dirname(root), null) !== homes || real !== path.join(homes, name)) {
+    return 'not_in_isolated_homes'
+  }
+  if (!name.startsWith(AUTHORITY_ROOT_PREFIX) || name.length === AUTHORITY_ROOT_PREFIX.length) {
+    return 'name_without_prefix'
+  }
+  return null
+}
+
+/**
+ * Why the matrix may not remove `dir` as its instance's profile, or null when
+ * it may: only `TaskWraith Dev <id>` directly in the home's Application
+ * Support. Never the real app's profile, the unnamed dev profile, or the one
+ * the shared verify instance uses.
+ *
+ * @param {string} dir
+ * @param {{ home?: string }} [context] the machine; the real one when omitted
+ * @returns {string | null}
+ */
+function profileDirRefusal(dir, context = {}) {
+  if (!plainAbsolute(dir)) return 'not_a_plain_absolute_path'
+  const home = context.home || os.homedir()
+  if (path.dirname(dir) !== path.join(home, 'Library', 'Application Support')) {
+    return 'not_in_application_support'
+  }
+  const name = path.basename(dir)
+  if (!DEV_PROFILE_NAME.test(name)) return 'not_a_dev_instance_profile'
+  if (name === 'TaskWraith Dev verify') return 'shared_verify_profile'
+  return null
+}
+
+/** @param {string} root @param {{ home?: string, homesRoot?: string, rm?: Function }} [context] */
+function removeAuthorityRoot(root, context = {}) {
+  const refusal = authorityRootRefusal(root, context)
+  if (refusal) throw new Error(`refusing to remove ${root}: ${refusal}`)
+  if (!isThere(root)) return
+  const rm = context.rm || fs.rmSync
+  rm(root, { recursive: true, force: true })
+}
+
+/** @param {string} dir @param {{ home?: string, rm?: Function }} [context] */
+function removeProfileDir(dir, context = {}) {
+  const refusal = profileDirRefusal(dir, context)
+  if (refusal) throw new Error(`refusing to remove ${dir}: ${refusal}`)
+  const rm = context.rm || fs.rmSync
+  rm(dir, { recursive: true, force: true })
+}
 
 function arg(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
@@ -62,15 +182,6 @@ const outFile = arg('out', '/tmp/startup-matrix.jsonl')
 const authorityRoot = arg('authority-root', '')
 const seedWal = arg('seed-wal', '')
 
-if (authorityRoot && !path.isAbsolute(authorityRoot)) {
-  console.error('--authority-root must be an absolute path.')
-  process.exit(1)
-}
-if (seedWal && !authorityRoot) {
-  console.error('--seed-wal requires --authority-root (never seed the shared root).')
-  process.exit(1)
-}
-
 /**
  * Plants a known WAL into the isolated authority root so a run measures a
  * chosen history size rather than whatever the machine happens to hold. Only
@@ -81,7 +192,7 @@ function seedAuthorityRoot() {
   const dir = path.join(authorityRoot, 'work-lock-authority')
   // Only --seed-wal wipes. Without it the existing root is measured as-is,
   // which is how an "after checkpoint" run is compared against its own "before".
-  if (seedWal) fs.rmSync(authorityRoot, { recursive: true, force: true })
+  if (seedWal) removeAuthorityRoot(authorityRoot)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   if (!seedWal) return { reused: true, ...authorityRootShape() }
   const raw = fs.readFileSync(seedWal, 'utf8')
@@ -113,23 +224,15 @@ function authorityRootShape() {
   }
 }
 
-if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(instanceId) || instanceId === 'verify') {
-  console.error(
-    'Pass --instance-id=<unique id> (not "verify"; see .claude/skills/verify/SKILL.md).'
-  )
-  process.exit(1)
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // devAppName truncates the instance id to 16 chars for the app/profile name.
+function profileDirFor(id, home = os.homedir()) {
+  return path.join(home, 'Library', 'Application Support', `TaskWraith Dev ${id.slice(0, 16)}`)
+}
+
 function profileDir() {
-  return path.join(
-    os.homedir(),
-    'Library',
-    'Application Support',
-    `TaskWraith Dev ${instanceId.slice(0, 16)}`
-  )
+  return profileDirFor(instanceId)
 }
 
 function inspectorState() {
@@ -174,7 +277,7 @@ function classifyLog(logText) {
 }
 
 async function runOnce(kind, runIndex) {
-  if (kind === 'cold') fs.rmSync(profileDir(), { recursive: true, force: true })
+  if (kind === 'cold') removeProfileDir(profileDir())
   const env = { ...process.env, TASKWRAITH_INSTANCE_ID: instanceId, IOS_REMOTE_TRUE: '0' }
   delete env.ELECTRON_RUN_AS_NODE
   if (authorityRoot) env.TASKWRAITH_WORKSPACE_LOCK_AUTHORITY_ROOT = authorityRoot
@@ -295,11 +398,51 @@ async function main() {
   summary.authorityRoot = authorityRoot || '(shared per-user root)'
   summary.authority = authorityRootShape()
   console.log('SUMMARY ' + JSON.stringify(summary))
-  fs.rmSync(profileDir(), { recursive: true, force: true })
+  removeProfileDir(profileDir())
   console.log('MATRIX DONE')
 }
 
-main().catch((e) => {
-  console.error('matrix failed:', e)
-  process.exit(1)
-})
+/** The argument checks, each of which stops the matrix before it does anything. */
+function refuseBadArguments() {
+  if (authorityRoot && !path.isAbsolute(authorityRoot)) {
+    console.error('--authority-root must be an absolute path.')
+    process.exit(1)
+  }
+  if (seedWal && !authorityRoot) {
+    console.error('--seed-wal requires --authority-root (never seed the shared root).')
+    process.exit(1)
+  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,80}$/.test(instanceId) || instanceId === 'verify') {
+    console.error(
+      'Pass --instance-id=<unique id> (not "verify"; see .claude/skills/verify/SKILL.md).'
+    )
+    process.exit(1)
+  }
+  const refusal = seedWal ? authorityRootRefusal(authorityRoot) : null
+  if (refusal) {
+    console.error(
+      `--seed-wal would remove ${authorityRoot}, which it may not (${refusal}). Name a folder ` +
+        `that is not there yet, or one directly in ${ISOLATED_HOMES} named ${AUTHORITY_ROOT_PREFIX}<name>.`
+    )
+    process.exit(1)
+  }
+}
+
+// Loaded by its tests, the matrix runs nothing: it runs only as a command.
+if (require.main === module) {
+  refuseBadArguments()
+  main().catch((e) => {
+    console.error('matrix failed:', e)
+    process.exit(1)
+  })
+}
+
+module.exports = {
+  AUTHORITY_ROOT_PREFIX,
+  ISOLATED_HOMES,
+  authorityRootRefusal,
+  profileDirFor,
+  profileDirRefusal,
+  removeAuthorityRoot,
+  removeProfileDir
+}

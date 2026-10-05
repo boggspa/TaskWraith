@@ -6,15 +6,21 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { collectRepoProvenance } = require('./repoProvenance.cjs') as {
-  collectRepoProvenance: (options: { repoRoot: string; forceIsolated?: boolean }) => {
-    gitSha: string
-    dirty: boolean
-    dirtyPaths: string[]
-    isolatedWorktree: boolean
-    authoritativeBaseline: boolean
+const { collectRepoProvenance, detectIsolatedWorktree, liesInsideAnotherCheckout } =
+  require('./repoProvenance.cjs') as {
+    collectRepoProvenance: (options: { repoRoot: string; forceIsolated?: boolean }) => {
+      gitSha: string
+      dirty: boolean
+      dirtyPaths: string[]
+      isolatedWorktree: boolean
+      authoritativeBaseline: boolean
+    }
+    detectIsolatedWorktree: (repoRoot: string) => boolean
+    liesInsideAnotherCheckout: (
+      repoRoot: string,
+      options?: { realpath?: (target: string) => string }
+    ) => boolean
   }
-}
 const { runT2BaselineCli } = require('./runT2Baseline.cjs') as {
   runT2BaselineCli: (argv: string[], options: Record<string, unknown>) => Promise<unknown>
 }
@@ -163,5 +169,53 @@ describe('repo provenance', () => {
     ).rejects.toThrow(
       `Refusing launch: ${exportRoot} is not the root of a git checkout, so git cannot say it is clean`
     )
+  })
+})
+
+describe('which checkouts count as isolated', () => {
+  it('a linked worktree, by git’s own word, and not the checkout it was made from', () => {
+    const { root } = checkoutWithExport()
+    const { linked } = linkedWorktree(root)
+    expect(detectIsolatedWorktree(linked)).toBe(true)
+    expect(detectIsolatedWorktree(root)).toBe(false)
+  })
+
+  // A guess from the path, kept as it was and pinned: see detectIsolatedWorktree.
+  it('also a checkout of its own whose path runs through a worktrees folder, and no other', () => {
+    const base = makeDirectory()
+    const checkouts = {
+      worktrees: path.join(base, 'worktrees', 'clone'),
+      taskwraith: path.join(base, '.taskwraith-worktrees', 'repo', 'clone'),
+      plain: path.join(base, 'plain', 'clone'),
+      named: path.join(base, 'my-worktrees', 'clone')
+    }
+    for (const dir of Object.values(checkouts)) {
+      mkdirSync(dir, { recursive: true })
+      git(dir, 'init', '--quiet')
+    }
+    expect(detectIsolatedWorktree(checkouts.worktrees)).toBe(true)
+    expect(detectIsolatedWorktree(checkouts.taskwraith)).toBe(true)
+    expect(detectIsolatedWorktree(checkouts.plain)).toBe(false)
+    expect(detectIsolatedWorktree(checkouts.named)).toBe(false)
+  })
+})
+
+describe('whether a tree lies inside a checkout that is not its own', () => {
+  it('is false at a checkout’s root and outside any checkout, and true inside one', () => {
+    const { root, exportRoot } = checkoutWithExport()
+    expect(liesInsideAnotherCheckout(root)).toBe(false)
+    expect(liesInsideAnotherCheckout(exportRoot)).toBe(true)
+    expect(liesInsideAnotherCheckout(makeDirectory())).toBe(false)
+  })
+
+  it('is true when a root cannot be resolved, so nothing is taken for the tree’s own', () => {
+    const { root } = checkoutWithExport()
+    const asked: string[] = []
+    const failing = (target: string): string => {
+      asked.push(target)
+      throw new Error(`cannot resolve ${target}`)
+    }
+    expect(liesInsideAnotherCheckout(root, { realpath: failing })).toBe(true)
+    expect(asked).toHaveLength(1)
   })
 })
