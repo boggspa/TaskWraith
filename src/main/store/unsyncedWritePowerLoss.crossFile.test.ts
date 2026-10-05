@@ -6,12 +6,16 @@
  * the canonical load the app and the history worker share, the tool-detail
  * reader, the run-event reader and the catalogue's. It pins, as current
  * behaviour, whether the record loads, what stands in for the part that is
- * missing, and that nothing a resolved barrier covered is lost.
+ * missing, and that nothing the staging made durable or a resolved barrier
+ * covered is lost. Tool detail reaches a record only through the staging,
+ * once its own syncs made it durable; the cases where its bytes are missing
+ * behind a reference are kept as pins of what the readers tolerate when a
+ * disk loses them anyway.
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ThreadCatalogue,
   type ThreadCatalogueTicket
@@ -36,6 +40,7 @@ import {
   hydrateToolActivityDetails,
   readToolActivityDetailSync
 } from './ToolActivityDetailLedger'
+import { createToolActivityDetailStaging } from './ToolActivityDetailStaging'
 import type { ChatRecord, RunEventInput, RunEventRecord, ToolActivity } from './types'
 import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
 
@@ -210,43 +215,72 @@ describe.skipIf(process.platform === 'win32')(
       new ThreadCatalogueDiskReader({ profilePath: root, ...READER }).read(CHAT)!.chat
     const runEvents = (): RunEventRecord[] =>
       getRunEventReplaySync(RUN, eventsFile(), readRunEventFile).events
-    const detailWriter = (): ToolActivityDetailBatchWriter =>
-      new ToolActivityDetailBatchWriter(runArtifactsDir, undefined, {
-        chatId: CHAT,
-        note: debt.note
-      })
     const eventWriter = (): RunEventLedgerWriter =>
       new RunEventLedgerWriter({ runEventsDir, runArtifactsDir, noteDurabilityDebt: debt.note })
 
-    /** A tool call: its detail committed, and a reply that references it appended. */
+    /**
+     * A tool call whose detail is written without any sync, and a reply that
+     * references it appended. Nothing in the app writes detail so now: it is
+     * the state a disk that lost the bytes leaves.
+     */
     const toolCall = (
       previous: ChatRecord,
       id: string
     ): { record: ChatRecord; ref: ToolActivity } => {
-      const writer = detailWriter()
+      const writer = new ToolActivityDetailBatchWriter(runArtifactsDir)
       const ref = writer.stage(RUN, activity(id))!
-      writer.commit()
+      writer.writeUnsynced()
       const compact = compactToolActivityWithDetailRef(activity(id), ref)
       return { record: append(previous, replied(previous, [compact])), ref: compact }
     }
 
-    it('keeps everything a resolved barrier covered, in every file of the thread', async () => {
+    it('keeps everything the staging made durable and a resolved barrier covered, in every file of the thread', async () => {
       const events = eventWriter()
       events.append(lifecycle(1, 'running'))
-      const { record: withTool, ref } = toolCall(started(), 'tool-1')
+      const staging = createToolActivityDetailStaging({
+        runArtifactsDir,
+        port: disk.port,
+        appendRunEvent: (input) => events.appendStaged(input),
+        checkpointInput: (chat, checkpoint) => ({
+          ...event(0, { kind: 'tool', phase: 'artifact', source: 'main' }),
+          chatId: chat.appChatId,
+          payload: { type: 'tool_activity_detail_checkpoint', sha256: checkpoint.sha256 }
+        })
+      })
+      // The reply goes in with its tool call inline, and the call's detail is staged.
+      const first = staging.batch(started())
+      expect(first.stage(RUN, activity('tool-1'))).toBeNull()
+      first.commit()
+      const inline = append(started(), replied(started(), [activity('tool-1')]))
+      await vi.waitFor(() => expect(staging.snapshot().batches.durable).toBe(1))
+      // A later save takes the ref the batch made durable, and strips the row.
+      const next = staging.batch(inline)
+      const ref = next.stage(RUN, activity('tool-1'))!
+      next.commit()
+      const withRef = structuredClone(inline)
+      withRef.persistenceRevision = (inline.persistenceRevision ?? 0) + 1
+      withRef.messages[1].toolActivities = [
+        compactToolActivityWithDetailRef(activity('tool-1'), ref)
+      ]
+      append(inline, withRef)
       events.append(lifecycle(2, 'completed'))
-      const done = append(withTool, finished(withTool))
+      const done = append(withRef, finished(withRef))
+      // The barrier pays the journal and the run's events; the detail, its
+      // folders and its checkpoint were paid by the staging's own syncs.
       await debt.barrier(CHAT)
 
       disk.powerLoss()
 
-      expect(replayed()).toMatchObject({ revision: 3, appliedBatches: 2 })
+      expect(replayed()).toMatchObject({ revision: 4, appliedBatches: 3 })
       expect(loaded().runs[0]).toMatchObject({ status: 'completed' })
       expect(loaded().persistenceRevision).toBe(done.persistenceRevision)
-      expect(readToolActivityDetailSync(runArtifactsDir, ref.detailRef!)).toEqual(
+      expect(loaded().messages[1].toolActivities![0].detailRef).toEqual(ref)
+      expect(readToolActivityDetailSync(runArtifactsDir, ref)).toEqual(
         expect.objectContaining({ id: 'tool-1', parameters: activity('tool-1').parameters })
       )
-      expect(runEvents().map((record) => record.sequence)).toEqual([1, 2])
+      // The run's two events, and the checkpoint the staging appended between them.
+      expect(runEvents().map((record) => record.sequence)).toEqual([1, 2, 3])
+      expect(runEvents()[1].payload).toMatchObject({ type: 'tool_activity_detail_checkpoint' })
     })
 
     describe('tool detail and the journal', () => {
@@ -283,7 +317,10 @@ describe.skipIf(process.platform === 'win32')(
           id: 'tool-1'
         })
         // The run's next detail goes after the bytes nothing references.
-        const next = detailWriter().stage(RUN, activity('tool-2'))!
+        const next = new ToolActivityDetailBatchWriter(runArtifactsDir).stage(
+          RUN,
+          activity('tool-2')
+        )!
         expect(next.offset).toBe(ref.detailRef!.offset + ref.detailRef!.byteLength)
       })
     })

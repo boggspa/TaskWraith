@@ -2,7 +2,8 @@
  * Barrier durability through the real store: a thread's saves of each kind,
  * with what each one syncs on the calling thread and what it leaves owed.
  */
-import { appendFileSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHAT_DURABILITY_MOMENTS, type ChatDurabilityMoment } from './ChatDurabilityTickets'
 import type { ThreadBarrierDurability } from './ThreadBarrierDurability'
 import { ThreadCatalogueDiskReader } from './ThreadCatalogueDiskReader'
-import type { ThreadDurabilityPort } from './ThreadDurabilityDebt'
+import type { ThreadDurabilityPort, ThreadDurabilitySyncOptions } from './ThreadDurabilityDebt'
 import type { ChatRecord, RunEventInput } from './types'
 import { disposeHostOwnedStores, importHostOwnedStore } from './hostOwnedErasure.testutil'
 import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
@@ -35,8 +36,8 @@ vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
         ...options,
         now: () => Date.now() + layers.clockOffsetMs,
         port: {
-          syncFile: (target) => layers.port!.syncFile(target),
-          syncDirectory: (target) => layers.port!.syncDirectory(target)
+          syncFile: (target, sync) => layers.port!.syncFile(target, sync),
+          syncDirectory: (target, sync) => layers.port!.syncDirectory(target, sync)
         },
         setTimer: (callback, ms) => {
           const timer = setTimeout(callback, ms)
@@ -243,20 +244,87 @@ function stable(entry: string): string {
     .replace(/\.\d+\.\d+(\.\d+)?\.tmp$/, '.<pid>.<time>.tmp')
 }
 
+/** Until no batch of staged tool detail is between its commit and its end. */
+async function stagingSettled(layer: ThreadBarrierDurability): Promise<void> {
+  await vi.waitFor(() => expect(layer.snapshot().staging?.outstanding ?? 0).toBe(0))
+}
+
+/** `disk`'s port, listing apart in `background` each sync asked for at background class. */
+function listingBackground(disk: CrashDisk, background: string[]): ThreadDurabilityPort {
+  const sync =
+    (call: 'syncFile' | 'syncDirectory') =>
+    (target: string, options?: ThreadDurabilitySyncOptions) => {
+      const before = disk.paid.length
+      const outcome = disk.port[call](target, options)
+      // The disk names a path as it is asked for it, before the sync settles.
+      if (options?.background) background.push(...disk.paid.slice(before))
+      return outcome
+    }
+  return { syncFile: sync('syncFile'), syncDirectory: sync('syncDirectory') }
+}
+
+/** `all` without one of each entry of `some`. */
+function without(all: readonly string[], some: readonly string[]): string[] {
+  const left = [...all]
+  for (const entry of some) {
+    const index = left.indexOf(entry)
+    if (index >= 0) left.splice(index, 1)
+  }
+  return left
+}
+
+/** A port that holds every background sync until released; any other goes through at once. */
+function holdingBackground(port: ThreadDurabilityPort): {
+  port: ThreadDurabilityPort
+  release(): void
+} {
+  let release = (): void => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  return {
+    port: {
+      syncFile: async (target, options) => {
+        if (options?.background) await held
+        return port.syncFile(target, options)
+      },
+      syncDirectory: async (target, options) => {
+        if (options?.background) await held
+        return port.syncDirectory(target, options)
+      }
+    },
+    release: () => release()
+  }
+}
+
+/**
+ * The steps, each with what it synced on the calling thread, what the
+ * staging synced for it in the background, and what the thread's barrier
+ * then paid.
+ */
 async function drive(switchOn: boolean) {
   if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
   const { AppStore, profilePath } = await importHostOwnedStore([])
   const disk = watchCrashDisk(profilePath)
   disks.push(disk)
-  layers.port = disk.port
-  const steps: Array<{ name: string; issued: string[]; paid: string[] }> = []
+  const background: string[] = []
+  layers.port = listingBackground(disk, background)
+  const steps: Array<{ name: string; issued: string[]; staged: string[]; paid: string[] }> = []
   for (const step of STEPS) {
     disk.issued.length = 0
     disk.paid.length = 0
+    background.length = 0
     step.act(AppStore)
     const issued = disk.issued.map(stable)
-    if (layers.built[0]) await layers.built[0].debt.barrier(CHAT)
-    steps.push({ name: step.name, issued, paid: disk.paid.map(stable) })
+    const layer = layers.built[0]
+    if (layer) {
+      await stagingSettled(layer)
+      await layer.debt.barrier(CHAT)
+    }
+    steps.push({
+      name: step.name,
+      issued,
+      staged: background.map(stable),
+      paid: without(disk.paid, background).map(stable)
+    })
   }
   return { steps, profilePath, AppStore }
 }
@@ -314,12 +382,103 @@ const SYNCED_BEFORE_THE_SWITCH: Array<[string, string[]]> = [
   ]
 ]
 
+/**
+ * What the save that moves a tool result's detail out wrote with the switch
+ * off, captured from the store at the commit before tool detail was staged:
+ * the detail's bytes, the checkpoint event that records them and the row's
+ * reference. With the switch off, nothing may differ.
+ */
+const DETAIL_BEFORE_THE_STAGING = {
+  bytes: 70_267,
+  sha256: 'b67b325f6d6a113ca385e5a190f467452402188e3a125d2c716f2a0b161c0ad5',
+  checkpoints: [
+    {
+      kind: 'tool',
+      phase: 'artifact',
+      source: 'main',
+      summary: 'Checkpointed 1 tool activity detail',
+      chatId: CHAT,
+      runId: RUN,
+      payload: {
+        type: 'tool_activity_detail_checkpoint',
+        schemaVersion: 1,
+        generation: 1,
+        activityCount: 1,
+        offset: 0,
+        byteLength: 70_267,
+        sha256: 'b67b325f6d6a113ca385e5a190f467452402188e3a125d2c716f2a0b161c0ad5'
+      },
+      artifacts: [
+        {
+          id: `${RUN}:tool-activity-detail:0`,
+          kind: 'other',
+          path: `${RUN}/tool-activity-details.jsonl`,
+          sha256: 'b67b325f6d6a113ca385e5a190f467452402188e3a125d2c716f2a0b161c0ad5',
+          sizeBytes: 70_267,
+          metadata: { offset: 0, activityCount: 1, generation: 1 }
+        }
+      ]
+    }
+  ],
+  ref: {
+    schemaVersion: 1,
+    storage: 'run_event_artifact',
+    runId: RUN,
+    activityId: 'activity-1',
+    offset: 0,
+    byteLength: 70_267,
+    sha256: 'b67b325f6d6a113ca385e5a190f467452402188e3a125d2c716f2a0b161c0ad5'
+  }
+}
+
+/** The checkpoint events in the run's ledger, without what changes from run to run. */
+function detailCheckpoints(profilePath: string): unknown[] {
+  if (!existsSync(path.join(profilePath, EVENTS))) return []
+  return readFileSync(path.join(profilePath, EVENTS), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((record) => record.payload?.type === 'tool_activity_detail_checkpoint')
+    .map(({ kind, phase, source, summary, chatId, runId, payload, artifacts }) => ({
+      kind,
+      phase,
+      source,
+      summary,
+      chatId,
+      runId,
+      payload,
+      artifacts
+    }))
+}
+
 describe('barrier durability, switched off', () => {
   it('syncs what each save synced before the switch existed, and builds nothing', async () => {
     const { steps } = await drive(false)
 
     expect(steps.map((step) => [step.name, step.issued])).toEqual(SYNCED_BEFORE_THE_SWITCH)
     expect(layers.built).toEqual([])
+  })
+
+  it("writes a tool result's detail as before the switch: the same bytes, syncs, checkpoint and reference", async () => {
+    const { steps, profilePath, AppStore } = await drive(false)
+
+    const detail = readFileSync(path.join(profilePath, DETAIL))
+    const row = AppStore.getChat(CHAT)!.messages.find((message) => message.id === 'tool-1')!
+    expect({
+      bytes: detail.byteLength,
+      sha256: createHash('sha256').update(detail).digest('hex'),
+      checkpoints: detailCheckpoints(profilePath),
+      ref: row.toolActivities![0].detailRef
+    }).toEqual(DETAIL_BEFORE_THE_STAGING)
+    expect(steps[6]).toMatchObject({
+      name: 'a tool result whose detail is moved out',
+      issued: [
+        `file:${DETAIL}`,
+        `directory:run-artifacts/${RUN}`,
+        `file:${EVENTS}`,
+        `file:${JOURNAL}`
+      ]
+    })
   })
 
   it('reports itself off in the perf section, with the checkpoints still counted', async () => {
@@ -396,19 +555,47 @@ describe('barrier durability, switched on', () => {
       ['a user message', [`file:${JOURNAL}`]],
       ['an approval opens', [`file:${JOURNAL}`, `file:${EVENTS}`]],
       ['the approval is answered', [`file:${JOURNAL}`, `file:${EVENTS}`]],
+      // The row stays inline until its detail is on the disk, which no barrier pays.
+      ['a tool result whose detail is moved out', [`file:${JOURNAL}`]],
+      ['the run ends', [`file:${JOURNAL}`, `file:${EVENTS}`]]
+    ])
+  })
+
+  it("stages a tool result's detail, synced in the background, and no barrier pays any of it", async () => {
+    const { steps } = await drive(true)
+    const layer = layers.built[0]
+
+    // The segment, every folder on the path to it, then its checkpoint's ledger.
+    expect(steps.map((step) => [step.name, step.staged])).toEqual([
+      ['a new thread with its first message', []],
+      ['a run starts', []],
+      ['streamed text', []],
+      ['a user message', []],
+      ['an approval opens', []],
+      ['the approval is answered', []],
       [
         'a tool result whose detail is moved out',
         [
-          'directory:.',
-          'directory:run-artifacts',
-          `directory:run-artifacts/${RUN}`,
-          `file:${JOURNAL}`,
           `file:${DETAIL}`,
+          `directory:run-artifacts/${RUN}`,
+          'directory:run-artifacts',
+          'directory:.',
           `file:${EVENTS}`
         ]
       ],
-      ['the run ends', [`file:${JOURNAL}`, `file:${EVENTS}`]]
+      ['the run ends', []]
     ])
+    // Neither a user's barrier nor the run's final one paid any detail.
+    expect(steps.flatMap((step) => step.paid).filter((entry) => entry.includes(DETAIL))).toEqual([])
+    expect(layer.debt.snapshot().owners.detail).toMatchObject({ noted: 0, synced: 0 })
+    // Staged at the tool result, its ref taken when the run ended.
+    expect(layer.snapshot().staging).toMatchObject({
+      outstanding: 0,
+      batches: { committed: 1, durable: 1, failed: 0, dropped: 0 },
+      rows: { staged: 1, swapped: 1 },
+      syncs: { files: 2, directories: 3 },
+      checkpointEvents: 1
+    })
   })
 })
 
@@ -464,32 +651,34 @@ describe('a torn journal tail', () => {
 })
 
 describe('the admitted path, taken before the Host owned the store', () => {
-  it('writes tool detail, and the run event that records it, without a sync too', async () => {
+  it('stages tool detail too: no sync on the calling thread, and none of it owed to the thread', async () => {
     vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
     const { AppStore, profilePath } = await importHostOwnedStore([], undefined, { gateOpen: true })
     const disk = watchCrashDisk(profilePath)
     disks.push(disk)
-    layers.port = disk.port
+    const background: string[] = []
+    layers.port = listingBackground(disk, background)
     STEPS[0].act(AppStore)
     STEPS[1].act(AppStore)
     await layers.built[0].debt.barrier(CHAT)
     disk.issued.length = 0
+    disk.paid.length = 0
 
     STEPS[6].act(AppStore)
 
     const stores =
       /^(file|directory):(run-artifacts|run-events|chat-journal-v2\/.*\.mutations\.jsonl)/
     expect(disk.issued.filter((entry) => stores.test(entry))).toEqual([])
-    disk.paid.length = 0
-    await layers.built[0].debt.barrier(CHAT)
-    expect([...disk.paid].sort()).toEqual([
-      'directory:.',
-      'directory:run-artifacts',
-      `directory:run-artifacts/${RUN}`,
-      `file:${JOURNAL}`,
+    await stagingSettled(layers.built[0])
+    expect(background).toEqual([
       `file:${DETAIL}`,
+      `directory:run-artifacts/${RUN}`,
+      'directory:run-artifacts',
+      'directory:.',
       `file:${EVENTS}`
     ])
+    await layers.built[0].debt.barrier(CHAT)
+    expect(without(disk.paid, background)).toEqual([`file:${JOURNAL}`])
   })
 })
 
@@ -631,7 +820,8 @@ describe('the tickets each save takes', () => {
     const { AppStore, profilePath } = await importHostOwnedStore([])
     const disk = watchCrashDisk(profilePath)
     disks.push(disk)
-    layers.port = disk.port
+    const background: string[] = []
+    layers.port = listingBackground(disk, background)
     STEPS[0].act(AppStore)
     const started = AppStore.getChat(CHAT)!
     AppStore.saveChat({
@@ -658,9 +848,10 @@ describe('the tickets each save takes', () => {
     await layers.built[0].debt.barrier(CHAT)
     disk.paid.length = 0
 
-    // The first seat's tool result, its detail moved out, and its last event;
+    // The first seat's tool result, its detail staged, and its last event;
     // the other seat streams on.
     STEPS[6].act(AppStore)
+    await stagingSettled(layers.built[0])
     AppStore.appendRunEvent({
       ...event('provider_raw', 'output'),
       runId: OTHER,
@@ -679,14 +870,10 @@ describe('the tickets each save takes', () => {
     expect(layers.built[0].tickets.snapshot().moments.run_final.noted).toBe(1)
     await layers.built[0].tickets.awaitChat(CHAT)
 
-    // What one finished run owes: the journal segment, the run's event file,
-    // and its detail file with the folders made for it.
-    expect([...disk.paid.map(stable)].sort()).toEqual([
-      'directory:.',
-      'directory:run-artifacts',
-      `directory:run-artifacts/${RUN}`,
+    // What one finished run owes: the journal segment and the run's event
+    // file. Its detail was staged and synced in the background, never owed.
+    expect(without(disk.paid, background).map(stable).sort()).toEqual([
       `file:${JOURNAL}`,
-      `file:${DETAIL}`,
       `file:${EVENTS}`
     ])
     // What the other seat streamed is left for its own barrier.
@@ -843,11 +1030,135 @@ describe('what pays the debt no moment pays, through the real store', () => {
 
       expect(layer.debt.snapshot().owed.threads).toBe(0)
       expect(layer.snapshot().threads).toMatchObject({ owing: 0, quitThreads: 1, quitUnpaid: 0 })
-      expect(disk.paid.map(stable)).toEqual(
-        expect.arrayContaining([`file:${EVENTS}`, `file:${DETAIL}`])
-      )
+      expect(disk.paid.map(stable)).toEqual(expect.arrayContaining([`file:${EVENTS}`]))
+      // The run's detail was never the thread's to pay.
+      expect(disk.paid.map(stable)).not.toContain(`file:${DETAIL}`)
     }
   )
+})
+
+describe('tool detail staged under the switch, through the real store', () => {
+  /** A thread whose run has started, all paid, its background syncs held until released. */
+  async function staging() {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    const held = holdingBackground(disk.port)
+    layers.port = held.port
+    STEPS[0].act(AppStore)
+    STEPS[1].act(AppStore)
+    const layer = layers.built[0]
+    await layer.debt.barrier(CHAT)
+    disk.paid.length = 0
+    return { AppStore, profilePath, disk, layer, release: held.release }
+  }
+
+  it("lets a user's barrier settle while the detail waits in the background, and pays none of it", async () => {
+    const { AppStore, disk, layer, release } = await staging()
+
+    STEPS[6].act(AppStore)
+    STEPS[3].act(AppStore)
+    await layer.tickets.awaitChat(CHAT, ['user_message'])
+
+    expect(layer.snapshot().staging).toMatchObject({ outstanding: 1 })
+    expect(disk.paid.map(stable)).toEqual([`file:${JOURNAL}`])
+    release()
+    await stagingSettled(layer)
+    expect(layer.snapshot().staging).toMatchObject({ batches: { durable: 1 } })
+    expect(layer.debt.snapshot().owners.detail).toMatchObject({ noted: 0, synced: 0 })
+  })
+
+  it("appends no checkpoint to an erased run's ledger when the thread is erased during a batch", async () => {
+    const { AppStore, profilePath, layer, release } = await staging()
+    STEPS[6].act(AppStore)
+    expect(layer.snapshot().staging).toMatchObject({ outstanding: 1 })
+
+    await AppStore.deleteChatViaHost(CHAT)
+    release()
+    await stagingSettled(layer)
+
+    expect(existsSync(path.join(profilePath, EVENTS))).toBe(false)
+    expect(existsSync(path.join(profilePath, 'run-artifacts', RUN))).toBe(false)
+    // The erasure dropped the thread's batch: it ended at its next step.
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 1, durable: 0, failed: 0, dropped: 1 },
+      checkpointEvents: 0
+    })
+  })
+
+  it("appends no checkpoint to a run's ledger that a deletion being prepared during the batch froze", async () => {
+    const { AppStore, profilePath, layer, release } = await staging()
+    STEPS[6].act(AppStore)
+
+    AppStore.prepareHistoryDeletion({ kind: 'chat', rootChatId: CHAT })
+    release()
+    await stagingSettled(layer)
+
+    expect(detailCheckpoints(profilePath)).toEqual([])
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 1, durable: 0, failed: 1 },
+      checkpointEvents: 0
+    })
+  })
+
+  it('writes nothing into the folder of a run whose thread was erased, for a late save of it', async () => {
+    const { AppStore, profilePath, layer, release } = await staging()
+    const before = AppStore.getChat(CHAT)!
+    await AppStore.deleteChatViaHost(CHAT)
+    release()
+    expect(existsSync(path.join(profilePath, 'run-artifacts', RUN))).toBe(false)
+
+    // A writer still holding the thread saves its tool result after the erasure.
+    STEPS[6].act({
+      getChat: () => before,
+      saveChat: (record: ChatRecord) => AppStore.saveChat(record)
+    } as unknown as Store)
+
+    expect(existsSync(path.join(profilePath, 'run-artifacts', RUN))).toBe(false)
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 0 },
+      rows: { staged: 0, passedOver: 0 }
+    })
+  })
+
+  it('quits without waiting for a batch still syncing, and the batch ends with nothing referenced', async () => {
+    const { AppStore, profilePath, layer, release } = await staging()
+    STEPS[6].act(AppStore)
+
+    await AppStore.flushAllChatSaves({ hostDrainTimeoutMs: 5_000 })
+
+    expect(layer.snapshot().threads).toMatchObject({ quitThreads: 1, quitUnpaid: 0 })
+    expect(layer.snapshot().staging).toMatchObject({ outstanding: 1 })
+    release()
+    await stagingSettled(layer)
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { durable: 0, dropped: 1 },
+      checkpointEvents: 0
+    })
+    expect(detailCheckpoints(profilePath)).toEqual([])
+  })
+
+  it.each([
+    'TASKWRAITH_JOURNAL_FLUSHER',
+    'TASKWRAITH_RUN_EVENT_FLUSHER',
+    'TASKWRAITH_CATALOGUE_DEFERRED_DURABILITY'
+  ])('is never built while %s is on, which may keep run events in the flusher', async (flusher) => {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    vi.stubEnv(flusher, '1')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { AppStore } = await importHostOwnedStore([])
+
+      expect(layers.built).toEqual([])
+      expect(AppStore.getThreadBarrierDurabilityPerf()).toMatchObject({
+        enabled: false,
+        ignored: `${flusher} on`
+      })
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 const TICKET = `file:thread-catalogue-v1/pending/desktop/${CHAT}/<operation>.json.tmp-<uuid>`

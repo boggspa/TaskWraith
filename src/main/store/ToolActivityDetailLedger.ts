@@ -8,7 +8,6 @@ import type {
   ToolActivityDetailDurability,
   ToolDetailDependency
 } from './ToolActivityDetailDurability'
-import type { NoteThreadDurabilityDebt } from './ThreadDurabilityDebt'
 
 export const TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME = 'tool-activity-details.jsonl'
 export const MAX_TOOL_ACTIVITY_DETAIL_BYTES = 32 * 1024 * 1024
@@ -128,30 +127,17 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-/** The thread a save belongs to, and where it says what it left unsynced. */
-export interface ToolActivityDetailDebt {
-  chatId: string
-  note: NoteThreadDurabilityDebt
-}
-
 /** One-save append coordinator: stage refs first, fsync each run once. */
 export class ToolActivityDetailBatchWriter {
   private readonly batches = new Map<string, PendingRunBatch>()
   private readonly pendingDependencies: ToolDetailDependency[] = []
 
-  /**
-   * `owed` is an explicit opt-in that nothing passes yet. With it a commit
-   * only writes each run's segment. Neither the file nor a directory that
-   * gained a name is synced, and `deferred` is not used: what the disk is owed
-   * is noted against the thread, with the run, for the thread's barrier to pay.
-   */
   constructor(
     private readonly runArtifactsDir: string,
     private readonly deferred?: {
       owner: ToolActivityDetailDurability
       onDependency(dependency: ToolDetailDependency): void
-    },
-    private readonly owed?: ToolActivityDetailDebt
+    }
   ) {}
 
   dependencies(): readonly ToolDetailDependency[] {
@@ -192,21 +178,19 @@ export class ToolActivityDetailBatchWriter {
 
   commit(): ToolActivityDetailCheckpoint[] {
     const checkpoints: ToolActivityDetailCheckpoint[] = []
-    const deferred = this.owed ? undefined : this.deferred
     for (const batch of this.batches.values()) {
       if (batch.chunks.length === 0) continue
-      if (this.owed) this.makeOwedDirectory(batch, this.owed)
-      else if (!deferred) fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
+      if (!this.deferred) fs.mkdirSync(path.dirname(batch.filePath), { recursive: true })
       const currentSize = sizeOf(batch.filePath)
       if (currentSize !== batch.initialSize) {
         throw new Error(`Tool detail artifact changed while staging run ${batch.runId}`)
       }
       const segment = Buffer.concat(batch.chunks)
-      if (deferred) {
-        const dependency = deferred.owner.append(batch.filePath, segment, batch.initialSize)
+      if (this.deferred) {
+        const dependency = this.deferred.owner.append(batch.filePath, segment, batch.initialSize)
         this.pendingDependencies.push(dependency)
         try {
-          deferred.onDependency(dependency)
+          this.deferred.onDependency(dependency)
         } catch (error) {
           try {
             flushToolDetailDependencies(this.pendingDependencies)
@@ -223,17 +207,11 @@ export class ToolActivityDetailBatchWriter {
         const fd = fs.openSync(batch.filePath, 'a')
         try {
           fs.writeFileSync(fd, segment)
-          if (!this.owed) fs.fsyncSync(fd)
+          fs.fsyncSync(fd)
         } finally {
           fs.closeSync(fd)
         }
-        if (this.owed) {
-          const { chatId, note } = this.owed
-          note(chatId, { file: batch.filePath, owner: 'detail', run: batch.runId })
-          if (!fileExisted) {
-            note(chatId, { directory: path.dirname(batch.filePath), run: batch.runId })
-          }
-        } else if (!fileExisted) fsyncDirectory(path.dirname(batch.filePath))
+        if (!fileExisted) fsyncDirectory(path.dirname(batch.filePath))
       }
       checkpoints.push(checkpointOf(batch, segment))
     }
@@ -264,24 +242,6 @@ export class ToolActivityDetailBatchWriter {
       segments.push({ checkpoint: checkpointOf(batch, segment), filePath: batch.filePath })
     }
     return segments
-  }
-
-  /**
-   * Make the run's folder, and note each directory that gained a name on the
-   * way: the artifacts root for a new run folder, and its parent for a new root.
-   */
-  private makeOwedDirectory(
-    batch: PendingRunBatch,
-    { chatId, note }: ToolActivityDetailDebt
-  ): void {
-    const directory = path.dirname(batch.filePath)
-    const directoryExisted = fs.existsSync(directory)
-    const rootExisted = directoryExisted || fs.existsSync(this.runArtifactsDir)
-    fs.mkdirSync(directory, { recursive: true })
-    if (!rootExisted) {
-      note(chatId, { directory: path.dirname(this.runArtifactsDir), run: batch.runId })
-    }
-    if (!directoryExisted) note(chatId, { directory: this.runArtifactsDir, run: batch.runId })
   }
 }
 

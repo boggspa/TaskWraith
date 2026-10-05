@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,9 +13,10 @@ import { barriersForSaveMoments, createThreadBarrierDurability } from './ThreadB
 import type {
   ThreadDurabilityBarrierOptions,
   ThreadDurabilityPort,
+  ThreadDurabilitySyncOptions,
   ThreadDurabilitySyncOutcome
 } from './ThreadDurabilityDebt'
-import type { ChatRecord } from './types'
+import type { ChatRecord, RunEventInput, ToolActivity } from './types'
 
 function recordingPort(): ThreadDurabilityPort & { paid: string[] } {
   const paid: string[] = []
@@ -95,12 +96,6 @@ describe('the barrier durability layer', () => {
     }
   })
 
-  it("gives a save's tool-detail writer the note for that save's thread", () => {
-    const layer = createThreadBarrierDurability({ port: recordingPort() })
-
-    expect(layer.detail('chat-1')).toEqual({ chatId: 'chat-1', note: layer.note })
-  })
-
   it('gives the catalogue the seam that writes heads and tickets owed to no barrier', async () => {
     const layer = createThreadBarrierDurability({ port: recordingPort() })
 
@@ -131,6 +126,198 @@ describe('the barrier durability layer', () => {
     })
     // A port supplied from outside has no counters of its own to report.
     expect(createThreadBarrierDurability({ port: recordingPort() }).snapshot().port).toBeNull()
+    // Told nothing of where tool detail goes, it stages none.
+    expect(built.snapshot().staging).toBeNull()
+  })
+})
+
+describe('tool detail staged by the layer', () => {
+  const PREFIX = 'owner-barrier-detail-'
+  const made: string[] = []
+
+  /** Removes a folder made below with PREFIX, and refuses anything else. */
+  function removeTemporary(directory: string): void {
+    const own = tmpdir() + sep + PREFIX
+    if (directory === tmpdir() || !directory.startsWith(own) || dirname(directory) !== tmpdir())
+      throw new Error(`Refusing to remove ${directory}`)
+    rmSync(directory, { recursive: true, force: true })
+  }
+
+  afterEach(() => {
+    while (made.length > 0) removeTemporary(made.pop()!)
+  })
+
+  function activity(id: string): ToolActivity {
+    return {
+      id,
+      toolName: 'run_shell_command',
+      displayName: 'Ran command',
+      category: 'shell',
+      status: 'success',
+      endedAt: AT,
+      rawResultEvent: { output: `output of ${id}` }
+    }
+  }
+
+  /**
+   * A layer staging tool detail in a temporary folder, over a port that lists
+   * each sync it is asked for, with its class. `refuses` stands for the
+   * store's erased and frozen history.
+   */
+  function staging(refuses: (runId: string, chatId: string) => boolean = () => false) {
+    const root = mkdtempSync(join(tmpdir(), PREFIX))
+    made.push(root)
+    const asked: string[] = []
+    const ask =
+      (kind: string) =>
+      async (
+        target: string,
+        options?: ThreadDurabilitySyncOptions
+      ): Promise<ThreadDurabilitySyncOutcome> => {
+        asked.push(
+          `${kind}:${relative(root, target) || '.'}${options?.background ? '' : ' (not background)'}`
+        )
+        return 'synced'
+      }
+    const appended: RunEventInput[] = []
+    const layer = createThreadBarrierDurability({
+      port: { syncFile: ask('file'), syncDirectory: ask('directory') },
+      detail: {
+        runArtifactsDir: join(root, 'run-artifacts'),
+        appendRunEvent: (input) => {
+          appended.push(input)
+          return { file: join(root, 'run-events', `${input.runId}.jsonl`), directories: [] }
+        },
+        checkpointInput: (chat, checkpoint) => ({
+          runId: checkpoint.runId,
+          chatId: chat.appChatId,
+          kind: 'tool',
+          phase: 'artifact',
+          source: 'main',
+          payload: { offset: checkpoint.offset, byteLength: checkpoint.byteLength }
+        }),
+        refuses
+      }
+    })
+    const settled = () => vi.waitFor(() => expect(layer.snapshot().staging!.outstanding).toBe(0))
+    return { layer, root, asked, appended, settled }
+  }
+
+  /** One save of `chat`: each activity staged for its run, then the commit. */
+  function save(
+    layer: ReturnType<typeof createThreadBarrierDurability>,
+    chat: ChatRecord,
+    staged: Array<[string, ToolActivity]>
+  ) {
+    const batch = layer.detailBatch(chat)!
+    const refs = staged.map(([runId, detail]) => batch.stage(runId, detail))
+    expect(batch.commit()).toEqual([])
+    return refs
+  }
+
+  it('stages none, and reports none, when not told where tool detail goes', () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+
+    expect(layer.detailBatch(thread())).toBeNull()
+    expect(layer.snapshot().staging).toBeNull()
+  })
+
+  it("gives a save a batch of its staging, synced through the layer's port at background class", async () => {
+    const { layer, asked, appended, settled } = staging()
+
+    expect(save(layer, thread(), [['run-1', activity('tool-1')]])).toEqual([null])
+    await settled()
+
+    // The segment, every folder on its path, then its checkpoint's ledger.
+    expect(asked).toEqual([
+      'file:run-artifacts/run-1/tool-activity-details.jsonl',
+      'directory:run-artifacts/run-1',
+      'directory:run-artifacts',
+      'directory:.',
+      'file:run-events/run-1.jsonl'
+    ])
+    expect(appended).toEqual([expect.objectContaining({ runId: 'run-1', chatId: 'chat-1' })])
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 1, durable: 1, failed: 0 },
+      rows: { staged: 1 },
+      syncs: { files: 2, directories: 3 },
+      checkpointEvents: 1
+    })
+    // A later save of the thread takes the ref.
+    expect(save(layer, thread(), [['run-1', activity('tool-1')]])).toEqual([
+      expect.objectContaining({ runId: 'run-1', activityId: 'tool-1', offset: 0 })
+    ])
+  })
+
+  it('writes nothing of a run whose history is erased or frozen, asking once a run in a save', async () => {
+    const refuses = vi.fn((runId: string) => runId === 'run-erased')
+    const { layer, root, appended, settled } = staging(refuses)
+
+    save(layer, thread(), [
+      ['run-erased', activity('tool-1')],
+      ['run-erased', activity('tool-2')],
+      ['run-1', activity('tool-3')]
+    ])
+    await settled()
+
+    expect(existsSync(join(root, 'run-artifacts', 'run-erased'))).toBe(false)
+    expect(existsSync(join(root, 'run-artifacts', 'run-1'))).toBe(true)
+    expect(layer.snapshot().staging).toMatchObject({ rows: { staged: 1 }, checkpointEvents: 1 })
+    expect(appended.map((input) => input.runId)).toEqual(['run-1'])
+    // Once for each run of the save, and once more before the checkpoint.
+    expect(refuses.mock.calls).toEqual([
+      ['run-erased', 'chat-1'],
+      ['run-1', 'chat-1'],
+      ['run-1', 'chat-1']
+    ])
+  })
+
+  it('appends no checkpoint for a run refused after the save staged it: the batch fails', async () => {
+    let frozen = false
+    const { layer, appended, settled } = staging(() => frozen)
+
+    save(layer, thread(), [['run-1', activity('tool-1')]])
+    frozen = true
+    await settled()
+
+    expect(appended).toEqual([])
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 1, durable: 0, failed: 1 },
+      checkpointEvents: 0
+    })
+  })
+
+  it("drops a thread's staging when it is erased, every thread's at a clear, and stages nothing after quit", async () => {
+    const { layer, settled } = staging()
+    const other = { ...thread(), appChatId: 'chat-2' }
+    save(layer, thread(), [['run-1', activity('tool-1')]])
+    save(layer, other, [['run-2', activity('tool-2')]])
+    await settled()
+    expect(layer.snapshot().staging).toMatchObject({ threads: 2, readyRefs: 2 })
+
+    layer.forget('chat-1')
+    expect(layer.snapshot().staging).toMatchObject({ threads: 1, readyRefs: 1 })
+    layer.forgetAll()
+    expect(layer.snapshot().staging).toMatchObject({ threads: 0, readyRefs: 0 })
+
+    await layer.payAll(10)
+    expect(save(layer, thread(), [['run-1', activity('tool-3')]])).toEqual([null])
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 2 },
+      rows: { passedOver: 1 }
+    })
+  })
+
+  it('stages nothing more once disposed', () => {
+    const { layer } = staging()
+
+    layer.dispose()
+
+    expect(save(layer, thread(), [['run-1', activity('tool-1')]])).toEqual([null])
+    expect(layer.snapshot().staging).toMatchObject({
+      batches: { committed: 0 },
+      rows: { staged: 0, passedOver: 1 }
+    })
   })
 })
 
@@ -534,9 +721,7 @@ describe('what pays the debt no moment pays', () => {
       file: '/p/chat-journal-v2/chat-1.mutations.jsonl',
       owner: 'journal'
     })
-    layer
-      .detail('chat-1')
-      .note('chat-1', { file: '/p/run-artifacts/run-1/detail', owner: 'detail' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
 
     expect(timers).toHaveLength(1)
     expect(timers[0].ms).toBe(15_000)

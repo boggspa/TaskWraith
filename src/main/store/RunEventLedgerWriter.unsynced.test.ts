@@ -22,11 +22,9 @@ import {
   type ThreadDurabilityDebt,
   type ThreadDurabilityDebtNote
 } from './ThreadDurabilityDebt'
-import {
-  ToolActivityDetailBatchWriter,
-  readToolActivityDetailSync
-} from './ToolActivityDetailLedger'
-import type { RunEventInput, RunEventRecord, ToolActivity } from './types'
+import { readToolActivityDetailSync } from './ToolActivityDetailLedger'
+import { createToolActivityDetailStaging } from './ToolActivityDetailStaging'
+import type { ChatRecord, RunEventInput, RunEventRecord, ToolActivity } from './types'
 import {
   countSyncs,
   watchCrashDisk,
@@ -413,9 +411,10 @@ describe.skipIf(process.platform === 'win32')(
       expect(recordsIn(ledger)).toEqual([strict])
     })
 
-    it('makes the folder a run was given by its raw output safe for the detail committed into it later', async () => {
+    it('makes the folder a run was given by its raw output safe for the detail staged into it later', async () => {
       const runArtifactsDir = path.join(root, 'run-artifacts')
-      writer().append(event(1), { storeRawEvents: true })
+      const events = writer()
+      events.append(event(1), { storeRawEvents: true })
       const detail: ToolActivity = {
         id: 'tool-1',
         toolName: 'run_shell_command',
@@ -424,14 +423,25 @@ describe.skipIf(process.platform === 'win32')(
         status: 'success',
         rawResultEvent: { output: 'done' }
       }
-      const details = new ToolActivityDetailBatchWriter(runArtifactsDir, undefined, {
-        chatId: CHAT,
-        note: debt.note
+      const chat = { appChatId: CHAT, messages: [], runs: [] } as unknown as ChatRecord
+      const staging = createToolActivityDetailStaging({
+        runArtifactsDir,
+        port: disk.port,
+        appendRunEvent: (input) => events.appendStaged(input),
+        checkpointInput: (_chat, checkpoint) => ({
+          ...event(2, { kind: 'tool', phase: 'artifact', source: 'main' }),
+          payload: { type: 'tool_activity_detail_checkpoint', sha256: checkpoint.sha256 }
+        })
       })
-      const ref = details.stage(RUN, detail)!
-      details.commit()
+      const first = staging.batch(chat)
+      expect(first.stage(RUN, detail)).toBeNull()
+      first.commit()
+      await vi.waitFor(() => expect(staging.snapshot().batches.durable).toBe(1))
+      // No barrier: the staging's own syncs made the folder safe, and the detail in it.
+      const next = staging.batch(chat)
+      const ref = next.stage(RUN, detail)!
+      next.commit()
 
-      await debt.barrier(CHAT)
       disk.powerLoss()
 
       expect(readToolActivityDetailSync(runArtifactsDir, ref)).toEqual(detail)

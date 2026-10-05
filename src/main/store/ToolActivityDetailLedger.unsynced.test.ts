@@ -1,26 +1,29 @@
 /**
- * A tool-detail writer told to leave syncing to the thread's barrier. A commit
- * then only writes each run's segment, and says what the disk is owed for it
- * and for which run. The second half runs it over a model of a power loss.
+ * Tool detail written without a sync. The staging writes a save's segments
+ * with the bytes-only half of a commit, and syncs them, every folder on the
+ * path to them and their checkpoint off the save, before any record
+ * references them. The first half pins what it writes; the second runs it
+ * over a model of a power loss. Beside each, a writer that syncs, as the
+ * store has it with barrier durability off.
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ToolActivityDetailDurability } from './ToolActivityDetailDurability'
+import { RunEventLedgerWriter } from './RunEventLedgerWriter'
+import type { ThreadDurabilityPort } from './ThreadDurabilityDebt'
 import {
   TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME,
   ToolActivityDetailBatchWriter,
   hydrateToolActivityDetails,
-  readToolActivityDetailSync
+  readToolActivityDetailSync,
+  type ToolActivityDetailCheckpoint
 } from './ToolActivityDetailLedger'
 import {
-  createThreadDurabilityDebt,
-  type NoteThreadDurabilityDebt,
-  type ThreadDurabilityDebt,
-  type ThreadDurabilityDebtNote
-} from './ThreadDurabilityDebt'
-import type { ToolActivity, ToolActivityDetailRef } from './types'
+  createToolActivityDetailStaging,
+  type ToolActivityDetailStaging
+} from './ToolActivityDetailStaging'
+import type { ChatRecord, RunEventInput, ToolActivity, ToolActivityDetailRef } from './types'
 import {
   countSyncs,
   watchCrashDisk,
@@ -64,20 +67,92 @@ function activity(id: string, output = `output of ${id}`): ToolActivity {
   }
 }
 
-describe('a tool-detail writer that leaves syncing to the thread barrier', () => {
+const CHAT_RECORD = {
+  appChatId: CHAT,
+  title: 'Tool detail',
+  createdAt: 1,
+  updatedAt: 1,
+  messages: [],
+  runs: []
+} as unknown as ChatRecord
+
+/** A segment's checkpoint run event, as the store would append it. */
+function checkpointInput(
+  chat: ChatRecord,
+  checkpoint: ToolActivityDetailCheckpoint
+): RunEventInput {
+  return {
+    runId: checkpoint.runId,
+    chatId: chat.appChatId,
+    kind: 'tool',
+    phase: 'artifact',
+    source: 'main',
+    payload: {
+      type: 'tool_activity_detail_checkpoint',
+      offset: checkpoint.offset,
+      byteLength: checkpoint.byteLength,
+      sha256: checkpoint.sha256
+    }
+  }
+}
+
+/** A staging writing under `root`, its checkpoints in a ledger writer of its own. */
+function stagingIn(root: string, port: Pick<ThreadDurabilityPort, 'syncFile' | 'syncDirectory'>) {
+  const runArtifactsDir = path.join(root, 'run-artifacts')
+  const events = new RunEventLedgerWriter({
+    runEventsDir: path.join(root, 'run-events'),
+    runArtifactsDir
+  })
+  return createToolActivityDetailStaging({
+    runArtifactsDir,
+    port,
+    appendRunEvent: (input) => events.appendStaged(input),
+    checkpointInput
+  })
+}
+
+/** Until the staging has no batch outstanding. */
+const settled = (staging: ToolActivityDetailStaging): Promise<void> =>
+  vi.waitFor(() => expect(staging.snapshot().outstanding).toBe(0))
+
+/** One save: each activity staged for its run, then the commit. Returns what `stage` gave. */
+function save(
+  staging: ToolActivityDetailStaging,
+  staged: Array<[string, ToolActivity]>
+): Array<ToolActivityDetailRef | null> {
+  const batch = staging.batch(CHAT_RECORD)
+  const refs = staged.map(([run, detail]) => batch.stage(run, detail))
+  batch.commit()
+  return refs
+}
+
+/** Stage each activity in a save of its own, wait for its batch, and take its ref at the next. */
+async function durably(
+  staging: ToolActivityDetailStaging,
+  staged: Array<[string, ToolActivity]>
+): Promise<ToolActivityDetailRef[]> {
+  expect(save(staging, staged)).toEqual(staged.map(() => null))
+  await settled(staging)
+  const refs = save(staging, staged)
+  expect(refs).not.toContain(null)
+  return refs as ToolActivityDetailRef[]
+}
+
+/** A port that makes every path safe at once. */
+const instant: Pick<ThreadDurabilityPort, 'syncFile' | 'syncDirectory'> = {
+  syncFile: async () => 'synced',
+  syncDirectory: async () => 'synced'
+}
+
+describe('tool detail the staging writes without a sync', () => {
   let root: string
   let runArtifactsDir: string
   let syncs: SyncCount
-  let notes: Array<[string, ThreadDurabilityDebtNote]>
-  const note: NoteThreadDurabilityDebt = (chatId, debt) => {
-    notes.push([chatId, debt])
-  }
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     runArtifactsDir = path.join(root, 'run-artifacts')
     syncs = countSyncs()
-    notes = []
   })
 
   afterEach(() => {
@@ -86,20 +161,10 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
     removeTemporaryDirectory(root)
   })
 
-  const unsynced = (directory = runArtifactsDir): ToolActivityDetailBatchWriter =>
-    new ToolActivityDetailBatchWriter(directory, undefined, { chatId: CHAT, note })
   const folder = (run: string): string => path.join(runArtifactsDir, run)
   const file = (run: string): string => path.join(folder(run), TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME)
-  const owedFile = (run: string): [string, ThreadDurabilityDebtNote] => [
-    CHAT,
-    { file: file(run), owner: 'detail', run }
-  ]
-  const owedDirectory = (directory: string, run: string): [string, ThreadDurabilityDebtNote] => [
-    CHAT,
-    { directory, run }
-  ]
-  /** One save's worth: stage each activity for its run, then commit. */
-  const save = (
+  /** One save's worth for a writer: stage each activity for its run, then commit. */
+  const commit = (
     writer: ToolActivityDetailBatchWriter,
     staged: Array<[string, ToolActivity]>
   ): ToolActivityDetailRef[] => {
@@ -108,11 +173,12 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
     return refs
   }
 
-  it('commits a long run of segments, new files among them, without one sync', async () => {
+  it('writes a long run of segments, new files among them, without one sync on the calling thread', async () => {
+    const staging = stagingIn(root, instant)
     const written: Array<{ ref: ToolActivityDetailRef; activity: ToolActivity }> = []
     for (let index = 0; index < 60; index += 1) {
       const detail = activity(`tool-${index}`)
-      const [ref] = save(unsynced(), [[`run-${index % 3}`, detail]])
+      const [ref] = await durably(staging, [[`run-${index % 3}`, detail]])
       written.push({ ref, activity: detail })
     }
 
@@ -130,64 +196,12 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
 
   it('a writer that syncs issues one for each segment, and one more for each new file', () => {
     for (let index = 0; index < 6; index += 1) {
-      save(new ToolActivityDetailBatchWriter(runArtifactsDir), [
+      commit(new ToolActivityDetailBatchWriter(runArtifactsDir), [
         [`run-${index % 3}`, activity(`tool-${index}`)]
       ])
     }
 
     expect(syncs.issued).toHaveLength(6 + 3)
-    expect(notes).toEqual([])
-  })
-
-  it('notes the file of the run for every segment, and each directory in which the segment made a name', () => {
-    save(unsynced(), [['run-1', activity('tool-1')]])
-    expect(notes).toEqual([
-      owedDirectory(root, 'run-1'),
-      owedDirectory(runArtifactsDir, 'run-1'),
-      owedFile('run-1'),
-      owedDirectory(folder('run-1'), 'run-1')
-    ])
-
-    notes.length = 0
-    save(unsynced(), [['run-1', activity('tool-2')]])
-    expect(notes).toEqual([owedFile('run-1')])
-
-    // A second run adds a folder to the directory the first one made.
-    notes.length = 0
-    save(unsynced(), [['run-2', activity('tool-3')]])
-    expect(notes).toEqual([
-      owedDirectory(runArtifactsDir, 'run-2'),
-      owedFile('run-2'),
-      owedDirectory(folder('run-2'), 'run-2')
-    ])
-    expect(syncs.issued).toEqual([])
-  })
-
-  it('owes only the file and its folder when the folder was there already', () => {
-    fs.mkdirSync(folder('run-1'), { recursive: true })
-
-    save(unsynced(), [['run-1', activity('tool-1')]])
-
-    expect(notes).toEqual([owedFile('run-1'), owedDirectory(folder('run-1'), 'run-1')])
-  })
-
-  it('notes each run of one save against that run', () => {
-    fs.mkdirSync(runArtifactsDir, { recursive: true })
-
-    save(unsynced(), [
-      ['run-1', activity('tool-1')],
-      ['run-2', activity('tool-2')],
-      ['run-1', activity('tool-3')]
-    ])
-
-    expect(notes).toEqual([
-      owedDirectory(runArtifactsDir, 'run-1'),
-      owedFile('run-1'),
-      owedDirectory(folder('run-1'), 'run-1'),
-      owedDirectory(runArtifactsDir, 'run-2'),
-      owedFile('run-2'),
-      owedDirectory(folder('run-2'), 'run-2')
-    ])
   })
 
   it('writes the same bytes, and hands back the same refs and checkpoints, as a writer that syncs', () => {
@@ -197,18 +211,23 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
       ['run-2', activity('tool-2')],
       ['run-1', activity('tool-3')]
     ]
-    const commit = (writer: ToolActivityDetailBatchWriter): unknown[] => {
+    const synced = (): unknown[] => {
+      const writer = new ToolActivityDetailBatchWriter(elsewhere)
       const refs = staged.map(([run, detail]) => writer.stage(run, detail))
       return [refs, writer.commit()]
     }
+    const unsynced = (): unknown[] => {
+      const writer = new ToolActivityDetailBatchWriter(runArtifactsDir)
+      const refs = staged.map(([run, detail]) => writer.stage(run, detail))
+      return [refs, writer.writeUnsynced().map(({ checkpoint }) => checkpoint)]
+    }
 
-    const first = [
-      commit(new ToolActivityDetailBatchWriter(elsewhere)),
-      commit(new ToolActivityDetailBatchWriter(elsewhere))
-    ]
-    const second = [commit(unsynced()), commit(unsynced())]
+    const first = [synced(), synced()]
+    syncs.issued.length = 0
+    const second = [unsynced(), unsynced()]
 
     expect(second).toEqual(first)
+    expect(syncs.issued).toEqual([])
     for (const run of ['run-1', 'run-2']) {
       expect(fs.readFileSync(file(run))).toEqual(
         fs.readFileSync(path.join(elsewhere, run, TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME))
@@ -216,51 +235,38 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
     }
   })
 
-  it('fails a commit whose write fails, closes the file and owes nothing for the segment', () => {
-    save(unsynced(), [['run-1', activity('tool-1')]])
-    notes.length = 0
+  it('fails a commit whose write fails, closes the file, and syncs nothing for it', async () => {
+    const asked: string[] = []
+    const staging = stagingIn(root, {
+      syncFile: async (target) => (asked.push(target), 'synced'),
+      syncDirectory: async (target) => (asked.push(target), 'synced')
+    })
+    await durably(staging, [['run-1', activity('tool-1')]])
+    asked.length = 0
     const close = vi.spyOn(fs, 'closeSync')
     vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
       throw new Error('ENOSPC: no space left on device, write')
     })
-    const writer = unsynced()
-    writer.stage('run-1', activity('tool-2'))
+    const batch = staging.batch(CHAT_RECORD)
+    batch.stage('run-1', activity('tool-2'))
 
-    expect(() => writer.commit()).toThrow('ENOSPC')
+    expect(() => batch.commit()).toThrow('ENOSPC')
 
     expect(close).toHaveBeenCalledOnce()
-    expect(notes).toEqual([])
+    expect(asked).toEqual([])
     expect(syncs.issued).toEqual([])
+    expect(staging.snapshot().batches).toMatchObject({ durable: 1, failed: 1 })
   })
 
-  it('still refuses a file that changed between staging and the commit', () => {
-    save(unsynced(), [['run-1', activity('tool-1')]])
-    const writer = unsynced()
-    writer.stage('run-1', activity('tool-2'))
+  it('still refuses a file that changed between staging and the commit', async () => {
+    const staging = stagingIn(root, instant)
+    await durably(staging, [['run-1', activity('tool-1')]])
+    const batch = staging.batch(CHAT_RECORD)
+    batch.stage('run-1', activity('tool-2'))
     fs.appendFileSync(file('run-1'), 'written by someone else')
-    notes.length = 0
 
-    expect(() => writer.commit()).toThrow('Tool detail artifact changed while staging run run-1')
-    expect(notes).toEqual([])
-  })
-
-  it('leaves the deferred owner out of it when it is given one as well', () => {
-    const owner = { append: vi.fn() } as unknown as ToolActivityDetailDurability
-    const onDependency = vi.fn()
-    const writer = new ToolActivityDetailBatchWriter(
-      runArtifactsDir,
-      { owner, onDependency },
-      { chatId: CHAT, note }
-    )
-
-    const [ref] = save(writer, [['run-1', activity('tool-1')]])
-
-    expect(owner.append).not.toHaveBeenCalled()
-    expect(onDependency).not.toHaveBeenCalled()
-    expect(writer.dependencies()).toEqual([])
-    expect(syncs.issued).toEqual([])
-    expect(notes).toContainEqual(owedFile('run-1'))
-    expect(readToolActivityDetailSync(runArtifactsDir, ref)).toEqual(activity('tool-1'))
+    expect(() => batch.commit()).toThrow('Tool detail artifact changed while staging run run-1')
+    expect(staging.snapshot().batches).toMatchObject({ committed: 1, failed: 1 })
   })
 })
 
@@ -270,13 +276,11 @@ describe.skipIf(process.platform === 'win32')(
     let root: string
     let runArtifactsDir: string
     let disk: CrashDisk
-    let debt: ThreadDurabilityDebt
 
     beforeEach(() => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       runArtifactsDir = path.join(root, 'run-artifacts')
       disk = watchCrashDisk(root)
-      debt = createThreadDurabilityDebt({ port: disk.port })
     })
 
     afterEach(() => {
@@ -284,88 +288,82 @@ describe.skipIf(process.platform === 'win32')(
       removeTemporaryDirectory(root)
     })
 
-    const commit = (
-      run: string,
-      detail: ToolActivity,
-      owed: boolean | 'synced' = true
-    ): ToolActivityDetailRef => {
-      const writer =
-        owed === 'synced'
-          ? new ToolActivityDetailBatchWriter(runArtifactsDir)
-          : new ToolActivityDetailBatchWriter(runArtifactsDir, undefined, {
-              chatId: CHAT,
-              note: debt.note
-            })
-      const ref = writer.stage(run, detail)!
-      writer.commit()
-      return ref
+    /** The disk's port, holding every sync until released. */
+    const held = (): {
+      port: Pick<ThreadDurabilityPort, 'syncFile' | 'syncDirectory'>
+      release(): void
+    } => {
+      let release = (): void => {}
+      const waiting = new Promise<void>((resolve) => (release = resolve))
+      return {
+        port: {
+          syncFile: async (target) => (await waiting, disk.port.syncFile(target)),
+          syncDirectory: async (target) => (await waiting, disk.port.syncDirectory(target))
+        },
+        release: () => release()
+      }
     }
 
-    it('keeps every detail a barrier covered, folders and all, and loses the detail after it', async () => {
-      const first = commit('run-1', activity('tool-1'))
-      const second = commit('run-1', activity('tool-2'))
-      await debt.barrier(CHAT)
-      const third = commit('run-1', activity('tool-3'))
+    it('keeps every detail a batch made durable, folders and all, and loses the detail after it', async () => {
+      const staging = stagingIn(root, disk.port)
+      const [first, second] = await durably(staging, [
+        ['run-1', activity('tool-1')],
+        ['run-1', activity('tool-2')]
+      ])
+      const end = second.offset + second.byteLength
+      // A batch the power loss cuts off before its syncs.
+      const later = stagingIn(root, held().port)
+      expect(save(later, [['run-1', activity('tool-3')]])).toEqual([null])
 
       expect(disk.issued).toEqual([])
       expect(disk.paid).toEqual([
         `file:run-artifacts/run-1/${TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME}`,
-        'directory:.',
+        'directory:run-artifacts/run-1',
         'directory:run-artifacts',
-        'directory:run-artifacts/run-1'
+        'directory:.',
+        'file:run-events/run-1.jsonl',
+        'directory:.',
+        'directory:run-events'
       ])
       disk.powerLoss()
 
       expect(readToolActivityDetailSync(runArtifactsDir, first)).toEqual(activity('tool-1'))
       expect(readToolActivityDetailSync(runArtifactsDir, second)).toEqual(activity('tool-2'))
-      // The file ends before this one: it is unavailable, and nothing else is.
-      expect(readToolActivityDetailSync(runArtifactsDir, third)).toBeNull()
-      await expect(
-        hydrateToolActivityDetails(runArtifactsDir, [first, second, third])
-      ).resolves.toEqual([
+      // The file ends where the durable batch ended: the bytes after it are gone.
+      expect(
+        fs.statSync(path.join(runArtifactsDir, 'run-1', TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME)).size
+      ).toBe(end)
+      await expect(hydrateToolActivityDetails(runArtifactsDir, [first, second])).resolves.toEqual([
         { ref: first, activity: activity('tool-1') },
         { ref: second, activity: activity('tool-2') }
       ])
-      // The next commit carries on from the end of what is left.
-      expect(commit('run-1', activity('tool-4')).offset).toBe(third.offset)
-    })
-
-    it('loses a file no barrier covered, even in a folder that was already safe', async () => {
-      fs.mkdirSync(path.join(runArtifactsDir, 'run-1'), { recursive: true })
-      disk.flushedAnyway(root)
-      disk.flushedAnyway(runArtifactsDir)
-      const ref = commit('run-1', activity('tool-1'))
-
-      disk.powerLoss()
-
-      expect(fs.existsSync(path.join(runArtifactsDir, 'run-1'))).toBe(true)
-      expect(readToolActivityDetailSync(runArtifactsDir, ref)).toBeNull()
-      await expect(hydrateToolActivityDetails(runArtifactsDir, [ref])).resolves.toEqual([])
+      // The next write carries on from the end of what is left.
+      const [next] = await durably(stagingIn(root, disk.port), [['run-1', activity('tool-4')]])
+      expect(next.offset).toBe(end)
     })
 
     it('a writer that syncs keeps a detail committed into a folder that was already safe', () => {
       fs.mkdirSync(path.join(runArtifactsDir, 'run-1'), { recursive: true })
       disk.flushedAnyway(root)
       disk.flushedAnyway(runArtifactsDir)
-      const ref = commit('run-1', activity('tool-1'), 'synced')
+      const writer = new ToolActivityDetailBatchWriter(runArtifactsDir)
+      const ref = writer.stage('run-1', activity('tool-1'))!
+      writer.commit()
 
       disk.powerLoss()
 
       expect(readToolActivityDetailSync(runArtifactsDir, ref)).toEqual(activity('tool-1'))
     })
 
-    it('keeps a second run beside the first only once a barrier has covered its folder', async () => {
-      const first = commit('run-1', activity('tool-1'))
-      await debt.barrier(CHAT)
-      const lost = commit('run-2', activity('tool-2'))
+    it('keeps a second run beside the first only once a batch has synced its folder', async () => {
+      const [first] = await durably(stagingIn(root, disk.port), [['run-1', activity('tool-1')]])
+      expect(save(stagingIn(root, held().port), [['run-2', activity('tool-2')]])).toEqual([null])
 
       disk.powerLoss()
       expect(readToolActivityDetailSync(runArtifactsDir, first)).toEqual(activity('tool-1'))
-      expect(readToolActivityDetailSync(runArtifactsDir, lost)).toBeNull()
       expect(fs.existsSync(path.join(runArtifactsDir, 'run-2'))).toBe(false)
 
-      const kept = commit('run-2', activity('tool-2'))
-      await debt.barrier(CHAT)
+      const [kept] = await durably(stagingIn(root, disk.port), [['run-2', activity('tool-2')]])
       disk.powerLoss()
       expect(readToolActivityDetailSync(runArtifactsDir, kept)).toEqual(activity('tool-2'))
     })

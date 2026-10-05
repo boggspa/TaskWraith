@@ -1161,7 +1161,16 @@ const mainResidualWindows = createMainResidualWindows(mainResiduals)
 // without a sync and note what they owe. Null while it is off.
 const threadDurabilitySwitches = resolveThreadDurabilitySwitches()
 const threadBarrierDurability = threadDurabilitySwitches.barrierDurability
-  ? createThreadBarrierDurability()
+  ? createThreadBarrierDurability({
+      // A save's tool detail is staged, and synced in the background through
+      // the layer's port, before any record references it.
+      detail: {
+        runArtifactsDir,
+        appendRunEvent: (input) => runEventLedgerWriter.appendStaged(input),
+        checkpointInput: toolActivityDetailCheckpointInput,
+        refuses: stagedToolDetailRefused
+      }
+    })
   : null
 // The bounded wait where a moment is reported done, over the layer's tickets.
 const durableMomentGate = threadBarrierDurability
@@ -3129,6 +3138,31 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
 function readHistoryDeletionIntent(): HistoryDeletionIntent | null {
   const value = readJsonStrictIfPresent(historyDeletionIntentPath)
   return value === null ? null : normalizeHistoryDeletionIntent(value)
+}
+
+/** Whether a deletion being prepared freezes a run's history: its run, its thread, or every one. */
+function deletionIntentFreezes(
+  intent: HistoryDeletionIntent,
+  runId: string,
+  chatId: string | undefined
+): boolean {
+  return (
+    intent.kind === 'global' ||
+    intent.runIds.includes(runId) ||
+    (typeof chatId === 'string' && intent.chatIds.includes(chatId))
+  )
+}
+
+/**
+ * Whether a run's history takes no new staged tool detail: the run erased, or
+ * frozen by a deletion being prepared, exactly as a strict run-event append is
+ * refused. An erased thread's tombstone alone does not refuse: the admitted
+ * save path lets a re-created thread of the same id save again.
+ */
+function stagedToolDetailRefused(runId: string, chatId: string): boolean {
+  if (deletedRunIds.has(runId)) return true
+  const intent = readHistoryDeletionIntent()
+  return intent !== null && deletionIntentFreezes(intent, runId, chatId)
 }
 
 async function readHistoryDeletionIntentAsync(): Promise<HistoryDeletionIntent | null> {
@@ -8465,6 +8499,7 @@ export class AppStore {
       // describe it and the mutation must be recomputed from before/after.
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
       createDetailBatch: () =>
+        threadBarrierDurability?.detailBatch(chatWithMainOwnedFields) ??
         new ToolActivityDetailBatchWriter(
           runArtifactsDir,
           mainDetailDurability
@@ -8472,8 +8507,7 @@ export class AppStore {
                 owner: mainDetailDurability,
                 onDependency: (dependency) => detailDependencies.collect([dependency])
               }
-            : undefined,
-          threadBarrierDurability?.detail(chatWithMainOwnedFields.appChatId)
+            : undefined
         ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
@@ -8714,6 +8748,7 @@ export class AppStore {
       authoredTranscript: options.authoredTranscript,
       authoredTranscriptEligible: reconciledMessages === rendererMessages,
       createDetailBatch: () =>
+        threadBarrierDurability?.detailBatch(chatWithMainOwnedFields) ??
         new ToolActivityDetailBatchWriter(
           runArtifactsDir,
           mainDetailDurability
@@ -8721,8 +8756,7 @@ export class AppStore {
                 owner: mainDetailDurability,
                 onDependency: (dependency) => detailDependencies.collect([dependency])
               }
-            : undefined,
-          threadBarrierDurability?.detail(chatWithMainOwnedFields.appChatId)
+            : undefined
         ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
@@ -14220,12 +14254,7 @@ export class AppStore {
     // racer settling during quiescence cannot write bytes the run-events step
     // must then re-erase.
     const pendingIntent = readHistoryDeletionIntent()
-    if (
-      pendingIntent &&
-      (pendingIntent.kind === 'global' ||
-        pendingIntent.runIds.includes(input.runId) ||
-        (typeof input.chatId === 'string' && pendingIntent.chatIds.includes(input.chatId)))
-    ) {
+    if (pendingIntent && deletionIntentFreezes(pendingIntent, input.runId, input.chatId)) {
       if (options.durability === 'strict') {
         throw new HistoryDeletionMutationBlockedError(
           pendingIntent.operationId,
