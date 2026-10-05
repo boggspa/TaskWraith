@@ -479,22 +479,34 @@ describe('the tickets each save takes', () => {
     disks.push(disk)
     layers.port = disk.port
     const taken: Array<[string, ChatDurabilityMoment[]]> = []
+    /** The barriers each save's tickets raised: urgent ones, and ones of a run. */
+    const raised: Array<[string, { urgent: number; scoped: number }]> = []
     for (const step of steps) {
       const before = noted(layers.built[0])
+      const barriersBefore = layers.built[0].debt.snapshot().barriers
       step.act(AppStore)
       const after = noted(layers.built[0])
+      const barriersAfter = layers.built[0].debt.snapshot().barriers
       taken.push([
         step.name,
         CHAT_DURABILITY_MOMENTS.flatMap((moment) =>
           Array<ChatDurabilityMoment>(after[moment] - before[moment]).fill(moment)
         )
       ])
+      raised.push([
+        step.name,
+        {
+          urgent: barriersAfter.urgent - barriersBefore.urgent,
+          scoped: barriersAfter.scoped - barriersBefore.scoped
+        }
+      ])
     }
-    return taken
+    return { taken, raised }
   }
 
   it('takes one for each moment a save contains, and none for anything else', async () => {
-    expect(await takenBy([...STEPS, ...LATER])).toEqual([
+    const { taken, raised } = await takenBy([...STEPS, ...LATER])
+    expect(taken).toEqual([
       // Written as a synced checkpoint where it happens: no batch, no ticket.
       ['a new thread with its first message', []],
       ['a run starts', []],
@@ -509,15 +521,91 @@ describe('the tickets each save takes', () => {
       ["an answer to an agent's question", ['decision']],
       ['rows removed from the transcript', ['destructive']]
     ])
+    // What the user sits in goes ahead of other syncs; a run's end pays its own run.
+    expect(raised.filter(([, kinds]) => kinds.urgent + kinds.scoped > 0)).toEqual([
+      ['a user message', { urgent: 1, scoped: 0 }],
+      ['the run ends', { urgent: 0, scoped: 1 }],
+      ["an answer to an agent's question", { urgent: 1, scoped: 0 }],
+      ['rows removed from the transcript', { urgent: 1, scoped: 0 }]
+    ])
   })
 
   it('takes them on the admitted path too, taken before the Host owned the store', async () => {
-    expect(await takenBy([STEPS[0], STEPS[1], STEPS[3], STEPS[7]], { gateOpen: true })).toEqual([
+    const { taken } = await takenBy([STEPS[0], STEPS[1], STEPS[3], STEPS[7]], { gateOpen: true })
+    expect(taken).toEqual([
       ['a new thread with its first message', []],
       ['a run starts', []],
       ['a user message', ['user_message']],
       ['the run ends', ['run_final']]
     ])
+  })
+
+  it("pays at a run's end what that run left owed and the thread's journal, and leaves another seat's writes owed", async () => {
+    const OTHER = 'run-barrier-b'
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    layers.port = disk.port
+    STEPS[0].act(AppStore)
+    const started = AppStore.getChat(CHAT)!
+    AppStore.saveChat({
+      ...started,
+      runs: [RUN, OTHER].map((runId) => ({
+        runId,
+        startedAt: AT,
+        status: 'running',
+        provider: 'codex'
+      })),
+      messages: [
+        ...started.messages,
+        ...[RUN, OTHER].map((runId) => ({
+          id: `reply-${runId}`,
+          role: 'assistant' as const,
+          content: '',
+          timestamp: AT,
+          runId
+        }))
+      ]
+    })
+    AppStore.appendRunEvent(event('lifecycle', 'Run started'))
+    AppStore.appendRunEvent({ ...event('lifecycle', 'Run started'), runId: OTHER })
+    await layers.built[0].debt.barrier(CHAT)
+    disk.paid.length = 0
+
+    // The first seat's tool result, its detail moved out, and its last event;
+    // the other seat streams on.
+    STEPS[6].act(AppStore)
+    AppStore.appendRunEvent({
+      ...event('provider_raw', 'output'),
+      runId: OTHER,
+      phase: 'raw',
+      source: 'provider',
+      payload: { data: 'Still going' }
+    })
+    AppStore.appendRunEvent(event('lifecycle', 'Run completed'))
+    const ending = AppStore.getChat(CHAT)!
+    AppStore.saveChat({
+      ...ending,
+      runs: ending.runs.map((run) =>
+        run.runId === RUN ? { ...run, status: 'completed', endedAt: AT } : run
+      )
+    })
+    expect(layers.built[0].tickets.snapshot().moments.run_final.noted).toBe(1)
+    await layers.built[0].tickets.awaitChat(CHAT)
+
+    // The log lane's list for one finished run: the journal segment, the
+    // run's event file, and its detail file with the folders made for it.
+    expect([...disk.paid.map(stable)].sort()).toEqual([
+      'directory:.',
+      'directory:run-artifacts',
+      `directory:run-artifacts/${RUN}`,
+      `file:${JOURNAL}`,
+      `file:${DETAIL}`,
+      `file:${EVENTS}`
+    ])
+    // What the other seat streamed is left for its own barrier.
+    expect(layers.built[0].debt.snapshot().owed).toMatchObject({ files: 1, directories: 0 })
   })
 
   it.each([true, false])(

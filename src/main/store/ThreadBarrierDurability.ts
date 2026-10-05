@@ -11,8 +11,9 @@
  *
  * After each append the store hands it the save, and it takes a ticket for
  * each moment the save contains (`ChatSaveMoments`), waiting for a barrier of
- * that thread. What no moment pays is paid by a quiet thread's idle barrier
- * or at quit, and dropped unpaid when the thread is erased
+ * that thread: an urgent one for what the user sits in, one of the run for a
+ * run's final record. What no moment pays is paid by a quiet thread's idle
+ * barrier or at quit, and dropped unpaid when the thread is erased
  * (`ThreadDebtTracker`).
  */
 import { ChatDurabilityTickets, type ChatDurabilityTicketsSnapshot } from './ChatDurabilityTickets'
@@ -22,6 +23,7 @@ import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
 import {
   createThreadDurabilityDebt,
   type NoteThreadDurabilityDebt,
+  type ThreadDurabilityBarrierOptions,
   type ThreadDurabilityDebt,
   type ThreadDurabilityDebtSnapshot,
   type ThreadDurabilityPort
@@ -101,21 +103,40 @@ export interface ThreadBarrierDurabilityOptions {
 }
 
 /**
- * The barrier each of one save's moments waits for.
+ * The barrier each of one save's moments waits for, one per kind of wait.
  *
- * NAMED SEAM for the log lane's slice 4c, which adds scoped and urgent
- * barriers: a user message, a decision and a destructive change are then to
- * wait for `barrier(chatId, { urgent: true })`, and a run's final record for
- * `barrier(chatId, { run })`. Until it lands every moment waits for the
- * thread's whole debt, neither scoped nor urgent, and the moments of one save
- * share one barrier.
+ * A user message, a decision and a destructive change are waits the user sits
+ * in: they share one urgent barrier of the whole thread, which the port puts
+ * ahead of every sync that is not urgent. A run's final record waits for a
+ * barrier of that run, which pays the thread's own debt and the run's and
+ * leaves what other runs owe; it is not urgent. Runs that end in the same save
+ * get one barrier each.
  */
-export function barrierForSaveMoments(
-  debt: Pick<ThreadDurabilityDebt, 'barrier'>,
+export function barriersForSaveMoments(
+  debt: {
+    barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
+  },
   chatId: string
 ): (moment: ChatSaveMoment) => Promise<void> {
-  let barrier: Promise<void> | null = null
-  return () => (barrier ??= debt.barrier(chatId))
+  let urgent: Promise<void> | null = null
+  const runs = new Map<string, Promise<void>>()
+  return (found) => {
+    if (found.moment !== 'run_final') return (urgent ??= debt.barrier(chatId, { urgent: true }))
+    let barrier = runs.get(found.runId)
+    if (!barrier) {
+      barrier = debt.barrier(chatId, { run: found.runId })
+      runs.set(found.runId, barrier)
+    }
+    return barrier
+  }
+}
+
+/** The moments the user sits in come first, so a run's barrier can join theirs. */
+function userWaitsFirst(moments: readonly ChatSaveMoment[]): ChatSaveMoment[] {
+  return [
+    ...moments.filter((found) => found.moment !== 'run_final'),
+    ...moments.filter((found) => found.moment === 'run_final')
+  ]
 }
 
 export function createThreadBarrierDurability(
@@ -165,8 +186,10 @@ export function createThreadBarrierDurability(
         threads.barrier(chatId).catch(() => {})
         return []
       }
-      const barrierFor = barrierForSaveMoments(threads, chatId)
-      for (const found of moments) tickets.note(chatId, revision, found.moment, barrierFor(found))
+      const barrierFor = barriersForSaveMoments(threads, chatId)
+      for (const found of userWaitsFirst(moments)) {
+        tickets.note(chatId, revision, found.moment, barrierFor(found))
+      }
       return moments
     },
     snapshot: () => ({

@@ -208,6 +208,27 @@ describe('what a barrier leaves the tracker', () => {
 
     expect(tracker.snapshot().owing).toBe(1)
   })
+
+  it("keeps a thread after a barrier of one of its runs, which leaves another run's debt owed", async () => {
+    const { disk, debt, tracker, write } = tracked()
+    write('chat-1')
+    tracker.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+    tracker.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
+
+    await tracker.barrier('chat-1', { run: 'run-1' })
+
+    expect([...disk.asked].sort()).toEqual([
+      '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      '/p/run-events/run-1.jsonl'
+    ])
+    expect(debt.snapshot().barriers.scoped).toBe(1)
+    expect(tracker.snapshot().owing).toBe(1)
+    // The barrier of the whole thread, urgent or not, pays the rest and forgets it.
+    await tracker.barrier('chat-1', { urgent: true })
+    expect(disk.asked).toHaveLength(3)
+    expect(debt.snapshot().barriers.urgent).toBe(1)
+    expect(tracker.snapshot().owing).toBe(0)
+  })
 })
 
 describe('erasure', () => {

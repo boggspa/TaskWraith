@@ -6,8 +6,10 @@
  * Every note the thread stores make passes through here on its way to the
  * debt, and every barrier the app raises for a thread goes through `barrier`,
  * so this knows each thread that may still owe something and when it last
- * wrote. A barrier that settles with nothing noted since it was raised has
- * paid the thread, which is then forgotten here.
+ * wrote. A barrier of the whole thread that settles with nothing noted since
+ * it was raised has paid the thread, which is then forgotten here. A barrier
+ * of one run pays only the thread's own debt and that run's, so the thread
+ * stays here after it: other runs may still owe.
  *
  * Idle: a thread that owes something and has written nothing for
  * `THREAD_IDLE_BARRIER_MS` gets one barrier, neither scoped nor urgent. One
@@ -28,7 +30,11 @@
  * Memory: one small entry per thread that has written since its last paid
  * barrier, and one timer.
  */
-import type { NoteThreadDurabilityDebt, ThreadDurabilityDebt } from './ThreadDurabilityDebt'
+import type {
+  NoteThreadDurabilityDebt,
+  ThreadDurabilityBarrierOptions,
+  ThreadDurabilityDebt
+} from './ThreadDurabilityDebt'
 
 /** How long a thread that owes something may go without a write before it gets a barrier. */
 export const THREAD_IDLE_BARRIER_MS = 15_000
@@ -108,10 +114,13 @@ export class ThreadDebtTracker {
     this.arm()
   }
 
-  /** A barrier for the thread, after which it is forgotten here if nothing was noted meanwhile. */
-  barrier(chatId: string): Promise<void> {
-    const raisedAt = this.owing.get(chatId)?.generation
-    const barrier = this.debt.barrier(chatId)
+  /**
+   * A barrier for the thread, with the debt's own options. One of the whole
+   * thread forgets the thread here if nothing was noted meanwhile.
+   */
+  barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void> {
+    const raisedAt = options?.run === undefined ? this.owing.get(chatId)?.generation : undefined
+    const barrier = options ? this.debt.barrier(chatId, options) : this.debt.barrier(chatId)
     if (raisedAt !== undefined) {
       barrier.then(
         () => {

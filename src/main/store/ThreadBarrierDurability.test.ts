@@ -3,8 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatDurabilityTickets } from './ChatDurabilityTickets'
 import { deriveChatRecordMutationWithProjection } from './ChatRecordMutation'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
-import { barrierForSaveMoments, createThreadBarrierDurability } from './ThreadBarrierDurability'
-import type { ThreadDurabilityPort, ThreadDurabilitySyncOutcome } from './ThreadDurabilityDebt'
+import { barriersForSaveMoments, createThreadBarrierDurability } from './ThreadBarrierDurability'
+import type {
+  ThreadDurabilityBarrierOptions,
+  ThreadDurabilityPort,
+  ThreadDurabilitySyncOutcome
+} from './ThreadDurabilityDebt'
 import type { ChatRecord } from './types'
 
 function recordingPort(): ThreadDurabilityPort & { paid: string[] } {
@@ -129,7 +133,7 @@ afterEach(() => {
 })
 
 describe('the tickets a save takes', () => {
-  it('takes one for each moment, at the revision its batch wrote, all waiting for one barrier', async () => {
+  it("takes one for each moment at the revision its batch wrote: the user's on an urgent barrier, a run's end on one of its run", async () => {
     const port = heldPort()
     const layer = createThreadBarrierDurability({ port })
     const previous = thread()
@@ -143,6 +147,8 @@ describe('the tickets a save takes', () => {
       runs: [{ runId: 'run-1', startedAt: AT, status: 'cancelled' }]
     }
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    // What another run of the thread wrote: the user's barrier pays it, the run's would not.
+    layer.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
 
     expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
       { moment: 'user_message' },
@@ -151,11 +157,15 @@ describe('the tickets a save takes', () => {
 
     const tickets = layer.tickets.snapshot().moments
     expect([tickets.user_message.pending, tickets.run_final.pending]).toEqual([1, 1])
-    expect(layer.debt.snapshot().barriers.raised).toBe(1)
+    expect(layer.debt.snapshot().barriers).toMatchObject({ raised: 2, urgent: 1, scoped: 1 })
     let settled = false
     const waited = layer.tickets.awaitChat('chat-1').then(() => (settled = true))
     await Promise.resolve()
-    expect(port.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
+    // The urgent barrier was raised first and took everything; the run's joined it.
+    expect([...port.asked].sort()).toEqual([
+      '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      '/p/run-events/run-2.jsonl'
+    ])
     expect(settled).toBe(false)
     port.release()
     await waited
@@ -210,21 +220,97 @@ describe('the tickets a save takes', () => {
   })
 })
 
-describe('the barrier for the moments of one save', () => {
-  it('until scoped and urgent barriers land, is one barrier of the whole thread', () => {
-    const raised: string[] = []
+describe('the barriers for the moments of one save', () => {
+  it("gives the user's moments one urgent barrier of the thread, and each run's end one of its run", () => {
+    const raised: Array<[string, ThreadDurabilityBarrierOptions | undefined]> = []
     const debt = {
-      barrier: (chatId: string) => {
-        raised.push(chatId)
+      barrier: (chatId: string, options?: ThreadDurabilityBarrierOptions) => {
+        raised.push([chatId, options])
         return Promise.resolve()
       }
     }
-    const barrierFor = barrierForSaveMoments(debt, 'chat-1')
+    const barrierFor = barriersForSaveMoments(debt, 'chat-1')
 
-    const first = barrierFor({ moment: 'user_message' })
+    const urgent = barrierFor({ moment: 'user_message' })
+    expect(barrierFor({ moment: 'decision' })).toBe(urgent)
+    expect(barrierFor({ moment: 'destructive' })).toBe(urgent)
+    const first = barrierFor({ moment: 'run_final', runId: 'run-1' })
+    expect(first).not.toBe(urgent)
     expect(barrierFor({ moment: 'run_final', runId: 'run-1' })).toBe(first)
-    expect(barrierFor({ moment: 'destructive' })).toBe(first)
-    expect(raised).toEqual(['chat-1'])
+    expect(barrierFor({ moment: 'run_final', runId: 'run-2' })).not.toBe(first)
+    expect(raised).toEqual([
+      ['chat-1', { urgent: true }],
+      ['chat-1', { run: 'run-1' }],
+      ['chat-1', { run: 'run-2' }]
+    ])
+  })
+
+  it("raises the user's barrier first, so a run's barrier in the same save joins it", async () => {
+    const port = heldPort()
+    const layer = createThreadBarrierDurability({ port })
+    const previous = thread({
+      messages: [
+        { id: 'user-1', role: 'user', content: 'First question', timestamp: AT },
+        { id: 'reply-1', role: 'assistant', content: 'An answer', timestamp: AT, runId: 'run-1' }
+      ]
+    })
+    // The run ends in the same save that removes a row: classified run end first.
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      messages: previous.messages.slice(0, 1),
+      runs: [{ runId: 'run-1', startedAt: AT, status: 'completed' }]
+    }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
+
+    expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
+      { moment: 'run_final', runId: 'run-1' },
+      { moment: 'destructive' }
+    ])
+    await Promise.resolve()
+
+    // One trip to the port for both, the user's first: nothing waits behind the run's barrier.
+    expect([...port.asked].sort()).toEqual([
+      '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      '/p/run-events/run-2.jsonl'
+    ])
+    port.release()
+    await layer.tickets.awaitChat('chat-1')
+  })
+
+  it("pays a run's end with the thread's own debt and that run's, and leaves another run's owed", async () => {
+    const port = recordingPort()
+    const layer = createThreadBarrierDurability({ port })
+    const running = { startedAt: AT, status: 'running' }
+    const previous = thread({
+      runs: [
+        { runId: 'run-1', ...running },
+        { runId: 'run-2', ...running }
+      ]
+    })
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      runs: [{ runId: 'run-1', startedAt: AT, status: 'completed' }, previous.runs![1]]
+    }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+    layer.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
+
+    expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
+      { moment: 'run_final', runId: 'run-1' }
+    ])
+    await layer.tickets.awaitChat('chat-1')
+
+    expect([...port.paid].sort()).toEqual([
+      'file:/p/chat-journal-v2/chat-1.mutations.jsonl',
+      'file:/p/run-events/run-1.jsonl'
+    ])
+    expect(layer.debt.snapshot().barriers).toMatchObject({ urgent: 0, scoped: 1 })
+    expect(layer.debt.snapshot().owed.files).toBe(1)
+    // Still owing, for its idle barrier to pay.
+    expect(layer.snapshot().threads.owing).toBe(1)
   })
 })
 
