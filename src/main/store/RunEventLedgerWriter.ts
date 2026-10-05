@@ -193,7 +193,16 @@ export class RunEventLedgerWriter {
     const artifactRelativePath = path.join(runFileName, `${stream.stream}.log`)
     const artifactPath = path.join(this.options.runArtifactsDir, artifactRelativePath)
     const bytes = Buffer.from(redactSecrets(stream.text), 'utf8')
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true })
+    // The output itself is never synced, and so never owed. The folder it
+    // makes is where the run's tool detail goes later, and that needs the
+    // folder's name to reach the disk.
+    const owed = this.owedBy(input)
+    const folder = path.dirname(artifactPath)
+    const folderExisted = !owed || fs.existsSync(folder)
+    const rootExisted = folderExisted || fs.existsSync(this.options.runArtifactsDir)
+    fs.mkdirSync(folder, { recursive: true })
+    if (owed && !rootExisted) owed({ directory: path.dirname(this.options.runArtifactsDir) })
+    if (owed && !folderExisted) owed({ directory: this.options.runArtifactsDir })
     fs.appendFileSync(artifactPath, bytes)
     return [
       {

@@ -22,7 +22,11 @@ import {
   type ThreadDurabilityDebt,
   type ThreadDurabilityDebtNote
 } from './ThreadDurabilityDebt'
-import type { RunEventInput, RunEventRecord } from './types'
+import {
+  ToolActivityDetailBatchWriter,
+  readToolActivityDetailSync
+} from './ToolActivityDetailLedger'
+import type { RunEventInput, RunEventRecord, ToolActivity } from './types'
 import {
   countSyncs,
   watchCrashDisk,
@@ -237,6 +241,49 @@ describe('a run-event ledger that leaves syncing to the thread barrier', () => {
     expect(syncs.issued).toEqual([])
   })
 
+  it('notes the folders the raw output of a run makes, and nothing for the output itself', () => {
+    const unsynced = writer()
+    const raw = { storeRawEvents: true }
+
+    const first = unsynced.append(event(1), raw)
+    expect(first.artifacts).toHaveLength(1)
+    expect(notes).toEqual([
+      owedDirectory(root),
+      owedDirectory(runArtifactsDir),
+      owedDirectory(root),
+      owedFile(),
+      owedDirectory(runEventsDir)
+    ])
+
+    notes.length = 0
+    unsynced.append(event(2), raw)
+    unsynced.append(event(3, { kind: 'provider_error', payload: { error: 'failed\n' } }), raw)
+    expect(notes).toEqual([owedFile(), owedFile()])
+
+    // Another run makes its own folder beside the first.
+    notes.length = 0
+    unsynced.append(event(1, { runId: 'run-2' }), raw)
+    expect(notes).toEqual([
+      owedDirectory(runArtifactsDir, 'run-2'),
+      owedFile('run-2'),
+      owedDirectory(runEventsDir, 'run-2')
+    ])
+    expect(fs.readFileSync(path.join(runArtifactsDir, RUN, 'stdout.log'), 'utf8')).toBe(
+      'output 1\noutput 2\n'
+    )
+    expect(syncs.issued).toEqual([])
+  })
+
+  it('notes nothing for raw output when the event names no thread, or when it was not asked to', () => {
+    const raw = { storeRawEvents: true }
+    writer().append(event(1, { chatId: undefined }), raw)
+    writer({ noteDurabilityDebt: undefined }).append(event(1, { runId: 'run-2' }), raw)
+
+    expect(notes).toEqual([])
+    expect(fs.existsSync(path.join(runArtifactsDir, RUN, 'stdout.log'))).toBe(true)
+    expect(fs.existsSync(path.join(runArtifactsDir, 'run-2', 'stdout.log'))).toBe(true)
+  })
+
   it('leaves the flusher out of it when it is given one as well', () => {
     const flusher = new MainDurabilityFlusher({
       now: () => 0,
@@ -343,6 +390,33 @@ describe.skipIf(process.platform === 'win32')(
       disk.powerLoss()
 
       expect(recordsIn(ledger)).toEqual([strict])
+    })
+
+    it('makes the folder a run was given by its raw output safe for the detail committed into it later', async () => {
+      const runArtifactsDir = path.join(root, 'run-artifacts')
+      writer().append(event(1), { storeRawEvents: true })
+      const detail: ToolActivity = {
+        id: 'tool-1',
+        toolName: 'run_shell_command',
+        displayName: 'Ran command',
+        category: 'shell',
+        status: 'success',
+        rawResultEvent: { output: 'done' }
+      }
+      const details = new ToolActivityDetailBatchWriter(runArtifactsDir, undefined, {
+        chatId: CHAT,
+        note: debt.note
+      })
+      const ref = details.stage(RUN, detail)!
+      details.commit()
+
+      await debt.barrier(CHAT)
+      disk.powerLoss()
+
+      expect(readToolActivityDetailSync(runArtifactsDir, ref)).toEqual(detail)
+      // The raw output was never owed. Its name came back with the folder's
+      // other names; its bytes did not.
+      expect(fs.readFileSync(path.join(runArtifactsDir, RUN, 'stdout.log'), 'utf8')).toBe('')
     })
 
     it('keeps a second run in the same directory only once a barrier has covered its name', async () => {
