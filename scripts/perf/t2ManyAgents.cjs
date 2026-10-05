@@ -25,6 +25,11 @@
  *   main-loop delay) between two profile markers, main's D1 counters at the
  *   fences, and the Host's spans and lag.
  *
+ * Main's spans are read as the window closes and again once its rounds have
+ * drained. The second read adds the spans still open at the first; the
+ * first gives back any span of the window that main's bounded ring evicted
+ * in between, which a long drain with many agents can do.
+ *
  * Main's span handle and the Host fold each take at most eight chats a
  * call, so both are read in batches of eight threads.
  *
@@ -222,6 +227,58 @@ function parseMainAgentSpans(text, labels) {
       admission
     }
   }
+}
+
+/** A span by everything it carries: two reads of one span give the same key. */
+function spanKey(span) {
+  return JSON.stringify([
+    span.kind,
+    span.startedAt,
+    span.durationMs,
+    span.resource,
+    span.bytes,
+    span.fallback,
+    span.reason ?? null
+  ])
+}
+
+/**
+ * One batch's spans from two reads of the same window, `parseMainAgentSpans`
+ * results: one as the window closed and one after its rounds drained. The
+ * second holds every span the first did, unless main's ring has evicted some
+ * since, and adds the spans still open at the first. When the second says
+ * the ring evicted spans of the window, each lane gets back the first read's
+ * spans the second no longer has, a span repeated in one read kept as often
+ * as either read has it. The two are then complete only if the first lost
+ * none and the ring evicted, between them, no more spans than it held at the
+ * first: those are the oldest, all of them in it.
+ *
+ * The second read's result, its lanes made whole and `censored` true only
+ * when spans may still be missing, with `recovered`: how many spans only the
+ * first read held. A second read that failed keeps its refusal.
+ */
+function mergeMainSpanReads(atEnd, afterDrain) {
+  if (!afterDrain.ok || !afterDrain.window.censored || !atEnd.ok) {
+    return { ...afterDrain, recovered: 0 }
+  }
+  const lanes = {}
+  let recovered = 0
+  for (const [label, spans] of Object.entries(afterDrain.window.lanes)) {
+    const held = new Map()
+    for (const span of spans) held.set(spanKey(span), (held.get(spanKey(span)) || 0) + 1)
+    const evicted = []
+    for (const span of atEnd.window.lanes[label] || []) {
+      const left = held.get(spanKey(span)) || 0
+      if (left > 0) held.set(spanKey(span), left - 1)
+      else evicted.push(span)
+    }
+    lanes[label] = [...evicted, ...spans]
+    recovered += evicted.length
+  }
+  const evictedBetween = afterDrain.window.ring.dropped - atEnd.window.ring.dropped
+  const heldAtEnd = atEnd.window.ring.recorded - atEnd.window.ring.dropped
+  const complete = !atEnd.window.censored && evictedBetween >= 0 && evictedBetween <= heldAtEnd
+  return { ok: true, window: { ...afterDrain.window, lanes, censored: !complete }, recovered }
 }
 
 /** The Host's per-thread timings pooled by kind, in taxonomy order. */
@@ -505,6 +562,10 @@ async function runT2ManyAgents(options) {
       await mark(windowId, 'window_end_marker_failed')
     }
     const mainAtEnd = await readMainAt(endedAtMs)
+    // Main's spans of the window as it closed, before a long drain can push
+    // any of them out of main's ring; the reads after the drain add the rest.
+    const spansAtEnd = []
+    for (const batch of batches) spansAtEnd.push(await readMain(batch, startedAtMs, endedAtMs))
     let mainWindow = null
     if (
       probeBegin.status === 'started' &&
@@ -583,19 +644,25 @@ async function runT2ManyAgents(options) {
     if (d1 === null) reasons.push('d1_counters_unavailable')
     else if (!(d1.deferredAppends > 0)) reasons.push('d1_no_deferred_append')
 
-    // Main's spans that started inside the window, eight threads a read.
+    // Main's spans that started inside the window, eight threads a read,
+    // with any the ring evicted since the window closed given back.
     const spansByThread = threads.map(() => null)
     const readProblems = new Set()
     let lastRead = null
     let censored = false
-    for (const batch of batches) {
-      const read = await readMain(batch, startedAtMs, endedAtMs)
+    let recovered = 0
+    for (const [index, batch] of batches.entries()) {
+      const read = mergeMainSpanReads(
+        spansAtEnd[index],
+        await readMain(batch, startedAtMs, endedAtMs)
+      )
       if (!read.ok) {
         readProblems.add(read.reason)
         continue
       }
       lastRead = read.window
       censored = censored || read.window.censored
+      recovered += read.recovered
       for (const { label, place } of batch) spansByThread[place] = read.window.lanes[label]
     }
     const waiting = summariseAgentWaiting({
@@ -622,8 +689,10 @@ async function runT2ManyAgents(options) {
       main = {
         // A span is recorded when its work completes: one still open at the
         // read is absent.
-        basis: 'spans started in the window and completed by the read, after its rounds drained',
+        basis:
+          'spans started in the window and completed by the read after its rounds drained, with those the ring evicted after the window closed taken from a read as it closed',
         censored,
+        recovered,
         ringRise,
         byKind: timingsByKind(spansByThread.filter((spans) => spans !== null).flat())
       }
@@ -801,6 +870,7 @@ module.exports = {
   DEFAULT_T2_MANY_AGENT_OPTIONS: DEFAULT_OPTIONS,
   manyAgentChatsOf,
   manyAgentsTeardownFailures,
+  mergeMainSpanReads,
   parseMainAgentSpans,
   runT2ManyAgents,
   withManyAgentsVerdict

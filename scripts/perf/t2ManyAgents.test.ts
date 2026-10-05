@@ -57,6 +57,7 @@ type Window = {
   main: {
     basis: string
     censored: boolean
+    recovered: number
     ringRise: Record<string, number> | null
     byKind: Record<string, { count: number; totalMs: number; maxMs: number }>
   } | null
@@ -97,6 +98,7 @@ const phase = require('./t2ManyAgents.cjs') as {
   }
   manyAgentsTeardownFailures: (agents: unknown) => string[]
   parseMainAgentSpans: (text: unknown, labels: string[]) => Record<string, unknown>
+  mergeMainSpanReads: (atEnd: unknown, afterDrain: unknown) => Record<string, any>
   runT2ManyAgents: (options: Record<string, unknown>) => Promise<PhaseResult>
   withManyAgentsVerdict: (rounds: unknown, agents: unknown) => Verdict
 }
@@ -190,8 +192,14 @@ type WorldOptions = {
   mainSampledOut?: boolean | 'before'
   mainRejected?: boolean
   noAdmission?: boolean
-  /** Span reads (not the two admission reads) for this batch throw. */
+  /** The read of this batch's spans after the drain throws. */
   failingBatch?: number
+  /** The read of this batch's spans as the window closed throws. */
+  failingEndBatch?: number
+  /** Main's ring holds only this many spans, evicting the oldest. */
+  mainRingSize?: number
+  /** Spans of no window that main records while the last rounds drain. */
+  drainSpans?: number
   baselineFails?: boolean
   probeFails?: boolean
   probeHangs?: boolean
@@ -491,6 +499,15 @@ function world(options: WorldOptions = {}) {
       stopSending: async () => {
         events.push('stopSending')
         sending = false
+        for (let span = 0; span < (options.drainSpans ?? 0); span += 1) {
+          mainSpans.push({
+            chatId: 'perf-other-chat',
+            kind: 'prompt_build',
+            resource: 'none',
+            startedAt: now,
+            durationMs: 1
+          })
+        }
         if (options.observerFaults) observerFaults += 1
         // Every round in flight runs to its end; a stuck one hits its bound.
         for (let waited = 0; threads.some((thread) => thread.active); waited += 100) {
@@ -550,8 +567,11 @@ function world(options: WorldOptions = {}) {
   }
 
   const mainQueries: Array<{ lanes: Record<string, string>; sinceMs: number; untilMs: number }> = []
+  const mainQueryAt: number[] = []
+  const batchCount = Math.ceil(threadCount / 8)
   const markers: string[] = []
   let spanReads = 0
+  const spanReadCensored: boolean[] = []
   const mainReadBounds: unknown[] = []
   const mainSession = {
     post: async (_method: string, params: { expression: string }, sendOptions?: unknown) => {
@@ -575,21 +595,32 @@ function world(options: WorldOptions = {}) {
       }
       const handle = (query: (typeof mainQueries)[number]) => {
         mainQueries.push(query)
+        mainQueryAt.push(now)
         const isSpanRead = query.untilMs > query.sinceMs
         if (isSpanRead) {
           spanReads += 1
-          if (options.failingBatch === spanReads - 1) throw new Error('main read failed')
+          // The reads as the window closes come first, a batch each, then those after the drain.
+          if (options.failingEndBatch === spanReads - 1) throw new Error('main read failed')
+          if (options.failingBatch === spanReads - 1 - batchCount) {
+            throw new Error('main read failed')
+          }
         } else if (options.baselineFails && mainQueries.length === 1) {
           throw new Error('main read failed')
         }
+        // The ring keeps the spans recorded last; the latest start it evicted censors a read.
+        const kept = Math.min(mainSpans.length, options.mainRingSize ?? mainSpans.length)
+        const evicted = mainSpans.slice(0, mainSpans.length - kept)
+        const evictedMaxStartedAt = Math.max(-Infinity, ...evicted.map((span) => span.startedAt))
+        if (isSpanRead) spanReadCensored.push(evictedMaxStartedAt >= query.sinceMs)
         return {
           sampledAt: now,
           sinceMs: query.sinceMs,
           untilMs: query.untilMs,
-          censored: options.mainCensored === true && isSpanRead,
+          censored:
+            (options.mainCensored === true && isSpanRead) || evictedMaxStartedAt >= query.sinceMs,
           ring: {
             recorded: mainSpans.length,
-            dropped: 0,
+            dropped: evicted.length,
             sampledOut:
               options.mainSampledOut === 'before' || (options.mainSampledOut && isSpanRead) ? 3 : 0,
             rejected: options.mainRejected && isSpanRead ? 1 : 0,
@@ -600,6 +631,7 @@ function world(options: WorldOptions = {}) {
               label,
               {
                 spans: mainSpans
+                  .slice(mainSpans.length - kept)
                   .filter(
                     (span) =>
                       span.chatId === chatId &&
@@ -786,6 +818,8 @@ function world(options: WorldOptions = {}) {
     chatIds,
     models,
     mainQueries,
+    mainQueryAt,
+    spanReadCensored,
     markers,
     calibration,
     calibrationFailures,
@@ -860,13 +894,18 @@ describe('a many-agent window, seats one after another', () => {
       drainedAtMs: T0 + 34_400,
       settledAtMs: T0 + 37_400
     })
-    const spanReads = w.mainQueries.filter((query) => query.untilMs > query.sinceMs)
+    // The spans are read as the window closes and again once its rounds have drained.
+    const spanReads = w.mainQueries
+      .map((query, place) => ({ query, at: w.mainQueryAt[place] - T0 }))
+      .filter(({ query }) => query.untilMs > query.sinceMs)
+    const read = {
+      lanes: { t001: w.chatIds[0], t002: w.chatIds[1], t003: w.chatIds[2] },
+      sinceMs: T0 + 11_000,
+      untilMs: T0 + 31_000
+    }
     expect(spanReads).toEqual([
-      {
-        lanes: { t001: w.chatIds[0], t002: w.chatIds[1], t003: w.chatIds[2] },
-        sinceMs: T0 + 11_000,
-        untilMs: T0 + 31_000
-      }
+      { query: read, at: 31_000 },
+      { query: read, at: 37_900 }
     ])
     // The model's turns from the first sends: a round that ran in the window
     // may have been sent before it.
@@ -1077,6 +1116,7 @@ describe('a many-agent window, seats one after another', () => {
     expect(w.mainReadBounds).toEqual([
       { timeoutMs: 4_000 },
       { timeoutMs: 4_000 },
+      { timeoutMs: 4_000 },
       { timeoutMs: 4_000 }
     ])
     // Lane options that are not a set of options are left out.
@@ -1182,10 +1222,12 @@ describe('many threads', () => {
     const w = world({ threads: 20, seats: 1 })
     const result = await w.run()
     expect(result.verdict).toEqual({ ok: true, reasons: [] })
+    // Three as the window closes, three after the drain.
     const spanReads = w.mainQueries.filter((query) => query.untilMs > query.sinceMs)
-    expect(spanReads.map((query) => Object.keys(query.lanes).length)).toEqual([8, 8, 4])
-    expect(spanReads.flatMap((query) => Object.values(query.lanes))).toEqual(w.chatIds)
-    expect(Object.keys(spanReads[2].lanes)).toEqual(['t017', 't018', 't019', 't020'])
+    expect(spanReads.map((query) => Object.keys(query.lanes).length)).toEqual([8, 8, 4, 8, 8, 4])
+    expect(spanReads.slice(3).flatMap((query) => Object.values(query.lanes))).toEqual(w.chatIds)
+    expect(spanReads.slice(0, 3)).toEqual(spanReads.slice(3))
+    expect(Object.keys(spanReads[5].lanes)).toEqual(['t017', 't018', 't019', 't020'])
     const window = result.windows[0]
     expect(window.agents?.threads).toHaveLength(20)
     expect(window.waiting.threads).toHaveLength(20)
@@ -1193,6 +1235,166 @@ describe('many threads', () => {
     expect(window.host).toMatchObject({ censored: false, threadsFolded: 20 })
     expect(window.host?.byKind.durable_commit.count).toBe(window.agents?.overall.turns.done)
     expect(window.agents?.overall.runningAtOnce).toMatchObject({ asked: 20, max: 20 })
+  })
+})
+
+describe('main’s spans, read as the window closes and once its rounds drain', () => {
+  // Main's ring holds this many spans: all of the window's as it closes, but
+  // not once the last rounds have drained.
+  const HOLDS_THE_WINDOW = 85
+
+  it('gives back the spans the ring evicted after the window closed', async () => {
+    const whole = (await world().run()).windows[0]
+    const w = world({ mainRingSize: HOLDS_THE_WINDOW })
+    const result = await w.run()
+    // As the window closed nothing of it was evicted; by the drain some was.
+    expect(w.spanReadCensored).toEqual([false, true])
+    const window = result.windows[0]
+    expect(window.reasons).toEqual([])
+    expect(window.main?.censored).toBe(false)
+    expect(window.main?.recovered).toBeGreaterThan(0)
+    expect(window.main?.byKind).toEqual(whole.main?.byKind)
+    expect(window.waiting.threads).toEqual(whole.waiting.threads)
+    expect(whole.main?.recovered).toBe(0)
+  })
+
+  it('names spans the ring had evicted before the window closed', async () => {
+    const w = world({ mainRingSize: 20 })
+    const result = await w.run()
+    expect(w.spanReadCensored).toEqual([true, true])
+    expect(result.windows[0].reasons).toEqual(['main_spans_evicted'])
+    expect(result.windows[0].main?.censored).toBe(true)
+  })
+
+  it('names spans lost when the ring turned over more than it held after the window closed', async () => {
+    const w = world({ mainRingSize: HOLDS_THE_WINDOW, drainSpans: HOLDS_THE_WINDOW + 1 })
+    const result = await w.run()
+    expect(w.spanReadCensored).toEqual([false, true])
+    expect(result.windows[0].reasons).toEqual(['main_spans_evicted'])
+    expect(result.windows[0].main?.censored).toBe(true)
+  })
+
+  it('needs no read as the window closed when the ring evicted nothing', async () => {
+    const whole = (await world().run()).windows[0]
+    const result = await world({ failingEndBatch: 0 }).run()
+    expect(result.windows[0].reasons).toEqual([])
+    expect(result.windows[0].main).toEqual(whole.main)
+  })
+
+  it('cannot give back evicted spans without the read as the window closed', async () => {
+    const w = world({ mainRingSize: HOLDS_THE_WINDOW, failingEndBatch: 0 })
+    const result = await w.run()
+    expect(result.windows[0].reasons).toEqual(['main_spans_evicted'])
+  })
+
+  it('takes a batch’s spans from the read after the drain, or not at all', async () => {
+    const result = await world({ failingBatch: 0 }).run()
+    expect(result.windows[0].reasons).toEqual(['main_read_failed'])
+    expect(result.windows[0].waiting.threadsUnread).toBe(3)
+    expect(result.windows[0].main).toBeNull()
+  })
+})
+
+describe('two reads of one batch’s spans, merged', () => {
+  const span = (kind: string, startedAt: number, durationMs = 0) => ({
+    kind,
+    startedAt,
+    durationMs,
+    resource: 'none',
+    bytes: 0,
+    fallback: false
+  })
+  const A = span('admission_wait', 100)
+  const B = span('prompt_build', 101, 5)
+  const C = span('round_start', 102, 900)
+  const read = (
+    spans: Array<ReturnType<typeof span>>,
+    censored: boolean,
+    recorded: number,
+    dropped: number
+  ) => ({
+    ok: true,
+    window: {
+      sinceMs: 100,
+      untilMs: 200,
+      censored,
+      ring: { recorded, dropped, sampledOut: 0, rejected: 0, degraded: 0 },
+      lanes: { t001: spans },
+      admission: null
+    }
+  })
+
+  it('keeps a span repeated in one read as often as either read has it', () => {
+    // As the window closed the ring held 50 spans; 10 were evicted by the drain.
+    const merged = phase.mergeMainSpanReads(
+      read([A, A, B], false, 50, 0),
+      read([A, C], true, 60, 10)
+    )
+    expect(merged).toMatchObject({ ok: true, recovered: 2 })
+    expect(merged.window.lanes.t001).toEqual([A, B, A, C])
+    expect(merged.window.censored).toBe(false)
+    // The rest of the window is the read after the drain's.
+    expect(merged.window.ring).toEqual({
+      recorded: 60,
+      dropped: 10,
+      sampledOut: 0,
+      rejected: 0,
+      degraded: 0
+    })
+  })
+
+  it('tells apart two spans that differ only in when they started', () => {
+    const later = span('admission_wait', 150)
+    const merged = phase.mergeMainSpanReads(
+      read([A, later], false, 50, 0),
+      read([later], true, 60, 10)
+    )
+    expect(merged.window.lanes.t001).toEqual([A, later])
+    expect(merged.recovered).toBe(1)
+  })
+
+  it('takes the read after the drain alone when the ring evicted none of the window', () => {
+    const merged = phase.mergeMainSpanReads(
+      read([A, B], false, 50, 0),
+      read([A, B, C], false, 60, 0)
+    )
+    expect(merged).toMatchObject({ ok: true, recovered: 0 })
+    expect(merged.window.lanes.t001).toEqual([A, B, C])
+  })
+
+  it('stays censored when the ring may have lost what neither read holds', () => {
+    // Evicted before the window closed.
+    expect(
+      phase.mergeMainSpanReads(read([A], true, 50, 5), read([C], true, 60, 15)).window.censored
+    ).toBe(true)
+    // More evicted after it closed than the ring held then.
+    expect(
+      phase.mergeMainSpanReads(read([A], false, 50, 0), read([C], true, 120, 51)).window.censored
+    ).toBe(true)
+    // Exactly what it held: every evicted span was in the first read.
+    expect(
+      phase.mergeMainSpanReads(read([A], false, 50, 0), read([C], true, 120, 50)).window.censored
+    ).toBe(false)
+    // Counters that went backwards prove nothing.
+    expect(
+      phase.mergeMainSpanReads(read([A], false, 50, 10), read([C], true, 60, 5)).window.censored
+    ).toBe(true)
+    // No first read at all.
+    const failed = { ok: false, reason: 'main_read_failed' }
+    expect(phase.mergeMainSpanReads(failed, read([C], true, 60, 10))).toMatchObject({
+      ok: true,
+      recovered: 0,
+      window: { censored: true, lanes: { t001: [C] } }
+    })
+  })
+
+  it('keeps the refusal of a read after the drain that failed', () => {
+    const failed = { ok: false, reason: 'main_read_failed' }
+    expect(phase.mergeMainSpanReads(read([A], false, 50, 0), failed)).toEqual({
+      ok: false,
+      reason: 'main_read_failed',
+      recovered: 0
+    })
   })
 })
 
