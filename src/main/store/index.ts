@@ -8472,6 +8472,12 @@ export class AppStore {
       preparation.authoredTranscript,
       deferTerminalCheckpoint
     )
+    threadBarrierDurability?.noteSave(
+      previousChatForFeedback,
+      normalizedChat,
+      incrementalResult,
+      flushReason
+    )
     // In-memory projection: this process reads the new record immediately.
     this.rememberChatRecord(normalizedChat.appChatId, {
       mtimeMs: -1,
@@ -8741,6 +8747,12 @@ export class AppStore {
         normalizedChat,
         flushReason,
         authoredTranscript
+      )
+      threadBarrierDurability?.noteSave(
+        previousChatForFeedback,
+        normalizedChat,
+        incrementalResult,
+        flushReason
       )
       // Stage 3: mirror the same save (with the same substituted authored
       // ops) onto the segmented store. The authoritative legacy write is

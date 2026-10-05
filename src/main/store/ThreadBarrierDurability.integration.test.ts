@@ -7,7 +7,9 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { CHAT_DURABILITY_MOMENTS, type ChatDurabilityMoment } from './ChatDurabilityTickets'
 import type { ThreadBarrierDurability } from './ThreadBarrierDurability'
+import { ThreadCatalogueDiskReader } from './ThreadCatalogueDiskReader'
 import type { ThreadDurabilityPort } from './ThreadDurabilityDebt'
 import type { ChatRecord, RunEventInput } from './types'
 import { disposeHostOwnedStores, importHostOwnedStore } from './hostOwnedErasure.testutil'
@@ -412,4 +414,134 @@ describe('the admitted path, taken before the Host owned the store', () => {
       `file:${EVENTS}`
     ])
   })
+})
+
+describe('the tickets each save takes', () => {
+  /** Saves after the run, of the two moments the steps above do not reach. */
+  const LATER: typeof STEPS = [
+    {
+      name: "an answer to an agent's question",
+      act: (store) => {
+        const chat = store.getChat(CHAT)!
+        store.saveChat({
+          ...chat,
+          messages: [
+            ...chat.messages,
+            {
+              id: 'agent-question-reply-q1',
+              role: 'user',
+              content: 'The second option',
+              timestamp: AT,
+              metadata: { kind: 'agentQuestionReply', questionId: 'q1' }
+            }
+          ]
+        })
+      }
+    },
+    {
+      name: 'rows removed from the transcript',
+      act: (store) => {
+        const chat = store.getChat(CHAT)!
+        store.saveChat({ ...chat, messages: chat.messages.slice(0, 2) })
+      }
+    }
+  ]
+
+  function noted(layer: ThreadBarrierDurability): Record<ChatDurabilityMoment, number> {
+    const { moments } = layer.tickets.snapshot()
+    return Object.fromEntries(
+      CHAT_DURABILITY_MOMENTS.map((moment) => [moment, moments[moment].noted])
+    ) as Record<ChatDurabilityMoment, number>
+  }
+
+  async function takenBy(steps: typeof STEPS, options: { gateOpen?: boolean } = {}) {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([], undefined, options)
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    layers.port = disk.port
+    const taken: Array<[string, ChatDurabilityMoment[]]> = []
+    for (const step of steps) {
+      const before = noted(layers.built[0])
+      step.act(AppStore)
+      const after = noted(layers.built[0])
+      taken.push([
+        step.name,
+        CHAT_DURABILITY_MOMENTS.flatMap((moment) =>
+          Array<ChatDurabilityMoment>(after[moment] - before[moment]).fill(moment)
+        )
+      ])
+    }
+    return taken
+  }
+
+  it('takes one for each moment a save contains, and none for anything else', async () => {
+    expect(await takenBy([...STEPS, ...LATER])).toEqual([
+      // Written as a synced checkpoint where it happens: no batch, no ticket.
+      ['a new thread with its first message', []],
+      ['a run starts', []],
+      ['streamed text', []],
+      ['a user message', ['user_message']],
+      // Lane approvals have no writer in the app: an approval's decision is
+      // recorded, and synced, in the approval ledger.
+      ['an approval opens', []],
+      ['the approval is answered', []],
+      ['a tool result whose detail is moved out', []],
+      ['the run ends', ['run_final']],
+      ["an answer to an agent's question", ['decision']],
+      ['rows removed from the transcript', ['destructive']]
+    ])
+  })
+
+  it('takes them on the admitted path too, taken before the Host owned the store', async () => {
+    expect(await takenBy([STEPS[0], STEPS[1], STEPS[3], STEPS[7]], { gateOpen: true })).toEqual([
+      ['a new thread with its first message', []],
+      ['a run starts', []],
+      ['a user message', ['user_message']],
+      ['the run ends', ['run_final']]
+    ])
+  })
+
+  it.each([true, false])(
+    'lets a user message be reported done only once the disk has it (barrier paid: %s)',
+    async (paid) => {
+      vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+      const { AppStore, profilePath } = await importHostOwnedStore([])
+      const disk = watchCrashDisk(profilePath)
+      disks.push(disk)
+      let held: Promise<void> | null = null
+      let release = (): void => {}
+      layers.port = {
+        syncFile: async (target) => (await held, disk.port.syncFile(target)),
+        syncDirectory: async (target) => (await held, disk.port.syncDirectory(target))
+      }
+      STEPS[0].act(AppStore)
+      // The Host syncs its copy of a new thread; the test Host only writes it.
+      disk.flushedAnyway(path.join(profilePath, 'chats', `${CHAT}.json`))
+      disk.flushedAnyway(path.join(profilePath, 'chats'))
+      STEPS[1].act(AppStore)
+      STEPS[2].act(AppStore)
+      await layers.built[0].debt.barrier(CHAT)
+      held = new Promise<void>((resolve) => (release = resolve))
+
+      STEPS[3].act(AppStore)
+      let reported = false
+      const done = layers.built[0].tickets.awaitChat(CHAT).then(() => (reported = true))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(reported).toBe(false)
+      if (paid) {
+        release()
+        await done
+      }
+
+      disk.powerLoss()
+      const loaded = new ThreadCatalogueDiskReader({
+        profilePath,
+        runtimeInstanceId: 'reader',
+        segmented: false
+      }).read(CHAT)!.chat
+      expect(loaded.messages.some((message) => message.id === 'user-2')).toBe(paid)
+      release()
+    }
+  )
 })
