@@ -882,12 +882,6 @@ async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promis
   }
 }
 
-const usageJournalStore = new UsageJournalStore({
-  checkpointPath: usagePath,
-  journalPath: usageJournalPath,
-  archivePath: usageArchivePath
-})
-
 /** Main-owned Project registry (Work surface). Constructed against the
  * hardened readJson/writeJson pair below (function declarations, so hoisting
  * makes them safe to reference here); record logic lives in shared/projects. */
@@ -1183,6 +1177,21 @@ if (durableMomentGate) installDurableMomentGate(durableMomentGate)
 const queuedStartGate = threadBarrierDurability
   ? new DurableMomentGate({ source: threadBarrierDurability.tickets })
   : null
+// The usage log. Under barrier durability its appends write without a sync,
+// and their syncs queue on the layer's port at its background class.
+const usageJournalStore = new UsageJournalStore({
+  checkpointPath: usagePath,
+  journalPath: usageJournalPath,
+  archivePath: usageArchivePath,
+  ...(threadBarrierDurability ? { unsynced: { port: threadBarrierDurability.port } } : {})
+})
+/** Quit under barrier durability: what every thread owes, and the usage log, within one budget. */
+function payBarrierDurabilityAtQuit(budgetMs: number): Promise<unknown> {
+  return Promise.all([
+    threadBarrierDurability?.payAll(budgetMs),
+    usageJournalStore.settleAtQuit(budgetMs)
+  ])
+}
 /**
  * What the dispatch barriers wait for before the journal holds a revision on
  * the disk. Under barrier durability the journal syncs nothing itself, and a
@@ -9374,12 +9383,12 @@ export class AppStore {
       saveCoalescer.flushAll()
       incrementalChatPersistence.checkpointAll()
       segmentedChatStore.checkpointAll()
-      if (threadBarrierDurability) await threadBarrierDurability.payAll(quitBudgetMs)
+      if (threadBarrierDurability) await payBarrierDurabilityAtQuit(quitBudgetMs)
       return
     }
     incrementalChatPersistence.checkpointAll()
     segmentedChatStore.checkpointAll()
-    const paying = threadBarrierDurability?.payAll(quitBudgetMs)
+    const paying = threadBarrierDurability ? payBarrierDurabilityAtQuit(quitBudgetMs) : null
     await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
     if (paying) await paying
   }
@@ -9399,6 +9408,7 @@ export class AppStore {
       layer: threadBarrierDurability,
       gate: durableMomentGate,
       startGate: queuedStartGate,
+      usage: usageJournalStore,
       checkpoints: () => journalCheckpointCounts.snapshot(),
       tornTailsTruncated: () => incrementalJournal.stats().tornTailsTruncated
     })

@@ -8,6 +8,9 @@
  * - `debt`, `port`, `tickets`, `gates`, `starts`, `threads` and `staging`:
  *   the layer's own counters, each its module's whole snapshot. Null with the
  *   switch off, when none of them exists.
+ * - `usageLog`: the usage log's appends written without a sync, the rounds
+ *   that sync them, and its compactions off the event loop. Null with the
+ *   switch off, when every append syncs where it is made.
  * - `checkpoints`: the journal's checkpoints by what triggered them, counted
  *   whatever the switch, so the pair off against on compares like with like.
  * - `tornTailsRepaired`: torn journal tails cut before an append, each with
@@ -23,6 +26,7 @@ import type { ThreadDebtTrackerSnapshot } from './ThreadDebtTracker'
 import type { ThreadDurabilityDebtSnapshot } from './ThreadDurabilityDebt'
 import type { ThreadDurabilityDebtFsSnapshot } from './ThreadDurabilityDebtFs'
 import type { ToolActivityDetailStagingSnapshot } from './ToolActivityDetailStaging'
+import type { UsageJournalUnsyncedSnapshot } from './UsageJournalStore'
 import type { DurableMomentGate, DurableMomentGateSnapshot } from '../run/DurableMomentGate'
 
 export interface ThreadBarrierDurabilityPerfSection {
@@ -41,6 +45,8 @@ export interface ThreadBarrierDurabilityPerfSection {
   threads: ThreadDebtTrackerSnapshot | null
   /** Tool detail staged off the save path and synced at the port's background class. */
   staging: ToolActivityDetailStagingSnapshot | null
+  /** The usage log: appends and spills written without a sync, its background rounds and compactions. */
+  usageLog: UsageJournalUnsyncedSnapshot | null
   /** Counted with the switch off too. */
   checkpoints: JournalCheckpointCounts
   tornTailsRepaired: number
@@ -54,6 +60,8 @@ export interface ThreadBarrierDurabilityPerfSources {
   gate: Pick<DurableMomentGate, 'snapshot'> | null
   /** The gate a queued start's barrier is bounded by; null with the switch off. */
   startGate: Pick<DurableMomentGate, 'snapshot'> | null
+  /** The usage log, whose counters are null with the switch off. */
+  usage: { unsyncedSnapshot(): UsageJournalUnsyncedSnapshot | null }
   checkpoints: () => JournalCheckpointCounts
   /** The journal's count of torn tails it cut before an append. */
   tornTailsTruncated: () => number
@@ -73,6 +81,7 @@ export function readThreadBarrierDurabilityPerf(
     starts: sources.startGate?.snapshot() ?? null,
     threads: layer?.threads ?? null,
     staging: layer?.staging ?? null,
+    usageLog: sources.usage.unsyncedSnapshot(),
     checkpoints: sources.checkpoints(),
     tornTailsRepaired: sources.tornTailsTruncated()
   }

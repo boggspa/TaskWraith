@@ -32,6 +32,7 @@ const FIELDS = [
   'starts',
   'threads',
   'staging',
+  'usageLog',
   'checkpoints',
   'tornTailsRepaired'
 ]
@@ -45,6 +46,7 @@ describe('the threadBarrierDurability perf section', () => {
       layer: null,
       gate: null,
       startGate: null,
+      usage: { unsyncedSnapshot: () => null },
       checkpoints: () => checkpoints,
       tornTailsTruncated: () => 2
     })
@@ -59,6 +61,7 @@ describe('the threadBarrierDurability perf section', () => {
       starts: null,
       threads: null,
       staging: null,
+      usageLog: null,
       checkpoints,
       tornTailsRepaired: 2
     })
@@ -74,6 +77,7 @@ describe('the threadBarrierDurability perf section', () => {
       layer: null,
       gate: null,
       startGate: null,
+      usage: { unsyncedSnapshot: () => null },
       checkpoints: counts,
       tornTailsTruncated: () => 0
     })
@@ -109,11 +113,26 @@ describe('the threadBarrierDurability perf section', () => {
       rawResultEvent: { output: 'Detail of the command' }
     })
 
+    // The usage log's counters, read when the section is.
+    const usageLog = {
+      appends: 4,
+      spills: 1,
+      background: {
+        owed: { files: 1, directories: 0 },
+        rounds: 2,
+        failedRounds: 0,
+        syncs: { files: 2, directories: 1 },
+        quitRounds: 0,
+        quitUnpaid: 0
+      },
+      compactions: { started: 1, completed: 1, stopped: 0, failed: 0 }
+    }
     const section = readThreadBarrierDurabilityPerf({
       switches: { barrierDurability: true, barrierDurabilityIgnored: null },
       layer,
       gate,
       startGate,
+      usage: { unsyncedSnapshot: () => usageLog },
       checkpoints: counts,
       tornTailsTruncated: () => 1
     })
@@ -130,6 +149,7 @@ describe('the threadBarrierDurability perf section', () => {
       starts: startGate.snapshot(),
       threads: parts.threads,
       staging: parts.staging,
+      usageLog,
       checkpoints: counts(),
       tornTailsRepaired: 1
     })

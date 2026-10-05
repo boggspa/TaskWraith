@@ -2,7 +2,13 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { TextDecoder } from 'util'
+import type { ThreadDurabilityPort, ThreadDurabilitySyncOutcome } from './ThreadDurabilityDebt'
 import type { UsageRecord } from './types'
+import {
+  UsageJournalBackgroundSync,
+  type UsageJournalBackgroundSyncOptions,
+  type UsageJournalBackgroundSyncSnapshot
+} from './UsageJournalBackgroundSync'
 import { partitionUsageRecordsForRotation } from './usageRotation'
 
 const DEFAULT_COMPACT_AFTER_RECORDS = 256
@@ -43,6 +49,32 @@ export interface UsageJournalStoreOptions {
   afterHistoryMutationStep?: (
     step: 'intent-prepared' | 'checkpoint' | 'journals' | 'archive' | 'verified' | 'completed'
   ) => void
+  /**
+   * Barrier durability: appends and compactions write without a sync on the
+   * calling thread and leave their syncs to the port, off it. Without it
+   * every write syncs where it is made.
+   */
+  unsynced?: UsageJournalUnsyncedOptions
+}
+
+export interface UsageJournalUnsyncedOptions {
+  /** The barrier layer's port: every sync it makes runs off the event loop. */
+  port: Pick<ThreadDurabilityPort, 'syncFile' | 'syncDirectory'>
+  /** The background rounds' spacing, clock and timer; the production ones when omitted. */
+  rounds?: Omit<UsageJournalBackgroundSyncOptions, 'port'>
+}
+
+export interface UsageJournalUnsyncedSnapshot {
+  /** Records appended without a sync, to the live journal or, when it was locked, as a spill. */
+  appends: number
+  spills: number
+  /** The rounds that sync what appends left owing. */
+  background: UsageJournalBackgroundSyncSnapshot
+  /**
+   * Compactions run off the event loop: started, completed, stopped by a
+   * history deletion before they finished, and failed.
+   */
+  compactions: { started: number; completed: number; stopped: number; failed: number }
 }
 
 export type UsageHistoryMutationKind = 'global' | 'workspace' | 'chat' | 'truncate'
@@ -82,6 +114,12 @@ interface UsageHistoryMutationIntent {
 interface UsageJournalLock {
   token: string
   filePath: string
+}
+
+/** A compaction running off the event loop, and whether a history purge took its lock over. */
+interface BackgroundCompaction {
+  lock: UsageJournalLock
+  takenOver: boolean
 }
 
 interface JournalReadResult {
@@ -144,6 +182,14 @@ export class UsageJournalStoreReadOnlyError extends Error {
  * archive, commits a new checkpoint, and only then removes claimed inputs.
  * Replaying checkpoint + journal artifacts is therefore safe across every
  * crash boundary. UsageRecord.id is the idempotency key.
+ *
+ * Under barrier durability (`unsynced`) an append writes without a sync, and
+ * a background round pays what it left owing, at most once a second
+ * (`UsageJournalBackgroundSync`). A power cut then costs the records appended
+ * since the last round, and a torn last line reads as the records before it,
+ * as it does after a crash mid-append. Compaction keeps its order and moves
+ * its syncs off the event loop (`compactInBackground`). History deletion is
+ * the user's and syncs itself as before.
  */
 export class UsageJournalStore {
   private readonly checkpointPath: string
@@ -171,6 +217,18 @@ export class UsageJournalStore {
   private compactionRetryTimer: ReturnType<typeof setTimeout> | null = null
   private compactionRetryAttempt = 0
   private readonly preservedCorruptCheckpointVersions = new Set<string>()
+  /** Barrier durability's port and background rounds; null when every write syncs itself. */
+  private readonly unsynced: {
+    port: UsageJournalUnsyncedOptions['port']
+    background: UsageJournalBackgroundSync
+  } | null
+  private backgroundCompaction: Promise<boolean> | null = null
+  private runningCompaction: BackgroundCompaction | null = null
+  private readonly unsyncedCounts = {
+    appends: 0,
+    spills: 0,
+    compactions: { started: 0, completed: 0, stopped: 0, failed: 0 }
+  }
 
   constructor(options: UsageJournalStoreOptions) {
     const managedDirectory = path.resolve(path.dirname(options.journalPath))
@@ -210,22 +268,34 @@ export class UsageJournalStore {
     this.beforeRetireRename = options.beforeRetireRename
     this.afterRetireRename = options.afterRetireRename
     this.afterHistoryMutationStep = options.afterHistoryMutationStep
-    if (!this.isWritable()) return
-    try {
-      const recoveryLock = this.tryAcquireLock()
-      if (recoveryLock) {
-        try {
-          this.recoverRetiredUsageArtifactsStrict()
-        } finally {
-          this.releaseLock(recoveryLock)
+    // Startup recovery syncs where it writes, as without barrier durability.
+    this.unsynced = null
+    if (this.isWritable()) {
+      try {
+        const recoveryLock = this.tryAcquireLock()
+        if (recoveryLock) {
+          try {
+            this.recoverRetiredUsageArtifactsStrict()
+          } finally {
+            this.releaseLock(recoveryLock)
+          }
         }
+      } catch (error) {
+        // A strict history purge retries this cleanup and refuses to verify while
+        // an unsafe managed retirement remains. Ordinary startup keeps the
+        // original evidence and reports the condition instead of deleting an
+        // ambiguous filesystem object.
+        this.logger.warn('Failed to recover a retired usage artifact', error)
       }
-    } catch (error) {
-      // A strict history purge retries this cleanup and refuses to verify while
-      // an unsafe managed retirement remains. Ordinary startup keeps the
-      // original evidence and reports the condition instead of deleting an
-      // ambiguous filesystem object.
-      this.logger.warn('Failed to recover a retired usage artifact', error)
+    }
+    if (options.unsynced) {
+      this.unsynced = {
+        port: options.unsynced.port,
+        background: new UsageJournalBackgroundSync({
+          ...options.unsynced.rounds,
+          port: options.unsynced.port
+        })
+      }
     }
   }
 
@@ -283,7 +353,7 @@ export class UsageJournalStore {
     const intent = this.readHistoryMutationIntent()
     if (!intent || intent.operationId !== hold.operationId) return false
     if (intent.status !== 'completed') return true
-    const lock = this.tryAcquireLock()
+    const lock = this.takeOverCompactionLock() ?? this.tryAcquireLock()
     if (!lock) {
       throw new Error('Completed usage history mutation could not acquire the retirement lock.')
     }
@@ -393,7 +463,8 @@ export class UsageJournalStore {
           // Recheck after acquiring the cross-instance append/compaction lock.
           // A history prepare may have landed while this caller was acquiring it.
           this.assertUsageRecordHistoryMutationAllowed(record)
-          durableAppend(this.journalPath, serialized)
+          if (this.writesUnsynced()) this.appendUnsynced(serialized)
+          else durableAppend(this.journalPath, serialized)
         } catch (error) {
           // The append may have torn before it failed. A complete immutable
           // spill with the same id is safe because replay dedupes by id.
@@ -434,6 +505,9 @@ export class UsageJournalStore {
    */
   compact(nowMs = this.now()): boolean {
     this.assertWritable()
+    if (this.writesUnsynced()) {
+      throw new Error('Under barrier durability the usage journal compacts off the event loop.')
+    }
     if (this.readHistoryMutationIntent()) return false
     const compacted = this.compactOnce(nowMs)
     if (compacted) this.finishSuccessfulCompaction()
@@ -516,6 +590,202 @@ export class UsageJournalStore {
     }
   }
 
+  /**
+   * Barrier durability's compaction: the steps of `compact` in its order,
+   * with each sync made off the event loop through the port, at its
+   * background class, and waited for before the step that relies on it.
+   * Nothing is renamed or removed whose bytes are not synced: the inputs are
+   * synced before the live journal is claimed, a quarantined copy and the new
+   * checkpoint before they take their names, the archive before the
+   * checkpoint drops the records it took, and the inputs are removed only once
+   * the checkpoint that holds their records is durable under its name.
+   *
+   * It holds the journal lock from its first step to its last, so an append
+   * meanwhile spills, and the spill waits for the next compaction. A history
+   * purge in this process takes the lock over, and the compaction stops at
+   * its next step; so does a deletion prepared meanwhile. Either way it leaves
+   * what a crash at that step would, which replay reads and the next
+   * compaction finishes. Without barrier durability this is `compact`.
+   */
+  compactInBackground(nowMs = this.now()): Promise<boolean> {
+    this.assertWritable()
+    if (!this.writesUnsynced()) return Promise.resolve(this.compact(nowMs))
+    if (this.backgroundCompaction) return this.backgroundCompaction
+    if (this.readHistoryMutationIntent()) return Promise.resolve(false)
+    this.unsyncedCounts.compactions.started += 1
+    const spillsBefore = this.unsyncedCounts.spills
+    const compacting = this.compactUnsyncedOnce(nowMs).then((compacted) => {
+      this.backgroundCompaction = null
+      if (!compacted) {
+        this.scheduleCompactionRetry()
+        return compacted
+      }
+      this.finishSuccessfulCompaction()
+      // An append that found the lock taken meanwhile spilled: compact it next.
+      if (this.unsyncedCounts.spills !== spillsBefore) this.scheduleCompaction()
+      return compacted
+    })
+    this.backgroundCompaction = compacting
+    return compacting
+  }
+
+  private async compactUnsyncedOnce(nowMs: number): Promise<boolean> {
+    const lock = this.tryAcquireLock()
+    if (!lock) {
+      this.unsyncedCounts.compactions.failed += 1
+      return false
+    }
+    const run: BackgroundCompaction = { lock, takenOver: false }
+    this.runningCompaction = run
+    const directory = path.dirname(this.journalPath)
+    const port = this.unsynced!.port
+    const syncFile = (filePath: string): Promise<ThreadDurabilitySyncOutcome> =>
+      port.syncFile(filePath, { background: true })
+    const syncDirectory = (): Promise<ThreadDurabilitySyncOutcome> =>
+      port.syncDirectory(directory, { background: true })
+    // Temps written and not yet renamed: removed if it stops before they are.
+    const temps = new Map<string, RegularFileIdentity>()
+    let outcome: 'completed' | 'stopped' | 'failed' = 'failed'
+    const stopped = (): boolean => {
+      if (!run.takenOver && this.isWritable() && !this.readHistoryMutationIntent()) return false
+      outcome = 'stopped'
+      return true
+    }
+    // Writes the content under a temp name and syncs it, then gives it its
+    // name and syncs that.
+    const commit = async (filePath: string, content: string | Buffer): Promise<boolean> => {
+      const temp = writeTempFileUnsynced(filePath, content)
+      temps.set(temp.path, temp.identity)
+      await syncFile(temp.path)
+      if (stopped()) return false
+      assertRegularFileOrMissing(filePath)
+      fs.renameSync(temp.path, filePath)
+      temps.delete(temp.path)
+      await syncDirectory()
+      return !stopped()
+    }
+
+    try {
+      this.assertManagedDataTargetsSafe()
+      // The inputs are what is replayable now, every one of them synced
+      // before any is moved. A spill written meanwhile is not among them.
+      const listed = this.listJournalArtifacts(true)
+      if (listed.status === 'error') throw listed.error
+      await Promise.all(listed.paths.map(syncFile))
+      if (stopped()) return false
+      const claimedInputs: string[] = []
+      for (const filePath of listed.paths) {
+        if (filePath !== this.journalPath) {
+          claimedInputs.push(filePath)
+          continue
+        }
+        const claimedLive = this.claimLiveJournal()
+        if (claimedLive) claimedInputs.push(claimedLive)
+      }
+
+      const checkpoint = this.readCheckpoint({ lockHeld: true })
+      if (checkpoint.status === 'error') throw checkpoint.error
+      const journalReads = claimedInputs.map((filePath) => this.readJournal(filePath))
+      const unreadableJournal = journalReads.find(
+        (result) => result.status !== 'ok' && result.status !== 'malformed'
+      )
+      if (unreadableJournal) throw unreadableJournal.error ?? new Error('Usage journal disappeared')
+      for (let index = 0; index < journalReads.length; index += 1) {
+        const journalRead = journalReads[index]
+        if (journalRead.status !== 'malformed') continue
+        if (!journalRead.rawBytes) throw new Error('Malformed usage journal has no forensic bytes')
+        const quarantinePath = this.quarantinePathFor(claimedInputs[index], journalRead.rawBytes)
+        if (quarantinePath && !(await commit(quarantinePath, journalRead.rawBytes))) return false
+      }
+      const journalRecords = journalReads.flatMap((result) => result.records)
+      const checkpointBeforeCommit = this.readCheckpoint({ lockHeld: true })
+      if (checkpointBeforeCommit.status === 'error') throw checkpointBeforeCommit.error
+      if (checkpointBeforeCommit.version !== checkpoint.version) {
+        throw new Error('Usage checkpoint changed during compaction')
+      }
+      const records = dedupeAndSortUsageRecords([...checkpoint.records, ...journalRecords])
+      const { keep, rotate } = partitionUsageRecordsForRotation(records, nowMs)
+
+      if (claimedInputs.length === 0 && rotate.length === 0) {
+        outcome = 'completed'
+        return true
+      }
+
+      if (rotate.length > 0) {
+        const archive = appendArchiveDurably(this.archivePath, rotate, false)
+        if (archive.appended) {
+          await syncFile(this.archivePath)
+          if (archive.created) await syncDirectory()
+          if (stopped()) return false
+        }
+      }
+      if (!(await commit(this.checkpointPath, JSON.stringify(keep)))) return false
+
+      for (let index = 0; index < claimedInputs.length; index += 1) {
+        const filePath = claimedInputs[index]
+        const identity = journalReads[index]?.identity
+        try {
+          if (!identity) {
+            throw new UnsafeUsageStorePathError(filePath, 'missing read identity at cleanup')
+          }
+          retireRegularFileNoFollow(
+            filePath,
+            identity,
+            this.beforeRetireRename,
+            this.afterRetireRename,
+            false
+          )
+        } catch (error) {
+          if (!isNodeError(error, 'ENOENT')) {
+            // The checkpoint already contains the record. Leaving an input
+            // behind causes only a deduped replay on the next read.
+            this.logger.warn(`Failed to remove compacted usage journal ${filePath}`, error)
+          }
+        }
+      }
+      await syncDirectory()
+      outcome = 'completed'
+      return true
+    } catch (error) {
+      this.logger.error('Failed to compact usage journal; replayable inputs were retained', error)
+      return false
+    } finally {
+      // A purge that took the lock over sweeps temps itself.
+      if (!run.takenOver) {
+        for (const [tempPath, identity] of temps) {
+          try {
+            retireRegularFileNoFollow(tempPath, identity, undefined, undefined, false)
+          } catch {
+            // A stale temp is safer than deleting an unverified replacement.
+          }
+        }
+      }
+      if (this.runningCompaction === run) this.runningCompaction = null
+      this.unsyncedCounts.compactions[outcome] += 1
+      if (!run.takenOver) this.releaseLock(lock)
+    }
+  }
+
+  /**
+   * Quit under barrier durability: pay what the usage log owes within
+   * `budgetMs`. Every append after it syncs where it is made.
+   */
+  async settleAtQuit(budgetMs: number): Promise<void> {
+    if (!this.unsynced) return
+    await this.unsynced.background.settle(budgetMs)
+  }
+
+  /** Barrier durability's counters; null without it. */
+  unsyncedSnapshot(): UsageJournalUnsyncedSnapshot | null {
+    if (!this.unsynced) return null
+    return {
+      appends: this.unsyncedCounts.appends,
+      spills: this.unsyncedCounts.spills,
+      background: this.unsynced.background.snapshot(),
+      compactions: { ...this.unsyncedCounts.compactions }
+    }
+  }
+
   dispose(): void {
     if (this.compactionTimer) clearTimeout(this.compactionTimer)
     if (this.ageCompactionTimer) clearTimeout(this.ageCompactionTimer)
@@ -523,6 +793,43 @@ export class UsageJournalStore {
     this.compactionTimer = null
     this.ageCompactionTimer = null
     this.compactionRetryTimer = null
+    this.unsynced?.background.dispose()
+  }
+
+  /** Whether a write leaves its syncs to the port: barrier durability, until quit settles it. */
+  private writesUnsynced(): boolean {
+    return this.unsynced !== null && !this.unsynced.background.settled
+  }
+
+  /** An append under barrier durability: written without a sync, and owed to the background. */
+  private appendUnsynced(serialized: string): void {
+    const created = durableAppend(this.journalPath, serialized, false)
+    this.unsyncedCounts.appends += 1
+    this.unsynced!.background.owe({
+      files: [this.journalPath],
+      directories: created ? [path.dirname(this.journalPath)] : []
+    })
+  }
+
+  /** A timer's compaction: off the event loop under barrier durability. */
+  private runScheduledCompaction(): void {
+    if (!this.writesUnsynced()) {
+      this.compact()
+      return
+    }
+    void this.compactInBackground()
+  }
+
+  /**
+   * A history purge, or its end, in this process while a background
+   * compaction holds the journal lock: the purge takes the lock over, and the
+   * compaction stops at its next step, leaving what a crash there would.
+   */
+  private takeOverCompactionLock(): UsageJournalLock | null {
+    const run = this.runningCompaction
+    if (!run || run.takenOver) return null
+    run.takenOver = true
+    return run.lock
   }
 
   private isWritable(): boolean {
@@ -573,7 +880,7 @@ export class UsageJournalStore {
   private purgeHistoryIntentStrict(
     expectedIntent: UsageHistoryMutationIntent
   ): UsageHistoryPurgeReport {
-    const lock = this.tryAcquireLock()
+    const lock = this.takeOverCompactionLock() ?? this.tryAcquireLock()
     if (!lock) {
       throw new Error('Usage history mutation could not acquire the journal lock.')
     }
@@ -1073,7 +1380,7 @@ export class UsageJournalStore {
     this.compactionTimer = setTimeout(() => {
       this.compactionTimer = null
       if (!this.isWritable()) return
-      this.compact()
+      this.runScheduledCompaction()
     }, this.compactionDelayMs)
     this.compactionTimer.unref?.()
   }
@@ -1096,7 +1403,7 @@ export class UsageJournalStore {
       this.ageCompactionTimer = null
       this.ageCompactionDueAtMs = null
       if (!this.isWritable()) return
-      this.compact()
+      this.runScheduledCompaction()
     }, delayMs)
     this.ageCompactionTimer.unref?.()
   }
@@ -1114,7 +1421,7 @@ export class UsageJournalStore {
     this.compactionRetryTimer = setTimeout(() => {
       this.compactionRetryTimer = null
       if (!this.isWritable()) return
-      this.compact()
+      this.runScheduledCompaction()
     }, delayMs)
     this.compactionRetryTimer.unref?.()
   }
@@ -1300,6 +1607,12 @@ export class UsageJournalStore {
   }
 
   private quarantineJournalArtifact(sourcePath: string, rawBytes: Buffer): void {
+    const quarantinePath = this.quarantinePathFor(sourcePath, rawBytes)
+    if (quarantinePath) writeFileAtomically(quarantinePath, rawBytes)
+  }
+
+  /** Where a malformed input's bytes are kept; null when the same bytes are there already. */
+  private quarantinePathFor(sourcePath: string, rawBytes: Buffer): string | null {
     const digest = digestBytes(rawBytes)
     const quarantinePath = `${this.journalPath}.quarantine-${digest}.jsonl`
     const existing = assertRegularFileOrMissing(quarantinePath)
@@ -1308,9 +1621,9 @@ export class UsageJournalStore {
       if (!existingBytes.equals(rawBytes)) {
         throw new Error(`Usage journal quarantine digest collision for ${sourcePath}`)
       }
-      return
+      return null
     }
-    writeFileAtomically(quarantinePath, rawBytes)
+    return quarantinePath
   }
 
   private claimLiveJournal(): string | null {
@@ -1328,7 +1641,26 @@ export class UsageJournalStore {
 
   private writeSpill(record: UsageRecord): void {
     const spillPath = `${this.journalPath}.spill-${process.pid}-${randomUUID()}`
-    writeFileAtomically(spillPath, `${JSON.stringify(record)}\n`)
+    if (!this.writesUnsynced()) {
+      writeFileAtomically(spillPath, `${JSON.stringify(record)}\n`)
+      return
+    }
+    // Complete under its name, as a spill always is, and owed to the background.
+    const temp = writeTempFileUnsynced(spillPath, `${JSON.stringify(record)}\n`)
+    try {
+      assertRegularFileOrMissing(spillPath)
+      fs.renameSync(temp.path, spillPath)
+    } catch (error) {
+      try {
+        retireRegularFileNoFollow(temp.path, temp.identity, undefined, undefined, false)
+      } catch {
+        // A stale temp is safer than deleting an unverified replacement.
+      }
+      throw error
+    }
+    this.unsyncedCounts.appends += 1
+    this.unsyncedCounts.spills += 1
+    this.unsynced!.background.owe({ files: [spillPath], directories: [path.dirname(spillPath)] })
   }
 
   private tryAcquireLock(): UsageJournalLock | null {
@@ -1385,11 +1717,17 @@ export class UsageJournalStore {
     try {
       const stat = assertRegularFile(this.lockPath)
       if (this.now() - stat.mtimeMs < LOCK_STALE_AFTER_MS) return false
+      const unsynced = this.writesUnsynced()
       retireRegularFileNoFollow(
         this.lockPath,
         regularFileIdentity(stat, this.lockPath),
-        this.beforeRetireRename
+        this.beforeRetireRename,
+        undefined,
+        !unsynced
       )
+      if (unsynced) {
+        this.unsynced!.background.owe({ directories: [path.dirname(this.lockPath)] })
+      }
       return true
     } catch (error) {
       return isNodeError(error, 'ENOENT')
@@ -1403,7 +1741,18 @@ export class UsageJournalStore {
         token?: unknown
       }
       if (parsed.token === lock.token) {
-        retireRegularFileNoFollow(lock.filePath, snapshot.identity, this.beforeRetireRename)
+        // The lock's name leaving its folder is owed to the background like any other.
+        const unsynced = this.writesUnsynced()
+        retireRegularFileNoFollow(
+          lock.filePath,
+          snapshot.identity,
+          this.beforeRetireRename,
+          undefined,
+          !unsynced
+        )
+        if (unsynced) {
+          this.unsynced!.background.owe({ directories: [path.dirname(lock.filePath)] })
+        }
       }
     } catch (error) {
       if (!isNodeError(error, 'ENOENT')) {
@@ -1571,7 +1920,12 @@ function dedupeAndSortUsageRecords(records: UsageRecord[]): UsageRecord[] {
   })
 }
 
-function durableAppend(filePath: string, content: string): void {
+/**
+ * Appends, and syncs the file and, when it made the file, its folder. With
+ * `sync` false it only writes, for barrier durability's caller to sync off
+ * the event loop. Returns whether it made the file.
+ */
+function durableAppend(filePath: string, content: string, sync = true): boolean {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const existed = assertRegularFileOrMissing(filePath) !== null
   const descriptor = openRegularFileNoFollow(
@@ -1581,19 +1935,25 @@ function durableAppend(filePath: string, content: string): void {
   )
   try {
     fs.writeFileSync(descriptor, content, 'utf8')
-    fs.fsyncSync(descriptor)
+    if (sync) fs.fsyncSync(descriptor)
   } finally {
     fs.closeSync(descriptor)
   }
-  if (!existed) fsyncDirectoryBestEffort(path.dirname(filePath))
+  if (!existed && sync) fsyncDirectoryBestEffort(path.dirname(filePath))
+  return !existed
 }
 
-function appendArchiveDurably(filePath: string, records: UsageRecord[]): void {
-  if (records.length === 0) return
+/** As `durableAppend`, for the records the archive does not hold yet: whether it appended and whether it made the file. */
+function appendArchiveDurably(
+  filePath: string,
+  records: UsageRecord[],
+  sync = true
+): { appended: boolean; created: boolean } {
+  if (records.length === 0) return { appended: false, created: false }
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const existingIds = readArchiveRecordIds(filePath)
   const recordsToAppend = records.filter((record) => !existingIds.has(record.id))
-  if (recordsToAppend.length === 0) return
+  if (recordsToAppend.length === 0) return { appended: false, created: false }
   const existed = assertRegularFileOrMissing(filePath) !== null
   const descriptor = openRegularFileNoFollow(
     filePath,
@@ -1606,11 +1966,12 @@ function appendArchiveDurably(filePath: string, records: UsageRecord[]): void {
       recordsToAppend.map((record) => `\n${JSON.stringify(record)}`).join(''),
       'utf8'
     )
-    fs.fsyncSync(descriptor)
+    if (sync) fs.fsyncSync(descriptor)
   } finally {
     fs.closeSync(descriptor)
   }
-  if (!existed) fsyncDirectoryBestEffort(path.dirname(filePath))
+  if (!existed && sync) fsyncDirectoryBestEffort(path.dirname(filePath))
+  return { appended: true, created: !existed }
 }
 
 function readArchiveRecordIds(filePath: string): Set<string> {
@@ -1679,6 +2040,50 @@ function writeFileAtomically(filePath: string, content: string | Buffer): void {
     if (tempIdentity) {
       try {
         retireRegularFileNoFollow(tempPath, tempIdentity)
+      } catch {
+        // A stale temp is safer than deleting an unverified replacement.
+      }
+    }
+    throw error
+  }
+}
+
+/**
+ * `writeFileAtomically` up to its rename, without its sync: the content under
+ * a temp name of the same shape, for barrier durability's caller to sync off
+ * the event loop before it renames it.
+ */
+function writeTempFileUnsynced(
+  filePath: string,
+  content: string | Buffer
+): { path: string; identity: RegularFileIdentity } {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  assertRegularFileOrMissing(filePath)
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
+  let descriptor: number | null = null
+  let tempIdentity: RegularFileIdentity | null = null
+  try {
+    descriptor = openRegularFileNoFollow(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600
+    )
+    tempIdentity = regularFileIdentity(fs.fstatSync(descriptor), tempPath)
+    fs.writeFileSync(descriptor, content, 'utf8')
+    fs.closeSync(descriptor)
+    descriptor = null
+    return { path: tempPath, identity: tempIdentity }
+  } catch (error) {
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor)
+      } catch {
+        // Preserve the original failure.
+      }
+    }
+    if (tempIdentity) {
+      try {
+        retireRegularFileNoFollow(tempPath, tempIdentity, undefined, undefined, false)
       } catch {
         // A stale temp is safer than deleting an unverified replacement.
       }
@@ -1838,11 +2243,13 @@ function splitByteLines(value: Buffer): Buffer[] {
   return lines
 }
 
+/** `syncParent` false leaves the folder's sync to barrier durability's caller. */
 function retireRegularFileNoFollow(
   filePath: string,
   expectedIdentity: RegularFileIdentity,
   beforeRename?: (filePath: string) => void,
-  afterRename?: (filePath: string, retiredPath: string) => void
+  afterRename?: (filePath: string, retiredPath: string) => void,
+  syncParent = true
 ): void {
   const parentDirectory = path.dirname(filePath)
   const retirementDirectory = path.join(
@@ -1874,7 +2281,7 @@ function retireRegularFileNoFollow(
     fs.unlinkSync(retiredPath)
     moved = false
     fs.rmdirSync(retirementDirectory)
-    fsyncDirectoryBestEffort(parentDirectory)
+    if (syncParent) fsyncDirectoryBestEffort(parentDirectory)
   } catch (error) {
     if (!moved) {
       try {

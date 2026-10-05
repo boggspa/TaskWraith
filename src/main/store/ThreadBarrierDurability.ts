@@ -73,6 +73,12 @@ export interface ThreadBarrierDurability {
   /** What every thread store is given in place of a sync. */
   readonly note: NoteThreadDurabilityDebt
   readonly debt: ThreadDurabilityDebt
+  /**
+   * The port that pays every barrier, for the stores outside the threads that
+   * sync off the event loop too: their syncs queue with the threads', each at
+   * its class, within the same limit.
+   */
+  readonly port: ThreadDurabilityPort
   readonly tickets: ChatDurabilityTickets
   /**
    * The journal's options in this mode. A line written without a sync can be
@@ -272,6 +278,7 @@ export function createThreadBarrierDurability(
   return {
     note,
     debt,
+    port,
     tickets,
     journal: {
       noteDurabilityDebt: note,
