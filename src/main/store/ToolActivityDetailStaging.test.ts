@@ -461,6 +461,22 @@ describe('tool detail staged across saves', () => {
       expect(save([['run-1', activity('tool-1')]])).toEqual([null])
       expect(staging.snapshot().outstanding).toBe(0)
     })
+
+    it('throws from the commit when the run’s file changed after the save staged, and writes nothing to it', () => {
+      const batch = staging.batch(chat())
+      expect(batch.stage('run-1', activity('tool-1'))).toBeNull()
+      // Another writer adds to the run's file between the save's stage and its commit.
+      fs.mkdirSync(path.dirname(detailFile('run-1')), { recursive: true })
+      fs.writeFileSync(detailFile('run-1'), 'another writer\n')
+
+      expect(() => batch.commit()).toThrow('Tool detail artifact changed while staging run run-1')
+      expect(fs.readFileSync(detailFile('run-1'), 'utf8')).toBe('another writer\n')
+      expect(port.asked).toEqual([])
+      expect(staging.snapshot()).toMatchObject({
+        outstanding: 0,
+        batches: { committed: 0, failed: 1 }
+      })
+    })
   })
 
   describe('a thread that goes away', () => {
