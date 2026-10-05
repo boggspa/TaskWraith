@@ -76,6 +76,7 @@ type PhaseResult = {
   asked: { threads: number; seats: number; agents: number; seatMode: string; atOnce: number }
   options: Record<string, number>
   leadIn: { startedAtMs: number; endedAtMs: number; threadsReady: number; complete: boolean } | null
+  firstBurst: Record<string, any> | null
   windows: Window[]
   hostLag: {
     windows: Array<{ role: string; outcome: string; lag: { sampleCount: number } }>
@@ -571,6 +572,7 @@ function world(options: WorldOptions = {}) {
   const batchCount = Math.ceil(threadCount / 8)
   const markers: string[] = []
   let spanReads = 0
+  let admissionReads = 0
   const spanReadCensored: boolean[] = []
   const mainReadBounds: unknown[] = []
   const mainSession = {
@@ -604,8 +606,10 @@ function world(options: WorldOptions = {}) {
           if (options.failingBatch === spanReads - 1 - batchCount) {
             throw new Error('main read failed')
           }
-        } else if (options.baselineFails && mainQueries.length === 1) {
-          throw new Error('main read failed')
+        } else {
+          // Before the first sends, as their first rounds have ended, then the window's own two.
+          admissionReads += 1
+          if (options.baselineFails && admissionReads === 3) throw new Error('main read failed')
         }
         // The ring keeps the spans recorded last; the latest start it evicted censors a read.
         const kept = Math.min(mainSpans.length, options.mainRingSize ?? mainSpans.length)
@@ -907,9 +911,13 @@ describe('a many-agent window, seats one after another', () => {
       { query: read, at: 31_000 },
       { query: read, at: 37_900 }
     ])
-    // The model's turns from the first sends: a round that ran in the window
-    // may have been sent before it.
-    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 37_900 }])
+    // The model's turns from the first sends: for the burst as the first
+    // rounds have ended, and for the window, as a round that ran in it may
+    // have been sent before it.
+    expect(w.daemonReads).toEqual([
+      { fromMs: T0, toMs: T0 + 4_000 },
+      { fromMs: T0, toMs: T0 + 37_900 }
+    ])
   })
 
   it('reports each thread’s rounds, its send and first-turn times and its turn spacing', async () => {
@@ -947,6 +955,29 @@ describe('a many-agent window, seats one after another', () => {
     }
     expect(agents?.overall.rounds).toMatchObject({ sent: 18, ran: 21, completed: 18 })
     expect(agents?.overall.turns).toEqual({ started: 33, done: 33, notDone: {} })
+  })
+
+  it('summarises the first burst, when every thread sends at once', async () => {
+    const result = await world().run()
+    expect(result.firstBurst).toMatchObject({
+      burst: { startedAtMs: T0, endedAtMs: T0 + 4_000, lengthMs: 4_000 },
+      asked: result.asked,
+      firstRounds: { sent: 3, completed: 3, endedOther: {}, unended: 0, withoutTurn: 0 },
+      sendToAcceptedMs: timing(45, 3),
+      acceptedToFirstTurnMs: timing(100, 3),
+      sendToFirstTurnMs: timing(150, 3),
+      firstRoundMs: timing(3_600, 3),
+      allAcceptedAfterMs: 50,
+      allStreamingAfterMs: 150,
+      runningAtOnce: { asked: 3, max: 3 }
+    })
+    // Six turns of the first rounds and three of the second before the wait ended.
+    expect(result.firstBurst?.waiting.pool).toMatchObject({
+      cause: 'ensemble_pool',
+      requests: 9,
+      queued: 0
+    })
+    expect(result.firstBurst?.waiting.limited).toBe(false)
   })
 
   it('says how many agents ran at once against how many were asked for', async () => {
@@ -990,9 +1021,11 @@ describe('a many-agent window, seats one after another', () => {
         reasons: { admitted: 11 }
       }
     ])
-    // The two admission reads bracket the window, each a read of no spans.
+    // Two admission reads bracket the burst and two the window, each a read of no spans.
     const admissionReads = w.mainQueries.filter((query) => query.untilMs === query.sinceMs)
     expect(admissionReads).toEqual([
+      { lanes: { t001: w.chatIds[0] }, sinceMs: T0, untilMs: T0 },
+      { lanes: { t001: w.chatIds[0] }, sinceMs: T0 + 4_000, untilMs: T0 + 4_000 },
       { lanes: { t001: w.chatIds[0] }, sinceMs: T0 + 11_000, untilMs: T0 + 11_000 },
       { lanes: { t001: w.chatIds[0] }, sinceMs: T0 + 31_000, untilMs: T0 + 31_000 }
     ])
@@ -1113,12 +1146,7 @@ describe('a many-agent window, seats one after another', () => {
     expect(typeof w.laneOptions?.sleep).toBe('function')
     expect(result.options).toEqual({ ...PHASE_OPTIONS, callTimeoutMs: 4_000 })
     // Every read of main's span handle carries the same bound to the inspector.
-    expect(w.mainReadBounds).toEqual([
-      { timeoutMs: 4_000 },
-      { timeoutMs: 4_000 },
-      { timeoutMs: 4_000 },
-      { timeoutMs: 4_000 }
-    ])
+    expect(w.mainReadBounds).toEqual(Array(6).fill({ timeoutMs: 4_000 }))
     // Lane options that are not a set of options are left out.
     const other = world()
     await other.run({ laneOptions: 'fast' })
@@ -1150,7 +1178,10 @@ describe('a many-agent window, seats one after another', () => {
     const w = world({ clockOffsetMs: 0.75 })
     const result = await w.run()
     expect(result.windows[0].startedAtMs).toBe(T0 + 11_000.75)
-    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 37_900 }])
+    expect(w.daemonReads).toEqual([
+      { fromMs: T0, toMs: T0 + 4_000 },
+      { fromMs: T0, toMs: T0 + 37_900 }
+    ])
     expect(result.verdict).toEqual({ ok: true, reasons: [] })
   })
 
@@ -1489,6 +1520,7 @@ describe('a window that is not evidence says why', () => {
     const result = await world({ daemonFails: true }).run()
     expect(result.windows[0].reasons).toEqual(['daemon_turns_unavailable'])
     expect(result.windows[0].agents).toBeNull()
+    expect(result.firstBurst).toEqual({ unavailable: 'daemon_turns_unavailable' })
     // The rest of the window's evidence stands.
     expect(result.windows[0].waiting.pool).not.toBeNull()
   })
@@ -1708,7 +1740,10 @@ describe('a window that is not evidence says why', () => {
     })
     // The settle time had already passed: no wait is asked for, least of all a negative one.
     expect(w.sleeps.filter((ms) => !(ms > 0))).toEqual([])
-    expect(w.daemonReads).toEqual([{ fromMs: T0, toMs: T0 + 44_400 }])
+    expect(w.daemonReads).toEqual([
+      { fromMs: T0, toMs: T0 + 4_000 },
+      { fromMs: T0, toMs: T0 + 44_400 }
+    ])
   })
 
   it('names a Host fold the union refused', async () => {
@@ -1775,6 +1810,7 @@ describe('a phase that cannot start', () => {
     })
     expect(result.windows).toEqual([])
     expect(result.leadIn).toBeNull()
+    expect(result.firstBurst).toBeNull()
     expect(result.hostLag).toBeNull()
     expect(w.events).toEqual(['sampler.start', 'install', 'lanes.stop', 'sampler.stop'])
     expect(result.teardown?.observer).toBe('not_installed')
@@ -1804,6 +1840,7 @@ describe('a phase that cannot start', () => {
       threadsReady: 0,
       complete: false
     })
+    expect(result.firstBurst).toEqual({ unavailable: 'burst_without_length' })
     expect(result.windows).toEqual([])
     expect(w.events).toEqual([
       'sampler.start',
@@ -1867,6 +1904,11 @@ describe('the teardown', () => {
       endedAtMs: T0 + 6_000,
       threadsReady: 0,
       complete: false
+    })
+    // The burst still says what became of the sends.
+    expect(result.firstBurst).toMatchObject({
+      firstRounds: { sent: 3, completed: 0, unended: 3, withoutTurn: 0 },
+      allStreamingAfterMs: 150
     })
     // No thread failed: each one's round was simply never seen to end.
     expect(w.cancels).toEqual(w.chatIds)

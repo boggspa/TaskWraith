@@ -52,8 +52,33 @@ type Summary = {
   >
 }
 
+type Burst = {
+  burst: { startedAtMs: number; endedAtMs: number; lengthMs: number }
+  asked: Summary['asked']
+  firstRounds: {
+    sent: number
+    completed: number
+    endedOther: Record<string, number>
+    unended: number
+    withoutTurn: number
+  }
+  sendToAcceptedMs: Timings
+  acceptedToFirstTurnMs: Timings
+  sendToFirstTurnMs: Timings
+  firstRoundMs: Timings
+  allAcceptedAfterMs: number | null
+  allStreamingAfterMs: number | null
+  runningAtOnce: { asked: number; max: number; mean: number; noneMs: number }
+  waiting: {
+    limits: Record<string, number> | null
+    pool: Record<string, unknown> | null
+    limited: boolean | null
+  }
+}
+
 const metrics = require('./manyAgentMetrics.cjs') as {
   agentsAsked: (shape: unknown) => Summary['asked']
+  summariseFirstBurst: (input: unknown) => Burst
   summariseManyAgents: (input: unknown) => Summary
   summariseAgentWaiting: (input: unknown) => Record<string, unknown>
   timingsOf: (values: unknown[]) => Timings
@@ -524,6 +549,193 @@ describe('all threads together', () => {
       overlapped: 0,
       appMsPerTurn: null
     })
+  })
+})
+
+describe('the first burst, when every thread sends at once', () => {
+  // Three threads send at 1,000 ms; the wait for their first rounds ends at 9,000.
+  const BURST = { startedAtMs: 1_000, endedAtMs: 9_000 }
+  const threads = [
+    {
+      chatId: 'chat-a',
+      model: 'm:a',
+      failure: null,
+      rounds: [round('a1', 1_000, 1_060, 55, 5_000), round('a2', 5_300, 5_350, 40, null)]
+    },
+    // The burst held its send back for half a second.
+    {
+      chatId: 'chat-b',
+      model: 'm:b',
+      failure: null,
+      rounds: [round('b1', 1_000, 1_500, 480, 8_000)]
+    },
+    // Still on its first round when the wait ended.
+    {
+      chatId: 'chat-c',
+      model: 'm:c',
+      failure: null,
+      rounds: [round('c1', 1_001, 1_090, 85, null)]
+    }
+  ]
+  const turns = [
+    turn('m:a', 1_200, 2_800),
+    turn('m:a', 3_000, 4_600),
+    // The second round's: the burst is the first rounds'.
+    turn('m:a', 5_400, 7_000),
+    turn('m:b', 2_500, 4_100),
+    turn('m:b', 4_300, 5_900),
+    turn('m:c', 6_000, null)
+  ]
+  const burst = (extra: Record<string, unknown> = {}) =>
+    metrics.summariseFirstBurst({
+      burst: BURST,
+      threads,
+      turns,
+      seats: 2,
+      seatMode: 'serial',
+      admissionBefore: null,
+      admissionAtEnd: null,
+      ...extra
+    })
+
+  it('times each thread’s first send, its acceptance and its first model turn', () => {
+    const summary = burst()
+    expect(summary.burst).toEqual({ startedAtMs: 1_000, endedAtMs: 9_000, lengthMs: 8_000 })
+    expect(summary.asked).toEqual({
+      threads: 3,
+      seats: 2,
+      agents: 6,
+      seatMode: 'serial',
+      atOnce: 3
+    })
+    expect(summary.firstRounds).toEqual({
+      sent: 3,
+      completed: 2,
+      endedOther: {},
+      unended: 1,
+      withoutTurn: 0
+    })
+    expect(summary.sendToAcceptedMs).toEqual({
+      count: 3,
+      minMs: 55,
+      p50Ms: 85,
+      p95Ms: 480,
+      maxMs: 480
+    })
+    expect(summary.acceptedToFirstTurnMs).toEqual({
+      count: 3,
+      minMs: 140,
+      p50Ms: 1_000,
+      p95Ms: 4_910,
+      maxMs: 4_910
+    })
+    expect(summary.sendToFirstTurnMs).toMatchObject({ count: 3, minMs: 200, maxMs: 4_999 })
+    // Only the first rounds that ended.
+    expect(summary.firstRoundMs).toMatchObject({ count: 2, minMs: 4_000, maxMs: 7_000 })
+  })
+
+  it('says how long until every send was accepted and every thread was streaming', () => {
+    const summary = burst()
+    expect(summary.allAcceptedAfterMs).toBe(500)
+    expect(summary.allStreamingAfterMs).toBe(5_000)
+    // A thread whose first round ran no turn was never streaming.
+    const silent = burst({ turns: turns.filter((entry) => entry.model !== 'm:c') })
+    expect(silent.allStreamingAfterMs).toBeNull()
+    expect(silent.firstRounds.withoutTurn).toBe(1)
+    // Nor one whose first round ran none, though its second did.
+    const secondOnly = burst({
+      turns: turns.filter((entry) => !(entry.model === 'm:a' && entry.startedAtMs < 5_000))
+    })
+    expect(secondOnly.firstRounds.withoutTurn).toBe(1)
+    expect(secondOnly.allStreamingAfterMs).toBeNull()
+    expect(secondOnly.acceptedToFirstTurnMs?.count).toBe(2)
+    // Nor one that never got its first round sent.
+    const unsent = burst({
+      threads: [...threads.slice(0, 2), { ...threads[2], rounds: [], failure: 'send_failed' }]
+    })
+    expect(unsent.firstRounds.sent).toBe(2)
+    expect(unsent.allAcceptedAfterMs).toBe(500)
+    expect(unsent.allStreamingAfterMs).toBeNull()
+    expect(unsent.sendToAcceptedMs?.count).toBe(2)
+  })
+
+  it('counts a first round that ended any other way by how it ended', () => {
+    const failed = burst({
+      threads: [{ ...threads[0], rounds: [round('a1', 1_000, 1_060, 55, 5_000, 'failed')] }]
+    })
+    expect(failed.firstRounds).toEqual({
+      sent: 1,
+      completed: 0,
+      endedOther: { failed: 1 },
+      unended: 0,
+      withoutTurn: 0
+    })
+    expect(failed.firstRoundMs).toBeNull()
+  })
+
+  it('says how many agents streamed at once over the burst', () => {
+    // Two at once at most; 11,000 ms of streaming over 8,000; none until 1,200.
+    expect(burst().runningAtOnce).toEqual({ asked: 3, max: 2, mean: 1.375, noneMs: 200 })
+    expect(burst({ seatMode: 'parallel' }).runningAtOnce.asked).toBe(6)
+  })
+
+  it('reports the waiting the burst caused behind the pool, with its cause', () => {
+    const admission = (
+      metrics: Record<string, number>,
+      occupancy: Record<string, number> = {}
+    ) => ({
+      occupancy: {
+        maxActive: 30,
+        maxForeground: 24,
+        maxQueued: 256,
+        active: 0,
+        queued: 0,
+        ...occupancy
+      },
+      metrics: {
+        requests: 0,
+        reservations: 0,
+        initiallyQueued: 0,
+        admitted: 0,
+        cancelledQueued: 0,
+        overflowRejected: 0,
+        admittedQueueWaitMs: 0,
+        maxAdmittedQueueWaitMs: 0,
+        peakActive: 0,
+        peakQueued: 0,
+        ...metrics
+      }
+    })
+    const summary = burst({
+      admissionBefore: admission({ requests: 2, admitted: 2 }),
+      admissionAtEnd: admission(
+        { requests: 202, admitted: 202, initiallyQueued: 170, admittedQueueWaitMs: 340_000 },
+        { active: 30 }
+      )
+    })
+    expect(summary.waiting.limits).toEqual({ maxActive: 30, maxForeground: 24, maxQueued: 256 })
+    expect(summary.waiting.pool).toMatchObject({
+      cause: 'ensemble_pool',
+      requests: 200,
+      queued: 170,
+      queueWaitMs: 340_000,
+      activeAtEnd: 30
+    })
+    expect(summary.waiting.limited).toBe(true)
+    expect(burst().waiting).toEqual({ limits: null, pool: null, limited: null })
+  })
+
+  it('refuses a burst with no length, threads without a tag of their own, or no turns', () => {
+    expect(() => burst({ burst: { startedAtMs: 9_000, endedAtMs: 9_000 } })).toThrow(
+      new Error('burst must have a start before its end')
+    )
+    expect(() => burst({ threads: [threads[0], { ...threads[1], model: 'm:a' }] })).toThrow(
+      new Error('threads must each have a chat, a model tag of their own and their rounds')
+    )
+    expect(() => burst({ turns: null })).toThrow(new Error('turns must be the daemon’s list'))
+    expect(() => metrics.summariseFirstBurst(null)).toThrow(
+      new Error('burst must have a start before its end')
+    )
   })
 })
 

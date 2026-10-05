@@ -25,6 +25,11 @@
  *   main-loop delay) between two profile markers, main's D1 counters at the
  *   fences, and the Host's spans and lag.
  *
+ * The first burst, when every thread sends its first round at once, is
+ * summarised as the wait for first rounds ends (`summariseFirstBurst`), from
+ * the rounds as the runner saw them then, the model's turns from the first
+ * sends, and main's admission counters read before the sends and then.
+ *
  * Main's spans are read as the window closes and again once its rounds have
  * drained. The second read adds the spans still open at the first; the
  * first gives back any span of the window that main's bounded ring evicted
@@ -57,6 +62,7 @@ const {
 const {
   agentsAsked,
   summariseAgentWaiting,
+  summariseFirstBurst,
   summariseManyAgents
 } = require('./manyAgentMetrics.cjs')
 const { createManyAgentLanes } = require('./manyAgentRounds.cjs')
@@ -534,6 +540,42 @@ async function runT2ManyAgents(options) {
     }
   }
 
+  /**
+   * The first burst, as its wait ends: never a reason against the window,
+   * and never a thrown run.
+   */
+  async function summariseBurst(leadInRecord, admissionBefore) {
+    const admissionAtEnd = await readMainAt(nowMs())
+    const snapshot = lanes.snapshot()
+    const fromMs = Math.floor(leadInRecord.startedAtMs)
+    const toMs = Math.floor(nowMs())
+    if (!(leadInRecord.endedAtMs > leadInRecord.startedAtMs) || !(toMs > fromMs)) {
+      return { unavailable: 'burst_without_length' }
+    }
+    let turns = null
+    try {
+      turns = await options.readDaemonTurns({ fromMs, toMs })
+    } catch {
+      return { unavailable: 'daemon_turns_unavailable' }
+    }
+    try {
+      return summariseFirstBurst({
+        burst: { startedAtMs: leadInRecord.startedAtMs, endedAtMs: leadInRecord.endedAtMs },
+        threads: snapshot.threads.map((thread, place) => ({
+          ...thread,
+          model: threads[place].model
+        })),
+        turns,
+        seats,
+        seatMode,
+        admissionBefore: admissionBefore ? admissionBefore.admission : null,
+        admissionAtEnd: admissionAtEnd ? admissionAtEnd.admission : null
+      })
+    } catch {
+      return { unavailable: 'burst_summary_failed' }
+    }
+  }
+
   async function measureWindow(hostUnion, leadInRecord) {
     const reasons = []
     if (!leadInRecord.complete) reasons.push('lead_in_incomplete')
@@ -764,6 +806,7 @@ async function runT2ManyAgents(options) {
   const windows = []
   let startFailure = null
   let leadInRecord = null
+  let firstBurst = null
   let lanesSnapshot = null
   let samplerSummary = null
   let teardown = null
@@ -778,9 +821,11 @@ async function runT2ManyAgents(options) {
       startFailure = `agents_not_started:${reason}`.slice(0, 200)
     }
     if (startFailure === null) {
+      const admissionBeforeSends = await readMainAt(nowMs())
       const sendsFromMs = nowMs()
       lanes.start()
       leadInRecord = await leadIn(sendsFromMs)
+      firstBurst = await summariseBurst(leadInRecord, admissionBeforeSends)
       if (leadInRecord.threadsReady === 0) startFailure = 'agents_not_started:no_round_completed'
       else windows.push(await measureWindow(samplerStarted ? union : null, leadInRecord))
     }
@@ -826,6 +871,7 @@ async function runT2ManyAgents(options) {
     asked,
     options: { ...settings },
     leadIn: leadInRecord,
+    firstBurst,
     windows,
     hostLag: hostLag === null ? null : hostLag.ok ? hostLag.evidence : { error: hostLag.reason },
     lanes: lanesSnapshot,

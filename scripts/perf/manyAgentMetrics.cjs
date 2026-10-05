@@ -32,6 +32,9 @@
  * Waiting behind the app's own limits is reported as waiting, by cause, from
  * main's admission counters and its wait spans (`summariseAgentWaiting`).
  *
+ * The first burst, when every thread sends its first round at once, is
+ * summarised on its own (`summariseFirstBurst`).
+ *
  * Every time is this machine's wall clock in milliseconds.
  */
 
@@ -254,6 +257,35 @@ function agentsAsked({ threads, seats, seatMode }) {
   return { threads, seats, agents, seatMode, atOnce: seatMode === 'parallel' ? agents : threads }
 }
 
+function checkThreads(threads) {
+  if (
+    !Array.isArray(threads) ||
+    threads.some(
+      (thread) =>
+        !isPlainObject(thread) ||
+        typeof thread.chatId !== 'string' ||
+        typeof thread.model !== 'string' ||
+        thread.model.length === 0 ||
+        !Array.isArray(thread.rounds)
+    ) ||
+    new Set(threads.map((thread) => thread.model)).size !== threads.length
+  ) {
+    throw new Error('threads must each have a chat, a model tag of their own and their rounds')
+  }
+}
+
+/** Each thread's turns by its model tag, in start order, and how many turns are no thread's. */
+function turnsByThread(threads, turns) {
+  const byModel = new Map(threads.map((thread) => [thread.model, []]))
+  let otherTurns = 0
+  for (const turn of [...turns].sort((left, right) => left.startedAtMs - right.startedAtMs)) {
+    const own = byModel.get(turn.model)
+    if (own) own.push(turn)
+    else otherTurns += 1
+  }
+  return { byModel, otherTurns }
+}
+
 /**
  * @param {{
  *   window: { startedAtMs: number, endedAtMs: number },
@@ -276,34 +308,14 @@ function summariseManyAgents(input) {
   ) {
     throw new Error('window must have a start before its end')
   }
-  if (
-    !Array.isArray(threads) ||
-    threads.some(
-      (thread) =>
-        !isPlainObject(thread) ||
-        typeof thread.chatId !== 'string' ||
-        typeof thread.model !== 'string' ||
-        thread.model.length === 0 ||
-        !Array.isArray(thread.rounds)
-    ) ||
-    new Set(threads.map((thread) => thread.model)).size !== threads.length
-  ) {
-    throw new Error('threads must each have a chat, a model tag of their own and their rounds')
-  }
-  const models = threads.map((thread) => thread.model)
+  checkThreads(threads)
   if (!Array.isArray(turns)) throw new Error('turns must be the daemon’s list')
   const asked = agentsAsked({ threads: threads.length, seats, seatMode })
   if (!Number.isFinite(configuredTurnMs) || configuredTurnMs <= 0) {
     throw new Error('configuredTurnMs must be positive')
   }
 
-  const byModel = new Map(models.map((model) => [model, []]))
-  let otherTurns = 0
-  for (const turn of [...turns].sort((left, right) => left.startedAtMs - right.startedAtMs)) {
-    const own = byModel.get(turn.model)
-    if (own) own.push(turn)
-    else otherTurns += 1
-  }
+  const { byModel, otherTurns } = turnsByThread(threads, turns)
   const measured = threads.map((thread) => measureThread(thread, byModel.get(thread.model), window))
   return {
     window: {
@@ -393,49 +405,153 @@ function waitsOf(spans) {
  *   admissionAtEnd: { occupancy: object, metrics: object } | null
  * }} input
  */
+/**
+ * The pool's limits and what queued behind them between two admission reads,
+ * from the scheduler's own counters; null figures without both reads.
+ */
+function poolWaiting(admissionBefore, admissionAtEnd) {
+  const before = admissionOf(admissionBefore)
+  const atEnd = admissionOf(admissionAtEnd)
+  if (!before || !atEnd) return { limits: null, pool: null, limited: null }
+  const rise = (name) => atEnd.metrics[name] - before.metrics[name]
+  const pool = {
+    cause: 'ensemble_pool',
+    requests: rise('requests'),
+    reservations: rise('reservations'),
+    admitted: rise('admitted'),
+    queued: rise('initiallyQueued'),
+    queueWaitMs: rise('admittedQueueWaitMs'),
+    overflowRejected: rise('overflowRejected'),
+    cancelledQueued: rise('cancelledQueued'),
+    activeAtEnd: atEnd.occupancy.active,
+    queuedAtEnd: atEnd.occupancy.queued,
+    // The scheduler keeps these as peaks since it started, not per window.
+    sinceLaunch: {
+      peakActive: atEnd.metrics.peakActive,
+      peakQueued: atEnd.metrics.peakQueued,
+      maxQueueWaitMs: atEnd.metrics.maxAdmittedQueueWaitMs
+    }
+  }
+  return {
+    limits: Object.fromEntries(POOL_LIMITS.map((name) => [name, atEnd.occupancy[name]])),
+    pool,
+    limited: pool.queued > 0 || pool.overflowRejected > 0
+  }
+}
+
 function summariseAgentWaiting(input) {
   const { spansByThread } = isPlainObject(input) ? input : {}
   if (!Array.isArray(spansByThread)) throw new Error('spansByThread must be one list per thread')
-  const before = admissionOf(input.admissionBefore)
-  const atEnd = admissionOf(input.admissionAtEnd)
-  let limits = null
-  let pool = null
-  if (before && atEnd) {
-    const rise = (name) => atEnd.metrics[name] - before.metrics[name]
-    limits = Object.fromEntries(POOL_LIMITS.map((name) => [name, atEnd.occupancy[name]]))
-    pool = {
-      cause: 'ensemble_pool',
-      requests: rise('requests'),
-      reservations: rise('reservations'),
-      admitted: rise('admitted'),
-      queued: rise('initiallyQueued'),
-      queueWaitMs: rise('admittedQueueWaitMs'),
-      overflowRejected: rise('overflowRejected'),
-      cancelledQueued: rise('cancelledQueued'),
-      activeAtEnd: atEnd.occupancy.active,
-      queuedAtEnd: atEnd.occupancy.queued,
-      // The scheduler keeps these as peaks since it started, not per window.
-      sinceLaunch: {
-        peakActive: atEnd.metrics.peakActive,
-        peakQueued: atEnd.metrics.peakQueued,
-        maxQueueWaitMs: atEnd.metrics.maxAdmittedQueueWaitMs
-      }
-    }
-  }
   const read = spansByThread.filter((spans) => spans !== null)
   return {
-    limits,
-    pool,
-    limited: pool === null ? null : pool.queued > 0 || pool.overflowRejected > 0,
+    ...poolWaiting(input.admissionBefore, input.admissionAtEnd),
     waits: waitsOf(read.flat()),
     threads: spansByThread.map((spans) => (spans === null ? null : waitsOf(spans))),
     threadsUnread: spansByThread.length - read.length
   }
 }
 
+/**
+ * The first burst: as the phase starts every thread sends its first round at
+ * once, and the wait for first rounds ends once each has ended or its bound
+ * has passed. What the app made of it: each thread's first send to its
+ * acceptance and to its round's first model turn; how long until every send
+ * was accepted and every thread was streaming; how long the first rounds
+ * took; how many agents streamed at once over the burst; and the waiting it
+ * caused behind the pool, from admission reads before the sends and as the
+ * wait ended. A thread's rounds are as the runner saw them when the wait
+ * ended: a first round not seen to end by then is unended.
+ *
+ * @param {{
+ *   burst: { startedAtMs: number, endedAtMs: number },
+ *   threads: Array<{ chatId: string, model: string, rounds: Array<{ sentAtMs: number,
+ *     acceptedAtMs: number, pageMs: number | null, endedAtMs: number | null,
+ *     status: string | null }> }>,
+ *   turns: Array<{ model: string, startedAtMs: number, endedAtMs: number | null }>,
+ *   seats: number, seatMode: 'serial' | 'parallel',
+ *   admissionBefore: object | null, admissionAtEnd: object | null
+ * }} input the daemon's turns must cover the burst from its first send
+ */
+function summariseFirstBurst(input) {
+  const { burst, threads, turns, seats, seatMode } = isPlainObject(input) ? input : {}
+  if (
+    !isPlainObject(burst) ||
+    !Number.isFinite(burst.startedAtMs) ||
+    !Number.isFinite(burst.endedAtMs) ||
+    !(burst.endedAtMs > burst.startedAtMs)
+  ) {
+    throw new Error('burst must have a start before its end')
+  }
+  checkThreads(threads)
+  if (!Array.isArray(turns)) throw new Error('turns must be the daemon’s list')
+  const asked = agentsAsked({ threads: threads.length, seats, seatMode })
+
+  const { byModel } = turnsByThread(threads, turns)
+  const firstRounds = { sent: 0, completed: 0, endedOther: {}, unended: 0, withoutTurn: 0 }
+  const sendToAccepted = []
+  const acceptedToFirstTurn = []
+  const sendToFirstTurn = []
+  const firstRoundMs = []
+  let lastAcceptedAtMs = null
+  let lastStreamingAtMs = null
+  let everyThreadStreaming = true
+  for (const thread of threads) {
+    const [first, second] = thread.rounds
+    if (!first) {
+      everyThreadStreaming = false
+      continue
+    }
+    firstRounds.sent += 1
+    if (first.endedAtMs === null) firstRounds.unended += 1
+    else if (first.status !== 'completed') {
+      countInto(firstRounds.endedOther, String(first.status))
+    } else {
+      firstRounds.completed += 1
+      firstRoundMs.push(first.endedAtMs - first.sentAtMs)
+    }
+    sendToAccepted.push(first.pageMs)
+    lastAcceptedAtMs = Math.max(lastAcceptedAtMs ?? -Infinity, first.acceptedAtMs)
+    // The round's turns began after its send and before the thread's next.
+    const untilMs = second ? second.sentAtMs : Infinity
+    const firstTurn = byModel
+      .get(thread.model)
+      .find((turn) => turn.startedAtMs >= first.sentAtMs && turn.startedAtMs < untilMs)
+    if (!firstTurn) {
+      firstRounds.withoutTurn += 1
+      everyThreadStreaming = false
+      continue
+    }
+    acceptedToFirstTurn.push(firstTurn.startedAtMs - first.acceptedAtMs)
+    sendToFirstTurn.push(firstTurn.startedAtMs - first.sentAtMs)
+    lastStreamingAtMs = Math.max(lastStreamingAtMs ?? -Infinity, firstTurn.startedAtMs)
+  }
+  return {
+    burst: {
+      startedAtMs: burst.startedAtMs,
+      endedAtMs: burst.endedAtMs,
+      lengthMs: burst.endedAtMs - burst.startedAtMs
+    },
+    asked,
+    firstRounds,
+    sendToAcceptedMs: timingsOf(sendToAccepted),
+    acceptedToFirstTurnMs: timingsOf(acceptedToFirstTurn),
+    sendToFirstTurnMs: timingsOf(sendToFirstTurn),
+    firstRoundMs: timingsOf(firstRoundMs),
+    allAcceptedAfterMs:
+      lastAcceptedAtMs === null ? null : round3(lastAcceptedAtMs - burst.startedAtMs),
+    allStreamingAfterMs:
+      everyThreadStreaming && lastStreamingAtMs !== null
+        ? round3(lastStreamingAtMs - burst.startedAtMs)
+        : null,
+    runningAtOnce: { asked: asked.atOnce, ...runningAtOnce([...byModel.values()].flat(), burst) },
+    waiting: poolWaiting(input.admissionBefore, input.admissionAtEnd)
+  }
+}
+
 module.exports = {
   agentsAsked,
   summariseAgentWaiting,
+  summariseFirstBurst,
   summariseManyAgents,
   timingsOf
 }
