@@ -5,8 +5,8 @@
  *
  * - `enabled` and `ignored`: the switch as this process resolved it, and why
  *   it was set but not honoured.
- * - `debt`, `port`, `tickets`, `gates` and `threads`: the layer's own
- *   counters, each its module's whole snapshot. Null with the switch off,
+ * - `debt`, `port`, `tickets`, `gates`, `threads` and `staging`: the layer's
+ *   own counters, each its module's whole snapshot. Null with the switch off,
  *   when none of them exists.
  * - `checkpoints`: the journal's checkpoints by what triggered them, counted
  *   whatever the switch, so the pair off against on compares like with like.
@@ -22,6 +22,7 @@ import type { ThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import type { ThreadDebtTrackerSnapshot } from './ThreadDebtTracker'
 import type { ThreadDurabilityDebtSnapshot } from './ThreadDurabilityDebt'
 import type { ThreadDurabilityDebtFsSnapshot } from './ThreadDurabilityDebtFs'
+import type { ToolActivityDetailStagingSnapshot } from './ToolActivityDetailStaging'
 import type { DurableMomentGate, DurableMomentGateSnapshot } from '../run/DurableMomentGate'
 
 export interface ThreadBarrierDurabilityPerfSection {
@@ -36,6 +37,8 @@ export interface ThreadBarrierDurabilityPerfSection {
   gates: DurableMomentGateSnapshot | null
   /** Threads that may still owe something, and the idle and quit barriers. */
   threads: ThreadDebtTrackerSnapshot | null
+  /** Tool detail staged off the save path and synced at the port's background class. */
+  staging: ToolActivityDetailStagingSnapshot | null
   /** Counted with the switch off too. */
   checkpoints: JournalCheckpointCounts
   tornTailsRepaired: number
@@ -64,6 +67,7 @@ export function readThreadBarrierDurabilityPerf(
     tickets: layer?.tickets ?? null,
     gates: sources.gate?.snapshot() ?? null,
     threads: layer?.threads ?? null,
+    staging: layer?.staging ?? null,
     checkpoints: sources.checkpoints(),
     tornTailsRepaired: sources.tornTailsTruncated()
   }

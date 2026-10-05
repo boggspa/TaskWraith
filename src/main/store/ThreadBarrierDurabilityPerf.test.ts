@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { MainSourceProbe } from '../mainSourceProbe.testutil'
@@ -8,6 +10,7 @@ import {
 } from './JournalCheckpointCounts'
 import { createThreadBarrierDurability } from './ThreadBarrierDurability'
 import { readThreadBarrierDurabilityPerf } from './ThreadBarrierDurabilityPerf'
+import type { ChatRecord } from './types'
 
 function counts(): JournalCheckpointCounts {
   return Object.fromEntries(
@@ -27,6 +30,7 @@ const FIELDS = [
   'tickets',
   'gates',
   'threads',
+  'staging',
   'checkpoints',
   'tornTailsRepaired'
 ]
@@ -51,6 +55,7 @@ describe('the threadBarrierDurability perf section', () => {
       tickets: null,
       gates: null,
       threads: null,
+      staging: null,
       checkpoints,
       tornTailsRepaired: 2
     })
@@ -73,9 +78,29 @@ describe('the threadBarrierDurability perf section', () => {
   })
 
   it("with the switch on, reports each part's whole snapshot, read when the section is", () => {
-    const layer = createThreadBarrierDurability()
+    const committed = (): never => {
+      throw new Error('No batch of tool detail is committed here')
+    }
+    const layer = createThreadBarrierDurability({
+      detail: {
+        runArtifactsDir: join(tmpdir(), 'owner-perf-staging-never-written'),
+        appendRunEvent: committed,
+        checkpointInput: committed,
+        refuses: () => false
+      }
+    })
     const gate = new DurableMomentGate({ source: layer.tickets })
     layer.tickets.note('chat-1', 3, 'user_message', Promise.resolve())
+    // A row staged and never committed: counted, and nothing is written.
+    layer.detailBatch({ appChatId: 'chat-1' } as ChatRecord)!.stage('run-1', {
+      id: 'activity-1',
+      toolName: 'run_shell_command',
+      displayName: 'Ran command',
+      category: 'shell',
+      status: 'success',
+      endedAt: '2026-10-05T00:00:00.000Z',
+      rawResultEvent: { output: 'Detail of the command' }
+    })
 
     const section = readThreadBarrierDurabilityPerf({
       switches: { barrierDurability: true, barrierDurabilityIgnored: null },
@@ -95,12 +120,14 @@ describe('the threadBarrierDurability perf section', () => {
       tickets: parts.tickets,
       gates: gate.snapshot(),
       threads: parts.threads,
+      staging: parts.staging,
       checkpoints: counts(),
       tornTailsRepaired: 1
     })
     // The port this process built keeps its counters; the section carries all of them.
     expect(section.port).not.toBeNull()
     expect(section.tickets?.moments.user_message.noted).toBe(1)
+    expect(section.staging?.rows.staged).toBe(1)
   })
 })
 

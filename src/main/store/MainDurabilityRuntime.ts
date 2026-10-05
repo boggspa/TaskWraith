@@ -5,7 +5,10 @@ import { MainDurabilityDirectoryLeases } from './MainDurabilityDirectoryLeases'
 import { MainDurabilityFlusher, type DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import type { RunEventInput, RunEventRecord } from './types'
-import type { RunEventLedgerAppendOptions } from './RunEventLedgerWriter'
+import type {
+  RunEventLedgerAppendOptions,
+  RunEventLedgerStagedAppend
+} from './RunEventLedgerWriter'
 import { readMainDurabilityTelemetry } from './MainDurabilityTelemetry'
 import type { ResidualObserver } from './MainDurabilityResiduals'
 import type { NoteThreadDurabilityDebt } from './ThreadDurabilityDebt'
@@ -127,6 +130,11 @@ export function createMainDurabilityRuntime(
     ): RunEventRecord {
       if (fenced) throw new Error('Run-event durability runtime is shutting down')
       return super.append(input, appendOptions)
+    }
+    // A staged append writes the ledger too, and past the fence nothing may.
+    override appendStaged(input: RunEventInput): RunEventLedgerStagedAppend {
+      if (fenced) throw new Error('Run-event durability runtime is shutting down')
+      return super.appendStaged(input)
     }
   }
   const writer = new FencedWriter({

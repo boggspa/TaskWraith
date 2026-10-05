@@ -567,4 +567,33 @@ describe('Main durability runtime', () => {
       }
     }
   )
+
+  it('fences a staged append at shutdown as it fences an append, and writes nothing for it', async () => {
+    // As the store builds it under barrier durability: no flusher, and a note.
+    const runtime = createMainDurabilityRuntime({
+      ...options(),
+      env: {},
+      noteDurabilityDebt: () => {}
+    })
+    const checkpoint: RunEventInput = {
+      ...input,
+      chatId: 'chat-1',
+      kind: 'tool',
+      phase: 'artifact',
+      source: 'main'
+    }
+    const staged = runtime.writer.appendStaged(checkpoint)
+    expect(staged.record.sequence).toBe(1)
+    const written = fs.readFileSync(staged.file, 'utf8')
+
+    const shutdown = runtime.shutdown()
+    expect(() => runtime.writer.appendStaged(checkpoint)).toThrow(
+      'Run-event durability runtime is shutting down'
+    )
+    await shutdown
+    expect(() => runtime.writer.appendStaged(checkpoint)).toThrow(
+      'Run-event durability runtime is shutting down'
+    )
+    expect(fs.readFileSync(staged.file, 'utf8')).toBe(written)
+  })
 })
