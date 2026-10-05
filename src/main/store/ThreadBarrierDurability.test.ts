@@ -314,6 +314,55 @@ describe('the barriers for the moments of one save', () => {
   })
 })
 
+describe('what a dispatch waits for', () => {
+  it("waits for an urgent barrier of the thread and the tickets of the user's moments", async () => {
+    const port = heldPort()
+    const layer = createThreadBarrierDurability({ port })
+    const previous = thread()
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      messages: [
+        ...previous.messages,
+        { id: 'user-2', role: 'user' as const, content: 'Go on', timestamp: AT }
+      ]
+    }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.noteSave(previous, next, appended(previous, next), 'normal')
+
+    let settled = false
+    const waiting = layer.awaitDurable('chat-1').then(() => (settled = true))
+    await Promise.resolve()
+    expect(layer.debt.snapshot().barriers).toMatchObject({ urgent: 2, scoped: 0 })
+    expect(settled).toBe(false)
+
+    port.release()
+    await waiting
+    expect(layer.tickets.snapshot().moments.user_message.covered).toBe(1)
+  })
+
+  it("never waits for a run's final record, whose own barrier pays it", async () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+    layer.tickets.note('chat-1', 9, 'run_final', new Promise<void>(() => {}))
+
+    await expect(layer.awaitDurable('chat-1')).resolves.toBeUndefined()
+    expect(layer.tickets.snapshot().moments.run_final).toMatchObject({ pending: 1, covered: 0 })
+  })
+
+  it('rejects when the disk refused a sync the dispatch depends on', async () => {
+    const failure = new Error('EIO: the disk refused')
+    const layer = createThreadBarrierDurability({
+      port: {
+        syncFile: () => Promise.reject(failure),
+        syncDirectory: () => Promise.reject(failure)
+      }
+    })
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+
+    await expect(layer.awaitDurable('chat-1')).rejects.toBe(failure)
+  })
+})
+
 describe('what pays the debt no moment pays', () => {
   it("gives a thread the stores wrote for its idle barrier on one unref'd timer", async () => {
     const port = recordingPort()
@@ -372,6 +421,27 @@ describe('what pays the debt no moment pays', () => {
     layer.forgetAll()
     expect(layer.debt.snapshot().owed.threads).toBe(0)
     expect(layer.snapshot().threads.owing).toBe(0)
+  })
+
+  it("counts an erased thread's tickets as covered: the erasure reports it gone", async () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+    const failure = new Error('EIO: the disk refused')
+    layer.tickets.note('chat-1', 3, 'destructive', new Promise<void>(() => {}))
+    layer.tickets.note('chat-1', 4, 'run_final', Promise.reject(failure))
+    layer.tickets.note('chat-2', 5, 'user_message', Promise.resolve())
+    layer.tickets.note('chat-3', 6, 'decision', Promise.resolve())
+    await new Promise((resolve) => setImmediate(resolve))
+
+    layer.forget('chat-1')
+    let moments = layer.tickets.snapshot().moments
+    expect([moments.destructive.covered, moments.run_final.covered]).toEqual([1, 1])
+    expect([moments.user_message.covered, moments.decision.covered]).toEqual([0, 0])
+
+    layer.forgetAll()
+    moments = layer.tickets.snapshot().moments
+    expect([moments.user_message.covered, moments.decision.covered]).toEqual([1, 1])
+    // Only the erased thread's ticket still running is left, for its barrier to settle.
+    expect(layer.tickets.chatIds()).toEqual(['chat-1'])
   })
 
   it('pays every thread at quit', async () => {

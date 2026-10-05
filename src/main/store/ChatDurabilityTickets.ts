@@ -9,6 +9,12 @@
  * `awaitChat` first. A save with no such moment, streamed text above all,
  * notes nothing and nobody waits for it.
  *
+ * A gate can wait for some of the moments only: the places the user sits in
+ * wait for the user's moments, whose barriers are urgent, and never for a
+ * run's final record, whose barrier is not. Coverage, failures and waits are
+ * kept per moment, so such a gate covers, and is told of, only what it waited
+ * for.
+ *
  * Pure bookkeeping: it starts no sync and no timer, and reads the clock it is
  * given.
  *
@@ -32,6 +38,13 @@ export const CHAT_DURABILITY_MOMENTS = [
 ] as const
 
 export type ChatDurabilityMoment = (typeof CHAT_DURABILITY_MOMENTS)[number]
+
+/** The moments the user sits in: their tickets wait for an urgent barrier. */
+export const USER_DURABILITY_MOMENTS: readonly ChatDurabilityMoment[] = [
+  'user_message',
+  'decision',
+  'destructive'
+]
 
 /**
  * How long a ticket may go without any `awaitChat` for its chat before it is
@@ -82,8 +95,10 @@ export interface ChatDurabilityTicketsSnapshot {
 }
 
 interface Gate {
-  /** Covers the chat's tickets up to this one. */
+  /** Covers the chat's tickets up to this one, of the moments it waits for. */
   through: number
+  /** By moment index: whether it waits for that moment. */
+  moments: readonly boolean[]
   /** How many of them are still pending. */
   remaining: number
   startedAt: number
@@ -94,21 +109,34 @@ interface Gate {
 interface ChatTickets {
   /** Tickets noted for the chat while this record has existed. */
   noted: number
-  /** Every ticket up to this one has been awaited. */
-  coveredThrough: number
-  /** Tickets whose sync is still running. */
+  /** Per moment: every ticket of it up to this one has been awaited. */
+  coveredThrough: number[]
+  /** Tickets whose sync is still running, and per moment. */
   pending: number
+  pendingByMoment: number[]
   /** Per moment: pending tickets no `awaitChat` has covered yet. */
   pendingUncovered: number[]
   /** Per moment: settled tickets no `awaitChat` has covered yet, and the newest one's revision. */
   undecided: number[]
   undecidedRevision: number[]
-  /** The first failure no awaiter has been told of. */
-  failure: { reason: unknown } | null
+  /** Per moment: the first failure no awaiter has been told of, and its ticket. */
+  failures: Array<{ reason: unknown; ticket: number } | null>
   gates: Gate[]
 }
 
 const RUN_FINAL = CHAT_DURABILITY_MOMENTS.indexOf('run_final')
+
+/** By moment index, whether `moments` names it; every moment when it is omitted. */
+function selection(moments: readonly ChatDurabilityMoment[] | undefined): boolean[] {
+  if (moments === undefined) return CHAT_DURABILITY_MOMENTS.map(() => true)
+  const selected = CHAT_DURABILITY_MOMENTS.map(() => false)
+  for (const moment of moments) {
+    const index = CHAT_DURABILITY_MOMENTS.indexOf(moment)
+    if (index < 0) throw new Error('Invalid durability moment')
+    selected[index] = true
+  }
+  return selected
+}
 
 function emptyCounters(): ChatDurabilityMomentCounters {
   return {
@@ -167,18 +195,20 @@ export class ChatDurabilityTickets {
     if (!chat) {
       chat = {
         noted: 0,
-        coveredThrough: 0,
+        coveredThrough: CHAT_DURABILITY_MOMENTS.map(() => 0),
         pending: 0,
+        pendingByMoment: CHAT_DURABILITY_MOMENTS.map(() => 0),
         pendingUncovered: CHAT_DURABILITY_MOMENTS.map(() => 0),
         undecided: CHAT_DURABILITY_MOMENTS.map(() => 0),
         undecidedRevision: CHAT_DURABILITY_MOMENTS.map(() => 0),
-        failure: null,
+        failures: CHAT_DURABILITY_MOMENTS.map(() => null),
         gates: []
       }
       this.chats.set(chatId, chat)
     }
     const ticket = ++chat.noted
     chat.pending++
+    chat.pendingByMoment[index]++
     chat.pendingUncovered[index]++
     this.counters[index].noted++
     this.counters[index].pending++
@@ -203,29 +233,39 @@ export class ChatDurabilityTickets {
    *
    * Every ticket noted so far counts as covered from this call on, whether or
    * not it has already settled.
+   *
+   * With `moments`, all of this holds for the tickets of those moments only:
+   * the others are neither waited for, covered nor reported.
    */
-  awaitChat(chatId: string): Promise<void> {
+  awaitChat(chatId: string, moments?: readonly ChatDurabilityMoment[]): Promise<void> {
+    const selected = selection(moments)
     const startedAt = this.now()
     this.collect(startedAt)
     this.awaits++
     const chat = this.chats.get(chatId)
     if (!chat) return Promise.resolve()
-    CHAT_DURABILITY_MOMENTS.forEach((_, index) => {
+    let failure: { reason: unknown; ticket: number } | null = null
+    let remaining = 0
+    for (let index = 0; index < CHAT_DURABILITY_MOMENTS.length; index++) {
+      if (!selected[index]) continue
       const counters = this.counters[index]
       counters.covered += chat.pendingUncovered[index] + chat.undecided[index]
       counters.undecided -= chat.undecided[index]
       chat.pendingUncovered[index] = 0
       chat.undecided[index] = 0
-    })
-    chat.coveredThrough = chat.noted
-    const failure = chat.failure
-    chat.failure = null
+      chat.coveredThrough[index] = chat.noted
+      // The first to fail, whichever moment it was for.
+      const failed = chat.failures[index]
+      if (failed && (!failure || failed.ticket < failure.ticket)) failure = failed
+      chat.failures[index] = null
+      remaining += chat.pendingByMoment[index]
+    }
     if (failure) {
       this.awaitsRejected++
       this.dropIfIdle(chatId, chat)
       return Promise.reject(failure.reason)
     }
-    if (chat.pending === 0) {
+    if (remaining === 0) {
       this.dropIfIdle(chatId, chat)
       return Promise.resolve()
     }
@@ -233,12 +273,37 @@ export class ChatDurabilityTickets {
     return new Promise<void>((resolve, reject) => {
       chat.gates.push({
         through: chat.noted,
-        remaining: chat.pending,
+        moments: selected,
+        remaining,
         startedAt,
         resolve,
         reject
       })
     })
+  }
+
+  /**
+   * Whether the chat has a ticket of `moments` (every moment when omitted)
+   * that `awaitChat` would wait for, cover or report: one whose sync is still
+   * running, one settled that nobody has awaited, or a failure nobody was
+   * told of. Without one, `awaitChat` would resolve at once and change no count.
+   */
+  holds(chatId: string, moments?: readonly ChatDurabilityMoment[]): boolean {
+    const chat = this.chats.get(chatId)
+    if (!chat) return false
+    const selected = selection(moments)
+    return CHAT_DURABILITY_MOMENTS.some(
+      (_, index) =>
+        selected[index] &&
+        (chat.pendingByMoment[index] > 0 ||
+          chat.undecided[index] > 0 ||
+          chat.failures[index] !== null)
+    )
+  }
+
+  /** The chats that hold anything: a ticket pending, one to judge, or a gate open. */
+  chatIds(): string[] {
+    return [...this.chats.keys()]
   }
 
   /**
@@ -265,7 +330,7 @@ export class ChatDurabilityTickets {
           this.lastMissingGate = { chatId, revision: chat.undecidedRevision[index], moment }
         }
       })
-      chat.failure = null
+      chat.failures.fill(null)
       // A sync or a gate still open keeps the record: look again a grace period from now.
       if (!this.dropIfIdle(chatId, chat)) this.due.set(chatId, now + this.graceMs)
     }
@@ -313,17 +378,18 @@ export class ChatDurabilityTickets {
     counters.longestWaitMs = Math.max(counters.longestWaitMs, settledAt - notedAt)
     if (failure) counters.failed++
     chat.pending--
-    if (ticket > chat.coveredThrough) {
+    chat.pendingByMoment[index]--
+    if (ticket > chat.coveredThrough[index]) {
       // Nobody has awaited this ticket yet. Keep its count, and its failure,
       // for an awaiter that arrives within the grace period.
       chat.pendingUncovered[index]--
       chat.undecided[index]++
       chat.undecidedRevision[index] = Math.max(chat.undecidedRevision[index], revision)
       counters.undecided++
-      if (failure) chat.failure ??= failure
+      if (failure) chat.failures[index] ??= { reason: failure.reason, ticket }
     }
     chat.gates = chat.gates.filter((gate) => {
-      if (gate.through < ticket) return true
+      if (!gate.moments[index] || gate.through < ticket) return true
       if (!failure && --gate.remaining > 0) return true
       this.awaitsWaiting--
       this.longestAwaitMs = Math.max(this.longestAwaitMs, settledAt - gate.startedAt)

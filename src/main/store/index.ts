@@ -82,6 +82,7 @@ import {
 } from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
 import { createThreadBarrierDurability } from './ThreadBarrierDurability'
+import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
 import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
@@ -784,7 +785,7 @@ const hostShadowReconcileMissByChatId = new Map<
  * through the compatibility coordinator's barrier.
  */
 const barrierChatRecordPersist = createHostMaterializationBarrier({
-  awaitJournalDurability: (chatId) => incrementalChatPersistence.awaitDeferredDurability(chatId),
+  awaitJournalDurability: (chatId) => awaitThreadJournalDurable(chatId),
   compatibility: {
     hasUnconfirmed: (chatId) => hostChatCompatibility().hasUnconfirmed(chatId),
     hasSubmitted: (chatId) => hostChatCompatibility().hasSubmitted(chatId),
@@ -1161,6 +1162,22 @@ const threadDurabilitySwitches = resolveThreadDurabilitySwitches()
 const threadBarrierDurability = threadDurabilitySwitches.barrierDurability
   ? createThreadBarrierDurability()
   : null
+// The bounded wait where a moment is reported done, over the layer's tickets.
+const durableMomentGate = threadBarrierDurability
+  ? new DurableMomentGate({ source: threadBarrierDurability.tickets })
+  : null
+if (durableMomentGate) installDurableMomentGate(durableMomentGate)
+/**
+ * What the dispatch barriers wait for before the journal holds a revision on
+ * the disk. The journal syncs nothing itself under barrier durability, so it
+ * is the thread's barrier and the user's tickets, bounded; otherwise the
+ * journal's own deferred syncs.
+ */
+function awaitThreadJournalDurable(chatId: string): Promise<void> {
+  return threadBarrierDurability && durableMomentGate
+    ? durableMomentGate.bound(threadBarrierDurability.awaitDurable(chatId))
+    : incrementalChatPersistence.awaitDeferredDurability(chatId)
+}
 const mainDurabilityRuntime = createMainDurabilityRuntime({
   residualObserver: baselineResidualObserver,
   runEventsDir,
@@ -9156,7 +9173,7 @@ export class AppStore {
       // exhausting revision-conflict retries: this save has no journal copy.
       return barrierChatRecordPersist(chatId)
     }
-    return incrementalChatPersistence.awaitDeferredDurability(chatId)
+    return awaitThreadJournalDurable(chatId)
   }
 
   private static awaitChatRecordPersistedWork(chatId: string): Promise<void> {

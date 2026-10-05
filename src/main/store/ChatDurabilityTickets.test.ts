@@ -3,6 +3,7 @@ import {
   CHAT_DURABILITY_MOMENTS,
   CHAT_TICKET_COVERAGE_GRACE_MS,
   ChatDurabilityTickets,
+  USER_DURABILITY_MOMENTS,
   type ChatDurabilityMoment
 } from './ChatDurabilityTickets'
 
@@ -321,6 +322,104 @@ describe('chat durability tickets', () => {
       expect(store.snapshot().missingGates).toBe(4)
     }
   )
+
+  it("names the user's moments: everything but a run's final record", () => {
+    expect(USER_DURABILITY_MOMENTS).toEqual(GATE_MOMENTS)
+  })
+
+  it('waits only for the moments it is given, and leaves the others to their own gates', async () => {
+    const { tickets: store, clock } = tickets()
+    const runEnd = barrier()
+    const message = barrier()
+    store.note('chat-1', 4, 'run_final', runEnd.promise)
+    store.note('chat-1', 5, 'user_message', message.promise)
+
+    const waiting = watch(store.awaitChat('chat-1', USER_DURABILITY_MOMENTS))
+    message.resolve()
+    await turn()
+    expect(waiting.state).toBe('resolved')
+
+    runEnd.resolve()
+    await turn()
+    clock.now += CHAT_TICKET_COVERAGE_GRACE_MS
+    const snapshot = store.snapshot()
+    expect(snapshot.moments.user_message).toMatchObject({ covered: 1, uncovered: 0 })
+    // Not waited for, so not covered: it stays what it is, a run end nobody followed.
+    expect(snapshot.moments.run_final).toMatchObject({ covered: 0, uncovered: 1 })
+    expect(snapshot.missingGates).toBe(0)
+  })
+
+  it('keeps waiting when a ticket of a moment it does not wait for settles or fails first', async () => {
+    const { tickets: store } = tickets()
+    const finished = barrier()
+    const failed = barrier()
+    const message = barrier()
+    store.note('chat-1', 3, 'run_final', finished.promise)
+    store.note('chat-1', 4, 'run_final', failed.promise)
+    store.note('chat-1', 5, 'user_message', message.promise)
+
+    const waiting = watch(store.awaitChat('chat-1', USER_DURABILITY_MOMENTS))
+    finished.resolve()
+    failed.reject(new Error('run end sync failed'))
+    await turn()
+    expect(waiting.state).toBe('pending')
+
+    message.resolve()
+    await turn()
+    expect(waiting.state).toBe('resolved')
+  })
+
+  it('tells an awaiter only of the failures of the moments it waits for', async () => {
+    const { tickets: store } = tickets()
+    const failure = new Error('run end sync failed')
+    store.note('chat-1', 4, 'run_final', Promise.reject(failure))
+    store.note('chat-1', 5, 'user_message', Promise.resolve())
+    await turn()
+
+    await expect(store.awaitChat('chat-1', USER_DURABILITY_MOMENTS)).resolves.toBeUndefined()
+    // Still held for whoever waits for a run's end.
+    await expect(store.awaitChat('chat-1')).rejects.toBe(failure)
+  })
+
+  it('tells an awaiter of the first failure in time, whichever moment it was for', async () => {
+    const { tickets: store } = tickets()
+    const first = new Error('decision sync failed')
+    store.note('chat-1', 1, 'decision', Promise.reject(first))
+    await turn()
+    store.note('chat-1', 2, 'user_message', Promise.reject(new Error('message sync failed')))
+    await turn()
+
+    await expect(store.awaitChat('chat-1')).rejects.toBe(first)
+  })
+
+  it('says whether a chat holds anything of the given moments to wait for, cover or report', async () => {
+    const { tickets: store } = tickets()
+    expect(store.holds('chat-1')).toBe(false)
+    const runEnd = barrier()
+    store.note('chat-1', 4, 'run_final', runEnd.promise)
+    expect(store.holds('chat-1')).toBe(true)
+    expect(store.holds('chat-1', USER_DURABILITY_MOMENTS)).toBe(false)
+
+    store.note('chat-1', 5, 'user_message', Promise.resolve())
+    await turn()
+    // Settled but not yet awaited: there is still a ticket to cover.
+    expect(store.holds('chat-1', USER_DURABILITY_MOMENTS)).toBe(true)
+    await store.awaitChat('chat-1', USER_DURABILITY_MOMENTS)
+    expect(store.holds('chat-1', USER_DURABILITY_MOMENTS)).toBe(false)
+    expect(store.chatIds()).toEqual(['chat-1'])
+
+    runEnd.resolve()
+    await store.awaitChat('chat-1')
+    expect(store.holds('chat-1')).toBe(false)
+    expect(store.chatIds()).toEqual([])
+  })
+
+  it('refuses to wait for a moment it does not know', () => {
+    const { tickets: store } = tickets()
+    expect(() => store.awaitChat('chat-1', ['typed' as ChatDurabilityMoment])).toThrow(
+      'Invalid durability moment'
+    )
+  })
 
   it('counts an unawaited final run record apart from the missing gates', async () => {
     const { tickets: store, clock } = tickets()

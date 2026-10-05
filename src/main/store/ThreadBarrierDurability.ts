@@ -16,7 +16,11 @@
  * barrier or at quit, and dropped unpaid when the thread is erased
  * (`ThreadDebtTracker`).
  */
-import { ChatDurabilityTickets, type ChatDurabilityTicketsSnapshot } from './ChatDurabilityTickets'
+import {
+  ChatDurabilityTickets,
+  USER_DURABILITY_MOMENTS,
+  type ChatDurabilityTicketsSnapshot
+} from './ChatDurabilityTickets'
 import { classifyChatSaveMoments, type ChatSaveMoment } from './ChatSaveMoments'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
@@ -69,9 +73,20 @@ export interface ThreadBarrierDurability {
   catalogue(profilePath: string): MainCatalogueUnsyncedDurability
   /** A barrier for the thread, as every barrier the app raises for one is. */
   barrier(chatId: string): Promise<void>
-  /** Erasure, after its own syncs: drop the thread's debt unpaid. */
+  /**
+   * What a dispatch waits for: the thread's `userWaitBarrier`, and the chat's
+   * tickets for the user's moments. Rejects when the disk refused a sync of
+   * either. A run's final record is not waited for here: its own barrier pays
+   * what it wrote, and its ticket belongs to the work that follows the run.
+   */
+  awaitDurable(chatId: string): Promise<void>
+  /**
+   * Erasure, after its own syncs: drop the thread's debt unpaid. Its tickets
+   * count as covered: the erasure, which syncs itself, is what reports the
+   * thread gone, and nothing is left for their barriers to make durable.
+   */
   forget(chatId: string): void
-  /** A global clear, after its own syncs: drop every thread's debt unpaid. */
+  /** A global clear, after its own syncs: the same for every thread. */
   forgetAll(): void
   /** Quit: pay every thread within `budgetMs`, and count what was not paid. */
   payAll(budgetMs: number): Promise<{ threads: number; unpaid: number }>
@@ -102,26 +117,42 @@ export interface ThreadBarrierDurabilityOptions {
   clearTimer?: (handle: unknown) => void
 }
 
+type RaisesBarriers = {
+  barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
+}
+
+/**
+ * The barrier of every wait the user sits in: the moments of a save that are
+ * theirs, and a dispatch. Urgent, so the port starts its syncs ahead of every
+ * sync that is not.
+ *
+ * NAMED SEAM for the log lane's slice 4d. These waits need only the thread's
+ * own debt: the message, the decision, the destructive batch and the record a
+ * dispatch reads are all journal lines. Until 4d's option to pay only that
+ * lands, this pays everything the thread owes, what streaming runs wrote
+ * included.
+ */
+export function userWaitBarrier(debt: RaisesBarriers, chatId: string): Promise<void> {
+  return debt.barrier(chatId, { urgent: true })
+}
+
 /**
  * The barrier each of one save's moments waits for, one per kind of wait.
  *
  * A user message, a decision and a destructive change are waits the user sits
- * in: they share one urgent barrier of the whole thread, which the port puts
- * ahead of every sync that is not urgent. A run's final record waits for a
+ * in: they share one `userWaitBarrier`. A run's final record waits for a
  * barrier of that run, which pays the thread's own debt and the run's and
  * leaves what other runs owe; it is not urgent. Runs that end in the same save
  * get one barrier each.
  */
 export function barriersForSaveMoments(
-  debt: {
-    barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void>
-  },
+  debt: RaisesBarriers,
   chatId: string
 ): (moment: ChatSaveMoment) => Promise<void> {
   let urgent: Promise<void> | null = null
   const runs = new Map<string, Promise<void>>()
   return (found) => {
-    if (found.moment !== 'run_final') return (urgent ??= debt.barrier(chatId, { urgent: true }))
+    if (found.moment !== 'run_final') return (urgent ??= userWaitBarrier(debt, chatId))
     let barrier = runs.get(found.runId)
     if (!barrier) {
       barrier = debt.barrier(chatId, { run: found.runId })
@@ -162,8 +193,19 @@ export function createThreadBarrierDurability(
     detail: (chatId) => ({ chatId, note }),
     catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),
-    forget: (chatId) => threads.forget(chatId),
-    forgetAll: () => threads.forgetAll(),
+    awaitDurable: (chatId) =>
+      Promise.all([
+        userWaitBarrier(threads, chatId),
+        tickets.awaitChat(chatId, USER_DURABILITY_MOMENTS)
+      ]).then(() => undefined),
+    forget(chatId) {
+      threads.forget(chatId)
+      tickets.awaitChat(chatId).catch(() => {})
+    },
+    forgetAll() {
+      threads.forgetAll()
+      for (const chatId of tickets.chatIds()) tickets.awaitChat(chatId).catch(() => {})
+    },
     payAll: (budgetMs) => threads.payAll(budgetMs),
     dispose: () => threads.dispose(),
     noteSave(previous, next, persisted, flushReason) {

@@ -364,6 +364,8 @@ describe('a torn journal tail', () => {
     async (switchOn) => {
       if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
       const first = await importHostOwnedStore([])
+      // The barrier the first process raises before it is cut off pays at once.
+      layers.port = { syncFile: async () => 'synced', syncDirectory: async () => 'synced' }
       STEPS[0].act(first.AppStore)
       STEPS[1].act(first.AppStore)
       await first.AppStore.awaitChatRecordPersisted(CHAT)
@@ -698,6 +700,12 @@ describe('what pays the debt no moment pays, through the real store', () => {
       disk.paid.length = 0
       await layer.barrier(CHAT)
       expect(disk.paid).toEqual([])
+      // Its tickets were the erased thread's: the erasure covers them, so none is a missing gate.
+      expect(layer.tickets.snapshot().moments).toMatchObject({
+        user_message: { covered: 1 },
+        run_final: { covered: 1 }
+      })
+      expect(layer.tickets.chatIds()).toEqual([])
     }
   )
 
@@ -708,6 +716,10 @@ describe('what pays the debt no moment pays, through the real store', () => {
 
     expect(layer.debt.snapshot().owed.threads).toBe(0)
     expect(layer.snapshot().threads.owing).toBe(0)
+    expect(layer.tickets.snapshot().moments).toMatchObject({
+      user_message: { covered: 1 },
+      run_final: { covered: 1 }
+    })
     disk.paid.length = 0
     await layer.barrier(CHAT)
     expect(disk.paid).toEqual([])
@@ -723,6 +735,7 @@ describe('what pays the debt no moment pays, through the real store', () => {
 
       expect(layer.debt.snapshot().owed.threads).toBe(0)
       expect(layer.snapshot().threads.owing).toBe(0)
+      expect(layer.tickets.snapshot().moments.run_final.covered).toBe(1)
     }
   )
 
@@ -906,5 +919,98 @@ describe("the catalogue's heads and tickets", () => {
     expect(
       steps.flatMap((step) => step.paid.filter((entry) => entry.includes('thread-catalogue-v1')))
     ).toEqual([])
+  })
+})
+
+describe('the dispatch barriers', () => {
+  /** A thread with a run, all paid, over a disk the test can hold or make refuse. */
+  async function dispatching(switchOn = true) {
+    if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    const gates = await import('../run/DurableMomentGate')
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    const state = {
+      held: null as Promise<void> | null,
+      release: () => {},
+      refusal: null as Error | null
+    }
+    const through = async <T>(sync: () => Promise<T>): Promise<T> => {
+      await state.held
+      if (state.refusal) throw state.refusal
+      return sync()
+    }
+    layers.port = {
+      syncFile: (target) => through(() => disk.port.syncFile(target)),
+      syncDirectory: (target) => through(() => disk.port.syncDirectory(target))
+    }
+    STEPS[0].act(AppStore)
+    STEPS[1].act(AppStore)
+    if (layers.built[0]) await layers.built[0].debt.barrier(CHAT)
+    return {
+      AppStore,
+      gates,
+      hold() {
+        state.held = new Promise<void>((resolve) => (state.release = resolve))
+      },
+      release: () => state.release(),
+      refuse(error: Error) {
+        state.refusal = error
+      }
+    }
+  }
+
+  it.each(['awaitChatRecordDispatchDurable', 'awaitChatRecordPersisted'] as const)(
+    "make %s wait for the thread's barrier and the user's message",
+    async (barrier) => {
+      const { AppStore, gates, hold, release } = await dispatching()
+      hold()
+      STEPS[3].act(AppStore)
+
+      let done = false
+      const waiting = AppStore[barrier](CHAT).then(() => (done = true))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(done).toBe(false)
+
+      release()
+      await waiting
+      expect(layers.built[0].tickets.snapshot().moments.user_message.covered).toBe(1)
+      expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 1, overdue: 0, rejected: 0 })
+    }
+  )
+
+  it('let a dispatch go at the bound when the disk hangs, and count it overdue', async () => {
+    const { AppStore, gates, hold, release } = await dispatching()
+    hold()
+    STEPS[3].act(AppStore)
+
+    const started = performance.now()
+    await AppStore.awaitChatRecordDispatchDurable(CHAT)
+
+    expect(performance.now() - started).toBeGreaterThanOrEqual(
+      gates.DURABLE_MOMENT_GATE_BOUND_MS - 5
+    )
+    expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 1, overdue: 1 })
+    expect(layers.built[0].tickets.snapshot().moments.user_message.pending).toBe(1)
+    release()
+  })
+
+  it('fail a dispatch whose barrier the disk refused, as a journal flush the disk refused does', async () => {
+    const { AppStore, gates, refuse } = await dispatching()
+    const failure = new Error('EIO: the disk refused')
+    refuse(failure)
+    STEPS[3].act(AppStore)
+
+    await expect(AppStore.awaitChatRecordDispatchDurable(CHAT)).rejects.toBe(failure)
+    expect(gates.durableMomentGateSnapshot()).toMatchObject({ waits: 1, rejected: 1 })
+  })
+
+  it("wait for the journal's own syncs with the switch off, with no gate installed", async () => {
+    const { AppStore, gates } = await dispatching(false)
+    STEPS[3].act(AppStore)
+
+    await expect(AppStore.awaitChatRecordDispatchDurable(CHAT)).resolves.toBeUndefined()
+    expect(gates.durableMomentGateSnapshot()).toBeNull()
+    expect(layers.built).toEqual([])
   })
 })
