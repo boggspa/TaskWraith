@@ -542,7 +542,11 @@ async function terminateExactChild(session, options = {}) {
   killTree(signal)
   const raced = await Promise.race([exitPromise, sleep(waitMs).then(() => ({ timeout: true }))])
 
-  if (!exited && raced && raced.timeout) {
+  // The launch's own process (its group, where it has one) outlived the
+  // SIGTERM wait and needed the force signal. A stray the reap kills below is
+  // counted apart, so a report can say whether the app itself had to be killed.
+  const launchForced = !exited && Boolean(raced && raced.timeout)
+  if (launchForced) {
     killTree(forceSignal)
     await sleep(500)
   }
@@ -563,7 +567,9 @@ async function terminateExactChild(session, options = {}) {
     pgid: session.pgid || null,
     terminated: true,
     neverAutoDeletedArtifacts: true,
-    usedForce: Boolean(raced && raced.timeout) || strayKills.length > 0,
+    // Either force: the launch's own, or a stray's (each named in strayKills).
+    usedForce: launchForced || strayKills.length > 0,
+    launchForced,
     killedProcessGroup,
     strayKills,
     straySkips: reap.skipped,

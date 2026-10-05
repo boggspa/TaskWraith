@@ -1361,12 +1361,15 @@ function carryT2DriverPopulationFields(run, windowedReplayResult) {
  * case where a silent SIGKILL is invisible.
  *
  * @param {object|null} termination
- * @returns {{ usedForce: boolean, killedProcessGroup: boolean, strayKills: Array<object>, straySkips: Array<object> }|null}
+ * @returns {{ usedForce: boolean, launchForced: boolean|null, killedProcessGroup: boolean, strayKills: Array<object>, straySkips: Array<object> }|null}
  */
 function childTerminationRecord(termination) {
   if (!termination || typeof termination !== 'object') return null
   return {
     usedForce: termination.usedForce === true,
+    // Whether the app's own process needed the SIGKILL after its SIGTERM wait,
+    // apart from the strays; null when the terminate did not say.
+    launchForced: typeof termination.launchForced === 'boolean' ? termination.launchForced : null,
     killedProcessGroup: termination.killedProcessGroup === true,
     strayKills: Array.isArray(termination.strayKills) ? termination.strayKills : [],
     straySkips: Array.isArray(termination.straySkips) ? termination.straySkips : [],

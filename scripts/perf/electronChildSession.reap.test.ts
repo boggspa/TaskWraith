@@ -259,6 +259,7 @@ describe('terminateExactChild on a child that has already exited', () => {
     expect(seen).toEqual([8000, 500])
     expect(kills).toEqual(['SIGTERM', 'SIGKILL'])
     expect(result.usedForce).toBe(true)
+    expect(result.launchForced).toBe(true)
   })
 
   it('flips the flag on the session object the caller holds, not the pre-spread copy', () => {
@@ -346,5 +347,81 @@ describe('stray reap where the probes cannot run', () => {
     expect(result.strayKills).toHaveLength(2)
     expect(killed).toEqual([32051, 12560])
     expect(probes).toBe(3)
+  })
+})
+
+describe('whether the launch itself needed the kill, apart from the strays', () => {
+  const userDataPath = '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1'
+  // A launch that exits on the signals in `exitsOn`, and a reap whose
+  // command-path sweep finds `strays`. Every signal is recorded, none sent.
+  async function terminate(exitsOn: string[], strays: number[]) {
+    const groupSignals: string[] = []
+    const strayKills: number[] = []
+    const fake = new EventEmitter()
+    Object.assign(fake, { pid: 77, pgid: 77, kill: () => true })
+    const result = await terminateExactChild(fake, {
+      platform: 'darwin',
+      waitMs: 20,
+      sleep: async () => undefined,
+      killProcessGroup: (_pgid: number, sig: string) => {
+        groupSignals.push(sig)
+        if (exitsOn.includes(sig)) fake.emit('exit', null, sig)
+      },
+      killPid: (pid: number) => {
+        strayKills.push(pid)
+      },
+      listListeningPidsForPort: async () => [],
+      listPidsMatchingCommandNeedle: async () => strays,
+      userDataPath
+    })
+    return { result, groupSignals, strayKills }
+  }
+
+  it('says the launch needed the kill when it outlived its SIGTERM', async () => {
+    const { result, groupSignals } = await terminate(['SIGKILL'], [])
+    expect(groupSignals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(result).toMatchObject({ launchForced: true, usedForce: true, strayKills: [] })
+  })
+
+  it('says the launch did not need it when only a stray was killed, and names the stray', async () => {
+    const { result, groupSignals, strayKills } = await terminate(['SIGTERM'], [12560])
+    expect(groupSignals).toEqual(['SIGTERM'])
+    expect(strayKills).toEqual([12560])
+    expect(result).toMatchObject({
+      launchForced: false,
+      usedForce: true,
+      strayKills: [{ pid: 12560, reason: 'userData-command' }]
+    })
+  })
+
+  it('says both when the launch outlived its SIGTERM and a stray was left', async () => {
+    const { result } = await terminate(['SIGKILL'], [12560])
+    expect(result).toMatchObject({
+      launchForced: true,
+      usedForce: true,
+      strayKills: [{ pid: 12560, reason: 'userData-command' }]
+    })
+  })
+
+  it('says neither when the launch exited on SIGTERM and nothing was left', async () => {
+    const { result, groupSignals } = await terminate(['SIGTERM'], [])
+    expect(groupSignals).toEqual(['SIGTERM'])
+    expect(result).toMatchObject({ launchForced: false, usedForce: false, strayKills: [] })
+  })
+
+  it('claims no kill of a launch that had already exited', async () => {
+    const fake = new EventEmitter()
+    Object.assign(fake, { pid: 77, pgid: 77, exited: true, kill: () => true })
+    const result = await terminateExactChild(fake, {
+      platform: 'darwin',
+      sleep: async () => undefined,
+      killProcessGroup: () => {
+        throw new Error('an exited launch is never signalled')
+      },
+      killPid: () => {},
+      listListeningPidsForPort: async () => [],
+      listPidsMatchingCommandNeedle: async () => []
+    })
+    expect(result).toMatchObject({ launchForced: false, usedForce: false })
   })
 })

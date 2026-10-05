@@ -72,12 +72,14 @@ describe('stray reap audit record', () => {
         pid: 1,
         terminated: true,
         usedForce: true,
+        launchForced: false,
         killedProcessGroup: true,
         strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }],
         strayReapSupported: true
       })
     ).toEqual({
       usedForce: true,
+      launchForced: false,
       killedProcessGroup: true,
       strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }],
       straySkips: [],
@@ -91,11 +93,26 @@ describe('stray reap audit record', () => {
     // A truthy non-record must not become a claim about force or kills.
     expect(childTerminationRecord({ usedForce: 'yes', strayKills: 'two' })).toEqual({
       usedForce: false,
+      launchForced: null,
       killedProcessGroup: false,
       strayKills: [],
       straySkips: [],
       strayReapSupported: null
     })
+  })
+
+  it('says whether the launch itself needed the kill, and never guesses it', () => {
+    const strayKills = [{ pid: 42, reason: 'userData-command' }]
+    expect(
+      childTerminationRecord({ usedForce: true, launchForced: true, strayKills: [] })
+    ).toMatchObject({ usedForce: true, launchForced: true, strayKills: [] })
+    expect(
+      childTerminationRecord({ usedForce: true, launchForced: false, strayKills })
+    ).toMatchObject({ usedForce: true, launchForced: false, strayKills })
+    // A terminate that did not say is not one that says the launch exited on
+    // SIGTERM: an older record, or a junk value, keeps the fact unknown.
+    expect(childTerminationRecord({ usedForce: true, strayKills }).launchForced).toBeNull()
+    expect(childTerminationRecord({ launchForced: 'yes' }).launchForced).toBeNull()
   })
 
   it('never upgrades a missing reap claim into a supported one', () => {
