@@ -510,4 +510,43 @@ describe('Main durability runtime', () => {
     expect(warn).toHaveBeenCalledOnce()
     await runtime.shutdown()
   })
+
+  it.each([true, false])(
+    'hands the run-event ledger the note it is given (%s), and the ledger then leaves syncing to it',
+    async (given) => {
+      const notes: unknown[] = []
+      const fsyncSync = vi.spyOn(fs, 'fsyncSync')
+      try {
+        const runtime = createMainDurabilityRuntime({
+          ...options(),
+          env: {},
+          ...(given ? { noteDurabilityDebt: (...note: unknown[]) => notes.push(note) } : {})
+        })
+        runtime.writer.append(
+          { ...input, chatId: 'chat-1', kind: 'lifecycle', phase: 'control', source: 'main' },
+          { durability: 'strict' }
+        )
+        // Without a note a strict event that makes its file syncs it and its folder.
+        expect(fsyncSync).toHaveBeenCalledTimes(given ? 0 : 2)
+        expect(notes).toEqual(
+          given
+            ? [
+                [
+                  'chat-1',
+                  {
+                    file: path.join(root, 'events', 'run-1.jsonl'),
+                    owner: 'run-events',
+                    run: 'run-1'
+                  }
+                ],
+                ['chat-1', { directory: path.join(root, 'events'), run: 'run-1' }]
+              ]
+            : []
+        )
+        await runtime.shutdown()
+      } finally {
+        fsyncSync.mockRestore()
+      }
+    }
+  )
 })

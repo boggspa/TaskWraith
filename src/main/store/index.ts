@@ -81,6 +81,8 @@ import {
   type CurrentChatAuthorityMetadata
 } from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
+import { createThreadBarrierDurability } from './ThreadBarrierDurability'
+import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
 import {
@@ -1152,11 +1154,18 @@ const baselineResidualObserver = mainResiduals.enroll([
   'forcedSynchronousCheckpoints'
 ])
 const mainResidualWindows = createMainResidualWindows(mainResiduals)
+// Barrier durability: while its switch is on the thread stores below write
+// without a sync and note what they owe. Null while it is off.
+const threadDurabilitySwitches = resolveThreadDurabilitySwitches()
+const threadBarrierDurability = threadDurabilitySwitches.barrierDurability
+  ? createThreadBarrierDurability()
+  : null
 const mainDurabilityRuntime = createMainDurabilityRuntime({
   residualObserver: baselineResidualObserver,
   runEventsDir,
   runArtifactsDir,
-  workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js')
+  workerEntryPath: path.join(__dirname, 'mainDurabilityFsyncWorker.js'),
+  noteDurabilityDebt: threadBarrierDurability?.note
 })
 const runEventLedgerWriter = mainDurabilityRuntime.writer
 let mainDetailDurability: ToolActivityDetailDurability | undefined
@@ -1212,7 +1221,8 @@ const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDi
   // ownership a torn legacy-era tail must not self-heal as a side effect
   // of merely reading a chat (the read-only import invariant), while the
   // explicit Stage 2 mirror writes above remain permitted.
-  canRepairOnRead: legacyStoreCanWrite
+  canRepairOnRead: legacyStoreCanWrite,
+  ...threadBarrierDurability?.journal
 })
 const journalHostReferenceConnector = checkpointPreparationWorker
   ? new JournalHostReferenceConnector({
@@ -8406,7 +8416,8 @@ export class AppStore {
                 owner: mainDetailDurability,
                 onDependency: (dependency) => detailDependencies.collect([dependency])
               }
-            : undefined
+            : undefined,
+          threadBarrierDurability?.detail(chatWithMainOwnedFields.appChatId)
         ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
@@ -8647,7 +8658,8 @@ export class AppStore {
                 owner: mainDetailDurability,
                 onDependency: (dependency) => detailDependencies.collect([dependency])
               }
-            : undefined
+            : undefined,
+          threadBarrierDurability?.detail(chatWithMainOwnedFields.appChatId)
         ),
       onDetailDependencies: (dependencies) => detailDependencies.collect(dependencies),
       readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),

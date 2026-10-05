@@ -150,13 +150,18 @@ export interface HostOwnedStore {
  * Host-owned, so erasure takes the Host route. `adapter` attaches the journal
  * flusher (and so the journal's descriptor cache) exactly as the composition
  * does under its rollout switch, without touching the process environment.
+ * `profilePath` starts a store again over a profile an earlier one used, as a
+ * restarted process would. `gateOpen` leaves the legacy writer gate open, as
+ * it was before the Host owned the store, so saves take the admitted path.
  */
 export async function importHostOwnedStore(
   seeds: ChatRecord[],
-  adapter?: RecordingAdapter
+  adapter?: RecordingAdapter,
+  options: { profilePath?: string; gateOpen?: boolean } = {}
 ): Promise<HostOwnedStore> {
-  const profilePath = mkdtempSync(join(tmpdir(), 'taskwraith-host-owned-erasure-'))
-  profiles.push(profilePath)
+  const profilePath =
+    options.profilePath ?? mkdtempSync(join(tmpdir(), 'taskwraith-host-owned-erasure-'))
+  if (options.profilePath === undefined) profiles.push(profilePath)
   const chatsDir = join(profilePath, 'chats')
   mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
   for (const seed of seeds) {
@@ -197,6 +202,8 @@ export async function importHostOwnedStore(
   })
   const { AppStore } = await import('./index')
   shutdowns.push(() => AppStore.shutdownMainDurability())
+  if (options.gateOpen)
+    return { AppStore, profilePath, journalDirectory: join(profilePath, 'chat-journal-v2') }
   const { legacyStoreWriterGate } = await import('./LegacyStoreWriterGate')
   if (!legacyStoreWriterGate.beginDrain()) throw new Error('test gate did not begin draining')
   if (

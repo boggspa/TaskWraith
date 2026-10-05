@@ -8,6 +8,7 @@ import type { RunEventInput, RunEventRecord } from './types'
 import type { RunEventLedgerAppendOptions } from './RunEventLedgerWriter'
 import { readMainDurabilityTelemetry } from './MainDurabilityTelemetry'
 import type { ResidualObserver } from './MainDurabilityResiduals'
+import type { NoteThreadDurabilityDebt } from './ThreadDurabilityDebt'
 
 export type JournalDurabilityFlusher = Pick<
   MainDurabilityFlusher,
@@ -46,6 +47,11 @@ export interface MainDurabilityRuntimeOptions {
   warn?: (message: string) => void
   /** Test seam; production always constructs the Node worker adapter. */
   createAdapter?: (entryPath: string) => DurabilityFlusherPorts & { dispose(): Promise<void> }
+  /**
+   * Given while barrier durability is on: the run-event ledger then writes an
+   * event that names its thread without a sync and notes what it owes here.
+   */
+  noteDurabilityDebt?: NoteThreadDurabilityDebt
 }
 
 export interface MainDurabilityRuntime {
@@ -127,7 +133,8 @@ export function createMainDurabilityRuntime(
     runEventsDir: options.runEventsDir,
     runArtifactsDir: options.runArtifactsDir,
     residualObserver: options.residualObserver,
-    ...(requested && flusher ? { durabilityFlusher: flusher, directoryLeases } : {})
+    ...(requested && flusher ? { durabilityFlusher: flusher, directoryLeases } : {}),
+    ...(options.noteDurabilityDebt ? { noteDurabilityDebt: options.noteDurabilityDebt } : {})
   })
   let journal: DurabilityParticipant | undefined
   let catalogue: DurabilityParticipant | undefined
