@@ -797,6 +797,7 @@ import {
 } from './run/MidRunSteering'
 import { createMidRunSteeringDispatchReceipt } from './run/MidRunSteeringDispatchReceipt'
 import { awaitRunFinal, settleUserMoment } from './run/DurableMomentGate'
+import { afterRunQueueUserChange } from './run/RunQueueUserWait'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
 import { ToolBoundarySteerCoordinator } from './steering/ToolBoundarySteer'
 import { createClaudePostToolBatchSteerHook } from './steering/ClaudePostToolBatchSteer'
@@ -36164,7 +36165,7 @@ async function cancelProviderRun(
       backgroundState.cancellationRequested ??= { reason: prelaunchReason, at: Date.now() }
       backgroundSubThreadDispatchMayStart(runId)
     }
-    return true
+    return afterRunQueueUserChange(true)
   }
   const queuedJob = runId ? AppStore.getRunQueueJob(runId) : null
   if (
@@ -36193,7 +36194,7 @@ async function cancelProviderRun(
       workspaceId: queuedJob.workspaceId,
       statusReason: 'Cancelled before the queued run started.'
     })
-    return true
+    return afterRunQueueUserChange(true)
   }
 
   const session = runId ? runManager.get(runId) : getSingleActiveProviderSession(provider)
@@ -36224,7 +36225,7 @@ async function cancelProviderRun(
         statusReason: 'Stopped from the app; the run process was already gone.'
       })
       scheduleRemoteComposerQueuePumpRef?.()
-      return true
+      return afterRunQueueUserChange(true)
     }
     return false
   }
@@ -36249,7 +36250,7 @@ async function cancelProviderRun(
         )
       })
     }
-    return cancelled
+    return afterRunQueueUserChange(cancelled)
   }
 
   // Provider-global process/controller handles cannot prove chat or occurrence
@@ -49220,7 +49221,7 @@ if (isGeminiMcpBridgeProcess) {
           'Remote queued steer was leased for dispatch.',
           { alreadyLeased: true }
         )
-        return ok ? { ok: true } : { ok: false, reason: 'Queued prompt could not be steered' }
+        return afterRunQueueUserChange(ok ? { ok: true } : { ok: false, reason: 'Queued prompt could not be steered' })
       }
       const broadcastRemoteComposerQueueChange = (chat: ChatRecord, workspaceId: string) => {
         broadcastThreadUpdate(chat.appChatId, { remoteProjectionSnapshot: false })
@@ -49634,7 +49635,7 @@ if (isGeminiMcpBridgeProcess) {
             ? Math.max(0, new Date(schedule.scheduledRunAt).getTime() - Date.now())
             : 0
         )
-        return { ok: true, queueId }
+        return afterRunQueueUserChange({ ok: true, queueId })
       }
       const updateRemoteComposerQueueItem = async (action: {
         workspaceId: string
@@ -49677,7 +49678,7 @@ if (isGeminiMcpBridgeProcess) {
           threadId: action.threadId
         })
         broadcastRemoteComposerQueueChange(chat, action.workspaceId)
-        return { ok: true }
+        return afterRunQueueUserChange({ ok: true })
       }
       return new MainProcessActionExecutor({
         // A paired device's human tapped send: authenticated, workspace-allowlisted,
