@@ -88,6 +88,8 @@ import {
   type ThreadBarrierDurabilityPerfSection
 } from './ThreadBarrierDurabilityPerf'
 import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
+import { installRunQueueUserWait } from '../run/RunQueueUserWait'
+import { RunQueueFile } from './RunQueueFile'
 import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
 import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalDescriptorCache'
@@ -965,9 +967,20 @@ const repoConventionIndexesPath = path.join(userDataPath, 'repo-convention-index
 const runQueuePath = path.join(userDataPath, 'run-queue.json')
 // Single choke point for run-queue writes: bounds retained terminal history
 // (capRunQueueJobs) so the full synchronous rewrite stays small. In-flight jobs
-// are always kept — see capRunQueueJobs.
-const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
-  writeJson(runQueuePath, sortRunQueueJobs(capRunQueueJobs(jobs)))
+// are always kept — see capRunQueueJobs. Under barrier durability the list in
+// memory takes the change, and the file follows it off the event loop.
+const writeRunQueueJobs = (jobs: RunQueueJob[]): void => {
+  const kept = sortRunQueueJobs(capRunQueueJobs(jobs))
+  if (runQueueFile) runQueueFile.replace(kept)
+  else writeJson(runQueuePath, kept)
+}
+/**
+ * The run queue for the store's own use: under barrier durability the list in
+ * memory, else the file.
+ */
+function readRunQueueJobs(): RunQueueJob[] {
+  return runQueueFile ? runQueueFile.read() : readJson<RunQueueJob[]>(runQueuePath, [])
+}
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
@@ -1185,11 +1198,38 @@ const usageJournalStore = new UsageJournalStore({
   archivePath: usageArchivePath,
   ...(threadBarrierDurability ? { unsynced: { port: threadBarrierDurability.port } } : {})
 })
-/** Quit under barrier durability: what every thread owes, and the usage log, within one budget. */
+// The run queue. Under barrier durability the list in memory is what the store
+// reads and changes, and the file follows it a write behind, synced through
+// the layer's port; history deletion and quit write it where they run.
+const runQueueFile = threadBarrierDurability
+  ? new RunQueueFile({
+      filePath: runQueuePath,
+      port: threadBarrierDurability.port,
+      read: () => readJson<RunQueueJob[]>(runQueuePath, []),
+      writeSync: (jobs) => writeJson(runQueuePath, jobs)
+    })
+  : null
+// A person's change to the run queue waits for the write that holds it,
+// bounded as a moment's place is, and counted apart. It reads no tickets.
+const runQueueUserGate = runQueueFile
+  ? new DurableMomentGate({ source: { holds: () => false, awaitChat: () => Promise.resolve() } })
+  : null
+if (runQueueFile && runQueueUserGate) {
+  installRunQueueUserWait(() =>
+    runQueueFile.writtenVersion >= runQueueFile.version
+      ? null
+      : runQueueUserGate.bound(runQueueFile.awaitWritten(runQueueFile.version, { urgent: true }))
+  )
+}
+/**
+ * Quit under barrier durability: what every thread owes, the usage log and the
+ * run queue, within one budget.
+ */
 function payBarrierDurabilityAtQuit(budgetMs: number): Promise<unknown> {
   return Promise.all([
     threadBarrierDurability?.payAll(budgetMs),
-    usageJournalStore.settleAtQuit(budgetMs)
+    usageJournalStore.settleAtQuit(budgetMs),
+    runQueueFile?.close(budgetMs)
   ])
 }
 /**
@@ -5136,6 +5176,7 @@ export class AppStore {
 
   static shutdownMainDurability(): Promise<void> {
     threadBarrierDurability?.dispose()
+    runQueueFile?.dispose()
     return mainDurabilityRuntime.shutdown()
   }
 
@@ -9409,6 +9450,10 @@ export class AppStore {
       gate: durableMomentGate,
       startGate: queuedStartGate,
       usage: usageJournalStore,
+      runQueue:
+        runQueueFile && runQueueUserGate
+          ? { file: runQueueFile, userGate: runQueueUserGate }
+          : null,
       checkpoints: () => journalCheckpointCounts.snapshot(),
       tornTailsTruncated: () => incrementalJournal.stats().tornTailsTruncated
     })
@@ -9771,12 +9816,16 @@ export class AppStore {
     draft.workflowIds = [...targetWorkflowIds].sort()
     draft.workflowExecutionIds = [...targetWorkflowExecutionIds].sort()
 
-    // Snapshot queued/recovery run ids before any store is rewritten.
+    // Snapshot queued/recovery run ids before any store is rewritten. Under
+    // barrier durability the run queue's list in memory is ahead of its file.
     for (const [filePath, label] of [
       [runQueuePath, 'run queue'],
       [runRecoveryPath, 'run recovery']
     ] as const) {
-      const stored = readJsonStrictIfPresent(filePath)
+      const stored =
+        filePath === runQueuePath && runQueueFile
+          ? runQueueFile.read()
+          : readJsonStrictIfPresent(filePath)
       if (stored === null) continue
       if (!Array.isArray(stored)) {
         if (input.kind === 'global') continue
@@ -10238,7 +10287,15 @@ export class AppStore {
       return
     }
     if (step === 'run-queue') {
-      rewriteArrayHistoryStore(runQueuePath, 'run queue history', intent)
+      // Under barrier durability the latest list is written here first, so the
+      // rewrite reads it, and the list kept is what the rewrite leaves; a write
+      // running from before renames nothing over it.
+      runQueueFile?.writeNowSync()
+      try {
+        rewriteArrayHistoryStore(runQueuePath, 'run queue history', intent)
+      } finally {
+        runQueueFile?.reload()
+      }
       return
     }
     if (step === 'run-recovery') {
@@ -14181,13 +14238,15 @@ export class AppStore {
 
   // Run queue
   static getRunQueueJobs(filter: RunQueueJobFilter = {}): RunQueueJob[] {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
-    return sortRunQueueJobs(filterRunQueueJobs(jobs, filter))
+    const jobs = readRunQueueJobs()
+    const found = sortRunQueueJobs(filterRunQueueJobs(jobs, filter))
+    return runQueueFile ? runQueueFile.copies(found) : found
   }
 
   static getRunQueueJob(runIdOrId: string): RunQueueJob | null {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
-    return jobs.find((job) => job.id === runIdOrId || job.runId === runIdOrId) || null
+    const jobs = readRunQueueJobs()
+    const found = jobs.find((job) => job.id === runIdOrId || job.runId === runIdOrId) || null
+    return found && runQueueFile ? runQueueFile.copyOf(found) : found
   }
 
   static saveRunQueueJob(input: RunQueueJobInput): RunQueueJob {
@@ -14216,7 +14275,7 @@ export class AppStore {
         runIds: [input.runId]
       })
     }
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
+    const jobs = readRunQueueJobs()
     const index = jobs.findIndex((job) => job.id === input.id || job.runId === input.runId)
     const now = new Date().toISOString()
     const record =
@@ -14232,7 +14291,7 @@ export class AppStore {
   }
 
   static updateRunQueueJob(runIdOrId: string, partial: Partial<RunQueueJob>): RunQueueJob | null {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
+    const jobs = readRunQueueJobs()
     const index = jobs.findIndex((job) => job.id === runIdOrId || job.runId === runIdOrId)
     if (index < 0) return null
     const updated = updateRunQueueJobRecord(jobs[index], partial)
@@ -14250,19 +14309,19 @@ export class AppStore {
   }
 
   static deleteRunQueueJob(runIdOrId: string) {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
+    const jobs = readRunQueueJobs()
     writeRunQueueJobs(jobs.filter((job) => job.id !== runIdOrId && job.runId !== runIdOrId))
   }
 
   static recoverInterruptedRunQueueJobs(): RunQueueJob[] {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
+    const jobs = readRunQueueJobs()
     const recovered = recoverInterruptedQueueJobs(jobs)
     writeRunQueueJobs(recovered)
-    return recovered
+    return runQueueFile ? runQueueFile.copies(recovered) : recovered
   }
 
   static recoverRunQueueAfterStartup(): RunRecoveryRecord[] {
-    const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
+    const jobs = readRunQueueJobs()
     const recovered = recoverRunQueueJobsAfterStartup(jobs)
     writeRunQueueJobs(recovered.jobs)
     if (recovered.records.length > 0) {

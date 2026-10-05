@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import {
   registerRunQueueHandlers,
   type RunQueueHandlersDeps
 } from './runQueueHandlers'
+import { installRunQueueUserWait } from '../run/RunQueueUserWait'
 import type {
   RunAnalystSnapshot,
   RunQueueJob,
@@ -835,5 +836,141 @@ describe('registerRunQueueHandlers', () => {
 
     expect(await handlerFor('get-run-event-replay')({}, 'run-1')).toEqual({ runId: 'run-1', events: [] })
     expect(deps.getRunEventReplay).toHaveBeenCalledWith('run-1')
+  })
+})
+
+describe("the replies to a person's run queue changes", () => {
+  afterEach(() => {
+    installRunQueueUserWait(null)
+  })
+
+  const job = (status: RunQueueJob['status']): RunQueueJob => ({
+    id: 'job-1',
+    runId: 'run-1',
+    provider: 'gemini',
+    status,
+    source: 'manual',
+    priority: 0,
+    attempt: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  })
+
+  const promoted: PromoteQueuedJobForSteerResult = {
+    ok: true,
+    kind: 'dispatch-permission',
+    runId: 'run-1',
+    provider: 'gemini',
+    ownerToken: 'owner-token',
+    promotionToken: 'promotion-token',
+    jobStatus: 'queued',
+    request: defaultRequest,
+    cancelRequested: false
+  }
+
+  /** A wait the store would install: open until the test says the write finished. */
+  function writeBehind() {
+    let finish!: () => void
+    const written = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const asked = vi.fn(() => written)
+    installRunQueueUserWait(asked)
+    return { asked, finish }
+  }
+
+  const turns = async (): Promise<void> => {
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve()
+  }
+
+  it('replies to a queued prompt, a cancelled queued run and a steered queued message once their write is done', async () => {
+    const deps = createDeps()
+    deps.transitionRunQueueJob = vi.fn(() => job('cancelled'))
+    deps.getRunLifecycleCoordinator = vi.fn(() => ({
+      promoteQueuedJobForSteer: vi.fn(async () => promoted),
+      leasePromotedSteerJob: vi.fn(),
+      fallbackPromotedSteerJob: vi.fn()
+    }))
+    registerRunQueueHandlers(deps)
+    const { asked, finish } = writeBehind()
+
+    const replied: string[] = []
+    const replies = [
+      Promise.resolve(handlerFor('request-run-queue-job')({}, { runId: 'run-1' })).then((reply) =>
+        replied.push(`queued:${(reply as RunQueueJob).status}`)
+      ),
+      Promise.resolve(handlerFor('transition-run-queue-job')({}, 'run-1', 'cancelled', {})).then(
+        (reply) => replied.push(`cancelled:${(reply as RunQueueJob).status}`)
+      ),
+      Promise.resolve(
+        handlerFor('promote-queued-job-for-steer')({}, { runId: 'run-1', provider: 'gemini' })
+      ).then((reply) => replied.push(`steered:${(reply as PromoteQueuedJobForSteerResult).kind}`))
+    ]
+    await turns()
+
+    expect(asked).toHaveBeenCalledTimes(3)
+    expect(replied).toEqual([])
+    finish()
+    await Promise.all(replies)
+    expect(replied.sort()).toEqual([
+      'cancelled:cancelled',
+      'queued:queued',
+      'steered:dispatch-permission'
+    ])
+  })
+
+  it("replies at once to the app's own transitions: a run starting, leased, running, ending, and the steer lease and fallback", async () => {
+    const deps = createDeps()
+    deps.requestRunQueueJob = vi.fn(() => job('starting'))
+    deps.getRunLifecycleCoordinator = vi.fn(() => ({
+      promoteQueuedJobForSteer: vi.fn(),
+      leasePromotedSteerJob: vi.fn(
+        async (): Promise<LeasePromotedSteerJobResult> => ({
+          ok: false,
+          kind: 'not-available',
+          runId: 'run-1',
+          reason: 'fixture',
+          ownerToken: 'owner'
+        })
+      ),
+      fallbackPromotedSteerJob: vi.fn(
+        async (): Promise<FallbackPromotedSteerJobResult> => ({
+          ok: false,
+          kind: 'not-found',
+          runId: 'run-1',
+          ownerToken: 'owner',
+          reason: 'fixture'
+        })
+      )
+    }))
+    registerRunQueueHandlers(deps)
+    const { asked } = writeBehind()
+
+    expect(handlerFor('request-run-queue-job')({}, { runId: 'run-1', status: 'starting' })).toEqual(
+      job('starting')
+    )
+    expect(handlerFor('lease-run-queue-job')({}, { runId: 'run-1' })).toEqual(job('queued'))
+    for (const status of ['starting', 'active', 'completed', 'failed', 'paused'] as const) {
+      expect(handlerFor('transition-run-queue-job')({}, 'run-1', status, {})).toEqual(job('queued'))
+    }
+    await expect(
+      handlerFor('lease-promoted-steer-job')({}, { runId: 'run-1', ownerToken: 'owner' })
+    ).resolves.toMatchObject({ kind: 'not-available' })
+    await expect(
+      handlerFor('fallback-promoted-steer-job')({}, { runId: 'run-1', ownerToken: 'owner' })
+    ).resolves.toMatchObject({ kind: 'not-found' })
+
+    expect(asked).not.toHaveBeenCalled()
+  })
+
+  it('with no wait installed, replies to a queued prompt and a cancellation as before, at once', () => {
+    const deps = createDeps()
+    deps.transitionRunQueueJob = vi.fn(() => job('cancelled'))
+    registerRunQueueHandlers(deps)
+
+    expect(handlerFor('request-run-queue-job')({}, { runId: 'run-1' })).toEqual(job('queued'))
+    expect(handlerFor('transition-run-queue-job')({}, 'run-1', 'cancelled', {})).toEqual(
+      job('cancelled')
+    )
   })
 })

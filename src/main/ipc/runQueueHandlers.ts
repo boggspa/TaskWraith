@@ -8,6 +8,7 @@ import {
   sanitizeContinuationProposalRequest,
   sanitizeContinuationTitleApplyRequest
 } from '../ContinuationProposal'
+import { afterRunQueueUserChange } from '../run/RunQueueUserWait'
 import {
   createComposerContinuationProposalService,
   type ComposerContinuationProposalService
@@ -240,10 +241,13 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
       throw new Error('Renderer cannot create run state for another chat.')
     }
     authorizeRendererMutation(deps, event, scope, { operation: 'request', job })
-    return deps.requestRunQueueJob(job, {
+    const requested = deps.requestRunQueueJob(job, {
       authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event),
       authorizedDirectoryPickerPaths: deps.resolveSenderDirectoryPickerPaths(event)
     })
+    // A prompt a person queued is reported queued once a write holds it; a run
+    // starting is the app's own transition and waits for nothing.
+    return requested?.status === 'queued' ? afterRunQueueUserChange(requested) : requested
   })
 
   ipcMain.handle(
@@ -272,7 +276,11 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
         status,
         partial
       })
-      return deps.transitionRunQueueJob(runIdOrId, status, partial)
+      const transitioned = deps.transitionRunQueueJob(runIdOrId, status, partial)
+      // The renderer cancels a queued run for a person: cancelled from the queue,
+      // edited back into the composer, sent twice, or its linked chat ended.
+      // Those wait for their write; a run's own transitions do not.
+      return status === 'cancelled' ? afterRunQueueUserChange(transitioned) : transitioned
     }
   )
 
@@ -330,10 +338,12 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
         }
       })
     }
-    return coordinator.promoteQueuedJobForSteer({
+    const promoted = await coordinator.promoteQueuedJobForSteer({
       ...input,
       ...(ownerToken ? { ownerToken } : {})
     })
+    // A person steering a queued message: reported once a write holds the promotion.
+    return afterRunQueueUserChange(promoted)
   })
 
   ipcMain.handle('lease-promoted-steer-job', async (event, input: LeasePromotedSteerInput) => {

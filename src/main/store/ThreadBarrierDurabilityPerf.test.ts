@@ -33,6 +33,7 @@ const FIELDS = [
   'threads',
   'staging',
   'usageLog',
+  'runQueue',
   'checkpoints',
   'tornTailsRepaired'
 ]
@@ -47,6 +48,7 @@ describe('the threadBarrierDurability perf section', () => {
       gate: null,
       startGate: null,
       usage: { unsyncedSnapshot: () => null },
+      runQueue: null,
       checkpoints: () => checkpoints,
       tornTailsTruncated: () => 2
     })
@@ -62,6 +64,7 @@ describe('the threadBarrierDurability perf section', () => {
       threads: null,
       staging: null,
       usageLog: null,
+      runQueue: null,
       checkpoints,
       tornTailsRepaired: 2
     })
@@ -78,6 +81,7 @@ describe('the threadBarrierDurability perf section', () => {
       gate: null,
       startGate: null,
       usage: { unsyncedSnapshot: () => null },
+      runQueue: null,
       checkpoints: counts,
       tornTailsTruncated: () => 0
     })
@@ -127,12 +131,30 @@ describe('the threadBarrierDurability perf section', () => {
       },
       compactions: { started: 1, completed: 1, stopped: 0, failed: 0 }
     }
+    // The run queue's counters, and the gate a person's change waited at.
+    const runQueueFile = {
+      changes: 7,
+      writes: 2,
+      coalesced: 5,
+      failed: 0,
+      superseded: 0,
+      inlineWrites: 1,
+      syncs: { files: 2, directories: 2 },
+      writing: false,
+      unwrittenChanges: 0,
+      quitUnwritten: 0
+    }
+    const userGate = new DurableMomentGate({
+      source: { holds: () => false, awaitChat: () => Promise.resolve() }
+    })
+    void userGate.bound(Promise.resolve())
     const section = readThreadBarrierDurabilityPerf({
       switches: { barrierDurability: true, barrierDurabilityIgnored: null },
       layer,
       gate,
       startGate,
       usage: { unsyncedSnapshot: () => usageLog },
+      runQueue: { file: { snapshot: () => runQueueFile }, userGate },
       checkpoints: counts,
       tornTailsTruncated: () => 1
     })
@@ -150,6 +172,7 @@ describe('the threadBarrierDurability perf section', () => {
       threads: parts.threads,
       staging: parts.staging,
       usageLog,
+      runQueue: { ...runQueueFile, userWaits: userGate.snapshot() },
       checkpoints: counts(),
       tornTailsRepaired: 1
     })
@@ -158,6 +181,7 @@ describe('the threadBarrierDurability perf section', () => {
     expect(section.tickets?.moments.user_message.noted).toBe(1)
     expect(section.staging?.rows.staged).toBe(1)
     expect([section.gates?.waits, section.starts?.waits]).toEqual([0, 1])
+    expect(section.runQueue?.userWaits.waits).toBe(1)
   })
 })
 

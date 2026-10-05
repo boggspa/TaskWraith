@@ -11,6 +11,10 @@
  * - `usageLog`: the usage log's appends written without a sync, the rounds
  *   that sync them, and its compactions off the event loop. Null with the
  *   switch off, when every append syncs where it is made.
+ * - `runQueue`: the run queue's changes, the whole-file writes that follow
+ *   them off the event loop and their syncs, and `userWaits`, the bounded
+ *   waits of the changes a person made. Null with the switch off, when every
+ *   change writes and syncs the file where it is made.
  * - `checkpoints`: the journal's checkpoints by what triggered them, counted
  *   whatever the switch, so the pair off against on compares like with like.
  * - `tornTailsRepaired`: torn journal tails cut before an append, each with
@@ -26,6 +30,7 @@ import type { ThreadDebtTrackerSnapshot } from './ThreadDebtTracker'
 import type { ThreadDurabilityDebtSnapshot } from './ThreadDurabilityDebt'
 import type { ThreadDurabilityDebtFsSnapshot } from './ThreadDurabilityDebtFs'
 import type { ToolActivityDetailStagingSnapshot } from './ToolActivityDetailStaging'
+import type { RunQueueFile, RunQueueFileSnapshot } from './RunQueueFile'
 import type { UsageJournalUnsyncedSnapshot } from './UsageJournalStore'
 import type { DurableMomentGate, DurableMomentGateSnapshot } from '../run/DurableMomentGate'
 
@@ -47,6 +52,8 @@ export interface ThreadBarrierDurabilityPerfSection {
   staging: ToolActivityDetailStagingSnapshot | null
   /** The usage log: appends and spills written without a sync, its background rounds and compactions. */
   usageLog: UsageJournalUnsyncedSnapshot | null
+  /** The run queue: its changes, writes and syncs, and the waits of a person's changes. */
+  runQueue: (RunQueueFileSnapshot & { userWaits: DurableMomentGateSnapshot }) | null
   /** Counted with the switch off too. */
   checkpoints: JournalCheckpointCounts
   tornTailsRepaired: number
@@ -62,6 +69,11 @@ export interface ThreadBarrierDurabilityPerfSources {
   startGate: Pick<DurableMomentGate, 'snapshot'> | null
   /** The usage log, whose counters are null with the switch off. */
   usage: { unsyncedSnapshot(): UsageJournalUnsyncedSnapshot | null }
+  /** The run queue's file and the gate a person's change waits at; null with the switch off. */
+  runQueue: {
+    file: Pick<RunQueueFile, 'snapshot'>
+    userGate: Pick<DurableMomentGate, 'snapshot'>
+  } | null
   checkpoints: () => JournalCheckpointCounts
   /** The journal's count of torn tails it cut before an append. */
   tornTailsTruncated: () => number
@@ -82,6 +94,9 @@ export function readThreadBarrierDurabilityPerf(
     threads: layer?.threads ?? null,
     staging: layer?.staging ?? null,
     usageLog: sources.usage.unsyncedSnapshot(),
+    runQueue: sources.runQueue
+      ? { ...sources.runQueue.file.snapshot(), userWaits: sources.runQueue.userGate.snapshot() }
+      : null,
     checkpoints: sources.checkpoints(),
     tornTailsRepaired: sources.tornTailsTruncated()
   }
