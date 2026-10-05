@@ -11,7 +11,12 @@
  *
  * - idle, busy: self time in `(idle)`, and the rest.
  * - sync: self time in the runtime's `fsync` / `fdatasync` frames, with its
- *   owner named from the functions above it (`SYNC_OWNERS`, first match).
+ *   owner named from the functions above it (`OWNERS`, first match).
+ * - plainFileCalls: self time in the runtime's other synchronous file calls,
+ *   reads apart: every runtime frame at or under the outermost `node:fs` call
+ *   named `...Sync` on the stack (`openSync`, `writeFileSync`, `renameSync`,
+ *   `statSync` and their kin), that call neither a sync nor a read
+ *   (`NOT_PLAIN_FILE_CALLS`). Owned as syncs are, and named by that call.
  * - wholeThreadRead: time under `readJson` reached through `getChat` or
  *   `readChatRecordCached`, with the callers that asked. `allJsonRead` is all
  *   time under `readJson`, which also holds small files (the run queue).
@@ -27,7 +32,9 @@
  * lines it spans in the built bundle the profile's frames point into, because
  * its method names (`pump`, `settle`, `snapshot`) are not its alone. Every
  * name a share matches is looked up in that build: a share whose function the
- * build no longer has is reported unmeasured, never as zero.
+ * build no longer has is reported unmeasured, never as zero. So is an owner
+ * whose function it no longer has, with every owner after it and other, which
+ * could have taken its calls; the owners before it matched first and stand.
  *
  * Clock. A window main timed on `performance.now` is placed in the profile by
  * the calibration markers captured around it (`mainProfileCalibration.cjs`).
@@ -63,16 +70,41 @@ const COPY_PARTS = Object.freeze(['canCloneRecord', 'postMessage'])
 const PREPARE_UNDER = 'prepareChatForPersistence'
 const HASHING_UNDER = 'computeChatSubRevisions'
 /**
- * Who a sync belongs to, by the functions above it; the first row that
- * matches wins. Tool detail is first because its checkpoint appends a run
- * event of its own.
+ * Who a sync or a plain file call belongs to, by the functions above it; the
+ * first row that matches wins. Tool detail is first because its checkpoint
+ * appends a run event of its own. The thread's stores come before the rest,
+ * so a store's write made inside other work (a fenced commit, say) stays the
+ * store's.
  */
-const SYNC_OWNERS = Object.freeze([
+const OWNERS = Object.freeze([
   ['toolDetail', ['prepareChatForPersistence', 'persistDetailCheckpoint']],
   ['cataloguePublication', ['beginPublication', 'finishPublication', 'settleBurst']],
   ['journal', ['persistIncrementalChatForHostSave', 'checkpointChat']],
   ['runEvents', ['appendRunEvent']],
-  ['runQueue', ['writeRunQueueJobs']]
+  ['runQueue', ['writeRunQueueJobs']],
+  // The usage ledger's appends, with its lock file's removal (`releaseLock`
+  // is the ledger's own lock, not the workspace lock's).
+  ['usageLedger', ['recordUsage']],
+  // The workspace lock's fence files, and whatever it commits under them.
+  ['workspaceLock', ['acquireInstanceFence', 'releaseInstanceFence', 'commitUnderFence']],
+  // Owners of plain file calls the stores do not make: the session
+  // checkpoint's file, the catalogue's checks before a thread's source
+  // changes, and the chat authority index's look at a thread's file.
+  ['sessionCheckpoint', ['persistOrThrow']],
+  [
+    'catalogueChecks',
+    ['assertSourceMutationAllowed', 'assertRecoveryHoldAllows', 'captureThreadCatalogueWitness']
+  ],
+  ['chatAuthority', ['getCurrentChatAuthorityMetadata', 'rememberChatRecord']]
+])
+/** The runtime's synchronous file calls that are not plain: syncs and reads. */
+const NOT_PLAIN_FILE_CALLS = new Set([
+  'fsyncSync',
+  'fdatasyncSync',
+  'readFileSync',
+  'readSync',
+  'readvSync',
+  'readdirSync'
 ])
 /** Shares measured as self time in the frames of one bundled class. */
 const CLASS_SHARES = Object.freeze({ flusherBookkeeping: 'MainDurabilityFlusher' })
@@ -83,7 +115,7 @@ const SHARE_NAMES = Object.freeze({
   wholeThreadCopy: [COPY_UNDER, 'canCloneRecord'],
   prepareForSave: [PREPARE_UNDER],
   transcriptHashing: [HASHING_UNDER],
-  syncOwners: SYNC_OWNERS.flatMap(([, names]) => names)
+  syncOwners: OWNERS.flatMap(([, names]) => names)
 })
 
 /** Frames that say nothing about who called. */
@@ -98,6 +130,7 @@ const MAX_READ_CALLERS = 8
 const READ_CALLER_VIA_DEPTH = 2
 const MAX_SYNC_OTHER_CALLERS = 5
 const SYNC_OTHER_CALLER_DEPTH = 3
+const MAX_FILE_CALLS = 10
 
 /**
  * V8 leaves steps of a microsecond or two backwards in a profile (one to
@@ -350,9 +383,12 @@ function createClassifier(timeline, classRanges) {
     const kind = {
       idle: leaf.name === '(idle)',
       gc: leaf.name === '(garbage collector)',
-      sync: SYNC_FRAMES.has(leaf.name) && (leaf.url === '' || leaf.url.startsWith('node:')),
+      sync: SYNC_FRAMES.has(leaf.name) && isRuntime(leaf),
       syncOwner: null,
       syncOtherCallers: null,
+      fileCall: null,
+      fileCallOwner: null,
+      fileCallOtherCallers: null,
       read: false,
       chatRead: false,
       readCaller: null,
@@ -363,13 +399,28 @@ function createClassifier(timeline, classRanges) {
       hashing: has(HASHING_UNDER),
       classShare: classShareOf(leaf)
     }
+    const owner = OWNERS.find(([, owners]) => owners.some(has))
     if (kind.sync) {
-      const owner = SYNC_OWNERS.find(([, owners]) => owners.some(has))
       kind.syncOwner = owner ? owner[0] : 'other'
       if (!owner) {
         kind.syncOtherCallers = names
           .filter((name) => !SYNC_FRAMES.has(name) && !UNNAMED_CALLERS.has(name))
           .slice(-SYNC_OTHER_CALLER_DEPTH)
+          .reverse()
+          .join(' <- ')
+      }
+    }
+    // The call the app made: a runtime call can make another (`writeFileSync`
+    // opens and writes), and the outermost is the one asked for.
+    const fileCall = stack.find((frame) => frame.url === 'node:fs' && frame.name.endsWith('Sync'))
+    if (fileCall && !kind.sync && !NOT_PLAIN_FILE_CALLS.has(fileCall.name)) {
+      kind.fileCall = fileCall.name
+      kind.fileCallOwner = owner ? owner[0] : 'other'
+      if (!owner) {
+        kind.fileCallOtherCallers = stack
+          .filter((frame) => !isRuntime(frame) && !UNNAMED_CALLERS.has(frame.name))
+          .slice(-SYNC_OTHER_CALLER_DEPTH)
+          .map((frame) => frame.name)
           .reverse()
           .join(' <- ')
       }
@@ -396,6 +447,11 @@ function createClassifier(timeline, classRanges) {
   }
 }
 
+/** A frame of the runtime itself rather than the app: native, or one of Node's own modules. */
+function isRuntime(frame) {
+  return frame.url === '' || frame.url.startsWith('node:')
+}
+
 function add(map, key, value) {
   map.set(key, (map.get(key) || 0) + value)
 }
@@ -407,6 +463,7 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     idle: 0,
     gc: 0,
     sync: 0,
+    fileCall: 0,
     read: 0,
     chatRead: 0,
     copy: 0,
@@ -415,6 +472,9 @@ function sumInterval(timeline, classify, fromUs, toUs) {
   }
   const syncOwners = new Map()
   const syncOtherCallers = new Map()
+  const fileCalls = new Map()
+  const fileCallOwners = new Map()
+  const fileCallOtherCallers = new Map()
   const readCallers = new Map()
   const readCallerVias = new Map()
   const copyParts = new Map()
@@ -441,6 +501,13 @@ function sumInterval(timeline, classify, fromUs, toUs) {
       add(syncOwners, kind.syncOwner, us)
       if (kind.syncOtherCallers !== null) add(syncOtherCallers, kind.syncOtherCallers, us)
     }
+    if (kind.fileCall !== null) {
+      sums.fileCall += us
+      add(fileCalls, kind.fileCall, us)
+      add(fileCallOwners, kind.fileCallOwner, us)
+      if (kind.fileCallOtherCallers !== null)
+        add(fileCallOtherCallers, kind.fileCallOtherCallers, us)
+    }
     if (kind.read) sums.read += us
     if (kind.chatRead) {
       sums.chatRead += us
@@ -458,6 +525,9 @@ function sumInterval(timeline, classify, fromUs, toUs) {
     sums,
     syncOwners,
     syncOtherCallers,
+    fileCalls,
+    fileCallOwners,
+    fileCallOtherCallers,
     readCallers,
     readCallerVias,
     copyParts,
@@ -494,25 +564,41 @@ function sharesOf(interval, build) {
       ? share(interval.classShares.get(name) || 0)
       : null
   }
+  // Runtime frames only: no name of the app's to vouch for.
+  shares.plainFileCalls = share(sums.fileCall)
   return shares
 }
 
 function describeInterval(interval, build) {
   const { sums } = interval
   const shares = sharesOf(interval, build)
-  const ownersMeasurable =
-    build.missing === null || !SHARE_NAMES.syncOwners.some((name) => build.missing.has(name))
-  const owners = {}
-  for (const [owner] of [...SYNC_OWNERS, ['other']]) {
-    owners[owner] = round((interval.syncOwners.get(owner) || 0) / sums.total, 5)
+  // An owner the build cannot vouch for may have lost its calls to an owner
+  // after it or to other, so those go unmeasured with it; the owners before
+  // it matched first and stand.
+  const firstUnvouched =
+    build.missing === null
+      ? -1
+      : OWNERS.findIndex(([, names]) => names.some((name) => build.missing.has(name)))
+  const vouched = (index) => firstUnvouched < 0 || index < firstUnvouched
+  const owned = (byOwner) => {
+    const owners = {}
+    for (const [index, [owner]] of [...OWNERS, ['other']].entries()) {
+      owners[owner] = vouched(index) ? round((byOwner.get(owner) || 0) / sums.total, 5) : null
+    }
+    return owners
   }
+  const otherCallers = (byCallers) =>
+    vouched(OWNERS.length)
+      ? topRows(byCallers, sums.total, MAX_SYNC_OTHER_CALLERS, 'callers')
+      : null
   return {
     sampledMs: round(sums.total / 1000, 3),
     shares,
-    syncOwners: ownersMeasurable ? owners : null,
-    syncOtherCallers: ownersMeasurable
-      ? topRows(interval.syncOtherCallers, sums.total, MAX_SYNC_OTHER_CALLERS, 'callers')
-      : null,
+    syncOwners: owned(interval.syncOwners),
+    syncOtherCallers: otherCallers(interval.syncOtherCallers),
+    plainFileCallOwners: owned(interval.fileCallOwners),
+    plainFileCallOtherCallers: otherCallers(interval.fileCallOtherCallers),
+    plainFileCallsByCall: topRows(interval.fileCalls, sums.total, MAX_FILE_CALLS, 'call'),
     // Each caller with the callers it was most often reached through.
     wholeThreadReadCallers:
       shares.wholeThreadRead === null
@@ -543,14 +629,25 @@ function boundsAcross(candidates) {
   return bounds
 }
 
-/** The share, or sync owner, its bounds move the most, with how far. */
-function largestMove(shareBounds, syncOwnerBounds) {
+/** Each owner table's bounds across placements of one window; an unmeasured table has none. */
+function ownerBoundsAcross(described, candidates) {
+  const across = (table) => boundsAcross(candidates.map((candidate) => candidate[table]))
+  return {
+    syncOwnerBounds: across('syncOwners'),
+    plainFileCallOwnerBounds: across('plainFileCallOwners')
+  }
+}
+
+/** The share, or owner, its bounds move the most, with how far. */
+function largestMove(shareBounds, ownerBounds) {
   const rows = [
     ...Object.entries(shareBounds),
-    ...Object.entries(syncOwnerBounds ?? {}).map(([owner, bounds]) => [
-      `syncOwners.${owner}`,
-      bounds
-    ])
+    ...[
+      ['syncOwners', ownerBounds.syncOwnerBounds],
+      ['plainFileCallOwners', ownerBounds.plainFileCallOwnerBounds]
+    ].flatMap(([table, bounds]) =>
+      Object.entries(bounds ?? {}).map(([owner, range]) => [`${table}.${owner}`, range])
+    )
   ]
   let largest = null
   for (const [share, bounds] of rows) {
@@ -640,11 +737,8 @@ function measureWindow(window, context) {
       ...[lower, upper].map((offset) => describeInterval(sum(fromUsAt(offset)), build))
     ]
     const shareBounds = boundsAcross(candidates.map((candidate) => candidate.shares))
-    const syncOwnerBounds =
-      described.syncOwners === null
-        ? null
-        : boundsAcross(candidates.map((candidate) => candidate.syncOwners))
-    const moved = largestMove(shareBounds, syncOwnerBounds)
+    const ownerBounds = ownerBoundsAcross(described, candidates)
+    const moved = largestMove(shareBounds, ownerBounds)
     if (moved !== null && moved.by > LOOSE_CLOCK_SHARE_TOLERANCE) {
       return {
         ...unmeasured('loose_clock_moves_share'),
@@ -659,7 +753,7 @@ function measureWindow(window, context) {
       windowMs: round(windowMs, 3),
       ...described,
       shareBounds,
-      syncOwnerBounds
+      ...ownerBounds
     }
   }
 
@@ -688,10 +782,7 @@ function measureWindow(window, context) {
     windowMs: round(windowMs, 3),
     ...described,
     shareBounds: boundsAcross(candidates.map((candidate) => candidate.shares)),
-    syncOwnerBounds:
-      described.syncOwners === null
-        ? null
-        : boundsAcross(candidates.map((candidate) => candidate.syncOwners))
+    ...ownerBoundsAcross(described, candidates)
   }
 }
 

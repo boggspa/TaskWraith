@@ -42,7 +42,12 @@ const BUNDLE_LINES = [
   /* 14 */ 'function prepareChatForPersistence(input) { persistDetailCheckpoint(input) }',
   /* 15 */ 'function saveChat(chat) { beginPublication(chat); finishPublication(chat); settleBurst(chat) }',
   /* 16 */ 'function persistIncrementalChatForHostSave(chat) { appendRunEvent(chat); writeRunQueueJobs(chat) }',
-  /* 17 */ 'const checkpointChat = (chatId) => checkpoint(chatId)'
+  /* 17 */ 'const checkpointChat = (chatId) => checkpoint(chatId)',
+  /* 18 */ 'function recordUsage(entry) { releaseLock(entry) }',
+  /* 19 */ 'function commitUnderFence(work) { acquireInstanceFence(work); releaseInstanceFence(work) }',
+  /* 20 */ 'function persistOrThrow() {}',
+  /* 21 */ 'function assertSourceMutationAllowed(id) { assertRecoveryHoldAllows(id); captureThreadCatalogueWitness(id) }',
+  /* 22 */ 'function getCurrentChatAuthorityMetadata(id) { rememberChatRecord(id) }'
 ]
 const CHUNK_LINES = ['function computeChatSubRevisions(chat) {', '}']
 const buildScripts = (bundleLines = BUNDLE_LINES) => [
@@ -294,7 +299,8 @@ describe('main-thread shares of a measured window', () => {
       prepareForSave: 0.05,
       garbageCollection: 0.05,
       transcriptHashing: 0.04,
-      flusherBookkeeping: 0.08
+      flusherBookkeeping: 0.08,
+      plainFileCalls: 0
     })
   })
 
@@ -306,10 +312,181 @@ describe('main-thread shares of a measured window', () => {
       runEvents: 0.03,
       toolDetail: 0.02,
       runQueue: 0.01,
-      other: 0.02
+      usageLedger: 0.02,
+      workspaceLock: 0,
+      sessionCheckpoint: 0,
+      catalogueChecks: 0,
+      chatAuthority: 0,
+      other: 0
+    })
+    expect(window.syncOtherCallers).toEqual([])
+  })
+
+  /** The window's rows, its 12 ms of busy time after the flusher spent as given. */
+  function spendingTheRest(rows: Row[]) {
+    const all = windowRows()
+    const at = all.findIndex((row) => row.stack.at(-1)?.name === 'handleProviderOutput')
+    expect(rows.reduce((sum, row) => sum + row.us, 0)).toBe(all[at].us)
+    all.splice(at, 1, ...rows)
+    return all
+  }
+
+  it('names the syncs left beside the thread’s stores, and leaves a store’s own to it inside them', () => {
+    const fenced = [js('releaseAllForRun'), js('commitUnderFence')]
+    const rows = spendingTheRest([
+      {
+        stack: [
+          ...fenced,
+          js('acquireTransitionFence'),
+          js('acquireInstanceFence'),
+          js('atomicCreateRegularFile'),
+          js('fsyncDirectory'),
+          ...sync
+        ],
+        us: 3_000
+      },
+      {
+        stack: [js('commitUnderFence'), js('releaseInstanceFence'), js('fsyncDirectory'), ...sync],
+        us: 1_000
+      },
+      // A journal sync made inside a fenced commit is still the journal's.
+      { stack: [...fenced, js('persistIncrementalChatForHostSave'), ...sync], us: 2_000 },
+      // The ledger's lock file goes as it appends: `releaseLock` is the ledger's own.
+      {
+        stack: [
+          js('recordUsage'),
+          js('append'),
+          js('releaseLock'),
+          js('retireRegularFileNoFollow'),
+          js('fsyncDirectoryBestEffort'),
+          ...sync
+        ],
+        us: 2_000
+      },
+      {
+        stack: [js('updateSettings'), js('writeJson'), js('writeJsonAdmitted'), ...sync],
+        us: 1_000
+      },
+      { stack: [js('handleProviderOutput', 1)], us: 3_000 }
+    ])
+    const [window] = measure({ profile: buildProfile(rows) }).windows
+    expect(window.shares.sync).toBe(0.29)
+    expect(window.syncOwners).toEqual({
+      cataloguePublication: 0.08,
+      journal: 0.06,
+      runEvents: 0.03,
+      toolDetail: 0.02,
+      runQueue: 0.01,
+      usageLedger: 0.04,
+      workspaceLock: 0.04,
+      sessionCheckpoint: 0,
+      catalogueChecks: 0,
+      chatAuthority: 0,
+      other: 0.01
     })
     expect(window.syncOtherCallers).toEqual([
-      { callers: 'durableAppend <- recordUsage', share: 0.02 }
+      { callers: 'writeJsonAdmitted <- writeJson <- updateSettings', share: 0.01 }
+    ])
+  })
+
+  it('measures the plain file calls apart from syncs and reads, by owner and by call', () => {
+    const checkpoint = [
+      js('persistSessionCheckpoint'),
+      js('upsertFromChat'),
+      js('persist'),
+      js('persistOrThrow')
+    ]
+    const rows = spendingTheRest([
+      {
+        stack: [
+          js('saveChat'),
+          js('begin'),
+          js('beginPublication'),
+          js('writeJson'),
+          nodeFs('renameSync'),
+          native('rename')
+        ],
+        us: 2_000
+      },
+      // Named by the call the app made, not the one the runtime made inside it.
+      {
+        stack: [...checkpoint, nodeFs('writeFileSync'), nodeFs('openSync'), native('open')],
+        us: 2_000
+      },
+      // A sync inside a plain call (a write asked to flush) is a sync, owned the same way.
+      { stack: [...checkpoint, nodeFs('writeFileSync'), ...sync], us: 1_000 },
+      {
+        stack: [
+          js('saveChat'),
+          js('begin'),
+          js('assertSourceMutationAllowed'),
+          js('isErasing'),
+          js('epochRecord'),
+          js('readJson$2'),
+          nodeFs('openSync'),
+          native('open')
+        ],
+        us: 1_000
+      },
+      // The runtime's own code under the call counts with it.
+      {
+        stack: [
+          js('readCurrent'),
+          js('getCurrentChatAuthorityMetadata'),
+          js('authorityMetadataSource'),
+          nodeFs('statSync'),
+          { name: 'isURL', url: 'node:internal/url' }
+        ],
+        us: 1_000
+      },
+      {
+        stack: [
+          js('peopleDonorMutationOwned'),
+          js('readPeopleMigrationLease'),
+          nodeFs('existsSync'),
+          native('existsSync')
+        ],
+        us: 1_000
+      },
+      // Not plain file calls: an app function of a runtime call's name, the
+      // runtime's own code inside a sync, a read, and a directory's listing.
+      { stack: [js('flushNow'), js('openSync')], us: 1_000 },
+      {
+        stack: [
+          js('appendRunEvent'),
+          nodeFs('fsyncSync'),
+          { name: 'isInt32', url: 'node:internal/validators' }
+        ],
+        us: 1_000
+      },
+      { stack: [js('loadState'), nodeFs('readFileSync'), native('readFileUtf8')], us: 1_000 },
+      { stack: [js('listThreads'), nodeFs('readdirSync'), native('readdir')], us: 1_000 }
+    ])
+    const [window] = measure({ profile: buildProfile(rows) }).windows
+    expect(window.shares).toMatchObject({ sync: 0.21, plainFileCalls: 0.07, allJsonRead: 0.21 })
+    expect(window.syncOwners).toMatchObject({ sessionCheckpoint: 0.01, other: 0 })
+    expect(window.plainFileCallOwners).toEqual({
+      cataloguePublication: 0.02,
+      journal: 0,
+      runEvents: 0,
+      toolDetail: 0,
+      runQueue: 0,
+      usageLedger: 0,
+      workspaceLock: 0,
+      sessionCheckpoint: 0.02,
+      catalogueChecks: 0.01,
+      chatAuthority: 0.01,
+      other: 0.01
+    })
+    expect(window.plainFileCallOtherCallers).toEqual([
+      { callers: 'readPeopleMigrationLease <- peopleDonorMutationOwned', share: 0.01 }
+    ])
+    expect(window.plainFileCallsByCall).toEqual([
+      { call: 'renameSync', share: 0.02 },
+      { call: 'writeFileSync', share: 0.02 },
+      { call: 'existsSync', share: 0.01 },
+      { call: 'openSync', share: 0.01 },
+      { call: 'statSync', share: 0.01 }
     ])
   })
 
@@ -406,12 +583,51 @@ describe('the flusher share and the build', () => {
     expect(result.windows[0].shares.wholeThreadCopy).toBe(0.11)
   })
 
-  it('leaves the sync owners unmeasured when an owner function is missing from the build', () => {
+  it('leaves an owner the build cannot vouch for unmeasured, with every owner after it and other', () => {
     const lines = BUNDLE_LINES.map((line) => line.replaceAll('appendRunEvent', 'appendEvent'))
     const result = measure({ buildScripts: buildScripts(lines) })
     expect(result.build.missingNames).toEqual(['appendRunEvent'])
-    expect(result.windows[0].syncOwners).toBeNull()
+    // Its syncs could have fallen to an owner after it, never to one before.
+    expect(result.windows[0].syncOwners).toEqual({
+      toolDetail: 0.02,
+      cataloguePublication: 0.08,
+      journal: 0.04,
+      runEvents: null,
+      runQueue: null,
+      usageLedger: null,
+      workspaceLock: null,
+      sessionCheckpoint: null,
+      catalogueChecks: null,
+      chatAuthority: null,
+      other: null
+    })
+    expect(result.windows[0].syncOtherCallers).toBeNull()
     expect(result.windows[0].shares.sync).toBe(0.2)
+  })
+
+  it('does the same for the plain file calls’ owners, but still counts the calls', () => {
+    const lines = BUNDLE_LINES.map((line) => line.replaceAll('persistOrThrow', 'persistNow'))
+    const [window] = measure({ buildScripts: buildScripts(lines) }).windows
+    const unvouched = {
+      sessionCheckpoint: null,
+      catalogueChecks: null,
+      chatAuthority: null,
+      other: null
+    }
+    expect(window.syncOwners).toMatchObject({ usageLedger: 0.02, workspaceLock: 0, ...unvouched })
+    expect(window.plainFileCallOwners).toEqual({
+      toolDetail: 0,
+      cataloguePublication: 0,
+      journal: 0,
+      runEvents: 0,
+      runQueue: 0,
+      usageLedger: 0,
+      workspaceLock: 0,
+      ...unvouched
+    })
+    expect(window.plainFileCallOtherCallers).toBeNull()
+    expect(window.shares.plainFileCalls).toBe(0)
+    expect(window.plainFileCallsByCall).toEqual([])
   })
 })
 
@@ -641,6 +857,7 @@ describe('the profile clock', () => {
       journal: [0.05, 0.05],
       other: [0, 0]
     })
+    expect(window.plainFileCallOwnerBounds).toMatchObject({ cataloguePublication: [0, 0] })
     // An owner the build cannot vouch for has no bounds either.
     const renamed = buildScripts(
       BUNDLE_LINES.map((line) => line.replace('appendRunEvent', 'appendEvent'))
@@ -651,7 +868,12 @@ describe('the profile clock', () => {
       markers: looseMarkers(120_000),
       buildScripts: renamed
     }).windows
-    expect(unowned).toMatchObject({ measured: true, syncOwners: null, syncOwnerBounds: null })
+    expect(unowned).toMatchObject({
+      measured: true,
+      syncOwners: { cataloguePublication: 0.1, runEvents: null, other: null },
+      syncOwnerBounds: { cataloguePublication: [0.09999, 0.1], runEvents: null, other: null },
+      plainFileCallOwnerBounds: { journal: [0, 0], runEvents: null, other: null }
+    })
   })
 
   it('refuses a loose window only when its bounds move a share by more than the tolerance', () => {
@@ -677,42 +899,48 @@ describe('the profile clock', () => {
     expect(refused.clock.uncertaintyMs).toBeCloseTo(1.4, 6)
   })
 
-  it('refuses a loose window when its bounds move a sync owner, though no share moves', () => {
-    // The window opens on a catalogue sync and closes on a journal sync, with a
-    // journal sync either side of it: placed later it trades catalogue sync
-    // for journal sync, placed earlier journal for journal.
-    const save = js('saveChat')
-    const catalogue = [save, js('begin'), js('beginPublication'), js('writeJson'), ...sync]
-    const journal = [save, js('persistIncrementalChatForHostSave'), js('appendLine'), ...sync]
-    const windowMs = 1_300
-    const rows: Row[] = [
-      ...looseRows(windowMs).slice(0, 4),
-      { stack: [native('(idle)')], us: 348_600 },
-      { stack: journal, us: 1_400 },
-      { stack: catalogue, us: 130_000 },
-      { stack: [native('(idle)')], us: 260_000 },
-      { stack: [js('handleProviderOutput', 1)], us: 845_000 },
-      { stack: journal, us: 65_000 },
-      { stack: journal, us: 1_400 },
-      { stack: [native('(idle)')], us: 3_198_600 },
-      ...looseRows(windowMs).slice(-3)
-    ]
-    const [window] = measure({
-      profile: buildProfile(rows),
-      windows: [looseWindow(windowMs)],
-      markers: looseMarkers(windowMs)
-    }).windows
-    expect(window).toMatchObject({
-      measured: false,
-      reason: 'loose_clock_moves_share',
-      moved: {
-        share: 'syncOwners.cataloguePublication',
-        bounds: [0.09892, 0.1],
-        by: 0.00108,
-        tolerance: 0.001
-      }
-    })
-  })
+  it.each([
+    ['sync', 'syncOwners', sync],
+    ['plain file call', 'plainFileCallOwners', [nodeFs('writeSync'), native('writeString')]]
+  ])(
+    'refuses a loose window when its bounds move a %s owner, though no share moves',
+    (_, table, call) => {
+      // The window opens on a catalogue write and closes on a journal write, with
+      // a journal write either side of it: placed later it trades catalogue for
+      // journal, placed earlier journal for journal.
+      const save = js('saveChat')
+      const catalogue = [save, js('begin'), js('beginPublication'), js('writeJson'), ...call]
+      const journal = [save, js('persistIncrementalChatForHostSave'), js('appendLine'), ...call]
+      const windowMs = 1_300
+      const rows: Row[] = [
+        ...looseRows(windowMs).slice(0, 4),
+        { stack: [native('(idle)')], us: 348_600 },
+        { stack: journal, us: 1_400 },
+        { stack: catalogue, us: 130_000 },
+        { stack: [native('(idle)')], us: 260_000 },
+        { stack: [js('handleProviderOutput', 1)], us: 845_000 },
+        { stack: journal, us: 65_000 },
+        { stack: journal, us: 1_400 },
+        { stack: [native('(idle)')], us: 3_198_600 },
+        ...looseRows(windowMs).slice(-3)
+      ]
+      const [window] = measure({
+        profile: buildProfile(rows),
+        windows: [looseWindow(windowMs)],
+        markers: looseMarkers(windowMs)
+      }).windows
+      expect(window).toMatchObject({
+        measured: false,
+        reason: 'loose_clock_moves_share',
+        moved: {
+          share: `${table}.cataloguePublication`,
+          bounds: [0.09892, 0.1],
+          by: 0.00108,
+          tolerance: 0.001
+        }
+      })
+    }
+  )
 
   it('still refuses loose markers that fail the calibration in any other way', () => {
     const windowMs = 120_000
@@ -806,8 +1034,17 @@ describe('the profile clock', () => {
       journal: [0.06, 0.08],
       runEvents: [0.06, 0.06],
       runQueue: [0.02, 0.02],
-      other: [0.04, 0.04]
+      usageLedger: [0.04, 0.04],
+      workspaceLock: [0, 0],
+      sessionCheckpoint: [0, 0],
+      catalogueChecks: [0, 0],
+      chatAuthority: [0, 0],
+      other: [0, 0]
     })
+    // No plain file call is near the window, so none moves.
+    expect(Object.values(window.plainFileCallOwnerBounds)).toEqual(
+      Object.values(window.syncOwnerBounds).map(() => [0, 0])
+    )
     // An owner the build cannot vouch for has no bounds either.
     const renamed = buildScripts(
       BUNDLE_LINES.map((line) => line.replace('appendRunEvent', 'appendEvent'))
@@ -818,8 +1055,13 @@ describe('the profile clock', () => {
       buildScripts: renamed,
       ...estimated
     }).windows
-    expect(unowned.syncOwners).toBeNull()
-    expect(unowned.syncOwnerBounds).toBeNull()
+    expect(unowned.syncOwners).toMatchObject({ journal: 0.08, runEvents: null, other: null })
+    expect(unowned.syncOwnerBounds).toMatchObject({
+      cataloguePublication: [0, 0.16],
+      runEvents: null,
+      other: null
+    })
+    expect(unowned.plainFileCallOwnerBounds).toMatchObject({ runEvents: null, other: null })
     // Nor has a share the build could not vouch for.
     const [unbuilt] = measure({
       windows: [legacy],

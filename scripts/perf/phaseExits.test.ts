@@ -1039,7 +1039,11 @@ const BUNDLE_TEXT = [
   'function prepareChatForPersistence(input) { persistDetailCheckpoint(input) }',
   'function saveChat(chat) { beginPublication(chat); finishPublication(chat); settleBurst(chat) }',
   'function persistIncrementalChatForHostSave(chat) { appendRunEvent(chat); writeRunQueueJobs(chat) }',
-  'const checkpointChat = (chatId) => computeChatSubRevisions(chatId)'
+  'const checkpointChat = (chatId) => computeChatSubRevisions(chatId)',
+  'function recordUsage(entry) { commitUnderFence(entry); acquireInstanceFence(entry) }',
+  'function releaseInstanceFence(fence) { persistOrThrow(fence); rememberChatRecord(fence) }',
+  'function assertSourceMutationAllowed(id) { assertRecoveryHoldAllows(id) }',
+  'function captureThreadCatalogueWitness(id) { getCurrentChatAuthorityMetadata(id) }'
 ].join('\n')
 function captureReport(windowOverrides: Dict = {}) {
   return {
