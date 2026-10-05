@@ -80,7 +80,12 @@ const SECTION_FIGURES = Object.freeze({
     startedUrgent: COUNTER,
     promoted: COUNTER,
     fairStarts: COUNTER,
-    urgencies: LEVEL
+    urgencies: LEVEL,
+    // The background class, below normal: what waits at it now, what it started,
+    // and what started only by the bound on other syncs in a row.
+    queuedBackground: LEVEL,
+    startedBackground: COUNTER,
+    backgroundFairStarts: COUNTER
   },
   tickets: {
     moments: {
@@ -115,6 +120,17 @@ const SECTION_FIGURES = Object.freeze({
     idleFailed: COUNTER,
     quitThreads: COUNTER,
     quitUnpaid: COUNTER
+  },
+  // Tool detail staged without a sync, synced at the port's background class
+  // and referenced only by a later save. Null with the switch off.
+  staging: {
+    threads: LEVEL,
+    outstanding: LEVEL,
+    readyRefs: LEVEL,
+    batches: { committed: COUNTER, durable: COUNTER, failed: COUNTER, dropped: COUNTER },
+    rows: { swapped: COUNTER, staged: COUNTER, passedOver: COUNTER },
+    syncs: { files: COUNTER, directories: COUNTER },
+    checkpointEvents: COUNTER
   },
   checkpoints: { each: { count: COUNTER, bytes: COUNTER, mainMs: COUNTER } },
   tornTailsRepaired: COUNTER

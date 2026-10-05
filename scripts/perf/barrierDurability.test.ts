@@ -94,7 +94,10 @@ function sectionOn(n: number) {
       startedUrgent: 3 * n,
       promoted: n,
       fairStarts: 0,
-      urgencies: 0
+      urgencies: 0,
+      queuedBackground: n % 5,
+      startedBackground: 7 * n,
+      backgroundFairStarts: n
     },
     tickets: {
       moments: Object.fromEntries(
@@ -121,6 +124,15 @@ function sectionOn(n: number) {
       chats: 3
     },
     gates: { waits: 6 * n, overdue: 0, rejected: 0, waitMsTotal: 7.25 * n, longestWaitMs: 33 },
+    staging: {
+      threads: n % 3,
+      outstanding: n % 4,
+      readyRefs: 2 * n,
+      batches: { committed: 5 * n, durable: 4 * n, failed: 0, dropped: n },
+      rows: { swapped: 20 * n, staged: 25 * n, passedOver: n },
+      syncs: { files: 8 * n, directories: 2 * n },
+      checkpointEvents: 3 * n
+    },
     checkpoints: Object.fromEntries(
       TRIGGERS.map((trigger, place) => [
         trigger,
@@ -140,7 +152,8 @@ function sectionOff(n: number) {
     debt: null,
     port: null,
     tickets: null,
-    gates: null
+    gates: null,
+    staging: null
   }
 }
 
@@ -271,6 +284,71 @@ describe('what changed between the two fences', () => {
     expect(change.unread).toEqual([])
   })
 
+  it("reads the port's background class: what waits at it, and what it started", () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(change.port).toMatchObject({
+      queuedBackground: { before: 2, after: 0 },
+      startedBackground: 21,
+      backgroundFairStarts: 3
+    })
+    expect(change.unread).toEqual([])
+  })
+
+  it('reads the staging of tool detail: its levels at both fences and its counters between them', () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(change.staging).toEqual({
+      threads: { before: 2, after: 2 },
+      outstanding: { before: 2, after: 1 },
+      readyRefs: { before: 4, after: 10 },
+      batches: { committed: 15, durable: 12, failed: 0, dropped: 3 },
+      rows: { swapped: 60, staged: 75, passedOver: 3 },
+      syncs: { files: 24, directories: 6 },
+      checkpointEvents: 9
+    })
+    expect(change.unread).toEqual([])
+  })
+
+  it('counts a failed staging batch between the fences', () => {
+    const after = sectionOn(5)
+    after.staging.batches.failed = 2
+    const change = (barrierDurabilityChange(sectionOn(2), after) as { change: any }).change
+    expect(change.staging.batches.failed).toBe(2)
+  })
+
+  it('reads what an older build does not report as null, and still differences the rest', () => {
+    // No staging, and a port without its background class.
+    const older = (n: number) => {
+      const section = sectionOn(n) as any
+      delete section.staging
+      delete section.port.queuedBackground
+      delete section.port.startedBackground
+      delete section.port.backgroundFairStarts
+      return section
+    }
+    const result = barrierDurabilityChange(older(2), older(5))
+    expect(result.ok).toBe(true)
+    const change = (result as { change: any }).change
+    expect(change.staging).toBeNull()
+    expect(change.port).toMatchObject({
+      started: 27,
+      queuedBackground: null,
+      startedBackground: null,
+      backgroundFairStarts: null
+    })
+    // Named, as is every figure a section does not give, and nothing refused.
+    expect(change.unread).toEqual([
+      'port.backgroundFairStarts',
+      'port.queuedBackground',
+      'port.startedBackground'
+    ])
+    const record = barrierDurabilityAtFences(
+      { ok: true, section: older(2) },
+      { ok: true, section: older(5) }
+    )
+    expect(record.unavailable).toBeNull()
+    expect(record.change.debt.barriers.raised).toBe(12)
+  })
+
   it('keeps a summed time to the microsecond, without the float error of subtracting it', () => {
     const before = sectionOn(1)
     const after = sectionOn(1)
@@ -315,7 +393,8 @@ describe('what changed between the two fences', () => {
       port: null,
       tickets: null,
       gates: null,
-      threads: null
+      threads: null,
+      staging: null
     })
     expect(change.checkpoints.initial).toEqual({ count: 3, bytes: 3_000, mainMs: 4.5 })
     expect(change.unread).toEqual([])
