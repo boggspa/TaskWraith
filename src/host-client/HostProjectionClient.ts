@@ -67,6 +67,7 @@ import {
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportRequest,
   type HostLocalTransportSuccessResult,
+  type HostLocalTransportThreadOwnerParams,
   type HostWorkspaceGitReadParams,
   type HostWorkspaceGitReadResult
 } from '../shared/hostProtocolTransport'
@@ -740,6 +741,17 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected command result kind.')
     }
     return result.receipt
+  }
+
+  /** Negotiate a thread grant on this persistent authenticated connection. */
+  async requestThreadOwner(
+    params: HostLocalTransportThreadOwnerParams
+  ): Promise<Extract<HostLocalTransportSuccessResult, { kind: 'thread.owner' }>> {
+    const result = await this.request('thread.owner', params)
+    if (result.kind !== 'thread.owner' || result.action !== params.action) {
+      throw new Error('TaskWraith Host returned an unexpected thread owner result.')
+    }
+    return result
   }
 
   /** Export one integrity-verified, detached `.twmission` bundle. */
