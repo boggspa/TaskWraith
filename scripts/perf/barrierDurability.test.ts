@@ -27,6 +27,19 @@ const {
   barrierDurabilityAtFences
 } = durability
 
+const WAIT_BUCKET_NAMES = [
+  'under1Ms',
+  'from1To5Ms',
+  'from5To10Ms',
+  'from10To20Ms',
+  'from20To50Ms',
+  'from50To100Ms',
+  'from100To250Ms',
+  'from250To500Ms',
+  'from500To1000Ms',
+  'from1000Ms'
+]
+
 const OWNERS = ['journal', 'run-events', 'detail', 'catalogue', 'directory']
 const MOMENTS = ['user_message', 'decision', 'run_final', 'destructive']
 const TRIGGERS = [
@@ -160,6 +173,10 @@ function sectionOn(n: number) {
             failed: 0,
             pending: n % 2,
             undecided: 0,
+            waitBuckets: Object.fromEntries(
+              WAIT_BUCKET_NAMES.map((name, index) => [name, index === place ? 5 * n : 0])
+            ),
+            invalidWaits: 0,
             longestWaitMs: 30 + place
           }
         ])
@@ -795,5 +812,40 @@ describe("a window's record of barrier durability", () => {
     expect(
       barrierDurabilityAtFences({ ok: true, section: sectionOn(3) }, { ok: true, section })
     ).toMatchObject({ change: null, unavailable: 'counter_went_back' })
+  })
+})
+
+describe('ticket wait histograms at window fences', () => {
+  it('differences every bucket while an inherited maximum remains only an upper bound', () => {
+    const before = sectionOn(2)
+    const after = sectionOn(5)
+    const result = barrierDurabilityChange(before, after)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('fixture failed')
+    expect(result.change.tickets.moments.user_message.waitBuckets).toEqual(
+      Object.fromEntries(WAIT_BUCKET_NAMES.map((name, index) => [name, index === 0 ? 15 : 0]))
+    )
+    expect(result.change.tickets.moments.user_message.longestWaitMs).toEqual({
+      atMost: 30,
+      exact: false
+    })
+    expect(result.change.unread).toEqual([])
+  })
+
+  it('rejects a reset bucket and does not invent histograms for an old capture', () => {
+    const before = sectionOn(2)
+    const after = sectionOn(5)
+    after.tickets.moments.user_message.waitBuckets.under1Ms = 1
+    expect(barrierDurabilityChange(before, after)).toMatchObject({
+      ok: false,
+      reason: 'counter_went_back',
+      at: ['tickets.moments.user_message.waitBuckets.under1Ms']
+    })
+    for (const section of [before, after])
+      for (const item of Object.values(section.tickets.moments)) delete (item as any).waitBuckets
+    const old = barrierDurabilityChange(before, after)
+    expect(old.ok).toBe(true)
+    if (!old.ok) throw new Error('old fixture failed')
+    expect(old.change.tickets.moments.user_message.waitBuckets).toBeNull()
   })
 })

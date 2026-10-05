@@ -47,6 +47,20 @@ function tickets(): { tickets: ChatDurabilityTickets; clock: { now: number } } {
   return { tickets: new ChatDurabilityTickets({ now: () => clock.now }), clock }
 }
 
+const WAIT_BUCKET_NAMES = [
+  'under1Ms',
+  'from1To5Ms',
+  'from5To10Ms',
+  'from10To20Ms',
+  'from20To50Ms',
+  'from50To100Ms',
+  'from100To250Ms',
+  'from250To500Ms',
+  'from500To1000Ms',
+  'from1000Ms'
+]
+const emptyWaitBuckets = () => Object.fromEntries(WAIT_BUCKET_NAMES.map((name) => [name, 0]))
+
 const GATE_MOMENTS = CHAT_DURABILITY_MOMENTS.filter((moment) => moment !== 'run_final')
 
 describe('chat durability tickets', () => {
@@ -583,6 +597,65 @@ describe('chat durability tickets', () => {
     expect(snapshot.awaits).toBe(1)
   })
 
+  it.each(CHAT_DURABILITY_MOMENTS)(
+    'keeps exactly ten settled-duration buckets for %s with strict boundary edges',
+    async (moment) => {
+      const { tickets: store, clock } = tickets()
+      const before = store.snapshot()
+      for (const duration of [
+        0, 1, 4, 5, 9, 10, 19, 20, 49, 50, 99, 100, 249, 250, 499, 500, 999, 1000
+      ]) {
+        clock.now = 1000
+        const pending = barrier()
+        store.note('chat', 1, moment, pending.promise)
+        clock.now += duration
+        pending.resolve()
+        await turn()
+      }
+      expect(store.snapshot().moments[moment].waitBuckets).toEqual(
+        Object.fromEntries(
+          WAIT_BUCKET_NAMES.map((name, index) => [name, index === 0 || index === 9 ? 1 : 2])
+        )
+      )
+      expect(before.moments[moment].waitBuckets).toEqual(emptyWaitBuckets())
+      const copy = store.snapshot()
+      copy.moments[moment].waitBuckets.under1Ms = 999
+      expect(store.snapshot().moments[moment].waitBuckets.under1Ms).toBe(1)
+      expect(store.snapshot().moments[moment].invalidWaits).toBe(0)
+    }
+  )
+
+  it('counts rejected settlements and invalid clock durations without changing barrier outcomes', async () => {
+    const { tickets: store, clock } = tickets()
+    const pending = barrier()
+    store.note('chat', 1, 'decision', pending.promise)
+    const waiting = watch(store.awaitChat('chat'))
+    clock.now += 50
+    pending.reject(new Error('sync failed'))
+    await turn()
+    expect(waiting.state).toBe('rejected')
+    expect(store.snapshot().moments.decision).toMatchObject({
+      failed: 1,
+      waitBuckets: { from50To100Ms: 1 }
+    })
+    for (const duration of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      clock.now = 1000
+      const invalid = barrier()
+      store.note('chat', 2, 'run_final', invalid.promise)
+      const outcome = watch(store.awaitChat('chat'))
+      clock.now += duration
+      invalid.resolve()
+      await turn()
+      expect(outcome.state).toBe('resolved')
+    }
+    clock.now = 1000
+    expect(store.snapshot().moments.run_final).toMatchObject({
+      invalidWaits: 3,
+      waitBuckets: emptyWaitBuckets(),
+      longestWaitMs: 0
+    })
+  })
+
   it('reports every counter for every moment', async () => {
     const { tickets: store } = tickets()
     expect(store.snapshot()).toEqual({
@@ -594,7 +667,9 @@ describe('chat durability tickets', () => {
           failed: 0,
           pending: 0,
           undecided: 0,
-          longestWaitMs: 0
+          longestWaitMs: 0,
+          waitBuckets: emptyWaitBuckets(),
+          invalidWaits: 0
         },
         decision: {
           noted: 0,
@@ -603,7 +678,9 @@ describe('chat durability tickets', () => {
           failed: 0,
           pending: 0,
           undecided: 0,
-          longestWaitMs: 0
+          longestWaitMs: 0,
+          waitBuckets: emptyWaitBuckets(),
+          invalidWaits: 0
         },
         run_final: {
           noted: 0,
@@ -612,7 +689,9 @@ describe('chat durability tickets', () => {
           failed: 0,
           pending: 0,
           undecided: 0,
-          longestWaitMs: 0
+          longestWaitMs: 0,
+          waitBuckets: emptyWaitBuckets(),
+          invalidWaits: 0
         },
         destructive: {
           noted: 0,
@@ -621,7 +700,9 @@ describe('chat durability tickets', () => {
           failed: 0,
           pending: 0,
           undecided: 0,
-          longestWaitMs: 0
+          longestWaitMs: 0,
+          waitBuckets: emptyWaitBuckets(),
+          invalidWaits: 0
         }
       },
       missingGates: 0,

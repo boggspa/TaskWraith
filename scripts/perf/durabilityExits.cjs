@@ -23,16 +23,13 @@
  *   second fence. With the gates' waits as far as the section counts them:
  *   their number, mean and longest. The section keeps no spread, so their p50
  *   and p95 are not measured.
- * - barrierWaitUserFacing, barrierWaitRunFinal: the p95 of the wait from a
- *   ticket to its barrier, by class, under its limit. The section keeps only
- *   the longest wait since main started, so a class passes when that longest
- *   is under its limit (no p95 can be over it), and fails only when its p95
- *   is known: fewer than twenty waits, all begun and ended between the
- *   fences, and the longest seen between them, which by nearest rank is then
- *   the p95. Anything else is not measured. Beside each class, the debt's own
- *   record of its barriers: the urgent ones for the user's moments, the rest
- *   for a run's final record (idle and quit barriers among them), with the
- *   syncs each found running or queued ahead of it.
+ * - barrierWaitUserFacing, barrierWaitRunFinal: nearest-rank p95 of ticket
+ *   note-to-settlement durations, with user moments combined and run_final
+ *   separate. Fixed buckets report an interval, with strict 50/250 ms edges.
+ *   Cohorts crossing a fence, failed tickets and inconsistent distributions
+ *   remain unmeasured. Old captures retain only their provable maximum-based
+ *   bound; an inherited maximum above the limit supplies no percentile.
+ *   Priority-class barriers remain context, never substitutes for moments.
  * Reported, not judged:
  * - checkpointsOnMain: the journal's whole-record checkpoints by trigger
  *   (count, bytes, the main thread's milliseconds), off and on.
@@ -62,6 +59,19 @@ const USER_FACING = Object.freeze(['user_message', 'decision', 'destructive'])
 const RUN_FINAL = Object.freeze(['run_final'])
 /** Below this many waits the p95 by nearest rank is the longest. */
 const P95_IS_LONGEST_BELOW = 20
+const WAIT_BUCKETS = Object.freeze([
+  ['under1Ms', 1],
+  ['from1To5Ms', 5],
+  ['from5To10Ms', 10],
+  ['from10To20Ms', 20],
+  ['from20To50Ms', 50],
+  ['from50To100Ms', 100],
+  ['from100To250Ms', 250],
+  ['from250To500Ms', 500],
+  ['from500To1000Ms', 1000],
+  ['from1000Ms', null]
+])
+
 const SPREAD_UNMEASURED =
   'not_measured: the section counts the waits, their total and the longest, not their spread'
 const USAGE = 'usage: node scripts/perf/durabilityExits.cjs <capture dir>... [--json]'
@@ -377,6 +387,62 @@ function barriersOfClass(debt, name) {
   }
 }
 
+/** A percentile interval over completed, uncensored moment tickets. */
+function histogramWaitRow(context, counters, limit, evidence) {
+  const unmeasured = (reason) => row(context, 'not_measured', null, [reason], evidence)
+  if (evidence.pendingAtStart > 0) return unmeasured('tickets_pending_at_first_fence')
+  if (evidence.pendingAtEnd > 0) return unmeasured('tickets_pending_at_second_fence')
+  if (counters.some((each) => each.invalidWaits > 0)) return unmeasured('invalid_wait_durations')
+  if (counters.some((each) => !isPlainObject(each.waitBuckets)))
+    return unmeasured('wait_histogram_missing')
+  const validCount = (value) => Number.isSafeInteger(value) && value >= 0
+  const totals = WAIT_BUCKETS.map(() => 0)
+  for (const each of counters) {
+    if (
+      ![
+        each.noted,
+        each.failed,
+        each.invalidWaits,
+        each.pending?.before,
+        each.pending?.after
+      ].every(validCount) ||
+      Object.keys(each.waitBuckets).length !== WAIT_BUCKETS.length ||
+      WAIT_BUCKETS.some(([name]) => !validCount(each.waitBuckets[name]))
+    ) {
+      return unmeasured('wait_histogram_invalid')
+    }
+    const count = WAIT_BUCKETS.reduce((sum, [name]) => sum + each.waitBuckets[name], 0)
+    if (count !== each.noted + each.pending.before - each.pending.after)
+      return unmeasured('wait_histogram_count_mismatch')
+    WAIT_BUCKETS.forEach(([name], index) => {
+      totals[index] += each.waitBuckets[name]
+    })
+  }
+  const count = totals.reduce((sum, value) => sum + value, 0)
+  if (!validCount(count)) return unmeasured('wait_histogram_invalid')
+  if (count === 0) return unmeasured('no_tickets_in_window')
+  const rank = Math.ceil(0.95 * count)
+  let cumulative = 0
+  let lower = 0
+  for (const [index, [, upper]] of WAIT_BUCKETS.entries()) {
+    cumulative += totals[index]
+    if (cumulative >= rank) {
+      const detail = {
+        ...evidence,
+        settledTickets: count,
+        percentileRank: rank,
+        valueIs: 'interval',
+        p95Ms: { lowerInclusive: lower, upperExclusive: upper }
+      }
+      if (upper !== null && upper <= limit) return row(context, 'pass', null, [], detail)
+      if (lower >= limit) return row(context, 'fail', null, ['over_limit'], detail)
+      return row(context, 'not_measured', null, ['p95_bucket_straddles_limit'], detail)
+    }
+    lower = upper
+  }
+  return unmeasured('wait_histogram_invalid')
+}
+
 /** One class of barrier wait in one window, against its limit. */
 function barrierWaitRow(context, moments, limit, barrierClass) {
   const held = heldBack(context) ?? sectionHeldBack(context)
@@ -392,12 +458,8 @@ function barrierWaitRow(context, moments, limit, barrierClass) {
   }
   const sum = (pick) => counters.reduce((total, each) => total + pick(each), 0)
   const noted = sum((each) => each.noted)
-  const pendingAtStart = sum((each) => each.pending.before)
-  const pendingAtEnd = sum((each) => each.pending.after)
-  const longest = Math.max(...counters.map((each) => each.longestWaitMs.atMost))
-  const exact = counters.some(
-    (each) => each.longestWaitMs.exact && each.longestWaitMs.atMost === longest
-  )
+  const pendingAtStart = sum((each) => each.pending?.before)
+  const pendingAtEnd = sum((each) => each.pending?.after)
   const evidence = {
     moments: [...moments],
     tickets: noted,
@@ -405,6 +467,26 @@ function barrierWaitRow(context, moments, limit, barrierClass) {
     pendingAtEnd,
     barriers: barriersOfClass(context.change.debt, barrierClass)
   }
+  if (
+    counters.some(
+      (each) =>
+        ![each.noted, each.failed, each.pending?.before, each.pending?.after].every(
+          (value) => Number.isSafeInteger(value) && value >= 0
+        )
+    )
+  ) {
+    return row(context, 'not_measured', null, ['moment_counters_invalid'], evidence)
+  }
+  if (counters.some((each) => each.failed > 0)) {
+    return row(context, 'not_measured', null, ['failed_tickets_in_window'], evidence)
+  }
+  if (counters.some((each) => each.waitBuckets != null || each.invalidWaits != null)) {
+    return histogramWaitRow(context, counters, limit, evidence)
+  }
+  const longest = Math.max(...counters.map((each) => each.longestWaitMs.atMost))
+  const exact = counters.some(
+    (each) => each.longestWaitMs.exact && each.longestWaitMs.atMost === longest
+  )
   if (noted === 0 && pendingAtStart === 0) {
     return row(context, 'not_measured', null, ['no_tickets_in_window'], evidence)
   }
@@ -672,6 +754,15 @@ function readCaptureFromDisk(captureDir) {
   return { id, report, shares: mainWindowProfileSharesForCapture(captureDir) }
 }
 
+function displayedValue(each) {
+  if (each.valueIs === 'interval' && each.p95Ms) {
+    return `[${each.p95Ms.lowerInclusive}, ${each.p95Ms.upperExclusive ?? '+inf'}) ms`
+  }
+  return typeof each.value === 'object' && each.value !== null
+    ? JSON.stringify(each.value)
+    : (each.value ?? 'n/a')
+}
+
 function summaryLines(result) {
   const { pair } = result
   const lines = [
@@ -687,7 +778,7 @@ function summaryLines(result) {
     } else {
       const rows = exit.windows.map(
         (each) =>
-          `${each.capture}: ${typeof each.value === 'object' && each.value !== null ? JSON.stringify(each.value) : (each.value ?? 'n/a')}${each.reasons.length > 0 ? ` ${each.reasons.join(',')}` : ''}`
+          `${each.capture}: ${displayedValue(each)}${each.reasons.length > 0 ? ` ${each.reasons.join(',')}` : ''}`
       )
       detail = rows.length > 0 ? rows.join('; ') : exit.reasons.join(',')
     }

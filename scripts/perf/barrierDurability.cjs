@@ -145,7 +145,20 @@ const SECTION_FIGURES = Object.freeze({
         failed: COUNTER,
         pending: LEVEL,
         undecided: LEVEL,
-        longestWaitMs: MAXIMUM
+        longestWaitMs: MAXIMUM,
+        invalidWaits: COUNTER,
+        waitBuckets: {
+          under1Ms: COUNTER,
+          from1To5Ms: COUNTER,
+          from5To10Ms: COUNTER,
+          from10To20Ms: COUNTER,
+          from20To50Ms: COUNTER,
+          from50To100Ms: COUNTER,
+          from100To250Ms: COUNTER,
+          from250To500Ms: COUNTER,
+          from500To1000Ms: COUNTER,
+          from1000Ms: COUNTER
+        }
       }
     },
     missingGates: COUNTER,

@@ -55,6 +55,22 @@ export const USER_DURABILITY_MOMENTS: readonly ChatDurabilityMoment[] = [
  */
 export const CHAT_TICKET_COVERAGE_GRACE_MS = 30_000
 
+/** Fixed upper-exclusive durations: every settled ticket increments one counter. */
+export const CHAT_DURABILITY_WAIT_BUCKETS = [
+  ['under1Ms', 1],
+  ['from1To5Ms', 5],
+  ['from5To10Ms', 10],
+  ['from10To20Ms', 20],
+  ['from20To50Ms', 50],
+  ['from50To100Ms', 100],
+  ['from100To250Ms', 250],
+  ['from250To500Ms', 500],
+  ['from500To1000Ms', 1000],
+  ['from1000Ms', Number.POSITIVE_INFINITY]
+] as const
+
+type WaitBuckets = Record<(typeof CHAT_DURABILITY_WAIT_BUCKETS)[number][0], number>
+
 export interface ChatDurabilityMomentCounters {
   /** Tickets noted. */
   noted: number
@@ -70,6 +86,10 @@ export interface ChatDurabilityMomentCounters {
   undecided: number
   /** The longest time from noting a ticket to its barrier settling. */
   longestWaitMs: number
+  /** Settled ticket durations, not gate waits or sync-priority classes. */
+  waitBuckets: WaitBuckets
+  /** Clock durations that could not safely enter the histogram. */
+  invalidWaits: number
 }
 
 export interface ChatDurabilityTicketsSnapshot {
@@ -146,7 +166,11 @@ function emptyCounters(): ChatDurabilityMomentCounters {
     failed: 0,
     pending: 0,
     undecided: 0,
-    longestWaitMs: 0
+    longestWaitMs: 0,
+    waitBuckets: Object.fromEntries(
+      CHAT_DURABILITY_WAIT_BUCKETS.map(([name]) => [name, 0])
+    ) as WaitBuckets,
+    invalidWaits: 0
   }
 }
 
@@ -347,7 +371,10 @@ export class ChatDurabilityTickets {
     const moments = {} as Record<ChatDurabilityMoment, ChatDurabilityMomentCounters>
     let missingGates = 0
     CHAT_DURABILITY_MOMENTS.forEach((moment, index) => {
-      moments[moment] = { ...this.counters[index] }
+      moments[moment] = {
+        ...this.counters[index],
+        waitBuckets: { ...this.counters[index].waitBuckets }
+      }
       if (index !== RUN_FINAL) missingGates += this.counters[index].uncovered
     })
     return {
@@ -375,7 +402,12 @@ export class ChatDurabilityTickets {
     const settledAt = this.now()
     const counters = this.counters[index]
     counters.pending--
-    counters.longestWaitMs = Math.max(counters.longestWaitMs, settledAt - notedAt)
+    const elapsed = settledAt - notedAt
+    if (Number.isFinite(elapsed) && elapsed >= 0) {
+      counters.longestWaitMs = Math.max(counters.longestWaitMs, elapsed)
+      const bucket = CHAT_DURABILITY_WAIT_BUCKETS.find(([, upper]) => elapsed < upper)!
+      counters.waitBuckets[bucket[0]]++
+    } else counters.invalidWaits++
     if (failure) counters.failed++
     chat.pending--
     chat.pendingByMoment[index]--

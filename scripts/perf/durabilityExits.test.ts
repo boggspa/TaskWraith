@@ -836,3 +836,156 @@ describe('the command line', () => {
     expect(usage[0]).toMatch(/^usage: node scripts\/perf\/durabilityExits\.cjs/)
   })
 })
+
+describe('per-moment p95 from bounded ticket wait histograms', () => {
+  const names = [
+    'under1Ms',
+    'from1To5Ms',
+    'from5To10Ms',
+    'from10To20Ms',
+    'from20To50Ms',
+    'from50To100Ms',
+    'from100To250Ms',
+    'from250To500Ms',
+    'from500To1000Ms',
+    'from1000Ms'
+  ]
+  const histogram = (counts: Dict = {}, extra: Dict = {}) =>
+    moment(
+      Object.values(counts).reduce((sum: number, value) => sum + Number(value), 0),
+      2000,
+      {
+        waitBuckets: Object.fromEntries(names.map((name) => [name, counts[name] ?? 0])),
+        invalidWaits: 0,
+        longestWaitMs: { atMost: 2000, exact: false },
+        ...extra
+      }
+    )
+  const judged = (moments: Dict) => {
+    const changed = changeOn()
+    changed.tickets.moments = Object.fromEntries(
+      ['user_message', 'decision', 'destructive', 'run_final'].map((name) => [
+        name,
+        moments[name] ?? histogram()
+      ])
+    ) as typeof changed.tickets.moments
+    return evaluate(pair((_state, index) => (index === 1 ? { change: changed } : {}))).exits
+  }
+
+  it('merges user moments and ignores normal-class idle/quit waits when judging run-final tickets', () => {
+    const exits = judged({
+      user_message: histogram({ under1Ms: 15 }),
+      decision: histogram({ from20To50Ms: 4 }),
+      destructive: histogram({ from1000Ms: 1 }),
+      run_final: histogram({ from100To250Ms: 19, from1000Ms: 1 })
+    })
+    expect(exits.barrierWaitUserFacing.windows[0]).toMatchObject({
+      verdict: 'pass',
+      value: null,
+      valueIs: 'interval',
+      p95Ms: { lowerInclusive: 20, upperExclusive: 50 },
+      settledTickets: 20,
+      percentileRank: 19
+    })
+    expect(exits.barrierWaitRunFinal.windows[0]).toMatchObject({
+      verdict: 'pass',
+      valueIs: 'interval',
+      p95Ms: { lowerInclusive: 100, upperExclusive: 250 },
+      settledTickets: 20,
+      percentileRank: 19
+    })
+  })
+
+  it.each([
+    ['user_message', 'from50To100Ms', 'barrierWaitUserFacing', 50],
+    ['run_final', 'from250To500Ms', 'barrierWaitRunFinal', 250]
+  ])(
+    'fails the exact strict threshold for %s, even when the old maximum did not rise',
+    (momentName, bucket, exit, lower) => {
+      expect(judged({ [momentName]: histogram({ [bucket]: 1 }) })[exit].windows[0]).toMatchObject({
+        verdict: 'fail',
+        reasons: ['over_limit'],
+        valueIs: 'interval',
+        p95Ms: { lowerInclusive: lower },
+        percentileRank: 1
+      })
+    }
+  )
+
+  it('uses nearest rank rather than the maximum for twenty samples and a long overflow tail', () => {
+    expect(
+      judged({ run_final: histogram({ under1Ms: 19, from1000Ms: 1 }) }).barrierWaitRunFinal
+        .windows[0]
+    ).toMatchObject({ verdict: 'pass', p95Ms: { lowerInclusive: 0, upperExclusive: 1 } })
+    expect(
+      judged({ run_final: histogram({ under1Ms: 18, from1000Ms: 2 }) }).barrierWaitRunFinal
+        .windows[0]
+    ).toMatchObject({ verdict: 'fail', p95Ms: { lowerInclusive: 1000, upperExclusive: null } })
+  })
+
+  it('rounds a fractional percentile rank upward', () => {
+    expect(
+      judged({ run_final: histogram({ under1Ms: 19, from1000Ms: 2 }) }).barrierWaitRunFinal
+        .windows[0]
+    ).toMatchObject({ verdict: 'fail', percentileRank: 20, settledTickets: 21 })
+  })
+
+  it.each([
+    [{ pending: { before: 1, after: 0 } }, 'tickets_pending_at_first_fence'],
+    [{ pending: { before: 0, after: 1 } }, 'tickets_pending_at_second_fence'],
+    [{ failed: 1 }, 'failed_tickets_in_window'],
+    [{ invalidWaits: 1 }, 'invalid_wait_durations'],
+    [{ noted: 2 }, 'wait_histogram_count_mismatch'],
+    [{ waitBuckets: { under1Ms: -1 } }, 'wait_histogram_invalid'],
+    [{ waitBuckets: null }, 'wait_histogram_missing']
+  ])('keeps incomplete or invalid distributions unmeasured: %s', (extra, reason) => {
+    const row = judged({
+      user_message: histogram({ under1Ms: 1 }, extra),
+      decision: histogram({ under1Ms: 1 })
+    }).barrierWaitUserFacing.windows[0]
+    expect(row).toMatchObject({ verdict: 'not_measured', reasons: [reason] })
+  })
+
+  it('does not fall back to a legacy maximum when a new run-final histogram is missing', () => {
+    expect(
+      judged({ run_final: histogram({ under1Ms: 1 }, { waitBuckets: null }) }).barrierWaitRunFinal
+        .windows[0]
+    ).toMatchObject({ verdict: 'not_measured', reasons: ['wait_histogram_missing'] })
+  })
+
+  it('prints a percentile interval rather than a fabricated point value', () => {
+    const changed = changeOn()
+    changed.tickets.moments = {
+      user_message: histogram({ from20To50Ms: 20 }),
+      decision: histogram(),
+      destructive: histogram(),
+      run_final: histogram({ from100To250Ms: 20 })
+    } as typeof changed.tickets.moments
+    const captures = Object.fromEntries(
+      pair((state) => (state === 'on' ? { change: changed } : {})).map((capture) => [
+        capture.id,
+        capture
+      ])
+    )
+    const lines: string[] = []
+    runDurabilityExitsCli(Object.keys(captures), {
+      readCapture: (id) => captures[id],
+      write: (line) => lines.push(line)
+    })
+    expect(lines.find((line) => line.includes('barrierWaitUserFacing'))).toContain('[20, 50) ms')
+    expect(lines.find((line) => line.includes('barrierWaitRunFinal'))).toContain('[100, 250) ms')
+  })
+
+  it('keeps an empty cohort and an old capture without buckets honest', () => {
+    expect(judged({}).barrierWaitUserFacing.windows[0]).toMatchObject({
+      verdict: 'not_measured',
+      reasons: ['no_tickets_in_window']
+    })
+    const old = changeOn()
+    old.tickets.moments.user_message.longestWaitMs = { atMost: 2000, exact: false }
+    expect(
+      evaluate(pair((_state, index) => (index === 1 ? { change: old } : {}))).exits
+        .barrierWaitUserFacing.windows[0]
+    ).toMatchObject({ verdict: 'not_measured', reasons: ['p95_unknown_longest_over_limit'] })
+  })
+})
