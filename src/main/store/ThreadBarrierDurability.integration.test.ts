@@ -663,3 +663,160 @@ describe('what pays the debt no moment pays, through the real store', () => {
     }
   )
 })
+
+const TICKET = `file:thread-catalogue-v1/pending/desktop/${CHAT}/<operation>.json.tmp-<uuid>`
+const TICKETS = `directory:thread-catalogue-v1/pending/desktop/${CHAT}`
+const HEAD = `file:thread-catalogue-v1/desktop/${CHAT}.json.tmp-<uuid>`
+const HEADS = 'directory:thread-catalogue-v1/desktop'
+
+/**
+ * What each save synced with the catalogue's publisher installed, captured
+ * from the store at the commit before the catalogue's seam was wired. With
+ * the switch off, nothing may differ.
+ */
+const SYNCED_WITH_THE_CATALOGUE_BEFORE_THE_SWITCH: Array<[string, string[]]> = [
+  [
+    'a new thread with its first message',
+    [
+      'directory:.',
+      'directory:thread-catalogue-v1',
+      'directory:thread-catalogue-v1/pending',
+      'directory:thread-catalogue-v1/pending/desktop',
+      TICKET,
+      TICKETS,
+      'directory:thread-catalogue-v1',
+      HEAD,
+      HEADS,
+      `file:${CHECKPOINT_TEMPORARY}`,
+      'directory:chat-journal-v2',
+      'directory:chat-journal-v2',
+      HEAD,
+      HEADS
+    ]
+  ],
+  [
+    'a run starts',
+    [
+      TICKET,
+      TICKETS,
+      HEAD,
+      HEADS,
+      `file:${JOURNAL}`,
+      'directory:chat-journal-v2',
+      `file:${EVENTS}`,
+      HEAD,
+      HEADS
+    ]
+  ],
+  ['streamed text', [TICKET, TICKETS, HEAD, HEADS, `file:${JOURNAL}`, HEAD, HEADS]],
+  ['a user message', [TICKET, TICKETS, HEAD, HEADS, `file:${JOURNAL}`, HEAD, HEADS]],
+  ['an approval opens', [TICKET, TICKETS, HEAD, HEADS, `file:${JOURNAL}`, HEAD, HEADS]],
+  ['the approval is answered', [TICKET, TICKETS, HEAD, HEADS, `file:${JOURNAL}`, HEAD, HEADS]],
+  [
+    'a tool result whose detail is moved out',
+    [
+      TICKET,
+      TICKETS,
+      HEAD,
+      HEADS,
+      `file:${DETAIL}`,
+      `directory:run-artifacts/${RUN}`,
+      `file:${EVENTS}`,
+      `file:${JOURNAL}`,
+      HEAD,
+      HEADS
+    ]
+  ],
+  [
+    'the run ends',
+    [
+      TICKET,
+      TICKETS,
+      HEAD,
+      HEADS,
+      `file:${JOURNAL}`,
+      `file:${CHECKPOINT_TEMPORARY}`,
+      'directory:chat-journal-v2',
+      'directory:chat-journal-v2',
+      `file:${EVENTS}`,
+      HEAD,
+      HEADS
+    ]
+  ]
+]
+
+describe("the catalogue's heads and tickets", () => {
+  /** A sync's path, with the ticket's operation id taken out too. */
+  function stableWithTickets(entry: string): string {
+    return stable(entry).replace(
+      /(pending\/desktop\/[^/]+\/)[0-9a-f-]{36}\.json/,
+      '$1<operation>.json'
+    )
+  }
+
+  /** The same saves, with the catalogue's publisher installed as the app installs it. */
+  async function driveWithCatalogue(switchOn: boolean) {
+    if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    AppStore.installThreadCataloguePublisher('test-writer', () => {})
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    layers.port = disk.port
+    const steps: Array<{ name: string; issued: string[]; paid: string[] }> = []
+    for (const step of STEPS) {
+      disk.issued.length = 0
+      disk.paid.length = 0
+      step.act(AppStore)
+      await AppStore.drainThreadCataloguePublications()
+      const issued = disk.issued.map(stableWithTickets)
+      if (layers.built[0]) await layers.built[0].debt.barrier(CHAT)
+      steps.push({ name: step.name, issued, paid: disk.paid.map(stableWithTickets) })
+    }
+    await AppStore.disposeThreadCataloguePublisher()
+    return steps
+  }
+
+  it('switched off, syncs what each save synced with the catalogue before the switch reached it', async () => {
+    const steps = await driveWithCatalogue(false)
+
+    expect(steps.map((step) => [step.name, step.issued])).toEqual(
+      SYNCED_WITH_THE_CATALOGUE_BEFORE_THE_SWITCH
+    )
+    expect(layers.built).toEqual([])
+  })
+
+  it('switched on, writes them without a sync: only new directories and checkpoints sync', async () => {
+    const steps = await driveWithCatalogue(true)
+
+    expect(steps.map((step) => [step.name, step.issued])).toEqual([
+      [
+        'a new thread with its first message',
+        [
+          'directory:.',
+          'directory:thread-catalogue-v1',
+          'directory:thread-catalogue-v1/pending',
+          'directory:thread-catalogue-v1/pending/desktop',
+          'directory:thread-catalogue-v1',
+          `file:${CHECKPOINT_TEMPORARY}`,
+          'directory:chat-journal-v2',
+          'directory:chat-journal-v2'
+        ]
+      ],
+      ['a run starts', []],
+      ['streamed text', []],
+      ['a user message', []],
+      ['an approval opens', []],
+      ['the approval is answered', []],
+      ['a tool result whose detail is moved out', []],
+      ['the run ends', [`file:${CHECKPOINT_TEMPORARY}`, 'directory:chat-journal-v2']]
+    ])
+  })
+
+  it('switched on, owes no barrier anything for them', async () => {
+    const steps = await driveWithCatalogue(true)
+
+    expect(
+      steps.flatMap((step) => step.paid.filter((entry) => entry.includes('thread-catalogue-v1')))
+    ).toEqual([])
+  })
+})

@@ -17,6 +17,7 @@
  */
 import { ChatDurabilityTickets, type ChatDurabilityTicketsSnapshot } from './ChatDurabilityTickets'
 import { classifyChatSaveMoments, type ChatSaveMoment } from './ChatSaveMoments'
+import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
 import {
   createThreadDurabilityDebt,
@@ -59,6 +60,11 @@ export interface ThreadBarrierDurability {
   }
   /** What one save's tool-detail writer is given, for that save's thread. */
   detail(chatId: string): ToolActivityDetailDebt
+  /**
+   * The catalogue's durability seam: heads and tickets written without a sync
+   * and owed to no barrier. Holds, fences and resolved rows never reach it.
+   */
+  catalogue(profilePath: string): MainCatalogueUnsyncedDurability
   /** A barrier for the thread, as every barrier the app raises for one is. */
   barrier(chatId: string): Promise<void>
   /** Erasure, after its own syncs: drop the thread's debt unpaid. */
@@ -133,6 +139,7 @@ export function createThreadBarrierDurability(
     tickets,
     journal: { noteDurabilityDebt: note, repairTornTailBeforeAppend: true },
     detail: (chatId) => ({ chatId, note }),
+    catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),
     forget: (chatId) => threads.forget(chatId),
     forgetAll: () => threads.forgetAll(),

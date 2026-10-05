@@ -6386,7 +6386,12 @@ export class AppStore {
       canWrite: incrementalJournalSidebandWritable,
       canManageRecoveryHolds: () => manageHolds && incrementalJournalSidebandWritable(),
       onChanged,
-      deferredDurability: mainCatalogueDurability?.publication,
+      deferredDurability: threadBarrierDurability
+        ? threadBarrierDurability.catalogue(userDataPath)
+        : mainCatalogueDurability?.publication,
+      // Barrier durability hands heads and tickets to its own seam; it is on
+      // only while the catalogue's deferred durability switch is off.
+      ...(threadBarrierDurability ? { catalogueDeferredDurabilityFlag: '1' } : {}),
       repairSource,
       onError: (error) => console.error('[thread-catalogue] source publication failed', error)
     })

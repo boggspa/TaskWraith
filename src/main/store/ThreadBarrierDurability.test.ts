@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatDurabilityTickets } from './ChatDurabilityTickets'
 import { deriveChatRecordMutationWithProjection } from './ChatRecordMutation'
+import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import { barrierForSaveMoments, createThreadBarrierDurability } from './ThreadBarrierDurability'
 import type { ThreadDurabilityPort, ThreadDurabilitySyncOutcome } from './ThreadDurabilityDebt'
 import type { ChatRecord } from './types'
@@ -51,6 +52,15 @@ describe('the barrier durability layer', () => {
     const layer = createThreadBarrierDurability({ port: recordingPort() })
 
     expect(layer.detail('chat-1')).toEqual({ chatId: 'chat-1', note: layer.note })
+  })
+
+  it('gives the catalogue the seam that writes heads and tickets owed to no barrier', async () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+
+    const seam = layer.catalogue('/profile')
+
+    expect(seam).toBeInstanceOf(MainCatalogueUnsyncedDurability)
+    await expect(seam.awaitDurable()).resolves.toBeUndefined()
   })
 
   it('keeps one set of tickets, timed by its clock', () => {
