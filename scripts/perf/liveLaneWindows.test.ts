@@ -40,6 +40,12 @@ type WindowRecord = {
   } | null
   mainWindow: Record<string, unknown> | null
   host: Record<string, unknown> | null
+  barrierDurability?: {
+    before: Record<string, any> | null
+    after: Record<string, any> | null
+    change: Record<string, any> | null
+    unavailable: string | null
+  }
 }
 type Result = { windows: WindowRecord[]; verdict: { ok: boolean; reasons: string[] } }
 
@@ -88,6 +94,34 @@ const COLUMNS = [
   'fallback',
   'reason'
 ]
+
+/** Main's barrier durability section with the switch on, `raised` barriers so far. */
+function barrierSection(raised: number) {
+  return {
+    enabled: true,
+    ignored: null,
+    debt: {
+      owners: { journal: { noted: raised, synced: raised, missing: 0, failed: 0 } },
+      barriers: {
+        raised,
+        idle: 0,
+        shared: 0,
+        rounds: raised,
+        renamedUnderway: 0,
+        failed: 0,
+        waitMsTotal: raised,
+        longestWaitMs: 4
+      },
+      owed: { threads: 1, files: 1, directories: 0 },
+      syncsOnCallingThread: 0
+    },
+    port: null,
+    tickets: null,
+    gates: null,
+    checkpoints: { initial: { count: 1, bytes: 10, mainMs: 1 } },
+    tornTailsRepaired: 0
+  }
+}
 
 type Span = {
   chatId: string
@@ -641,6 +675,62 @@ describe('runLiveLaneWindows', () => {
     expect(w.d1ReadsAt).toHaveLength(2)
     expect(w.d1ReadsAt[0]).toBeLessThanOrEqual(window.startedAtMs)
     expect(w.d1ReadsAt[1]).toBeGreaterThanOrEqual(w.readsAt[1])
+  })
+
+  it("reads barrier durability at the window's two fences, beside the save counters", async () => {
+    const w = world()
+    const readsAt: number[] = []
+    // Main's section, its counters rising with the clock.
+    const readBarrierDurability = async () => {
+      readsAt.push(w.nowMs())
+      const raised = Math.floor((w.nowMs() - T0) / 1_000)
+      return { ok: true, section: barrierSection(raised) }
+    }
+    const result = await run(w, { windows: 2, readBarrierDurability })
+    expect(readsAt).toEqual(w.d1ReadsAt)
+    result.windows.forEach((window, index) => {
+      const [before, after] = readsAt.slice(2 * index, 2 * index + 2)
+      expect(window.reasons).toEqual([])
+      expect(window.barrierDurability).toMatchObject({
+        before: { debt: { barriers: { raised: Math.floor((before - T0) / 1_000) } } },
+        after: { debt: { barriers: { raised: Math.floor((after - T0) / 1_000) } } },
+        unavailable: null
+      })
+      expect(window.barrierDurability?.change.debt.barriers.raised).toBe(
+        Math.floor((after - T0) / 1_000) - Math.floor((before - T0) / 1_000)
+      )
+    })
+  })
+
+  it('judges a window as before when barrier durability cannot be read, and says why', async () => {
+    const absent = await run(world(), {
+      windows: 1,
+      readBarrierDurability: async () => ({ ok: false, reason: 'section_absent' })
+    })
+    expect(absent.windows[0].reasons).toEqual([])
+    expect(absent.windows[0].barrierDurability).toEqual({
+      before: null,
+      after: null,
+      change: null,
+      unavailable: 'section_absent'
+    })
+    let reads = 0
+    const throwing = await run(world(), {
+      windows: 1,
+      readBarrierDurability: async () => {
+        reads += 1
+        if (reads === 2) throw new Error('renderer went away')
+        return { ok: true, section: barrierSection(1) }
+      }
+    })
+    expect(throwing.windows[0].reasons).toEqual([])
+    expect(throwing.windows[0].barrierDurability).toMatchObject({
+      before: { enabled: true },
+      after: null,
+      unavailable: 'read_failed'
+    })
+    const unread = await run(world(), { windows: 1 })
+    expect(unread.windows[0].barrierDurability?.unavailable).toBe('reader_absent')
   })
 
   it('refuses a window whose rounds never reached the deferred journal', async () => {

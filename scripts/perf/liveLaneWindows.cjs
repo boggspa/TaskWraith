@@ -39,6 +39,7 @@
 const { WORK_SPAN_KINDS } = require('./collectors/hostSpans.cjs')
 const { timingsByKind } = require('./collectors/hostRecentSpanWindows.cjs')
 const { awaitWithTimeout } = require('./boundedAwait.cjs')
+const { barrierDurabilityAtFences } = require('./barrierDurability.cjs')
 
 /** Global the S3a handle installs in main (`perfWorkSpanHandle.ts`); keep in lockstep. */
 const MAIN_WORK_SPANS_GLOBAL = '__TASKWRAITH_PERF_WORK_SPANS__'
@@ -248,6 +249,7 @@ function positiveOption(options, name) {
  *   lightChatId: string, heavyChatId: string,
  *   readMainWindow: (query: object) => Promise<unknown>,
  *   readD1Counters: () => Promise<{ deferredAppends: number, normalSaves: number } | null>,
+ *   readBarrierDurability?: () => Promise<{ ok: boolean, section?: object, reason?: string }>,
  *   readLaneActivity: (lane: 'light' | 'heavy', range: { fromMs: number, toMs: number }) =>
  *     Promise<{ started: number, done: number, busyMs: number, maxQuietMs: number }>,
  *   hostUnion?: { evaluate(windows: object[], lanes: object): any } | null,
@@ -341,6 +343,17 @@ async function runLiveLaneWindows(options) {
       return null
     }
   }
+  // Barrier durability, read at the same fences as the save counters when
+  // the caller can read it. It never rules a window out.
+  const readBarrier = async () => {
+    if (typeof options.readBarrierDurability !== 'function') return null
+    try {
+      const read = await options.readBarrierDurability()
+      return isPlainObject(read) ? read : { ok: false, reason: 'read_invalid' }
+    } catch {
+      return { ok: false, reason: 'read_failed' }
+    }
+  }
 
   // The Host fold needs a read strictly before each window starts; later
   // windows have the one before's settle wait, the first gets this lead-in.
@@ -370,6 +383,7 @@ async function runLiveLaneWindows(options) {
 
     const reasons = []
     const d1Before = await readD1()
+    const barrierBefore = await readBarrier()
     const windowId = `light_beside_${repetition}`
     const mainWindowBegin = await probeMain({ action: 'begin', id: windowId, durationMs: windowMs })
     const startedAtMs = nowMs()
@@ -406,6 +420,7 @@ async function runLiveLaneWindows(options) {
     await sleepUntil(Math.max(lightSettledAtMs ?? endedAtMs, heavySettledAtMs) + fenceMs)
     const main = await readMain(startedAtMs, endedAtMs)
     const d1After = await readD1()
+    const barrierAfter = await readBarrier()
     // Each lane's model turns: the light lane's over its rounds, the heavy
     // lane's over the window and the settle it must have streamed through.
     const activity = {
@@ -546,6 +561,7 @@ async function runLiveLaneWindows(options) {
       heavy: { idleMs: heavyIdleMs, roundsEnded: heavyEnded.length },
       activity,
       d1,
+      barrierDurability: barrierDurabilityAtFences(barrierBefore, barrierAfter),
       main: mainEvidence,
       mainWindow,
       mainWindowCensored: mainWindow === null,

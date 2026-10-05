@@ -55,6 +55,7 @@ const { captureProfileMarker } = require('./collectors/mainProfileCalibration.cj
 const { liveLaneWindowsVerdict } = require('./liveLaneWindows.cjs')
 const { cancelRoundExpression } = require('./liveRoundLanes.cjs')
 const { readD1Counters } = require('./liveRounds.cjs')
+const { barrierDurabilityAtFences, readBarrierDurability } = require('./barrierDurability.cjs')
 const {
   threadObserverConfig,
   uninstallThreadObserverExpression
@@ -480,6 +481,9 @@ async function runT2ManyAgents(options) {
       return null
     }
   }
+  // Barrier durability at the same fences as the D1 counters; it never rules
+  // the window out.
+  const readBarrier = () => readBarrierDurability(page, { timeoutMs: settings.callTimeoutMs })
   const probeMain = async (request) => {
     try {
       const result = await readMainPerfWindow(page, request, settings.callTimeoutMs)
@@ -578,6 +582,7 @@ async function runT2ManyAgents(options) {
     if (hostUnion !== null) await sleep(settings.hostCaptureWaitMs)
     const before = lanes.snapshot()
     const d1Before = await readD1()
+    const barrierBefore = await readBarrier()
     const windowId = 'many_agents_0'
     const mainBefore = await readMainAt(nowMs())
     await mark(windowId, 'window_start_marker_failed')
@@ -668,6 +673,7 @@ async function runT2ManyAgents(options) {
 
     // D1: real rounds reached the deferred journal inside the fences.
     const d1After = await readD1()
+    const barrierAfter = await readBarrier()
     const d1 =
       d1Before && d1After
         ? {
@@ -780,6 +786,7 @@ async function runT2ManyAgents(options) {
       agents,
       waiting,
       d1,
+      barrierDurability: barrierDurabilityAtFences(barrierBefore, barrierAfter),
       main,
       mainWindow,
       mainWindowCensored: mainWindow === null,

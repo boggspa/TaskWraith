@@ -47,6 +47,9 @@ type PhaseResult = {
     reasons: string[]
     host: unknown
     activity: Record<string, Record<string, number> | null>
+    startedAtMs: number
+    laneSettledAtMs: { light: number | null; heavy: number }
+    barrierDurability?: { change: unknown; unavailable: string | null }
   }>
   hostLag: {
     windows: Array<{ role: string; outcome: string; lag: { sampleCount: number } }>
@@ -170,6 +173,8 @@ function world(
     probeLate?: number
     /** Main answers a window's end with a snapshot that has no window. */
     endNoWindow?: boolean
+    /** Main's barrier durability section at a moment; no section without it. */
+    barrierSection?: (nowMs: number) => unknown
   } = {}
 ) {
   let now = T0
@@ -190,6 +195,7 @@ function world(
   let lightIndex = 0
   const daemonTurns: DaemonTurn[] = []
   const daemonReads: Array<{ model: string; fromMs: number; toMs: number }> = []
+  const barrierReadsAt: number[] = []
 
   const addSpan = (span: Span) => {
     mainSpans.push(span)
@@ -303,10 +309,19 @@ function world(
   const probeWindow = windowProbeFixture(() => now, options.probeLate ?? 0, endAsks)
   const pageWindow: Record<string, unknown> = {
     api: {
-      getMainPerfSnapshot: async (request: { window: Parameters<typeof probeWindow>[0] }) =>
-        options.endNoWindow && request.window.action === 'end'
+      getMainPerfSnapshot: async (request?: { window: Parameters<typeof probeWindow>[0] }) => {
+        if (request === undefined) {
+          barrierReadsAt.push(now)
+          return {
+            sections: options.barrierSection
+              ? { threadBarrierDurability: options.barrierSection(now) }
+              : {}
+          }
+        }
+        return options.endNoWindow && request.window.action === 'end'
           ? { sections: {} }
-          : { window: probeWindow(request.window), sections: {} },
+          : { window: probeWindow(request.window), sections: {} }
+      },
       cancelEnsembleRound: (chatId: string) => {
         events.push(`cancel:${chatId}`)
         if (options.cancelHangs) return new Promise(() => {})
@@ -503,6 +518,7 @@ function world(
     markers,
     endAsks,
     daemonReads,
+    barrierReadsAt,
     pageWindow,
     clock: () => now,
     laneOptions: () => laneOptions,
@@ -610,6 +626,40 @@ describe('runT2LiveLanes', () => {
     for (const window of result.hostLag!.windows) {
       expect(window).toMatchObject({ role: 'light-beside', outcome: 'eligible' })
       expect(window.lag.sampleCount).toBeGreaterThan(0)
+    }
+  })
+
+  it("reads barrier durability through the page at each window's fences", async () => {
+    const raisedAt = (atMs: number) => Math.floor((atMs - T0) / 100)
+    const w = world({
+      barrierSection: (atMs) => ({
+        enabled: true,
+        ignored: null,
+        debt: null,
+        port: { started: raisedAt(atMs), inFlight: 0, queued: 0, joined: 0, peakInFlight: 2 },
+        tickets: null,
+        gates: null,
+        checkpoints: {},
+        tornTailsRepaired: 0
+      })
+    })
+    const result = await w.run()
+    expect(result.windows.map((window) => window.reasons)).toEqual([[], []])
+    expect(w.barrierReadsAt).toHaveLength(4)
+    result.windows.forEach((window, index) => {
+      const [before, after] = w.barrierReadsAt.slice(2 * index, 2 * index + 2)
+      expect(before).toBeLessThanOrEqual(window.startedAtMs)
+      expect(after).toBeGreaterThanOrEqual(window.laneSettledAtMs.heavy)
+      expect(window.barrierDurability).toMatchObject({
+        unavailable: null,
+        change: { enabled: true, port: { started: raisedAt(after) - raisedAt(before) } }
+      })
+    })
+    // A build without the section: the windows are judged as before.
+    const without = await world().run()
+    expect(without.windows.map((window) => window.reasons)).toEqual([[], []])
+    for (const window of without.windows) {
+      expect(window.barrierDurability?.unavailable).toBe('section_absent')
     }
   })
 

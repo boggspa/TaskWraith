@@ -44,6 +44,7 @@ const {
 const { uninstallLaneObserverExpression, laneObserverConfig } = require('./liveLaneObserver.cjs')
 const { cancelRoundExpression, createLiveLanes } = require('./liveRoundLanes.cjs')
 const { readD1Counters } = require('./liveRounds.cjs')
+const { readBarrierDurability } = require('./barrierDurability.cjs')
 
 const DEFAULT_OPTIONS = Object.freeze({
   callTimeoutMs: 60_000,
@@ -431,6 +432,8 @@ async function runT2LiveLanes(options) {
         readMainWindow: (query) =>
           readMainWorkSpanWindow(mainSession, query, settings.callTimeoutMs),
         readD1Counters: () => readD1Counters(page, { timeoutMs: settings.callTimeoutMs }),
+        readBarrierDurability: () =>
+          readBarrierDurability(page, { timeoutMs: settings.callTimeoutMs }),
         readMainPerfWindow: async (request) => {
           if (request.action === 'begin' && options.onCalibrationMarker) {
             try {

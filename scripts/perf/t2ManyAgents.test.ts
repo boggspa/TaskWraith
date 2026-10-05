@@ -61,6 +61,12 @@ type Window = {
     ringRise: Record<string, number> | null
     byKind: Record<string, { count: number; totalMs: number; maxMs: number }>
   } | null
+  barrierDurability?: {
+    before: Record<string, any> | null
+    after: Record<string, any> | null
+    change: Record<string, any> | null
+    unavailable: string | null
+  }
   mainWindow: Record<string, unknown> | null
   mainWindowCensored: boolean
   host: {
@@ -187,6 +193,8 @@ type WorldOptions = {
   /** Every D1 read answers nothing, or only the one before or after the window. */
   d1Unavailable?: boolean | 'before' | 'after'
   d1Frozen?: boolean
+  /** Main's barrier durability section at a moment; no section without it. */
+  barrierSection?: (nowMs: number) => unknown
   mainHandleAbsent?: boolean
   mainCensored?: boolean
   /** The ring sampled spans out during the window, or had already before it. */
@@ -429,15 +437,25 @@ function world(options: WorldOptions = {}) {
 
   // The page's window: the app's cancel, the main window probe, and the
   // observer global the lanes install.
+  const barrierReadsAt: number[] = []
+  const d1ReadsAt: number[] = []
   let probeStartedAtMs = 0
   let probeDurationMs = 0
   let probeEndAsks = 0
   const cancels: string[] = []
   const pageWindow: Record<string, unknown> = {
     api: {
-      getMainPerfSnapshot: async (request: {
+      getMainPerfSnapshot: async (request?: {
         window: { action: string; id: string; durationMs?: number }
       }) => {
+        if (request === undefined) {
+          barrierReadsAt.push(now)
+          return {
+            sections: options.barrierSection
+              ? { threadBarrierDurability: options.barrierSection(now) }
+              : {}
+          }
+        }
         if (options.probeFails) throw new Error('main went away')
         if (options.probeHangs) return new Promise(() => {})
         if (options.probeNoWindow) return { sections: {} }
@@ -545,6 +563,7 @@ function world(options: WorldOptions = {}) {
     evaluate: async (expression: string) => {
       if (expression === D1_COUNTERS_EXPRESSION) {
         d1Reads += 1
+        d1ReadsAt.push(now)
         if (options.d1Throws) throw new Error('renderer went away')
         if (
           options.d1Unavailable === true ||
@@ -838,6 +857,8 @@ function world(options: WorldOptions = {}) {
       return probeEndAsks
     },
     mainReadBounds,
+    barrierReadsAt,
+    d1ReadsAt,
     get now() {
       return now
     }
@@ -1093,6 +1114,54 @@ describe('a many-agent window, seats one after another', () => {
     const w = world()
     // Thirteen turns of each thread end between the two reads.
     expect((await w.run()).windows[0].d1).toEqual({ deferredAppends: 39, normalSaves: 39 })
+  })
+
+  it('reads barrier durability at the window’s fences, beside the D1 counters', async () => {
+    const awaitsAt = (atMs: number) => Math.floor((atMs - T0) / 100)
+    const w = world({
+      barrierSection: (atMs) => ({
+        enabled: true,
+        ignored: null,
+        debt: null,
+        port: null,
+        tickets: {
+          moments: {},
+          missingGates: 0,
+          uncoveredRunFinals: 0,
+          lastMissingGate: null,
+          awaits: awaitsAt(atMs),
+          awaitsRejected: 0,
+          awaitsWaiting: 0,
+          longestAwaitMs: 9,
+          chats: 1
+        },
+        gates: null,
+        checkpoints: {},
+        tornTailsRepaired: 0
+      })
+    })
+    const [window] = (await w.run()).windows
+    expect(w.barrierReadsAt).toHaveLength(2)
+    expect(w.barrierReadsAt).toEqual(w.d1ReadsAt)
+    const [before, after] = w.barrierReadsAt
+    expect(window.reasons).toEqual([])
+    expect(window.barrierDurability).toMatchObject({
+      before: { tickets: { awaits: awaitsAt(before) } },
+      after: { tickets: { awaits: awaitsAt(after) } },
+      change: { tickets: { awaits: awaitsAt(after) - awaitsAt(before) } },
+      unavailable: null
+    })
+  })
+
+  it('judges the window as before when barrier durability cannot be read, and says why', async () => {
+    const [window] = (await world().run()).windows
+    expect(window.reasons).toEqual([])
+    expect(window.barrierDurability).toEqual({
+      before: null,
+      after: null,
+      change: null,
+      unavailable: 'section_absent'
+    })
   })
 
   it('folds the Host’s spans of every thread, and its lag over the window', async () => {
