@@ -309,7 +309,7 @@ class App {
   async compact(): Promise<void> {
     // Join the existing compaction before completing its worker. Counting
     // event-loop turns can run out before the off-thread unlink completes.
-    const adopted = this.journal.checkpointDeferred(CHAT)
+    const adopted = this.journal.checkpointDeferred!(CHAT)
     this.compactor.fold()
     expect(await adopted).toBe('checkpointed')
   }
