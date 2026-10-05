@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
+import { ChatDurabilityTickets } from '../store/ChatDurabilityTickets'
+import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
 import { bindMainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import type { WorkSpanRecordInput } from '../perf/WorkSpanRecorder'
 import {
@@ -650,5 +652,87 @@ describe('registerApprovalResponseHandlers', () => {
     } finally {
       bindMainWorkSpanSink(undefined)
     }
+  })
+})
+
+describe('the grant, under barrier durability', () => {
+  afterEach(() => installDurableMomentGate(null))
+
+  /** The gate the store installs while the switch is on, over tickets the test takes, with its bound by hand. */
+  function gated() {
+    const tickets = new ChatDurabilityTickets({ now: () => 0 })
+    const timers: Array<() => void> = []
+    const gate = new DurableMomentGate({
+      source: tickets,
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => {}
+    })
+    installDurableMomentGate(gate)
+    return { tickets, gate, expire: () => timers.splice(0).forEach((fire) => fire()) }
+  }
+
+  /** The store takes the grant's ticket on its save, held until the test settles it. */
+  function grantSavedOnHeldBarrier(order: string[]) {
+    const { deps } = createDeps(order)
+    const { tickets, gate, expire } = gated()
+    let settle!: { resolve(): void; reject(reason: unknown): void }
+    const barrier = new Promise<void>((resolve, reject) => (settle = { resolve, reject }))
+    vi.mocked(deps.saveChat).mockImplementation(() => {
+      order.push('saveChat')
+      tickets.note('chat-1', 2, 'decision', barrier)
+    })
+    registerApprovalResponseHandlers(deps)
+    return { deps, tickets, gate, expire, settle }
+  }
+
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+
+  it('tells the agent of the grant only once the grant is on the disk', async () => {
+    const order: string[] = []
+    const { tickets, settle } = grantSavedOnHeldBarrier(order)
+
+    const responding = handlerFor('respond-agent-approval')({}, 'req-1', 'grantExternalPathRead')
+    await turn()
+    expect(order).not.toContain('resolve')
+
+    settle.resolve()
+    await responding
+    expect(order.slice(-3)).toEqual(['saveChat', 'broadcastChatUpdated', 'resolve'])
+    expect(tickets.snapshot().moments.decision.covered).toBe(1)
+  })
+
+  it('tells the agent at the bound when the disk hangs, and counts the wait as overdue', async () => {
+    const order: string[] = []
+    const { gate, expire } = grantSavedOnHeldBarrier(order)
+
+    const responding = handlerFor('respond-agent-approval')({}, 'req-2', 'grantExternalPathEdit')
+    await turn()
+    expect(order).not.toContain('resolve')
+    expire()
+    await responding
+
+    expect(order[order.length - 1]).toBe('resolve')
+    expect(gate.snapshot()).toMatchObject({ waits: 1, overdue: 1 })
+  })
+
+  it('still tells the agent when the disk refused the sync, as when the save itself fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const order: string[] = []
+    const { deps, settle } = grantSavedOnHeldBarrier(order)
+    const refusal = new Error('EIO: the disk refused')
+
+    const responding = handlerFor('respond-agent-approval')({}, 'req-3', 'grantExternalPathRead')
+    settle.reject(refusal)
+    const result = await responding
+
+    expect(warn).toHaveBeenCalledWith(
+      '[ExternalPathGrant] runtime grant persistence failed',
+      refusal
+    )
+    expect(vi.mocked(deps.approvalService.resolve)).toHaveBeenCalledTimes(1)
+    expect(result).toEqual(expect.objectContaining({ ok: true }))
   })
 })

@@ -2,7 +2,7 @@
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   authorizeMainOwnedScheduledOccurrenceDispatch,
   createRunDispatchFacade,
@@ -15,6 +15,8 @@ import {
 } from '../ScheduledOccurrenceOwnerRegistry'
 import { HistoryClearAdmissionGate } from '../HistoryClearAdmissionGate'
 import { RegenerableHistoryByteStore } from '../services/RegenerableHistoryByteStore'
+import { ChatDurabilityTickets } from '../store/ChatDurabilityTickets'
+import { DurableMomentGate, installDurableMomentGate } from './DurableMomentGate'
 
 // The 3 pure helpers direct-import in the facade → vi.mock them (M3-1b precedent).
 vi.mock('../ProviderRunPause', () => ({
@@ -1052,5 +1054,89 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     expect(result.dispatched).toBe(true)
     expect(deps.captureFailoverSnapshot).not.toHaveBeenCalled()
     expect(deps.failoverSnapshotByRun.set).not.toHaveBeenCalled()
+  })
+})
+
+describe('createRunDispatchFacade — under barrier durability', () => {
+  afterEach(() => installDurableMomentGate(null))
+
+  /** The gate the store installs while the switch is on, a user message held on its barrier. */
+  function messageHeldOnItsBarrier() {
+    const tickets = new ChatDurabilityTickets({ now: () => 0 })
+    const timers: Array<() => void> = []
+    const gate = new DurableMomentGate({
+      source: tickets,
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => {}
+    })
+    installDurableMomentGate(gate)
+    let settle!: { resolve(): void; reject(reason: unknown): void }
+    tickets.note(
+      'chat-1',
+      4,
+      'user_message',
+      new Promise<void>((resolve, reject) => (settle = { resolve, reject }))
+    )
+    return { tickets, gate, settle, expire: () => timers.splice(0).forEach((fire) => fire()) }
+  }
+
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+
+  it("starts the provider only once the user's message is on the disk", async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const { tickets, settle } = messageHeldOnItsBarrier()
+
+    const dispatching = createRunDispatchFacade(deps)(payload(), senderEvent)
+    await turn()
+    expect(order).not.toContain('runCoordinator.dispatch')
+
+    settle.resolve()
+    await expect(dispatching).resolves.toEqual({ dispatched: true, appRunId: 'run-1' })
+    expect(order).toContain('runCoordinator.dispatch')
+    expect(tickets.snapshot().moments.user_message.covered).toBe(1)
+  })
+
+  it('starts it at the bound when the disk hangs, and counts the wait as overdue', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const { gate, expire } = messageHeldOnItsBarrier()
+
+    const dispatching = createRunDispatchFacade(deps)(payload(), senderEvent)
+    await turn()
+    expect(order).not.toContain('runCoordinator.dispatch')
+    expire()
+
+    await expect(dispatching).resolves.toMatchObject({ dispatched: true })
+    expect(gate.snapshot()).toMatchObject({ waits: 1, overdue: 1 })
+  })
+
+  it('fails the dispatch, never retried, when the disk refused the sync, and releases its reservation', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const { settle } = messageHeldOnItsBarrier()
+    const refusal = new Error('EIO: the disk refused')
+
+    const dispatching = createRunDispatchFacade(deps)(payload(), senderEvent)
+    settle.reject(refusal)
+
+    await expect(dispatching).rejects.toBe(refusal)
+    expect(deps.runCoordinator.dispatch).not.toHaveBeenCalled()
+    expect(deps.releaseDispatchReservation).toHaveBeenCalledTimes(1)
+    expect(deps.scheduledOccurrenceOwners.hasOrdinaryChatDispatchReservation('chat-1')).toBe(false)
+  })
+
+  it('waits for nothing on a chat with no ticket, as with the switch off', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const { gate } = messageHeldOnItsBarrier()
+
+    await createRunDispatchFacade(deps)(payload({ appChatId: 'chat-2' }), senderEvent)
+
+    expect(order).toContain('runCoordinator.dispatch')
+    expect(gate.snapshot().waits).toBe(0)
   })
 })

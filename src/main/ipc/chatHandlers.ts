@@ -38,6 +38,7 @@ import {
 } from '../../shared/chatUpdateTransport'
 import { ChatTranscriptMutationIndex } from '../store/ChatTranscriptMutationAuthoring'
 import { assertSafeChatId } from '../ChatPath'
+import { afterUserMoment } from '../run/DurableMomentGate'
 import {
   parseChatComposerSelectionPatchRequest,
   type ChatComposerSelectionPatchResult
@@ -800,7 +801,8 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         deps.pushRemoteThreadSnapshot(saved, workspaceId)
       }
     }
-    return {
+    // A message the save accepted is reported once it is on the disk.
+    return afterUserMoment(chatId, {
       chat: saved,
       // The preload needs the exact canonical base that participated in this
       // compare-and-swap to perform an honest three-way rebase of a queued
@@ -810,7 +812,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         !previous ||
         deps.getSettings().storeLocalChatHistory === false ||
         persistenceRevision(saved) > persistenceRevision(previous)
-    }
+    })
   })
 
   ipcMain.handle(
@@ -1051,7 +1053,8 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.broadcastThreadUpdate(saved.appChatId)
       const envelope = chatUpdateProducerEnvelopeFor(saved)
       const contentSub = computeChatSubRevisions(saved)
-      return {
+      // A message, an edit or a rewind the save accepted is reported once it is on the disk.
+      return afterUserMoment(saved.appChatId, {
         version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
         accepted: true,
         chatId: saved.appChatId,
@@ -1062,7 +1065,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         ...(envelope?.state.transcriptHash
           ? { transcriptHash: envelope.state.transcriptHash }
           : {})
-      }
+      })
     }
   )
 

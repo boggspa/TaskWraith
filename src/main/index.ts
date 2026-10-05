@@ -796,6 +796,7 @@ import {
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
 import { createMidRunSteeringDispatchReceipt } from './run/MidRunSteeringDispatchReceipt'
+import { awaitRunFinal, settleUserMoment } from './run/DurableMomentGate'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
 import { ToolBoundarySteerCoordinator } from './steering/ToolBoundarySteer'
 import { createClaudePostToolBatchSteerHook } from './steering/ClaudePostToolBatchSteer'
@@ -10204,6 +10205,7 @@ async function maybePropagateLinkedChildResult(
   } = { outcome: 'done' }
 ): Promise<void> {
   if (!chatId) return
+  await awaitRunFinal(chatId)
   const linkedChild = AppStore.getChat(chatId)
   if (!linkedChild) return
   const decision = decideLinkedChildReturn(linkedChild, terminal, {
@@ -33403,7 +33405,8 @@ function handleCodexServerRequest(message: any) {
         if (!delivered && !bridgeBroadcasterRef) {
           remoteQuestionRegistry.cancel(record.questionId, 'no-renderer')
         }
-      }
+      },
+      answered: () => settleUserMoment(state.appChatId, 'a Codex answer')
     }).then(
       (result) => {
         try {
@@ -44124,6 +44127,7 @@ async function executeUnscopedGeminiMcpTool(
             remoteQuestionRegistry.cancel(record.questionId, 'no-renderer')
           }
         })
+        await settleUserMoment(context.appChatId, 'an answer to an agent')
 
         text = mcpJson({
           ok: !result.cancelled,

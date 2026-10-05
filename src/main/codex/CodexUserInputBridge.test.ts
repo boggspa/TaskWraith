@@ -14,6 +14,51 @@ function record(question: string, questionId: string): RemoteQuestionRecord {
 }
 
 describe('CodexUserInputBridge', () => {
+  it('hands the answers back only once what recorded them is on the disk', async () => {
+    let release!: () => void
+    const answered = vi.fn(() => new Promise<void>((resolve) => (release = resolve)))
+    const callbacks: CodexUserInputBridgeCallbacks = {
+      registerQuestion: (question, resolve, _ttlMs, index) => {
+        resolve({ answer: 'yes', is_custom: false })
+        return record(question.question, `registry-${index}`)
+      },
+      emitQuestion: () => {},
+      answered,
+      now: () => 1_000
+    }
+    let settled = false
+    const pending = collectCodexUserInput(
+      { questions: [{ id: 'only', question: 'Proceed?' }] },
+      callbacks
+    ).then((result) => {
+      settled = true
+      return result
+    })
+
+    await vi.waitFor(() => expect(answered).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    release()
+    await expect(pending).resolves.toEqual({ ok: true, response: { answers: { only: 'yes' } } })
+  })
+
+  it('waits for nothing more when an answer was cancelled', async () => {
+    const answered = vi.fn(() => null)
+    const callbacks: CodexUserInputBridgeCallbacks = {
+      registerQuestion: (question, resolve, _ttlMs, index) => {
+        resolve({ answer: '', is_custom: false, cancelled: true, cancellation_reason: 'dismissed' })
+        return record(question.question, `registry-${index}`)
+      },
+      emitQuestion: () => {},
+      answered
+    }
+
+    await expect(
+      collectCodexUserInput({ questions: [{ id: 'only', question: 'Proceed?' }] }, callbacks)
+    ).resolves.toEqual({ ok: false, reason: 'dismissed' })
+    expect(answered).not.toHaveBeenCalled()
+  })
+
   it('collects multiple host questions sequentially and preserves ids', async () => {
     const resolvers: Array<(result: RemoteQuestionResolution) => void> = []
     const emitted: RemoteQuestionRecord[] = []

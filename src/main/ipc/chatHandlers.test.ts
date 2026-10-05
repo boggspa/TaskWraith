@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
+import { ChatDurabilityTickets } from '../store/ChatDurabilityTickets'
+import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
 import {
   CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS,
   ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
@@ -1675,5 +1677,149 @@ describe('registerChatHandlers', () => {
       reaped: ['stale-1']
     })
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the replies that report a message accepted, under barrier durability', () => {
+  afterEach(() => installDurableMomentGate(null))
+
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+
+  /**
+   * The gate the store installs while the switch is on, over tickets the test
+   * takes as the store's save would, with its clock and bound in the test's hands.
+   */
+  function gated() {
+    const clock = { now: 0 }
+    const tickets = new ChatDurabilityTickets({ now: () => clock.now })
+    const timers: Array<() => void> = []
+    const gate = new DurableMomentGate({
+      source: tickets,
+      now: () => clock.now,
+      setTimer: (callback) => {
+        timers.push(callback)
+        return callback
+      },
+      clearTimer: () => {}
+    })
+    installDurableMomentGate(gate)
+    return { clock, tickets, gate, expire: () => timers.splice(0).forEach((fire) => fire()) }
+  }
+
+  /** A save of a user message whose ticket waits for a barrier the test settles. */
+  function messageSavedOnHeldBarrier(
+    tickets: ChatDurabilityTickets,
+    deps: ReturnType<typeof createDeps>
+  ) {
+    let settle!: { resolve(): void; reject(reason: unknown): void }
+    const barrier = new Promise<void>((resolve, reject) => (settle = { resolve, reject }))
+    vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => {
+      tickets.note(record.appChatId, 8, 'user_message', barrier)
+      return { ...record, persistenceRevision: 8 }
+    })
+    return settle
+  }
+
+  const sent = chat('chat-1', {
+    persistenceRevision: 7,
+    messages: [{ id: 'user-1', role: 'user', content: 'Ship it', timestamp: 'now' }]
+  })
+
+  it('save-chat replies only once the message the save accepted is on the disk', async () => {
+    const { clock, tickets } = gated()
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', { persistenceRevision: 7 }))
+    const settle = messageSavedOnHeldBarrier(tickets, deps)
+    registerChatHandlers(deps)
+
+    const reply = handlerFor('save-chat')({} as any, sent)
+    expect(reply).toBeInstanceOf(Promise)
+    let replied = false
+    void (reply as Promise<unknown>).then(() => (replied = true))
+    await turn()
+    expect(replied).toBe(false)
+
+    settle.resolve()
+    await expect(reply).resolves.toMatchObject({ accepted: true, chat: { persistenceRevision: 8 } })
+    // Covered: once its grace has passed, it is no missing gate.
+    clock.now += 60_000
+    expect(tickets.snapshot()).toMatchObject({
+      missingGates: 0,
+      moments: { user_message: { covered: 1 } }
+    })
+  })
+
+  it('save-chat replies at the bound when the disk hangs, and counts the wait as overdue', async () => {
+    const { tickets, gate, expire } = gated()
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', { persistenceRevision: 7 }))
+    messageSavedOnHeldBarrier(tickets, deps)
+    registerChatHandlers(deps)
+
+    const reply = handlerFor('save-chat')({} as any, sent)
+    expect(reply).toBeInstanceOf(Promise)
+    expire()
+
+    await expect(reply).resolves.toMatchObject({ accepted: true })
+    expect(gate.snapshot()).toMatchObject({ waits: 1, overdue: 1 })
+  })
+
+  it('save-chat fails its reply when the disk refused the sync, as a save that throws does', async () => {
+    const { tickets } = gated()
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', { persistenceRevision: 7 }))
+    const settle = messageSavedOnHeldBarrier(tickets, deps)
+    registerChatHandlers(deps)
+    const refusal = new Error('EIO: the disk refused')
+
+    const reply = handlerFor('save-chat')({} as any, sent)
+    settle.reject(refusal)
+
+    await expect(reply).rejects.toBe(refusal)
+  })
+
+  it('save-chat replies at once, and synchronously, to a save with no moment', () => {
+    gated()
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', { persistenceRevision: 7 }))
+    registerChatHandlers(deps)
+
+    const reply = handlerFor('save-chat')({} as any, chat('chat-1', { title: 'Renamed' }))
+
+    expect(reply).not.toBeInstanceOf(Promise)
+    expect(reply).toMatchObject({ chat: { title: 'Renamed' } })
+  })
+
+  it('mutate-chat-transcript replies only once the message it appended is on the disk, or at the bound', async () => {
+    const { tickets, gate, expire } = gated()
+    const previous = chat('chat-1', { persistenceRevision: 3, messages: [] })
+    const appended = { id: 'user-2', role: 'user' as const, content: 'And this', timestamp: 'now' }
+    for (const hang of [false, true]) {
+      const deps = createDeps()
+      vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
+      const settle = messageSavedOnHeldBarrier(tickets, deps)
+      mockedHandle.mockReset()
+      registerChatHandlers(deps)
+
+      const reply = handlerFor('mutate-chat-transcript')(
+        { sender: { id: 41 } },
+        {
+          version: 1,
+          chatId: 'chat-1',
+          baseRevision: 3,
+          transcriptOps: [{ op: 'append', messages: [appended] }]
+        }
+      )
+      expect(reply).toBeInstanceOf(Promise)
+      let replied = false
+      void (reply as Promise<unknown>).then(() => (replied = true))
+      await turn()
+      expect(replied).toBe(false)
+
+      if (hang) expire()
+      else settle.resolve()
+      await expect(reply).resolves.toMatchObject({ accepted: true, revision: 8 })
+    }
+    expect(gate.snapshot()).toMatchObject({ waits: 2, overdue: 1 })
   })
 })

@@ -16,6 +16,7 @@ import type { CommandRuleApprovalFlow } from '../command-rules/CommandRuleApprov
 import { commandRuleListItem } from '../command-rules/CommandRuleApprovalFlow'
 import type { CommandRuleListItem } from '../../shared/commandRules'
 import { handleDesktopControl } from '../perf/desktopControlResponseSpan'
+import { awaitUserMoment } from '../run/DurableMomentGate'
 
 /**
  * approvalResponseHandlers — M3-3d approval-cluster extraction (per
@@ -209,6 +210,8 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
               }
               deps.saveChat(updatedChat)
               deps.broadcastChatUpdated(updatedChat)
+              // The grant is the decision: on the disk before the agent is told of it.
+              await awaitUserMoment(detection.appChatId)
             }
           } catch (err) {
             console.warn('[ExternalPathGrant] runtime grant persistence failed', err)

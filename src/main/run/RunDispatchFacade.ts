@@ -14,6 +14,7 @@ import type {
 } from '../ScheduledOccurrenceOwnerRegistry'
 import { applyReroutePlanToPayload, resolveProviderDispatch } from '../ProviderRunPause'
 import { hasAnyBudget } from '../WorkflowBudgetGuard'
+import { awaitUserMoment } from './DurableMomentGate'
 
 const mainOwnedScheduledOccurrencePayloads = new WeakSet<object>()
 
@@ -215,6 +216,8 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         : undefined
     await deps.repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
     await deps.expandPdfImagePathsForPayload(routedPayload)
+    // The user's message, and any decision before it, on the disk before a provider sees it.
+    await awaitUserMoment(routedPayload.appChatId)
     if (
       scheduledOwner &&
       deps.scheduledOccurrenceOwners.lookupByOwnerRunId(scheduledOwner.ownerRunId) !==

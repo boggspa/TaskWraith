@@ -13,6 +13,12 @@ export interface CodexUserInputBridgeCallbacks {
     index: number
   ) => RemoteQuestionRecord
   emitQuestion: (record: RemoteQuestionRecord) => void
+  /**
+   * Waited for after the last answer and before the answers go back to
+   * Codex: the wait for what recorded them to be on the disk. Null when there
+   * is nothing to wait for.
+   */
+  answered?: () => Promise<void> | null
   now?: () => number
 }
 
@@ -63,6 +69,7 @@ export async function collectCodexUserInput(
     answers[question.id] = result.answer
   }
 
+  await callbacks.answered?.()
   return {
     ok: true,
     response: buildCodexUserInputResponse(normalized.request.questions, answers)
