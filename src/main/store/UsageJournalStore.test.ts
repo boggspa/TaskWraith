@@ -77,6 +77,8 @@ describe('UsageJournalStore', () => {
   afterEach(() => {
     for (const store of stores) store.dispose()
     vi.useRealTimers()
+    expect(directory).not.toBe(os.tmpdir())
+    expect(directory.startsWith(os.tmpdir() + path.sep + 'taskwraith-usage-journal-')).toBe(true)
     fs.rmSync(directory, { recursive: true, force: true })
   })
 
@@ -278,7 +280,7 @@ describe('UsageJournalStore', () => {
     expect(store.compact()).toBe(false)
     expect(store.getRecords().map((record) => record.id)).toEqual(['old', 'fresh'])
 
-    fs.rmSync(archivePath, { recursive: true })
+    fs.rmdirSync(archivePath)
     expect(store.compact()).toBe(true)
     expect(
       (JSON.parse(fs.readFileSync(checkpointPath, 'utf8')) as UsageRecord[]).map(
@@ -527,7 +529,7 @@ describe('UsageJournalStore', () => {
     ).toBe(true)
     expect(fs.existsSync(checkpointPath)).toBe(false)
 
-    fs.rmSync(quarantinePath, { recursive: true })
+    fs.rmdirSync(quarantinePath)
     expect(store.compact()).toBe(true)
     expect(fs.readFileSync(quarantinePath)).toEqual(rawJournal)
     expect(
