@@ -11,7 +11,9 @@
  *
  * After each append the store hands it the save, and it takes a ticket for
  * each moment the save contains (`ChatSaveMoments`), waiting for a barrier of
- * that thread.
+ * that thread. What no moment pays is paid by a quiet thread's idle barrier
+ * or at quit, and dropped unpaid when the thread is erased
+ * (`ThreadDebtTracker`).
  */
 import { ChatDurabilityTickets, type ChatDurabilityTicketsSnapshot } from './ChatDurabilityTickets'
 import { classifyChatSaveMoments, type ChatSaveMoment } from './ChatSaveMoments'
@@ -27,6 +29,7 @@ import {
   createThreadDurabilityDebtFs,
   type ThreadDurabilityDebtFsSnapshot
 } from './ThreadDurabilityDebtFs'
+import { ThreadDebtTracker, type ThreadDebtTrackerSnapshot } from './ThreadDebtTracker'
 import type { ToolActivityDetailDebt } from './ToolActivityDetailLedger'
 import type { FlushReason } from './saveCoalescer'
 import type { ChatRecord } from './types'
@@ -36,6 +39,8 @@ export interface ThreadBarrierDurabilitySnapshot {
   /** Null when the port was supplied from outside and keeps no counters here. */
   port: ThreadDurabilityDebtFsSnapshot | null
   tickets: ChatDurabilityTicketsSnapshot
+  /** Threads that may still owe something, and the idle and quit barriers. */
+  threads: ThreadDebtTrackerSnapshot
 }
 
 export interface ThreadBarrierDurability {
@@ -54,6 +59,16 @@ export interface ThreadBarrierDurability {
   }
   /** What one save's tool-detail writer is given, for that save's thread. */
   detail(chatId: string): ToolActivityDetailDebt
+  /** A barrier for the thread, as every barrier the app raises for one is. */
+  barrier(chatId: string): Promise<void>
+  /** Erasure, after its own syncs: drop the thread's debt unpaid. */
+  forget(chatId: string): void
+  /** A global clear, after its own syncs: drop every thread's debt unpaid. */
+  forgetAll(): void
+  /** Quit: pay every thread within `budgetMs`, and count what was not paid. */
+  payAll(budgetMs: number): Promise<{ threads: number; unpaid: number }>
+  /** Stops the idle timer. */
+  dispose(): void
   /**
    * After a save's append: a ticket for each moment the save contains, at the
    * revision its batch wrote. A save that created the thread, or whose append
@@ -72,8 +87,11 @@ export interface ThreadBarrierDurability {
 export interface ThreadBarrierDurabilityOptions {
   /** Pays the debt; the production port when omitted. */
   port?: ThreadDurabilityPort
-  /** Milliseconds, for timing barriers and tickets. */
+  /** Milliseconds, for timing barriers and tickets, and for idle threads. */
   now?: () => number
+  /** The idle timer; the real one when omitted. */
+  setTimer?: (callback: () => void, ms: number) => unknown
+  clearTimer?: (handle: unknown) => void
 }
 
 /**
@@ -101,7 +119,13 @@ export function createThreadBarrierDurability(
   const built = options.port ? null : createThreadDurabilityDebtFs()
   const debt = createThreadDurabilityDebt({ port: options.port ?? built!, now })
   const tickets = new ChatDurabilityTickets({ now })
-  const note = debt.note
+  const threads = new ThreadDebtTracker({
+    debt,
+    now,
+    setTimer: options.setTimer,
+    clearTimer: options.clearTimer
+  })
+  const note = threads.note
   let unclassified = 0
   return {
     note,
@@ -109,6 +133,11 @@ export function createThreadBarrierDurability(
     tickets,
     journal: { noteDurabilityDebt: note, repairTornTailBeforeAppend: true },
     detail: (chatId) => ({ chatId, note }),
+    barrier: (chatId) => threads.barrier(chatId),
+    forget: (chatId) => threads.forget(chatId),
+    forgetAll: () => threads.forgetAll(),
+    payAll: (budgetMs) => threads.payAll(budgetMs),
+    dispose: () => threads.dispose(),
     noteSave(previous, next, persisted, flushReason) {
       const derived = persisted?.derived
       if (!previous || !derived) return []
@@ -126,17 +155,18 @@ export function createThreadBarrierDurability(
         // Never fail a save that is already written. What it wrote is paid
         // now instead, with no ticket to wait for it.
         if (unclassified++ === 0) console.error('[thread-barrier] could not classify a save', error)
-        debt.barrier(chatId).catch(() => {})
+        threads.barrier(chatId).catch(() => {})
         return []
       }
-      const barrierFor = barrierForSaveMoments(debt, chatId)
+      const barrierFor = barrierForSaveMoments(threads, chatId)
       for (const found of moments) tickets.note(chatId, revision, found.moment, barrierFor(found))
       return moments
     },
     snapshot: () => ({
       debt: debt.snapshot(),
       port: built?.snapshot() ?? null,
-      tickets: tickets.snapshot()
+      tickets: tickets.snapshot(),
+      threads: threads.snapshot()
     })
   }
 }

@@ -1569,6 +1569,8 @@ function purgeChatJournalArtifactsAdmitted(chatId: string): void {
       console.error('Failed to remove chat journal artifact', chatId, suffix, e)
     }
   }
+  // What the erased thread still owed the disk is dropped, not paid.
+  threadBarrierDurability?.forget(chatId)
 }
 
 /**
@@ -5035,6 +5037,7 @@ export class AppStore {
   }
 
   static shutdownMainDurability(): Promise<void> {
+    threadBarrierDurability?.dispose()
     return mainDurabilityRuntime.shutdown()
   }
 
@@ -9249,15 +9252,20 @@ export class AppStore {
       deferredHostMaterialization?.dispose()
       clearInterval(incrementalChatIdleCheckpointTimer)
     }
+    // Barrier durability pays what every thread owes within the same budget.
+    const quitBudgetMs = options?.hostDrainTimeoutMs ?? HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS
     if (legacyStoreCanWrite()) {
       saveCoalescer.flushAll()
       incrementalChatPersistence.checkpointAll()
       segmentedChatStore.checkpointAll()
+      if (threadBarrierDurability) await threadBarrierDurability.payAll(quitBudgetMs)
       return
     }
     incrementalChatPersistence.checkpointAll()
     segmentedChatStore.checkpointAll()
+    const paying = threadBarrierDurability?.payAll(quitBudgetMs)
     await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
+    if (paying) await paying
   }
 
   static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {
@@ -9865,6 +9873,8 @@ export class AppStore {
     for (const target of threadAuthorityArtifactPaths(userDataPath, chatId)) {
       fs.rmSync(target, { force: true })
     }
+    // What the erased thread still owed the disk is dropped, not paid.
+    threadBarrierDurability?.forget(chatId)
   }
 
   private static async executeHostChatRecordErasure(intent: HistoryDeletionIntent): Promise<void> {
@@ -9930,6 +9940,8 @@ export class AppStore {
       // Stage 3: the segmented store is a durable transcript copy; a global
       // clear must retire it (and its in-memory baselines) with the rest.
       segmentedChatStore.clear()
+      // What every thread still owed the disk is dropped, not paid.
+      threadBarrierDurability?.forgetAll()
     } else {
       // Discard, never flush, and tombstone the journal before the unlink —
       // same ordering guarantees as the legacy step.
@@ -10320,6 +10332,8 @@ export class AppStore {
         // the legacy files while leaving the journal intact would leave the
         // deleted transcript recoverable on disk (NON-NEGOTIABLE #4).
         removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
+        // What every thread still owed the disk is dropped, not paid.
+        threadBarrierDurability?.forgetAll()
       } else if (intent.kind === 'truncate') {
         const chatId = intent.rootChatId!
         const chatPath = chatPathForId(chatsDir, chatId)

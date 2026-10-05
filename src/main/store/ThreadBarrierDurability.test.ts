@@ -63,12 +63,13 @@ describe('the barrier durability layer', () => {
     expect(layer.tickets.snapshot().moments.user_message.noted).toBe(1)
   })
 
-  it('reports the debt, the tickets and, for the port it built, the port', () => {
+  it('reports the debt, the tickets, the threads owing and, for the port it built, the port', () => {
     const built = createThreadBarrierDurability()
     expect(built.snapshot()).toEqual({
       debt: built.debt.snapshot(),
       port: { started: 0, inFlight: 0, queued: 0, joined: 0, peakInFlight: 0 },
-      tickets: built.tickets.snapshot()
+      tickets: built.tickets.snapshot(),
+      threads: { owing: 0, idleBarriers: 0, idleFailed: 0, quitThreads: 0, quitUnpaid: 0 }
     })
     // A port supplied from outside has no counters of its own to report.
     expect(createThreadBarrierDurability({ port: recordingPort() }).snapshot().port).toBeNull()
@@ -213,5 +214,76 @@ describe('the barrier for the moments of one save', () => {
     expect(barrierFor({ moment: 'run_final', runId: 'run-1' })).toBe(first)
     expect(barrierFor({ moment: 'destructive' })).toBe(first)
     expect(raised).toEqual(['chat-1'])
+  })
+})
+
+describe('what pays the debt no moment pays', () => {
+  it("gives a thread the stores wrote for its idle barrier on one unref'd timer", async () => {
+    const port = recordingPort()
+    const timers: Array<{ callback: () => void; ms: number; unref: () => void }> = []
+    const layer = createThreadBarrierDurability({
+      port,
+      now: () => 0,
+      setTimer: (callback, ms) => {
+        const timer = { callback, ms, unref: vi.fn() }
+        timers.push(timer)
+        return timer
+      },
+      clearTimer: () => {}
+    })
+
+    layer.journal.noteDurabilityDebt('chat-1', {
+      file: '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      owner: 'journal'
+    })
+    layer
+      .detail('chat-1')
+      .note('chat-1', { file: '/p/run-artifacts/run-1/detail', owner: 'detail' })
+
+    expect(timers).toHaveLength(1)
+    expect(timers[0].ms).toBe(15_000)
+    expect(timers[0].unref).toHaveBeenCalled()
+    expect(layer.snapshot().threads.owing).toBe(1)
+  })
+
+  it("forgets a moment's thread once its barrier has paid it", async () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+    const previous = thread()
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      messages: [
+        ...previous.messages,
+        { id: 'user-2', role: 'user' as const, content: 'Next', timestamp: AT }
+      ]
+    }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+
+    layer.noteSave(previous, next, appended(previous, next), 'normal')
+    await layer.tickets.awaitChat('chat-1')
+
+    expect(layer.snapshot().threads.owing).toBe(0)
+  })
+
+  it('drops an erased thread unpaid, and every thread at a global clear', () => {
+    const layer = createThreadBarrierDurability({ port: recordingPort() })
+    layer.note('chat-1', { file: '/p/a', owner: 'journal' })
+    layer.note('chat-2', { file: '/p/b', owner: 'journal' })
+
+    layer.forget('chat-1')
+    expect(layer.debt.snapshot().owed.threads).toBe(1)
+    layer.forgetAll()
+    expect(layer.debt.snapshot().owed.threads).toBe(0)
+    expect(layer.snapshot().threads.owing).toBe(0)
+  })
+
+  it('pays every thread at quit', async () => {
+    const port = recordingPort()
+    const layer = createThreadBarrierDurability({ port })
+    layer.note('chat-1', { file: '/p/a', owner: 'journal' })
+    layer.note('chat-2', { file: '/p/b', owner: 'run-events', run: 'run-1' })
+
+    expect(await layer.payAll(1_000)).toEqual({ threads: 2, unpaid: 0 })
+    expect([...port.paid].sort()).toEqual(['file:/p/a', 'file:/p/b'])
   })
 })

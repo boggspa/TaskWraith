@@ -17,7 +17,9 @@ import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testuti
 
 const layers = vi.hoisted(() => ({
   port: null as ThreadDurabilityPort | null,
-  built: [] as ThreadBarrierDurability[]
+  built: [] as ThreadBarrierDurability[],
+  /** The idle timers each layer armed, and whether each was cleared. */
+  timers: [] as Array<{ ms: number; cleared: boolean }>
 }))
 
 vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
@@ -32,6 +34,21 @@ vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
         port: {
           syncFile: (target) => layers.port!.syncFile(target),
           syncDirectory: (target) => layers.port!.syncDirectory(target)
+        },
+        setTimer: (callback, ms) => {
+          const timer = setTimeout(callback, ms)
+          timer.unref()
+          layers.timers.push({ ms, cleared: false })
+          return { timer, record: layers.timers[layers.timers.length - 1] }
+        },
+        clearTimer: (handle) => {
+          const armed = handle as {
+            timer: ReturnType<typeof setTimeout>
+            record: { cleared: boolean }
+          }
+          if (!armed) return
+          clearTimeout(armed.timer)
+          armed.record.cleared = true
         }
       })
       layers.built.push(layer)
@@ -46,6 +63,7 @@ afterEach(async () => {
   while (disks.length > 0) disks.pop()!.dispose()
   layers.port = null
   layers.built.length = 0
+  layers.timers.length = 0
   vi.unstubAllEnvs()
   await disposeHostOwnedStores()
 })
@@ -561,6 +579,87 @@ describe("the journal's checkpoints, counted by trigger", () => {
         ['initial', 1, true, true],
         ['terminal', 1, true, true]
       ])
+    }
+  )
+})
+
+describe('what pays the debt no moment pays, through the real store', () => {
+  /** A thread through its whole run, its writes still owed, and the store holding it. */
+  async function owing(options: { gateOpen?: boolean } = {}) {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([], undefined, options)
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    layers.port = disk.port
+    for (const step of STEPS) step.act(AppStore)
+    const layer = layers.built[0]
+    expect(layer.debt.snapshot().owed.threads).toBe(1)
+    return { AppStore, disk, layer }
+  }
+
+  it.each(['delete', 'truncate'] as const)(
+    "drops an erased thread's debt unpaid on a %s, so no barrier syncs what the erasure removed",
+    async (kind) => {
+      const { AppStore, disk, layer } = await owing()
+
+      if (kind === 'delete') await AppStore.deleteChatViaHost(CHAT)
+      else await AppStore.truncateChatHistoryViaHost(CHAT)
+
+      expect(layer.debt.snapshot().owed.threads).toBe(0)
+      expect(layer.snapshot().threads.owing).toBe(0)
+      disk.paid.length = 0
+      await layer.barrier(CHAT)
+      expect(disk.paid).toEqual([])
+    }
+  )
+
+  it("drops every thread's debt at a global clear", async () => {
+    const { AppStore, disk, layer } = await owing()
+
+    await AppStore.clearChatsViaHost()
+
+    expect(layer.debt.snapshot().owed.threads).toBe(0)
+    expect(layer.snapshot().threads.owing).toBe(0)
+    disk.paid.length = 0
+    await layer.barrier(CHAT)
+    expect(disk.paid).toEqual([])
+  })
+
+  it.each(['delete', 'clear'] as const)(
+    "drops the debt on the admitted path's %s too, taken before the Host owned the store",
+    async (kind) => {
+      const { AppStore, layer } = await owing({ gateOpen: true })
+
+      if (kind === 'delete') await AppStore.deleteChat(CHAT)
+      else await AppStore.clearChats()
+
+      expect(layer.debt.snapshot().owed.threads).toBe(0)
+      expect(layer.snapshot().threads.owing).toBe(0)
+    }
+  )
+
+  it('stops the idle timer when the store shuts its durability down', async () => {
+    const { AppStore } = await owing()
+    expect(layers.timers.filter((timer) => !timer.cleared)).toHaveLength(1)
+
+    await AppStore.shutdownMainDurability()
+
+    expect(layers.timers.filter((timer) => !timer.cleared)).toHaveLength(0)
+  })
+
+  it.each([false, true])(
+    'pays what every thread owes at quit (gate open: %s)',
+    async (gateOpen) => {
+      const { AppStore, disk, layer } = await owing({ gateOpen })
+      disk.paid.length = 0
+
+      await AppStore.flushAllChatSaves({ hostDrainTimeoutMs: 5_000 })
+
+      expect(layer.debt.snapshot().owed.threads).toBe(0)
+      expect(layer.snapshot().threads).toMatchObject({ owing: 0, quitThreads: 1, quitUnpaid: 0 })
+      expect(disk.paid.map(stable)).toEqual(
+        expect.arrayContaining([`file:${EVENTS}`, `file:${DETAIL}`])
+      )
     }
   )
 })
