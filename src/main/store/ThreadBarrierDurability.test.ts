@@ -147,7 +147,7 @@ describe('the tickets a save takes', () => {
       runs: [{ runId: 'run-1', startedAt: AT, status: 'cancelled' }]
     }
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
-    // What another run of the thread wrote: the user's barrier pays it, the run's would not.
+    // What another run of the thread wrote: neither barrier of this save pays it.
     layer.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
 
     expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
@@ -157,19 +157,58 @@ describe('the tickets a save takes', () => {
 
     const tickets = layer.tickets.snapshot().moments
     expect([tickets.user_message.pending, tickets.run_final.pending]).toEqual([1, 1])
-    expect(layer.debt.snapshot().barriers).toMatchObject({ raised: 2, urgent: 1, scoped: 1 })
+    expect(layer.debt.snapshot().barriers).toMatchObject({
+      raised: 2,
+      urgent: 1,
+      threadOnly: 1,
+      scoped: 1
+    })
     let settled = false
     const waited = layer.tickets.awaitChat('chat-1').then(() => (settled = true))
     await Promise.resolve()
-    // The urgent barrier was raised first and took everything; the run's joined it.
-    expect([...port.asked].sort()).toEqual([
-      '/p/chat-journal-v2/chat-1.mutations.jsonl',
-      '/p/run-events/run-2.jsonl'
-    ])
+    // The user's barrier took the journal; the run's, owed nothing else, joined it.
+    expect(port.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
     expect(settled).toBe(false)
     port.release()
     await waited
     expect(layer.tickets.snapshot().moments.user_message.covered).toBe(1)
+    expect(layer.debt.snapshot().owed.files).toBe(1)
+  })
+
+  it("asks the port for the journal's two paths only, on a thread where runs owe files", async () => {
+    const port = recordingPort()
+    const layer = createThreadBarrierDurability({ port })
+    const previous = thread()
+    const next = {
+      ...previous,
+      persistenceRevision: 8,
+      messages: [
+        ...previous.messages,
+        { id: 'user-2', role: 'user' as const, content: 'One more thing', timestamp: AT }
+      ]
+    }
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    layer.note('chat-1', { directory: '/p/chat-journal-v2' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+    layer.note('chat-1', { directory: '/p/run-artifacts/run-1', run: 'run-1' })
+    layer.note('chat-1', {
+      file: '/p/run-artifacts/run-2/tool-activity-details.jsonl',
+      owner: 'detail',
+      run: 'run-2'
+    })
+
+    layer.noteSave(previous, next, appended(previous, next), 'normal')
+    await layer.tickets.awaitChat('chat-1')
+    expect(port.paid).toEqual([
+      'file:/p/chat-journal-v2/chat-1.mutations.jsonl',
+      'directory:/p/chat-journal-v2'
+    ])
+
+    // A dispatch's barrier is the same: what the runs owe stays theirs.
+    layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
+    await layer.awaitDurable('chat-1')
+    expect(port.paid.slice(2)).toEqual(['file:/p/chat-journal-v2/chat-1.mutations.jsonl'])
+    expect(layer.debt.snapshot().owed).toMatchObject({ files: 2, directories: 1 })
   })
 
   it('takes none, and raises no barrier, for a save with no moment', () => {
@@ -239,13 +278,13 @@ describe('the barriers for the moments of one save', () => {
     expect(barrierFor({ moment: 'run_final', runId: 'run-1' })).toBe(first)
     expect(barrierFor({ moment: 'run_final', runId: 'run-2' })).not.toBe(first)
     expect(raised).toEqual([
-      ['chat-1', { urgent: true }],
+      ['chat-1', { threadOnly: true, urgent: true }],
       ['chat-1', { run: 'run-1' }],
       ['chat-1', { run: 'run-2' }]
     ])
   })
 
-  it("raises the user's barrier first, so a run's barrier in the same save joins it", async () => {
+  it("raises the user's barrier first, so the user never waits behind the ending run's files", async () => {
     const port = heldPort()
     const layer = createThreadBarrierDurability({ port })
     const previous = thread({
@@ -262,7 +301,7 @@ describe('the barriers for the moments of one save', () => {
       runs: [{ runId: 'run-1', startedAt: AT, status: 'completed' }]
     }
     layer.note('chat-1', { file: '/p/chat-journal-v2/chat-1.mutations.jsonl', owner: 'journal' })
-    layer.note('chat-1', { file: '/p/run-events/run-2.jsonl', owner: 'run-events', run: 'run-2' })
+    layer.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
 
     expect(layer.noteSave(previous, next, appended(previous, next), 'normal')).toEqual([
       { moment: 'run_final', runId: 'run-1' },
@@ -270,13 +309,14 @@ describe('the barriers for the moments of one save', () => {
     ])
     await Promise.resolve()
 
-    // One trip to the port for both, the user's first: nothing waits behind the run's barrier.
-    expect([...port.asked].sort()).toEqual([
-      '/p/chat-journal-v2/chat-1.mutations.jsonl',
-      '/p/run-events/run-2.jsonl'
-    ])
+    // The user's barrier went first with the journal alone; the run's files follow it.
+    expect(port.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
     port.release()
     await layer.tickets.awaitChat('chat-1')
+    expect(port.asked).toEqual([
+      '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      '/p/run-events/run-1.jsonl'
+    ])
   })
 
   it("pays a run's end with the thread's own debt and that run's, and leaves another run's owed", async () => {
@@ -333,7 +373,7 @@ describe('what a dispatch waits for', () => {
     let settled = false
     const waiting = layer.awaitDurable('chat-1').then(() => (settled = true))
     await Promise.resolve()
-    expect(layer.debt.snapshot().barriers).toMatchObject({ urgent: 2, scoped: 0 })
+    expect(layer.debt.snapshot().barriers).toMatchObject({ urgent: 2, threadOnly: 2, scoped: 0 })
     expect(settled).toBe(false)
 
     port.release()
@@ -392,7 +432,7 @@ describe('what pays the debt no moment pays', () => {
     expect(layer.snapshot().threads.owing).toBe(1)
   })
 
-  it("forgets a moment's thread once its barrier has paid it", async () => {
+  it("keeps a moment's thread owing after the user's barrier, and forgets it after one of the whole thread", async () => {
     const layer = createThreadBarrierDurability({ port: recordingPort() })
     const previous = thread()
     const next = {
@@ -407,7 +447,10 @@ describe('what pays the debt no moment pays', () => {
 
     layer.noteSave(previous, next, appended(previous, next), 'normal')
     await layer.tickets.awaitChat('chat-1')
+    // It paid the thread's own debt alone: a run may still owe.
+    expect(layer.snapshot().threads.owing).toBe(1)
 
+    await layer.barrier('chat-1')
     expect(layer.snapshot().threads.owing).toBe(0)
   })
 

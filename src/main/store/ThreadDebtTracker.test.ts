@@ -231,6 +231,26 @@ describe('what a barrier leaves the tracker', () => {
   })
 })
 
+describe('a barrier of the thread alone', () => {
+  it('keeps the thread owing while a run still owes, and its idle barrier pays the run', async () => {
+    const { time, disk, debt, tracker, write } = tracked()
+    write('chat-1')
+    tracker.note('chat-1', { file: '/p/run-events/run-1.jsonl', owner: 'run-events', run: 'run-1' })
+
+    await tracker.barrier('chat-1', { threadOnly: true, urgent: true })
+    expect(disk.asked).toEqual(['/p/chat-journal-v2/chat-1.mutations.jsonl'])
+    expect(tracker.snapshot().owing).toBe(1)
+
+    await time.advance(THREAD_IDLE_BARRIER_MS)
+    expect(disk.asked).toEqual([
+      '/p/chat-journal-v2/chat-1.mutations.jsonl',
+      '/p/run-events/run-1.jsonl'
+    ])
+    expect(debt.snapshot().owed.threads).toBe(0)
+    expect(tracker.snapshot().owing).toBe(0)
+  })
+})
+
 describe('erasure', () => {
   it("drops an erased thread's debt unpaid, and gives it no idle barrier", async () => {
     const { time, disk, debt, tracker, write } = tracked()

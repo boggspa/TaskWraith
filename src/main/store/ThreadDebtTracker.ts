@@ -8,8 +8,8 @@
  * so this knows each thread that may still owe something and when it last
  * wrote. A barrier of the whole thread that settles with nothing noted since
  * it was raised has paid the thread, which is then forgotten here. A barrier
- * of one run pays only the thread's own debt and that run's, so the thread
- * stays here after it: other runs may still owe.
+ * of one run, or of the thread's own debt alone, leaves what runs owe, so the
+ * thread stays here after it for its idle barrier to pay.
  *
  * Idle: a thread that owes something and has written nothing for
  * `THREAD_IDLE_BARRIER_MS` gets one barrier, neither scoped nor urgent. One
@@ -116,10 +116,12 @@ export class ThreadDebtTracker {
 
   /**
    * A barrier for the thread, with the debt's own options. One of the whole
-   * thread forgets the thread here if nothing was noted meanwhile.
+   * thread, neither of a run nor of the thread's own debt alone, forgets the
+   * thread here if nothing was noted meanwhile.
    */
   barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void> {
-    const raisedAt = options?.run === undefined ? this.owing.get(chatId)?.generation : undefined
+    const wholeThread = options?.run === undefined && options?.threadOnly !== true
+    const raisedAt = wholeThread ? this.owing.get(chatId)?.generation : undefined
     const barrier = options ? this.debt.barrier(chatId, options) : this.debt.barrier(chatId)
     if (raisedAt !== undefined) {
       barrier.then(

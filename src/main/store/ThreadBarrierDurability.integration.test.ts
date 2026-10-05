@@ -481,8 +481,8 @@ describe('the tickets each save takes', () => {
     disks.push(disk)
     layers.port = disk.port
     const taken: Array<[string, ChatDurabilityMoment[]]> = []
-    /** The barriers each save's tickets raised: urgent ones, and ones of a run. */
-    const raised: Array<[string, { urgent: number; scoped: number }]> = []
+    /** The barriers each save's tickets raised: urgent ones of the thread alone, and ones of a run. */
+    const raised: Array<[string, { urgent: number; threadOnly: number; scoped: number }]> = []
     for (const step of steps) {
       const before = noted(layers.built[0])
       const barriersBefore = layers.built[0].debt.snapshot().barriers
@@ -499,6 +499,7 @@ describe('the tickets each save takes', () => {
         step.name,
         {
           urgent: barriersAfter.urgent - barriersBefore.urgent,
+          threadOnly: barriersAfter.threadOnly - barriersBefore.threadOnly,
           scoped: barriersAfter.scoped - barriersBefore.scoped
         }
       ])
@@ -525,10 +526,10 @@ describe('the tickets each save takes', () => {
     ])
     // What the user sits in goes ahead of other syncs; a run's end pays its own run.
     expect(raised.filter(([, kinds]) => kinds.urgent + kinds.scoped > 0)).toEqual([
-      ['a user message', { urgent: 1, scoped: 0 }],
-      ['the run ends', { urgent: 0, scoped: 1 }],
-      ["an answer to an agent's question", { urgent: 1, scoped: 0 }],
-      ['rows removed from the transcript', { urgent: 1, scoped: 0 }]
+      ['a user message', { urgent: 1, threadOnly: 1, scoped: 0 }],
+      ['the run ends', { urgent: 0, threadOnly: 0, scoped: 1 }],
+      ["an answer to an agent's question", { urgent: 1, threadOnly: 1, scoped: 0 }],
+      ['rows removed from the transcript', { urgent: 1, threadOnly: 1, scoped: 0 }]
     ])
   })
 
@@ -540,6 +541,26 @@ describe('the tickets each save takes', () => {
       ['a user message', ['user_message']],
       ['the run ends', ['run_final']]
     ])
+  })
+
+  it("pays for a user's message the journal alone, and leaves what the streaming run wrote owed", async () => {
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    const { AppStore, profilePath } = await importHostOwnedStore([])
+    const disk = watchCrashDisk(profilePath)
+    disks.push(disk)
+    layers.port = disk.port
+    STEPS[0].act(AppStore)
+    STEPS[1].act(AppStore)
+    await layers.built[0].debt.barrier(CHAT)
+    disk.paid.length = 0
+
+    STEPS[2].act(AppStore)
+    STEPS[3].act(AppStore)
+    await layers.built[0].tickets.awaitChat(CHAT, ['user_message'])
+
+    expect(disk.paid.map(stable)).toEqual([`file:${JOURNAL}`])
+    // The run's streamed event is its own barrier's, or the idle one's.
+    expect(layers.built[0].debt.snapshot().owed).toMatchObject({ files: 1, directories: 0 })
   })
 
   it("pays at a run's end what that run left owed and the thread's journal, and leaves another seat's writes owed", async () => {

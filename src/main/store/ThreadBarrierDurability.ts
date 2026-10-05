@@ -123,17 +123,13 @@ type RaisesBarriers = {
 
 /**
  * The barrier of every wait the user sits in: the moments of a save that are
- * theirs, and a dispatch. Urgent, so the port starts its syncs ahead of every
- * sync that is not.
- *
- * NAMED SEAM for the log lane's slice 4d. These waits need only the thread's
- * own debt: the message, the decision, the destructive batch and the record a
- * dispatch reads are all journal lines. Until 4d's option to pay only that
- * lands, this pays everything the thread owes, what streaming runs wrote
- * included.
+ * theirs, and a dispatch. It pays the thread's own debt alone: the message,
+ * the decision, the destructive batch and the record a dispatch reads are all
+ * journal lines, and what streaming runs wrote is left to their own barriers.
+ * Urgent, so the port starts its syncs ahead of every sync that is not.
  */
 export function userWaitBarrier(debt: RaisesBarriers, chatId: string): Promise<void> {
-  return debt.barrier(chatId, { urgent: true })
+  return debt.barrier(chatId, { threadOnly: true, urgent: true })
 }
 
 /**
