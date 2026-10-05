@@ -747,8 +747,9 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
   async requestThreadOwner(
     params: HostLocalTransportThreadOwnerParams
   ): Promise<Extract<HostLocalTransportSuccessResult, { kind: 'thread.owner' }>> {
+    const action = params.action
     const result = await this.request('thread.owner', params)
-    if (result.kind !== 'thread.owner' || result.action !== params.action) {
+    if (result.kind !== 'thread.owner' || result.action !== action) {
       throw new Error('TaskWraith Host returned an unexpected thread owner result.')
     }
     return result

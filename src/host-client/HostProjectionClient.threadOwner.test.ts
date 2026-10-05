@@ -159,6 +159,30 @@ describe('HostProjectionClient thread ownership request', () => {
     )
   })
 
+  it('matches the sent action when the caller mutates its params while awaiting the reply', async () => {
+    const f = await fixture()
+    const result = {
+      kind: 'thread.owner',
+      action: 'claim',
+      reply: { threadId: 'thread', claimId: 1, granted: true, epoch: { host: HOST, grant: 1 } }
+    }
+    f.reply(result)
+    const params = { ...CLAIM }
+    const answer = f.client.requestThreadOwner(params)
+    ;(params as { action: string }).action = 'release'
+    await expect(answer).resolves.toEqual(result)
+    expect(f.requests).toEqual([{ kind: 'thread.owner', params: CLAIM }])
+  })
+
+  it('does not accept a mismatched action after the caller mutates its params', async () => {
+    const f = await fixture()
+    f.reply({ kind: 'thread.owner', action: 'release', released: true })
+    const params = { ...CLAIM }
+    const answer = f.client.requestThreadOwner(params)
+    ;(params as { action: string }).action = 'release'
+    await expect(answer).rejects.toThrow('unexpected thread owner result')
+  })
+
   it('preserves old-Host unknown_request_kind for connection-scoped fallback', async () => {
     const f = await fixture()
     f.fail()
