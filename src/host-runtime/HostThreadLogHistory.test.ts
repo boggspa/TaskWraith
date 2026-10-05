@@ -307,13 +307,11 @@ class App {
 
   /** Let the worker fold the waiting compaction, and wait until it is adopted. */
   async compact(): Promise<void> {
-    const adopted = this.journal.stats().compactionsAdopted
+    // Join the existing compaction before completing its worker. Counting
+    // event-loop turns can run out before the off-thread unlink completes.
+    const adopted = this.journal.checkpointDeferred(CHAT)
     this.compactor.fold()
-    for (let turn = 0; turn < 500; turn += 1) {
-      if (this.journal.stats().compactionsAdopted > adopted) return
-      await settle()
-    }
-    throw new Error('the compaction was not adopted')
+    expect(await adopted).toBe('checkpointed')
   }
 }
 
