@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { applyChatRecordMutations, type ChatRecordMutationBatch } from './ChatRecordMutation'
@@ -116,6 +117,8 @@ export interface IncrementalChatJournalStats {
   tombstoneRejects: number
   /** Segments set aside because they do not chain; see `noteDurabilityDebt`. */
   segmentsSetAside: number
+  /** Chats whose checkpoint did not parse, read as having none; see `noteDurabilityDebt`. */
+  checkpointsReadAsAbsent: number
 }
 
 /**
@@ -172,8 +175,18 @@ export interface IncrementalChatJournalOptions {
    * removed by a compaction. Whoever needs a line to be on the disk waits on
    * the thread's own barrier: `awaitDeferredDurability` and
    * `drainDeferredDurability` have nothing to wait for, because nothing was
-   * issued here. Writing a checkpoint, the re-anchor, torn-tail repair and
-   * erasure keep every sync they have.
+   * issued here. The first checkpoint of a chat is written the same way:
+   * written, renamed into place, and its file and the directory owed. Writing
+   * any later checkpoint, the re-anchor, torn-tail repair and erasure keep
+   * every sync they have.
+   *
+   * A power cut can then take a chat's first checkpoint, name and all, or
+   * leave its name with only part of its bytes. No barrier resolved for that
+   * chat, since a barrier pays the checkpoint with its first line, so a
+   * checkpoint that does not parse is read as absent: the chat has no record,
+   * its segments are set aside as below, and its next save starts it again.
+   * It is counted and logged by chat id only. One that parses and is not a
+   * checkpoint is still refused.
    *
    * A power cut can then leave segments that do not chain: a segment that
    * reached the disk while the end of the one before it did not, or segments
@@ -301,6 +314,8 @@ interface SetAsideSegment {
   last: number
 }
 
+/** The random part of a temporary file's name: 2^48 - 1, the most `randomInt` allows. */
+const TEMPORARY_NAME_RANGE = 0xffff_ffff_ffff
 const DEFAULT_MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 const DEFAULT_MAX_JOURNAL_ENTRIES = 1_000
 const DEFAULT_IDLE_CHECKPOINT_MS = 15_000
@@ -433,6 +448,9 @@ export function createIncrementalChatJournal(
   let tornTailBytesTruncated = 0
   let corruptSegmentRejects = 0
   let segmentsSetAside = 0
+  let checkpointsReadAsAbsent = 0
+  /** Chats whose checkpoint a load read as absent, logged once each. */
+  const checkpointsAbsentLogged = new Set<string>()
   /** Chats whose active segment stops at a line that does not chain: no line may follow it. */
   const brokenChains = new Set<string>()
   /**
@@ -491,12 +509,21 @@ export function createIncrementalChatJournal(
     }
   }
 
+  /**
+   * A name for a file before it is renamed into place. A power cut can leave
+   * one behind, name and all, and a later process may have the same pid and
+   * count its writes from zero again: the random number keeps a name left
+   * behind from being chosen again.
+   */
+  const temporaryPath = (filePath: string): string =>
+    path.join(
+      baseDir,
+      `.${path.basename(filePath)}.${process.pid}.${writeSequence++}.${randomInt(TEMPORARY_NAME_RANGE)}.tmp`
+    )
+
   const atomicWrite = (filePath: string, data: string): number => {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
-    const tempPath = path.join(
-      baseDir,
-      `.${path.basename(filePath)}.${process.pid}.${writeSequence++}.tmp`
-    )
+    const tempPath = temporaryPath(filePath)
     let fd: number | null = null
     try {
       fd = fs.openSync(tempPath, 'wx+', 0o600)
@@ -522,6 +549,39 @@ export function createIncrementalChatJournal(
       }
       throw error
     }
+  }
+
+  /**
+   * As `atomicWrite`, without its syncs: the file is owed to the chat's next
+   * barrier, and the caller owes the directory its new name.
+   */
+  const writeUnsynced = (chatId: string, filePath: string, data: string): number => {
+    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    const tempPath = temporaryPath(filePath)
+    let fd: number | null = null
+    try {
+      fd = fs.openSync(tempPath, 'wx+', 0o600)
+      fs.writeFileSync(fd, data, 'utf8')
+      fs.closeSync(fd)
+      fd = null
+      fs.renameSync(tempPath, filePath)
+    } catch (error) {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd)
+        } catch {
+          /* best effort */
+        }
+      }
+      try {
+        fs.unlinkSync(tempPath)
+      } catch {
+        /* best effort */
+      }
+      throw error
+    }
+    noteDebt!(chatId, { file: filePath, owner: 'journal' })
+    return Buffer.byteLength(data, 'utf8')
   }
 
   // The journal file is created lazily by its first append (initialize, a
@@ -773,7 +833,16 @@ export function createIncrementalChatJournal(
     try {
       parsed = JSON.parse(raw)
     } catch {
-      throw new Error(`Incremental chat checkpoint for ${chatId} is corrupt`)
+      if (!noteDebt) throw new Error(`Incremental chat checkpoint for ${chatId} is corrupt`)
+      // A first checkpoint a power cut left only part of: see `noteDurabilityDebt`.
+      if (!checkpointsAbsentLogged.has(chatId)) {
+        checkpointsAbsentLogged.add(chatId)
+        checkpointsReadAsAbsent += 1
+        console.warn(
+          `[incremental-chat] the checkpoint of ${chatId} does not parse and is read as absent`
+        )
+      }
+      return null
     }
     if (!validCheckpoint(parsed, chatId)) {
       throw new Error(`Incremental chat checkpoint for ${chatId} has an invalid shape`)
@@ -1168,7 +1237,11 @@ export function createIncrementalChatJournal(
       // Serialized immediately below; see replaceAuthoritativeCheckpoint.
       record
     }
-    const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(checkpoint))
+    // Under the barrier, as a line is: nothing is lost if a power cut takes
+    // it, since no barrier has resolved for the chat. See `noteDurabilityDebt`.
+    const bytes = noteDebt
+      ? writeUnsynced(chatId, checkpointPath(chatId), JSON.stringify(checkpoint))
+      : atomicWrite(checkpointPath(chatId), JSON.stringify(checkpoint))
     options.descriptorCache?.retireSync([chatId])
     for (const filePath of [sealedPath(chatId), journalPath(chatId)]) {
       try {
@@ -1179,7 +1252,8 @@ export function createIncrementalChatJournal(
     }
     removeSetAside(chatId)
     forgetChainDamage(chatId)
-    fsyncDirectory()
+    if (noteDebt) noteDebt(chatId, { directory: baseDir })
+    else fsyncDirectory()
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
     state.headRevision = revision
@@ -2099,7 +2173,8 @@ export function createIncrementalChatJournal(
     tornTailBytesTruncated,
     corruptSegmentRejects,
     tombstoneRejects,
-    segmentsSetAside
+    segmentsSetAside,
+    checkpointsReadAsAbsent
   })
 
   return {

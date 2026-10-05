@@ -416,7 +416,7 @@ const initialize: Step = {
   run: (live) => {
     live.journal.initialize(CHAT, records[0])
     live.head = 1
-    live.covered = 1
+    // Written without a sync, like a line: only a barrier makes it safe.
   }
 }
 
@@ -585,7 +585,15 @@ describe.skipIf(process.platform === 'win32')(
         if (problem) return problem
         if (loaded.revision !== readOnly.revision)
           return `the writer read ${loaded.revision}, the reader ${readOnly.revision}`
-        if (loaded.revision === null) return null
+        if (loaded.revision === null) {
+          // The chat has no record: its next save starts it again.
+          journal.initialize(CHAT, records[0])
+          journal.append(batches[0])
+          const again = createIncrementalChatJournal(directory, {
+            noteDurabilityDebt: ignore
+          }).replay(CHAT)
+          return again.revision === 2 ? null : `started again, the thread read ${again.revision}`
+        }
         // The thread goes on from what it loaded.
         journal.append(batches[loaded.revision - 1])
         const next = createIncrementalChatJournal(directory, {

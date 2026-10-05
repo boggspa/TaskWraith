@@ -68,6 +68,7 @@ function removeTemporaryDirectory(directory: string): void {
 const CHAT = 'chat-1'
 const ACTIVE = `${CHAT}.mutations.jsonl`
 const SEALED = `${CHAT}.sealed.mutations.jsonl`
+const CHECKPOINT = `${CHAT}.checkpoint.json`
 
 function chat(revision = 1, content = 'initial'): ChatRecord {
   return {
@@ -251,7 +252,12 @@ describe('a journal that leaves syncing to the thread barrier', () => {
     const { records, batches } = chain(3)
     const journal = writer()
     journal.initialize(CHAT, records[0])
-    expect(notes).toEqual([])
+    // The first checkpoint, and its name: see the test of the first checkpoint.
+    expect(notes).toEqual([
+      [CHAT, { file: path.join(baseDir, CHECKPOINT), owner: 'journal' }],
+      owedDirectory()
+    ])
+    fromHere()
 
     journal.append(batches[0])
     expect(notes).toEqual([owedDirectory(), owedSegment()])
@@ -296,13 +302,51 @@ describe('a journal that leaves syncing to the thread barrier', () => {
     expect(notes).toEqual([])
   })
 
-  it('still syncs in line when it writes the first checkpoint, re-anchors or erases', () => {
+  it('writes the first checkpoint without a sync, and owes its file and the directory', () => {
+    const { records } = chain(0)
+    const journal = writer()
+
+    journal.initialize(CHAT, records[0])
+
+    expect(syncs.issued).toEqual([])
+    expect(scheduled).toBe(0)
+    expect(notes).toEqual([
+      [CHAT, { file: path.join(baseDir, CHECKPOINT), owner: 'journal' }],
+      owedDirectory()
+    ])
+    expect(replayed()).toMatchObject({ record: records[0], revision: 1 })
+    // No temporary file is left beside it.
+    expect(fs.readdirSync(baseDir)).toEqual([CHECKPOINT])
+  })
+
+  it.each([true, false])(
+    'writes a checkpoint past temporary files an earlier process with this pid left behind (leaving syncing to the barrier: %s)',
+    (owing) => {
+      const { records } = chain(0)
+      const left = Array.from(
+        { length: 4 },
+        (_unused, index) => `.${CHECKPOINT}.${process.pid}.${index}.tmp`
+      )
+      for (const name of left) fs.writeFileSync(path.join(baseDir, name), '')
+
+      writer(owing ? {} : { noteDurabilityDebt: undefined }).initialize(CHAT, records[0])
+
+      expect(replayed()).toMatchObject({ record: records[0], revision: 1 })
+      expect(fs.readdirSync(baseDir).sort()).toEqual([...left, CHECKPOINT].sort())
+    }
+  )
+
+  it('a journal that syncs still writes its first checkpoint with three', () => {
+    const { records } = chain(0)
+    writer({ noteDurabilityDebt: undefined }).initialize(CHAT, records[0])
+    expect(syncs.issued).toEqual(['fsyncSync', 'fsyncSync', 'fsyncSync'])
+  })
+
+  it('still syncs in line when it re-anchors or erases', () => {
     const { records, batches } = chain(2)
     const journal = writer()
 
     journal.initialize(CHAT, records[0])
-    expect(syncs.issued).toEqual(['fsyncSync', 'fsyncSync', 'fsyncSync'])
-
     journal.append(batches[0])
     fromHere()
     journal.replaceAuthoritativeCheckpoint(CHAT, records[2])
@@ -614,6 +658,7 @@ describe.skipIf(process.platform === 'win32')(
 
     afterEach(() => {
       disk.dispose()
+      vi.restoreAllMocks()
       removeTemporaryDirectory(baseDir)
     })
 
@@ -633,6 +678,8 @@ describe.skipIf(process.platform === 'win32')(
       const { records, batches } = chain(5)
       const journal = writer()
       journal.initialize(CHAT, records[0])
+      // The chat's first checkpoint is safe: these tests are about its lines.
+      await debt.barrier(CHAT)
       fromHere()
 
       journal.append(batches[0], { durability: 'immediate' })
@@ -647,10 +694,11 @@ describe.skipIf(process.platform === 'win32')(
       expect(afterPowerLoss()).toMatchObject({ record: records[3], appliedBatches: 3 })
     })
 
-    it('loses the whole segment, name and all, when no barrier was raised', () => {
+    it('loses the whole segment, name and all, when no barrier was raised', async () => {
       const { records, batches } = chain(3)
       const journal = writer()
       journal.initialize(CHAT, records[0])
+      await debt.barrier(CHAT)
       for (const batch of batches) journal.append(batch, { durability: 'immediate' })
 
       expect(afterPowerLoss()).toMatchObject({ record: records[0], appliedBatches: 0 })
@@ -786,6 +834,106 @@ describe.skipIf(process.platform === 'win32')(
       expect(fs.existsSync(activePath)).toBe(false)
     })
 
+    describe('the first checkpoint', () => {
+      const checkpointPath = (): string => path.join(baseDir, CHECKPOINT)
+
+      it('is lost, and the chat with it, when no barrier followed it', () => {
+        const { records, batches } = chain(1)
+        const journal = writer()
+        journal.initialize(CHAT, records[0])
+        journal.append(batches[0])
+
+        disk.powerLoss()
+
+        expect(fs.readdirSync(baseDir)).toEqual([])
+        expect(createIncrementalChatJournal(baseDir).replay(CHAT)).toMatchObject({
+          record: null,
+          revision: null
+        })
+      })
+
+      it('is kept once a barrier settles, paid before the directory that names it', async () => {
+        const { records } = chain(0)
+        const journal = writer()
+        journal.initialize(CHAT, records[0])
+
+        await debt.barrier(CHAT)
+
+        expect(disk.issued).toEqual([])
+        expect(disk.paid).toEqual([`file:${CHECKPOINT}`, 'directory:.'])
+        expect(afterPowerLoss()).toMatchObject({ record: records[0], revision: 1 })
+      })
+
+      it('reaching the disk by name without its bytes, reads as absent, and the chat starts again at its next save', () => {
+        const { records, batches } = chain(1)
+        writer().initialize(CHAT, records[0])
+        // Another chat's barrier synced the directory the two share.
+        disk.flushedAnyway(baseDir)
+
+        disk.powerLoss()
+
+        expect(fs.readFileSync(checkpointPath(), 'utf8')).toBe('')
+        // A journal that syncs as it writes never leaves this, and refuses it as it always has.
+        expect(() => createIncrementalChatJournal(baseDir).replay(CHAT)).toThrow('is corrupt')
+
+        const warned = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const restarted = writer()
+        expect(restarted.replay(CHAT)).toMatchObject({ record: null, revision: null })
+        expect(restarted.replay(CHAT)).toMatchObject({ record: null, revision: null })
+        expect(restarted.stats().checkpointsReadAsAbsent).toBe(1)
+        expect(warned.mock.calls.map((call) => String(call[0]))).toEqual([
+          `[incremental-chat] the checkpoint of ${CHAT} does not parse and is read as absent`
+        ])
+
+        restarted.initialize(CHAT, records[0])
+        restarted.append(batches[0])
+        expect(writer().replay(CHAT)).toMatchObject({ record: records[1], revision: 2 })
+      })
+
+      it('reaching the disk without its name, is lost with the chat, and leaves nothing behind', () => {
+        const { records } = chain(0)
+        writer().initialize(CHAT, records[0])
+        disk.flushedAnyway(checkpointPath())
+
+        disk.powerLoss()
+
+        expect(fs.readdirSync(baseDir)).toEqual([])
+        expect(writer().replay(CHAT)).toMatchObject({ record: null, revision: null })
+      })
+
+      it('cut short under its name, reads as absent, and holds up no other chat', () => {
+        const { records, batches } = chain(1)
+        const other = 'chat-2'
+        const journal = writer()
+        journal.initialize(CHAT, records[0])
+        journal.initialize(other, { ...records[0], appChatId: other, title: other })
+        journal.append({ ...batches[0], chatId: other })
+        const whole = fs.readFileSync(checkpointPath())
+        fs.writeFileSync(checkpointPath(), whole.subarray(0, whole.length >> 1))
+
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const restarted = writer()
+        expect(restarted.replay(CHAT)).toMatchObject({ record: null, revision: null })
+        expect(restarted.replay(other)).toMatchObject({ revision: 2, appliedBatches: 1 })
+        // The sweeps that visit every chat pass over it as well.
+        expect(() => restarted.checkpointAll('shutdown')).not.toThrow()
+        expect(
+          createIncrementalChatJournal(baseDir, { canWrite: () => false }).replay(other)
+        ).toMatchObject({ revision: 2 })
+      })
+
+      it('that parses but is not a checkpoint is refused, with the option or without it', () => {
+        const { records } = chain(0)
+        writer().initialize(CHAT, records[0])
+        fs.writeFileSync(checkpointPath(), JSON.stringify({ format: 'something else' }))
+
+        expect(() => writer().replay(CHAT)).toThrow('has an invalid shape')
+        expect(() => createIncrementalChatJournal(baseDir).replay(CHAT)).toThrow(
+          'has an invalid shape'
+        )
+      })
+    })
+
     describe('with rotation', () => {
       let pool: MainDurabilityFlusher
       let cache: IncrementalChatJournalDescriptorCache
@@ -806,6 +954,7 @@ describe.skipIf(process.platform === 'win32')(
         const { records, batches } = chain(4)
         const journal = rotating()
         journal.initialize(CHAT, records[0])
+        await debt.barrier(CHAT)
         fromHere()
         journal.append(batches[0])
         journal.append(batches[1])
@@ -853,8 +1002,9 @@ describe.skipIf(process.platform === 'win32')(
         letThrough()
         await acknowledged
 
-        // Nothing is under the old name any more: the line is in the sealed segment.
-        expect(disk.paid).toEqual([`file:${SEALED}`, 'directory:.'])
+        // Nothing is under the old name any more: the line is in the sealed
+        // segment. The chat's first checkpoint is paid with it.
+        expect(disk.paid).toEqual([`file:${CHECKPOINT}`, `file:${SEALED}`, 'directory:.'])
         expect(afterPowerLoss()).toMatchObject({ record: records[1], appliedBatches: 1 })
       })
 
@@ -872,7 +1022,12 @@ describe.skipIf(process.platform === 'win32')(
         letThrough()
         await acknowledged
 
-        expect(disk.paid).toEqual([`file:${ACTIVE}`, `file:${SEALED}`, 'directory:.'])
+        expect(disk.paid).toEqual([
+          `file:${CHECKPOINT}`,
+          `file:${ACTIVE}`,
+          `file:${SEALED}`,
+          'directory:.'
+        ])
         expect(afterPowerLoss()).toMatchObject({ record: records[2], appliedBatches: 2 })
       })
 
