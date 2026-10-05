@@ -34,7 +34,10 @@ import {
   classifyCreatedChatMoments,
   type ChatSaveMoment
 } from './ChatSaveMoments'
-import type { CheckpointPreparationPort } from './CheckpointPreparationProtocol'
+import {
+  MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
+  type CheckpointPreparationPort
+} from './CheckpointPreparationProtocol'
 import { CheckpointPreparationWorker } from './CheckpointPreparationWorker'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
 import type { IncrementalChatPersistResult } from './IncrementalChatPersistence'
@@ -294,7 +297,12 @@ export function createThreadBarrierDurability(
     journal: {
       noteDurabilityDebt: note,
       repairTornTailBeforeAppend: true,
-      checkpointPreparation: options.checkpointPreparation ?? new CheckpointPreparationWorker(),
+      checkpointPreparation:
+        options.checkpointPreparation ??
+        new CheckpointPreparationWorker({
+          maxSourceBytes: MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
+          maxReservedBytes: 1024 * 1024 * 1024
+        }),
       syncDirectory: (directory) => port.syncDirectory(directory)
     },
     detailBatch(chat) {

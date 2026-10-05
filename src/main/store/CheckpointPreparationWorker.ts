@@ -4,6 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { electronUtilityProcess } from '../host/HostThreadRecordTransferTransport'
 import {
+  MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
   activePreparedCheckpointPaths,
   checkpointFileReference,
   type CheckpointPreparationJob,
@@ -15,8 +16,8 @@ import {
 } from './CheckpointPreparationProtocol'
 
 const MiB = 1024 * 1024
-/** The most source, checkpoint and segment together, a fold is given. */
-const MAX_SOURCE_BYTES = 64 * MiB
+/** The default pool keeps its existing source limit; barrier durability opts in to more. */
+const DEFAULT_MAX_SOURCE_BYTES = 64 * MiB
 
 /**
  * What a fold is reserved: its child's peak resident memory as measured, a
@@ -101,7 +102,8 @@ function spawnPreparationProcess(entryPath: string): CheckpointPreparationProces
  * `maxJobs` (2) run and the reservations of those running and this one stay
  * within `maxReservedBytes` (768 MiB), a reservation being the child's
  * measured peak (`checkpointPreparationReservationBytes`). Otherwise it
- * returns null and makes nothing. A source above 64 MiB is never taken. A
+ * returns null and makes nothing. The default source limit is 64 MiB; an
+ * explicit pool may admit up to the shared parent/child ceiling. A
  * reservation returns when its child has exited and its caller released it,
  * and `onCapacity` listeners hear of each one.
  */
@@ -115,10 +117,20 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
       entryPath?: string
       maxJobs?: number
       maxReservedBytes?: number
+      maxSourceBytes?: number
       deadlineMs?: number
       spawn?: (entryPath: string) => CheckpointPreparationProcess
     } = {}
-  ) {}
+  ) {
+    const limit = options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit <= 0 ||
+      limit > MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES
+    ) {
+      throw new Error('Invalid checkpoint preparation source limit')
+    }
+  }
 
   stats(): { activeJobs: number; reservedBytes: number } {
     return { activeJobs: this.active, reservedBytes: this.bytes }
@@ -130,7 +142,7 @@ export class CheckpointPreparationWorker implements CheckpointPreparationPort {
       /^[A-Za-z0-9_-]{1,256}$/.test(source.chatId) &&
       Number.isSafeInteger(sourceBytes) &&
       sourceBytes > 0 &&
-      sourceBytes <= MAX_SOURCE_BYTES &&
+      sourceBytes <= (this.options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES) &&
       checkpointPreparationReservationBytes(sourceBytes) <= this.budgetBytes()
     )
   }

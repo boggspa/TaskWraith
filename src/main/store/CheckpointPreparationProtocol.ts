@@ -1,6 +1,9 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 
+/** Shared parent/child ceiling; individual pools may retain a smaller admission limit. */
+export const MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES = 96 * 1024 * 1024
+
 /** Same-process custody also protects a second journal instance's startup sweep. */
 export const activePreparedCheckpointPaths = new Set<string>()
 const PREPARED_NAME = /^\.([A-Za-z0-9_-]{1,256})\.checkpoint-prepared-(\d+)-[a-f0-9-]+\.tmp$/

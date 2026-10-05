@@ -496,3 +496,121 @@ describe('admission to the checkpoint preparation pool', () => {
     }
   })
 })
+
+describe('barrier checkpoint pool source allowance', () => {
+  it('admits the measured 76.7 MiB source within 1 GiB, then starts an ordinary waiter after release', async () => {
+    const large = fixture('large-admission')
+    const ordinary = fixture('ordinary-admission')
+    const worker = new CheckpointPreparationWorker({
+      maxSourceBytes: 96 * MiB,
+      maxReservedBytes: 1024 * MiB,
+      spawn: () => new HeldProcess()
+    })
+    const source = sized(large.source, 80_431_677)
+    const later = sized(ordinary.source, 32 * MiB)
+    expect(new CheckpointPreparationWorker().admits(source)).toBe(false)
+    expect(worker.admits(source)).toBe(true)
+    const first = worker.start(source)!
+    expect(first).not.toBeNull()
+    const rejected = expect(first.result).rejects.toThrow('cancelled')
+    try {
+      expect(worker.stats().reservedBytes).toBe(828_742_693)
+      const before = fs.readdirSync(ordinary.baseDir)
+      expect(worker.start(later)).toBeNull()
+      expect(fs.readdirSync(ordinary.baseDir)).toEqual(before)
+      let next: ReturnType<CheckpointPreparationWorker['start']> = null
+      const stop = worker.onCapacity(() => {
+        next = worker.start(later)
+        stop()
+      })
+      first.cancel()
+      await rejected
+      expect(next).not.toBeNull()
+      const second = next as NonNullable<ReturnType<CheckpointPreparationWorker['start']>>
+      second.result.catch(() => {})
+      expect(worker.stats().reservedBytes).toBe(checkpointPreparationReservationBytes(32 * MiB))
+      second.cancel()
+      expect(worker.stats().activeJobs).toBe(0)
+    } finally {
+      first.cancel()
+    }
+  })
+
+  it('validates the configurable source bound and refuses before temporary output or spawn', () => {
+    const { source, baseDir } = fixture('bounds')
+    const spawn = vi.fn(() => new HeldProcess())
+    for (const maxSourceBytes of [0, -1, 96 * MiB + 1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      expect(() => new CheckpointPreparationWorker({ maxSourceBytes })).toThrow('source')
+    }
+    const worker = new CheckpointPreparationWorker({
+      maxSourceBytes: 96 * MiB,
+      maxReservedBytes: 1024 * MiB,
+      spawn
+    })
+    expect(worker.admits(sized(source, 96 * MiB))).toBe(true)
+    const before = fs.readdirSync(baseDir)
+    expect(worker.start(sized(source, 96 * MiB + 1))).toBeNull()
+    expect(
+      new CheckpointPreparationWorker({
+        maxSourceBytes: 96 * MiB,
+        maxReservedBytes: 768 * MiB,
+        spawn
+      }).start(sized(source, 80_431_677))
+    ).toBeNull()
+    expect(fs.readdirSync(baseDir)).toEqual(before)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('shares the 96 MiB validation ceiling with the child core', () => {
+    const { source, baseDir } = fixture('core-bounds')
+    const outputPath = path.join(baseDir, 'bound-output.tmp')
+    fs.writeFileSync(outputPath, '')
+    const output = checkpointFileReference(outputPath)
+    expect(() =>
+      prepareCheckpoint({ ...sized(source, 96 * MiB), output, maxOutputBytes: 128 * MiB })
+    ).toThrow('source changed before')
+    expect(() =>
+      prepareCheckpoint({ ...sized(source, 96 * MiB + 1), output, maxOutputBytes: 128 * MiB })
+    ).toThrow('Invalid checkpoint preparation bounds')
+    expect(fs.statSync(outputPath).size).toBe(0)
+  })
+
+  it('folds a representative oversized baseline and single large mutation in the real child', async () => {
+    const f = fixture('large-real')
+    f.before.messages[0].content = 'a'.repeat(52 * MiB)
+    f.after.messages[0].content = 'b'.repeat(25 * MiB)
+    f.journal.replaceAuthoritativeCheckpoint('large-real', f.before)
+    fs.writeFileSync(
+      f.source.journal.path,
+      JSON.stringify(deriveChatRecordMutation(f.before, f.after)) + '\n'
+    )
+    const source = {
+      ...f.source,
+      checkpoint: checkpointFileReference(f.source.checkpoint.path),
+      journal: checkpointFileReference(f.source.journal.path)
+    }
+    expect(sourceBytes(source)).toBeGreaterThan(64 * MiB)
+    expect(sourceBytes(source)).toBeLessThan(96 * MiB)
+    const worker = new CheckpointPreparationWorker({
+      entryPath,
+      maxSourceBytes: 96 * MiB,
+      maxReservedBytes: 1024 * MiB
+    })
+    const job = worker.start(source)!
+    expect(job).not.toBeNull()
+    try {
+      const prepared = await job.result
+      const bytes = fs.readFileSync(job.output.path)
+      const record = JSON.parse(bytes.toString()).record as ChatRecord
+      expect(prepared.revision).toBe(2)
+      expect(record.messages[0].content.length).toBe(25 * MiB)
+      expect(createHash('sha256').update(record.messages[0].content).digest('hex')).toBe(
+        createHash('sha256').update(f.after.messages[0].content).digest('hex')
+      )
+      expect(prepared.sha256).toBe(createHash('sha256').update(bytes).digest('hex'))
+    } finally {
+      job.release()
+    }
+    expect(worker.stats().activeJobs).toBe(0)
+  }, 30_000)
+})

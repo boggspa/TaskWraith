@@ -12,6 +12,7 @@ import {
 } from './IncrementalChatJournal'
 import { encodeThreadJsonChunks } from './ThreadCatalogueJson'
 import {
+  MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES,
   checkpointFileIdentity,
   checkpointReferenceIsCurrent,
   sameCheckpointFile,
@@ -198,7 +199,7 @@ export function prepareCheckpoint(request: CheckpointPreparationRequest): Prepar
     request.revision < 0 ||
     !Number.isSafeInteger(sourceBytes) ||
     sourceBytes <= 0 ||
-    sourceBytes > 64 * 1024 * 1024 ||
+    sourceBytes > MAX_CHECKPOINT_PREPARATION_SOURCE_BYTES ||
     !Number.isSafeInteger(request.maxOutputBytes) ||
     request.maxOutputBytes <= 0 ||
     request.maxOutputBytes > 128 * 1024 * 1024 ||
