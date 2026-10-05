@@ -10,6 +10,10 @@ import {
 } from '../store/ThreadCatalogueMirror'
 import type { HostProjectionBroker } from '../host/HostProjectionBroker'
 import { ThreadCatalogueRecoveryController } from '../store/ThreadCatalogueRecoveryController'
+import {
+  createCatalogueErasureCallbacks,
+  type CatalogueErasureJoins
+} from './ThreadCatalogueErasureCallbacks'
 import { withThreadCatalogueReadContext } from '../store/ThreadCatalogueReadContextPort'
 import type { HostProfileAuthorityPort } from '../../host-runtime/HostProfileDomainStore'
 import type {
@@ -36,6 +40,8 @@ export function createHostThreadCatalogueTransport(
 export function installStartupThreadCatalogue(options: {
   quiesceRecovery?(): Promise<void>
   resumeRecovery?(): void
+  /** Ownership-side writers erasure must join; absent until ownership activation is composed. */
+  erasureJoins?: CatalogueErasureJoins
   externalHost: boolean
   profileAuthority?: HostProfileAuthorityPort
   broker: HostProjectionBroker
@@ -121,28 +127,20 @@ export function installStartupThreadCatalogue(options: {
       },
       hasLiveWork: (chatId) => guards.get(chatId)?.() !== true
     })
+  const erasure = createCatalogueErasureCallbacks({
+    maintain,
+    drainPublications: (chatIds) => AppStore.drainThreadCataloguePublications(chatIds),
+    mirror,
+    recovery: () => recovery,
+    publisher: () => AppStore.getThreadCataloguePublisher(),
+    saveIntents: AppStore.getSaveIntentQueue(),
+    ...(options.erasureJoins ? { joins: options.erasureJoins } : {})
+  })
+  AppStore.installCatalogueErasureFinish(erasure.finish)
   AppStore.installCatalogueErasure(
-    async (preparation) => {
-      const scopes = preparation.kind === 'global' ? [undefined] : preparation.chatIds
-      for (const chatId of scopes) {
-        const generation = await maintain<string>({
-          method: 'erase',
-          ...(chatId ? { chatId } : {})
-        })
-        if (chatId) mirror.forget(chatId)
-        else mirror.forgetAll()
-        if (
-          !(await maintain<boolean>({
-            method: 'finish-erasure',
-            generation,
-            ...(chatId ? { chatId } : {})
-          }))
-        )
-          throw new Error('History catalogue erasure was not acknowledged')
-        recovery?.forgetErased(chatId)
-        AppStore.getThreadCataloguePublisher()?.forgetErased(chatId)
-      }
-    },
+    // Begin side: raises the fence and joins the writers. The fence is lifted by
+    // the finish side, which the deletion runs only after it verified clean.
+    erasure.begin,
     async (preparation) => {
       await options.quiesceRecovery?.()
       await AppStore.drainThreadCataloguePublications(

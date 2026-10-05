@@ -88,7 +88,23 @@ export interface ThreadOwnershipActivationOptions {
     intent: ChatSaveIntent,
     reservation: ThreadOwnershipReservation
   ): Promise<ThreadOwnershipReceiptEvidence>
+  /**
+   * Whether history erasure is fencing the chat. Polled between activation
+   * steps and between owned appends, so an activation that started before the
+   * fence stops instead of appending into an erased chat. A throw reads as
+   * erasing: an unreadable fence must not let an append through.
+   */
+  erasing?(chatId: string): boolean
+  /**
+   * Whether the chat holds owned rows beyond what this process appended, such
+   * as rows from before a restart. `deactivate` keeps the mark while any exist.
+   */
+  hasOwnedRows?(chatId: string): boolean | Promise<boolean>
+  /** How long `deactivate` waits for an activation already in flight. */
+  readonly erasureFenceTimeoutMs?: number
 }
+
+export const DEFAULT_ERASURE_FENCE_TIMEOUT_MS = 5_000
 
 export class ThreadOwnershipActivationCoordinator {
   /** Active chats and the reservation each activated under. */
@@ -96,6 +112,10 @@ export class ThreadOwnershipActivationCoordinator {
   /** Chats that hold the shared authority switch: in flight or active. */
   private readonly holders = new Set<string>()
   private readonly inFlight = new Map<string, Promise<ThreadOwnershipActivationResult>>()
+  /** Chats this process committed an owned append for; their mark must outlive a deactivate. */
+  private readonly ownedCommitted = new Set<string>()
+  /** Chats whose mark a failed `deactivate` could not remove, so a retry finishes the job. */
+  private readonly markRemovalOwed = new Set<string>()
 
   constructor(private readonly options: ThreadOwnershipActivationOptions) {}
 
@@ -113,6 +133,91 @@ export class ThreadOwnershipActivationCoordinator {
     const attempt = this.run(chatId).finally(() => this.inFlight.delete(chatId))
     this.inFlight.set(chatId, attempt)
     return attempt
+  }
+
+  /**
+   * Take a chat out of ownership because its history is being erased. Waits
+   * for an activation already in flight (bounded by `erasureFenceTimeoutMs`),
+   * releases the reservation, drops the queue's pending intents and gives the
+   * shared switch back. The mark is removed only when no owned rows exist; rows
+   * the Host has not seen must stay discoverable. Idempotent: a chat that is
+   * not active, and owes no mark removal, is a no-op. Throws once cleanup has
+   * run if any part of it failed, so the caller's erasure step is retried.
+   */
+  async deactivate(chatId: string): Promise<void> {
+    const running = this.inFlight.get(chatId)
+    if (running) await this.settleWithin(running)
+    const reservation = this.active.get(chatId)
+    const wasHolder = this.holders.has(chatId)
+    if (!reservation && !wasHolder && !this.markRemovalOwed.has(chatId)) return
+
+    const { queue, authorityFile, authoritySwitch, registry } = this.options
+    const faults: string[] = []
+    this.active.delete(chatId)
+    this.holders.delete(chatId)
+    queue.reset(chatId)
+    if (reservation && registry.release) {
+      try {
+        await registry.release(reservation)
+      } catch {
+        faults.push('reservation_release_failed')
+      }
+    }
+    let ownedRows = this.ownedCommitted.has(chatId)
+    if (!ownedRows && this.options.hasOwnedRows) {
+      try {
+        ownedRows = await this.options.hasOwnedRows(chatId)
+      } catch {
+        // Unknown is not empty: keep the mark rather than hide rows.
+        ownedRows = true
+        faults.push('owned_rows_unknown')
+      }
+    }
+    if (!ownedRows) {
+      try {
+        await authorityFile.remove(chatId)
+        this.markRemovalOwed.delete(chatId)
+      } catch {
+        this.markRemovalOwed.add(chatId)
+        faults.push('mark_remove_failed')
+      }
+    }
+    if (wasHolder && this.holders.size === 0) {
+      try {
+        authoritySwitch.disable()
+      } catch {
+        faults.push('switch_disable_failed')
+      }
+    }
+    if (faults.length > 0) {
+      throw new Error(`Ownership deactivation incomplete: ${faults.join(', ')}`)
+    }
+  }
+
+  /** Waits for an attempt to settle either way; its own failure is its caller's to handle. */
+  private async settleWithin(running: Promise<ThreadOwnershipActivationResult>): Promise<void> {
+    const limit = this.options.erasureFenceTimeoutMs ?? DEFAULT_ERASURE_FENCE_TIMEOUT_MS
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), limit)
+    })
+    const settled = running.then(
+      () => 'settled' as const,
+      () => 'settled' as const
+    )
+    const outcome = await Promise.race([settled, timedOut]).finally(() => clearTimeout(timer))
+    if (outcome === 'timeout') {
+      throw new Error('Ownership activation did not settle before the erasure fence')
+    }
+  }
+
+  /** Non-blocking: reads the reservation's own flag and the injected fence, and fails closed. */
+  private erasingNow(chatId: string, reservation: ThreadOwnershipReservation | null): boolean {
+    try {
+      return reservation?.erasing() === true || this.options.erasing?.(chatId) === true
+    } catch {
+      return true
+    }
   }
 
   private async run(chatId: string): Promise<ThreadOwnershipActivationResult> {
@@ -151,6 +256,7 @@ export class ThreadOwnershipActivationCoordinator {
     }
 
     // 4. The mark. A write that rejects may still have left a file behind.
+    if (this.erasingNow(chatId, state.reservation)) return fail('reservation_invalid')
     try {
       state.markAttempted = true
       await this.options.markWriter(chatId, state.reservation)
@@ -159,6 +265,7 @@ export class ThreadOwnershipActivationCoordinator {
     }
 
     // 5. Owned appends on.
+    if (this.erasingNow(chatId, state.reservation)) return fail('reservation_invalid')
     try {
       this.holders.add(chatId)
       state.switchEnabled = true
@@ -168,6 +275,7 @@ export class ThreadOwnershipActivationCoordinator {
     }
 
     // 6 and 7. Resume flushing, replay, record.
+    if (this.erasingNow(chatId, state.reservation)) return fail('reservation_invalid')
     queue.unfreeze(chatId)
     this.active.set(chatId, state.reservation)
     return this.replay(chatId, state.reservation, state)
@@ -180,6 +288,9 @@ export class ThreadOwnershipActivationCoordinator {
     state: Rollback | null
   ): Promise<ThreadOwnershipActivationResult> {
     const { queue, ownedAppend, receiptStore } = this.options
+    if (this.erasingNow(chatId, reservation)) {
+      return this.finishFailed(chatId, 'reservation_invalid', state, [], 0)
+    }
     let drained: ChatSaveIntent[]
     try {
       drained = queue.drain(chatId)
@@ -190,6 +301,17 @@ export class ThreadOwnershipActivationCoordinator {
     let receiptFaults = 0
     for (let index = 0; index < drained.length; index += 1) {
       const intent = drained[index]
+      // Between appends, so an erasure that begins mid-replay stops it with the
+      // rest handed back rather than appended into a chat being deleted.
+      if (this.erasingNow(chatId, reservation)) {
+        return this.finishFailed(
+          chatId,
+          'reservation_invalid',
+          state,
+          drained.slice(index),
+          committed
+        )
+      }
       try {
         const evidence = await ownedAppend(intent, reservation)
         if (
@@ -200,6 +322,7 @@ export class ThreadOwnershipActivationCoordinator {
           throw new Error('Owned append returned evidence for another command')
         }
         committed += 1
+        this.ownedCommitted.add(chatId)
         try {
           await receiptStore.record(evidence, { chatId, commandId: intent.commandId })
         } catch {

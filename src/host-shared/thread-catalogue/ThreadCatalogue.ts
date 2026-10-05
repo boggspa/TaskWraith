@@ -466,6 +466,30 @@ export class ThreadCatalogue {
     return this.epochRecord().erasing || this.epochRecord(chatId).erasing
   }
 
+  /**
+   * The durable erasure fence for one scope (global when `chatId` is omitted).
+   * An unreadable fence reads as erasing under the generation `unreadable`.
+   */
+  readErasureState(chatId?: string): { generation: string; erasing: boolean } {
+    if (chatId !== undefined) this.assertChatId(chatId)
+    const { generation, erasing } = this.epochRecord(chatId)
+    return { generation, erasing }
+  }
+
+  /**
+   * The generation of the live fence on this chat or, failing that, the global
+   * one; null when nothing is fenced. This is the generation `finishErasure`
+   * must be given to lift it.
+   */
+  currentErasureGeneration(chatId?: string): string | null {
+    if (chatId !== undefined) {
+      const chat = this.readErasureState(chatId)
+      if (chat.erasing) return chat.generation
+    }
+    const global = this.readErasureState()
+    return global.erasing ? global.generation : null
+  }
+
   registerWriter(): void {
     if (this.lifecycle(this.options.writer, this.options.writerId) !== 'active') {
       throw new Error('Thread catalogue source writer is not active')
@@ -1244,5 +1268,36 @@ export class ThreadCatalogue {
       erasing: false
     } satisfies EpochRecord)
     return true
+  }
+
+  /**
+   * Resume an erasure after a restart without minting a second generation.
+   *
+   * - A live fence under `generation` is kept as it is (`reused: true`) and
+   *   nothing is written.
+   * - No fence, or one a finished erasure already lifted, is written afresh as
+   *   `beginErasure` would (`reused: false`); the caller learns the new
+   *   generation from the result.
+   * - A fence that cannot be read is treated as a lost one and is replaced the
+   *   same way: it was already blocking writes, so replacing it only keeps the
+   *   scope fenced.
+   * - A readable live fence under another generation throws. Something else
+   *   began an erasure, or the recorded intent is not this one, and lifting or
+   *   overwriting it would let two erasures disagree about who may finish.
+   */
+  reestablishErasure(
+    chatId: string | undefined,
+    generation: string
+  ): { generation: string; reused: boolean } {
+    if (!this.options.canErase())
+      throw new Error('Thread catalogue erasure authority is unavailable')
+    if (chatId !== undefined) this.assertChatId(chatId)
+    const current = this.epochRecord(chatId)
+    if (current.erasing && current.generation !== 'unreadable') {
+      if (current.generation !== generation)
+        throw new Error('Thread catalogue erasure fence generation mismatch')
+      return { generation, reused: true }
+    }
+    return { generation: this.beginErasure(chatId), reused: false }
   }
 }

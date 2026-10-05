@@ -136,6 +136,37 @@ export class HostOwnershipReceiptEvidenceStore {
     return this.quarantined
   }
 
+  /**
+   * Drop every entry for one chat once the chat is erased, and resolve once the
+   * shortened document is durable. Evidence for other chats is untouched. When
+   * the caller holds the chat record's own evidence field, pass it so the
+   * stale copy cannot be hydrated back into memory.
+   */
+  async forgetChat(
+    chatId: string,
+    recordRef?: { threadOwnershipReceipts?: readonly ThreadOwnershipReceiptEvidence[] }
+  ): Promise<void> {
+    if (recordRef && recordRef.threadOwnershipReceipts !== undefined)
+      delete recordRef.threadOwnershipReceipts
+    await this.load()
+    await this.serialize(async () => {
+      const next = this.entries.filter((entry) => entry.chatId !== chatId)
+      if (next.length === this.entries.length) return
+      await this.persistence.write(serialize(next))
+      this.entries = next
+    })
+  }
+
+  /** Drop all evidence, for a global history clear. */
+  async forgetAll(): Promise<void> {
+    await this.load()
+    await this.serialize(async () => {
+      if (this.entries.length === 0) return
+      await this.persistence.write(serialize([]))
+      this.entries = []
+    })
+  }
+
   /** Adapter for HostThreadRecordPersistClient's `onPersistedEvidence`. */
   persistedEvidenceSink(
     onError: (error: unknown) => void = (error) =>

@@ -19,6 +19,7 @@ export type ThreadCatalogueReadQuery = Exclude<
       | 'owner'
       | 'erase'
       | 'finish-erasure'
+      | 'reestablish-erasure'
       | 'prepare'
       | 'prepared'
       | 'discard-prepared'
@@ -40,6 +41,7 @@ export type ThreadCatalogueMaintenanceQuery = Extract<
       | 'changed'
       | 'erase'
       | 'finish-erasure'
+      | 'reestablish-erasure'
       | 'prepare'
       | 'prepared'
       | 'discard-prepared'
@@ -297,13 +299,12 @@ export function decodeThreadCatalogueMaintenanceQuery(
   }
   if (q.method === 'changed' && safeId(q.chatId)) return { method: 'changed', chatId: q.chatId }
   if (
-    (q.method === 'erase' || q.method === 'finish-erasure') &&
+    (q.method === 'erase' || q.method === 'finish-erasure' || q.method === 'reestablish-erasure') &&
     (q.chatId === undefined || safeId(q.chatId))
   ) {
     const scope = q.chatId === undefined ? {} : { chatId: q.chatId as string }
     if (q.method === 'erase') return { method: 'erase', ...scope }
-    if (safeId(q.generation))
-      return { method: 'finish-erasure', generation: q.generation, ...scope }
+    if (safeId(q.generation)) return { method: q.method, generation: q.generation, ...scope }
   }
   return null
 }

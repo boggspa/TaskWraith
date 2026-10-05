@@ -105,6 +105,8 @@ type CatalogueJob = ImportJob | PreparationJob | FoldJob
  */
 export const THREAD_CATALOGUE_RETRY_BASE_MS = 100
 export const THREAD_CATALOGUE_RETRY_MAX_MS = 5_000
+/** Names the global erasure scope in `erasureScopes`; a NUL can never be in a chat id. */
+const ERASURE_GLOBAL_SCOPE = '\0global'
 
 /** Storage-process actor. Decoding is in a separate isolate; no request falls back to main. */
 export class ThreadCatalogueWorkerService {
@@ -128,6 +130,8 @@ export class ThreadCatalogueWorkerService {
   private running: Promise<void> | null = null
   private closed = false
   private pausedForErasure = false
+  /** Scopes fenced for erasure whose fence has not been lifted; the chat id, or the global key. */
+  private readonly erasureScopes = new Set<string>()
   /** Fast-lane picks since the last queue-head pick; see the job selector. */
   private consecutiveFastPicks = 0
   private inventoryWitness = ''
@@ -920,6 +924,59 @@ export class ThreadCatalogueWorkerService {
    * `priority` is the envelope's lane, not the query's. Absent means
    * foreground, which is what every caller but the recovery drain sends.
    */
+  /**
+   * Retire everything derived for the scope under a fence that is already
+   * written. Idempotent: a resumed erasure runs it again over what is left.
+   */
+  private async purgeForErasure(chatId?: string): Promise<void> {
+    const scope = chatId ?? ERASURE_GLOBAL_SCOPE
+    this.erasureScopes.add(scope)
+    const first = !this.pausedForErasure
+    this.pausedForErasure = true
+    // Closing the decoder drains its last acknowledged batch and discards
+    // unpublished work before derived bytes are removed. A later scope of the
+    // same begin pass finds it already closed.
+    if (first) await this.decoder.dispose()
+    await this.running
+    for (const [id, prepared] of this.prepared)
+      if (!chatId || prepared.chatId === chatId) this.discardPrepared(id)
+    for (const [id, folded] of this.folded)
+      if (!chatId || folded.chatId === chatId) this.discardFolded(id)
+    for (const job of this.queue.splice(0)) {
+      this.jobs.delete(job.chatId)
+      job.reject(new Error('History indexing interrupted by erasure'))
+    }
+    for (const [id, lease] of this.leases)
+      if (!chatId || lease.entry.chatId === chatId) this.leases.delete(id)
+    const ids = chatId ? [chatId] : [...this.known]
+    if (!chatId) this.database.removeAll()
+    for (const id of ids) {
+      this.database.removeChat(id)
+      fs.rmSync(path.join(this.catalogue.directory, 'prepared', id), {
+        recursive: true,
+        force: true
+      })
+      this.indexed.delete(id)
+      this.known.delete(id)
+      this.options.onRemoved?.(id)
+      this.changed(id, true)
+      for (const lane of ['desktop', 'host', 'resolved']) {
+        fs.rmSync(path.join(this.catalogue.directory, lane, `${id}.json`), { force: true })
+      }
+      for (const lane of ['desktop', 'host'])
+        fs.rmSync(path.join(this.catalogue.directory, 'pending', lane, id), {
+          recursive: true,
+          force: true
+        })
+    }
+    if (!chatId) {
+      for (const lane of ['desktop', 'host', 'resolved', 'pending', 'prepared'])
+        fs.rmSync(path.join(this.catalogue.directory, lane), { recursive: true, force: true })
+      this.known.clear()
+    }
+    this.catalogue.syncErasedCacheDirectories()
+  }
+
   async query(
     query: ThreadCatalogueQuery,
     priority: 'foreground' | 'background' = 'foreground'
@@ -1057,58 +1114,30 @@ export class ThreadCatalogueWorkerService {
       }
       case 'erase': {
         const generation = this.catalogue.beginErasure(query.chatId)
-        this.pausedForErasure = true
-        // Closing the decoder drains its last acknowledged batch and discards
-        // unpublished work before derived bytes are removed.
-        await this.decoder.dispose()
-        await this.running
-        for (const [id, prepared] of this.prepared)
-          if (!query.chatId || prepared.chatId === query.chatId) this.discardPrepared(id)
-        for (const [id, folded] of this.folded)
-          if (!query.chatId || folded.chatId === query.chatId) this.discardFolded(id)
-        for (const job of this.queue.splice(0)) {
-          this.jobs.delete(job.chatId)
-          job.reject(new Error('History indexing interrupted by erasure'))
-        }
-        for (const [id, lease] of this.leases)
-          if (!query.chatId || lease.entry.chatId === query.chatId) this.leases.delete(id)
-        const ids = query.chatId ? [query.chatId] : [...this.known]
-        if (!query.chatId) this.database.removeAll()
-        for (const id of ids) {
-          this.database.removeChat(id)
-          fs.rmSync(path.join(this.catalogue.directory, 'prepared', id), {
-            recursive: true,
-            force: true
-          })
-          this.indexed.delete(id)
-          this.known.delete(id)
-          this.options.onRemoved?.(id)
-          this.changed(id, true)
-          for (const lane of ['desktop', 'host', 'resolved']) {
-            fs.rmSync(path.join(this.catalogue.directory, lane, `${id}.json`), { force: true })
-          }
-          for (const lane of ['desktop', 'host'])
-            fs.rmSync(path.join(this.catalogue.directory, 'pending', lane, id), {
-              recursive: true,
-              force: true
-            })
-        }
-        if (!query.chatId) {
-          for (const lane of ['desktop', 'host', 'resolved', 'pending', 'prepared'])
-            fs.rmSync(path.join(this.catalogue.directory, lane), { recursive: true, force: true })
-          this.known.clear()
-        }
-        this.catalogue.syncErasedCacheDirectories()
+        await this.purgeForErasure(query.chatId)
+        return generation
+      }
+      case 'reestablish-erasure': {
+        // A restart resumes the recorded fence instead of minting a new one,
+        // then purges again: the interrupted purge may have stopped half-way.
+        const { generation } = this.catalogue.reestablishErasure(query.chatId, query.generation)
+        await this.purgeForErasure(query.chatId)
         return generation
       }
       case 'finish-erasure': {
         const finished = this.catalogue.finishErasure(query.generation, query.chatId)
         if (finished) {
-          this.decoder = new ThreadCatalogueDecoderClient(this.options.decoderPath)
-          this.pausedForErasure = false
-          this.failed.clear()
-          this.inventoryStarted = false
-          this.scheduleInventory(0)
+          this.erasureScopes.delete(query.chatId ?? ERASURE_GLOBAL_SCOPE)
+          // A begin pass can fence several chats before any finishes. Indexing
+          // restarts when the last fence lifts, so it gets one decoder, not one
+          // per scope.
+          if (this.erasureScopes.size === 0 && this.pausedForErasure) {
+            this.decoder = new ThreadCatalogueDecoderClient(this.options.decoderPath)
+            this.pausedForErasure = false
+            this.failed.clear()
+            this.inventoryStarted = false
+            this.scheduleInventory(0)
+          }
         }
         return finished
       }

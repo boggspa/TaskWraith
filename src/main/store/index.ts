@@ -1926,6 +1926,15 @@ export interface HistoryDeletionPreparation {
   completedQuiescenceTargetIds: string[]
 }
 
+/**
+ * One catalogue erasure fence a deletion holds: the chat it covers (absent for
+ * the global scope) and the generation `finish-erasure` must present to lift it.
+ */
+export interface CatalogueErasureFence {
+  readonly chatId?: string
+  readonly generation: string
+}
+
 export interface HistoryDeletionScopePreview {
   kind: HistoryDeletionKind
   workspaceId?: string
@@ -1960,6 +1969,10 @@ type HistoryDeletionStep =
   | 'project-membership'
 
 const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
+  // The catalogue fence goes up first, straight after the durable intent and
+  // before any source is removed. The step only *begins* erasure; the fence is
+  // lifted by the success-only epilogue, after every residual check below.
+  'thread-catalogue',
   // Resurrection sources are retired before the visible transcript commit.
   'scheduled-orchestration',
   'workflow-run-history',
@@ -1977,7 +1990,6 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   'kimi-seat-state',
   'muse-seat-state',
   'chat-records',
-  'thread-catalogue',
   'chat-list-index',
   'project-membership'
 ]
@@ -2002,6 +2014,8 @@ interface HistoryDeletionIntent {
   quiescenceTargets: HistoryDeletionQuiescenceTarget[]
   completedQuiescenceTargetIds: string[]
   completedSteps: HistoryDeletionStep[]
+  /** Fences the catalogue erasure begin recorded; a resumed deletion keeps these generations. */
+  catalogueErasureFences?: CatalogueErasureFence[]
   failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>
 }
 
@@ -3186,6 +3200,19 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
         )
         .map((failure) => ({ step: failure.step, message: failure.message.slice(0, 500) }))
     : []
+  // A fence that does not parse is dropped, not fatal: the resumed erasure then
+  // mints a fresh generation and the scope stays fenced either way.
+  const catalogueErasureFences = Array.isArray(record.catalogueErasureFences)
+    ? record.catalogueErasureFences.flatMap((fence): CatalogueErasureFence[] => {
+        if (!fence || typeof fence !== 'object' || Array.isArray(fence)) return []
+        const { chatId, generation } = fence as { chatId?: unknown; generation?: unknown }
+        if (typeof generation !== 'string' || generation === '' || generation.length > 256)
+          return []
+        if (chatId === undefined) return kind === 'global' ? [{ generation }] : []
+        if (typeof chatId !== 'string' || !chatIds.includes(chatId)) return []
+        return [{ chatId, generation }]
+      })
+    : []
   return {
     schemaVersion: 1,
     operationId: record.operationId,
@@ -3206,6 +3233,7 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
     quiescenceTargets,
     completedQuiescenceTargetIds,
     completedSteps,
+    ...(catalogueErasureFences.length > 0 ? { catalogueErasureFences } : {}),
     failures
   }
 }
@@ -5215,7 +5243,8 @@ export class AppStore {
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
-    this.catalogueErasure = null
+    this.catalogueErasureBegin = null
+    this.catalogueErasureFinish = null
     this.catalogueQuiescence = null
     this.catalogueResume = null
     historyDeletionFailureStepsForTests.clear()
@@ -6575,19 +6604,57 @@ export class AppStore {
   static async disposeThreadCataloguePublisher(): Promise<void> {
     await this.threadCataloguePublisher?.dispose()
   }
-  private static catalogueErasure:
-    | ((preparation: HistoryDeletionPreparation) => Promise<void>)
+  private static catalogueErasureBegin:
+    | ((
+        preparation: HistoryDeletionPreparation,
+        recorded: readonly CatalogueErasureFence[]
+      ) => Promise<readonly CatalogueErasureFence[] | void>)
+    | null = null
+  private static catalogueErasureFinish:
+    | ((
+        preparation: HistoryDeletionPreparation,
+        fences: readonly CatalogueErasureFence[]
+      ) => Promise<void>)
     | null = null
   private static catalogueResume: (() => void) | null = null
   private static catalogueQuiescence:
     | ((preparation: HistoryDeletionPreparation) => Promise<void>)
     | null = null
+  /**
+   * Erasure is two callbacks. `begin` raises the catalogue fence and joins every
+   * writer; it runs right after the durable intent and before source removal,
+   * receives the fences a previous run recorded so a restart resumes them, and
+   * returns the fences it holds. `finish` lifts them and runs only in the
+   * success epilogue, after residual verification and before the intent goes.
+   */
+  static installCatalogueErasureBegin(
+    begin: (
+      preparation: HistoryDeletionPreparation,
+      recorded: readonly CatalogueErasureFence[]
+    ) => Promise<readonly CatalogueErasureFence[] | void>
+  ): void {
+    this.catalogueErasureBegin = begin
+  }
+
+  static installCatalogueErasureFinish(
+    finish: (
+      preparation: HistoryDeletionPreparation,
+      fences: readonly CatalogueErasureFence[]
+    ) => Promise<void>
+  ): void {
+    this.catalogueErasureFinish = finish
+  }
+
+  /** `erase` is the begin side; install `finish` separately to lift the fence. */
   static installCatalogueErasure(
-    erase: (preparation: HistoryDeletionPreparation) => Promise<void>,
+    erase: (
+      preparation: HistoryDeletionPreparation,
+      recorded: readonly CatalogueErasureFence[]
+    ) => Promise<readonly CatalogueErasureFence[] | void>,
     quiesce: (preparation: HistoryDeletionPreparation) => Promise<void>,
     resume: () => void = () => {}
   ): void {
-    this.catalogueErasure = erase
+    this.installCatalogueErasureBegin(erase)
     this.catalogueQuiescence = quiesce
     this.catalogueResume = resume
   }
@@ -10231,6 +10298,48 @@ export class AppStore {
     }
   }
 
+  /**
+   * Raise the catalogue fence and join its writers. Runs again in the residual
+   * sweep, where the recorded generations make it a resume of the same fence
+   * rather than a second erasure.
+   */
+  private static beginCatalogueErasure(intent: HistoryDeletionIntent): void | Promise<void> {
+    const begin = this.catalogueErasureBegin
+    if (!begin) return
+    return begin(this.historyDeletionPreparation(intent), intent.catalogueErasureFences ?? []).then(
+      (fences) => {
+        if (fences && fences.length > 0) {
+          intent.catalogueErasureFences = fences.map((fence) => ({ ...fence }))
+        }
+      }
+    )
+  }
+
+  /**
+   * Lift the catalogue fence, but only for a deletion that verified clean. A
+   * failed deletion keeps the fence, and a restart resumes it.
+   */
+  private static finishHistoryDeletionAfterCatalogue(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>
+  ): void | Promise<void> {
+    const finish = this.catalogueErasureFinish
+    const fences = intent.catalogueErasureFences
+    if (failures.length > 0 || !finish || !fences || fences.length === 0) {
+      return this.finishHistoryDeletion(intent, failures)
+    }
+    return finish(
+      this.historyDeletionPreparation(intent),
+      fences.map((fence) => ({ ...fence }))
+    ).then(
+      () => this.finishHistoryDeletion(intent, failures),
+      (error: unknown) => {
+        failures.push({ step: 'thread-catalogue', message: historyDeletionErrorMessage(error) })
+        return this.finishHistoryDeletion(intent, failures)
+      }
+    )
+  }
+
   private static executeHistoryDeletionStep(
     intent: HistoryDeletionIntent,
     step: HistoryDeletionStep
@@ -10238,8 +10347,7 @@ export class AppStore {
     if (historyDeletionFailureStepsForTests.has(step)) {
       throw new Error(`Injected history deletion failure at ${step}.`)
     }
-    if (step === 'thread-catalogue')
-      return this.catalogueErasure?.(this.historyDeletionPreparation(intent))
+    if (step === 'thread-catalogue') return this.beginCatalogueErasure(intent)
     if (step === 'scheduled-orchestration') {
       const occurrenceMutation = readScheduledOccurrenceMutationJournal()
       if (occurrenceMutation.status !== 'none') {
@@ -10807,7 +10915,7 @@ export class AppStore {
       }
     }
 
-    this.finishHistoryDeletion(intent, failures)
+    return this.finishHistoryDeletionAfterCatalogue(intent, failures)
   }
 
   /** Async continuation once a step goes async mid-loop: finish the first
@@ -10850,7 +10958,7 @@ export class AppStore {
         }
       }
     }
-    this.finishHistoryDeletion(intent, failures)
+    return this.finishHistoryDeletionAfterCatalogue(intent, failures)
   }
 
   private static finishHistoryDeletion(

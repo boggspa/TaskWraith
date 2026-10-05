@@ -381,6 +381,8 @@ export type ThreadCatalogueQuery =
   | { method: 'owner'; owner: ThreadCatalogueOwner }
   | { method: 'erase'; chatId?: string }
   | { method: 'finish-erasure'; chatId?: string; generation: string }
+  /** Resume a fenced erasure under its recorded generation, then purge again. */
+  | { method: 'reestablish-erasure'; chatId?: string; generation: string }
 
 export interface ThreadCatalogueOpenResult {
   leaseId: string
