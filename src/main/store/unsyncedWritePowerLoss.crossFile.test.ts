@@ -374,7 +374,7 @@ describe.skipIf(process.platform === 'win32')(
             isIndexedGenerationCommitted: () => true,
             deferredDurability
           })
-        source = make(new MainCatalogueUnsyncedDurability({ profilePath: root, note: debt.note }))
+        source = make(new MainCatalogueUnsyncedDurability({ profilePath: root }))
         resolver = make()
         source.registerWriter()
       })
