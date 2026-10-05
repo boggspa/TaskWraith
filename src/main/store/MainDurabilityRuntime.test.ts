@@ -6,6 +6,24 @@ import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
 import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { RunEventInput } from './types'
 
+const PREFIX = 'main-durability-runtime-'
+
+/**
+ * Removes a folder this file made with mkdtemp under the temporary folder,
+ * and refuses anything else.
+ */
+function removeTemporary(directory: string): void {
+  const own = os.tmpdir() + path.sep + PREFIX
+  if (
+    directory === os.tmpdir() ||
+    !directory.startsWith(own) ||
+    directory.includes(path.sep, own.length)
+  ) {
+    throw new Error(`Refusing to remove ${directory}`)
+  }
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 describe('Main durability runtime', () => {
   it('forwards the real legacy strict observer and contains its failure without counting pooled writes twice', async () => {
     const events: string[] = []
@@ -142,11 +160,11 @@ describe('Main durability runtime', () => {
   let root: string
   let entry: string
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'main-durability-runtime-'))
+    root = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
     entry = path.join(root, 'worker.cjs')
     fs.writeFileSync(entry, '// emitted test worker')
   })
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
+  afterEach(() => removeTemporary(root))
   const input: RunEventInput = {
     runId: 'run-1',
     kind: 'provider_raw',

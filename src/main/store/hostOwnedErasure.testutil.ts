@@ -17,7 +17,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 import { vi } from 'vitest'
 
@@ -28,14 +28,27 @@ import type {
 import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { ChatRecord } from './types'
 
+const PREFIX = 'owner-host-owned-erasure-'
 const profiles: string[] = []
 const shutdowns: Array<() => Promise<void>> = []
+
+/**
+ * Removes a folder this file made with mkdtemp under the temporary folder,
+ * and refuses anything else.
+ */
+function removeTemporary(directory: string): void {
+  const own = tmpdir() + sep + PREFIX
+  if (directory === tmpdir() || !directory.startsWith(own) || directory.includes(sep, own.length)) {
+    throw new Error(`Refusing to remove ${directory}`)
+  }
+  rmSync(directory, { recursive: true, force: true })
+}
 
 /** Call after each test: stops every store it opened and removes their profiles. */
 export async function disposeHostOwnedStores(): Promise<void> {
   while (shutdowns.length > 0) await shutdowns.pop()!()
   vi.doUnmock('./MainDurabilityRuntime')
-  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+  while (profiles.length > 0) removeTemporary(profiles.pop()!)
 }
 
 export function chatRecord(
@@ -159,8 +172,7 @@ export async function importHostOwnedStore(
   adapter?: RecordingAdapter,
   options: { profilePath?: string; gateOpen?: boolean } = {}
 ): Promise<HostOwnedStore> {
-  const profilePath =
-    options.profilePath ?? mkdtempSync(join(tmpdir(), 'taskwraith-host-owned-erasure-'))
+  const profilePath = options.profilePath ?? mkdtempSync(join(tmpdir(), PREFIX))
   if (options.profilePath === undefined) profiles.push(profilePath)
   const chatsDir = join(profilePath, 'chats')
   mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
@@ -243,7 +255,10 @@ export async function importHostOwnedStore(
       return {} as never
     }),
     deleteRecord: vi.fn(async (input: { chatId: string }) => {
-      rmSync(join(chatsDir, `${input.chatId}.json`), { force: true })
+      const recordPath = join(chatsDir, `${input.chatId}.json`)
+      // One record of this profile, never anything outside its folder.
+      if (dirname(recordPath) !== chatsDir) throw new Error(`Refusing to remove ${recordPath}`)
+      rmSync(recordPath, { force: true })
     }),
     enqueue: vi.fn((input: HostThreadRecordPersistInput) => applyPersist(input)),
     drain: vi.fn(async () => {}),

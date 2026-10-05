@@ -8,7 +8,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { buildSync } from 'esbuild'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -40,12 +40,26 @@ const CHURN_ROUNDS = 20
 
 type Operation = 'write' | 'replace' | 'remove'
 
+const PREFIX = 'owner-thread-authority-process-'
+
+/**
+ * Removes a folder this file made with mkdtemp under the temporary folder,
+ * and refuses anything else.
+ */
+function removeTemporary(directory: string): void {
+  const own = tmpdir() + sep + PREFIX
+  if (directory === tmpdir() || !directory.startsWith(own) || directory.includes(sep, own.length)) {
+    throw new Error(`Refusing to remove ${directory}`)
+  }
+  rmSync(directory, { recursive: true, force: true })
+}
+
 describe('authority files under real processes', () => {
   let root: string
   let executable: string
 
   beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), 'taskwraith-thread-authority-process-'))
+    root = mkdtempSync(join(tmpdir(), PREFIX))
     executable = join(root, 'writer.cjs')
     buildSync({
       stdin: {
@@ -147,7 +161,7 @@ describe('authority files under real processes', () => {
   })
 
   afterAll(() => {
-    if (root) rmSync(root, { recursive: true, force: true })
+    if (root) removeTemporary(root)
   })
 
   /** A profile holding what the operation starts from. */

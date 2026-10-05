@@ -25,6 +25,25 @@ const { buildElectronSpawnPlan, spawnExactElectronChild } = require('./electronC
 const { validatePerfEnvironment } = require('./schema.cjs')
 const { runT2BaselineCli } = require('./runT2Baseline.cjs')
 
+const CATALOGUE_PIN_PREFIX = 'tw-t2-catalogue-pin-'
+const FLAGS_PREFIX = 'tw-t2-flags-'
+
+/**
+ * Removes a folder a test here made with mkdtemp under the temporary folder,
+ * with the prefix it was made with, and refuses anything else.
+ */
+function removeTemporary(directory: string, prefix: string): void {
+  const own = tmpdir() + path.sep + prefix
+  if (
+    directory === tmpdir() ||
+    !directory.startsWith(own) ||
+    directory.includes(path.sep, own.length)
+  ) {
+    throw new Error(`Refusing to remove ${directory}`)
+  }
+  rmSync(directory, { recursive: true, force: true })
+}
+
 const QUEUED = 'TASKWRAITH_HOST_QUEUED_START'
 const CHECKPOINT = 'TASKWRAITH_CHECKPOINT_WORKER'
 const FAIRNESS = 'TASKWRAITH_CODEX_COHORT_FAIRNESS'
@@ -395,7 +414,7 @@ describe('environment record', () => {
 
 describe('T2 runner', () => {
   it('records an explicitly declared catalogue pin in the runner plan', async () => {
-    const outDir = mkdtempSync(path.join(tmpdir(), 'tw-t2-catalogue-pin-'))
+    const outDir = mkdtempSync(path.join(tmpdir(), CATALOGUE_PIN_PREFIX))
     try {
       const dry = await runT2BaselineCli(
         [
@@ -417,13 +436,13 @@ describe('T2 runner', () => {
       expect(dry.report.launchPlan.shellCommand).toContain(`${CATALOGUE}=1`)
       expect(validateRolloutFlagRecord(dry.report.environment.rolloutFlags)).toEqual([])
     } finally {
-      rmSync(outDir, { recursive: true, force: true })
+      removeTemporary(outDir, CATALOGUE_PIN_PREFIX)
     }
   })
 
   it('records declared flags in the environment and the reproducible command', async () => {
     vi.stubEnv(CHECKPOINT, '1')
-    const outDir = mkdtempSync(path.join(tmpdir(), 'tw-t2-flags-'))
+    const outDir = mkdtempSync(path.join(tmpdir(), FLAGS_PREFIX))
     try {
       const dry = await runT2BaselineCli(
         [
@@ -466,7 +485,7 @@ describe('T2 runner', () => {
         )
       ).toBe(true)
     } finally {
-      rmSync(outDir, { recursive: true, force: true })
+      removeTemporary(outDir, FLAGS_PREFIX)
     }
   })
 

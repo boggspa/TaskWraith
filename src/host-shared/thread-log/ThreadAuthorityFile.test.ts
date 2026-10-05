@@ -28,14 +28,31 @@ import {
   type ThreadAuthorityRecord
 } from './ThreadAuthorityFile'
 
+const PREFIX = 'owner-thread-authority-'
 const roots: string[] = []
 
+/**
+ * Removes a folder this file made with mkdtemp under the temporary folder,
+ * and refuses anything else.
+ */
+function removeTemporary(directory: string): void {
+  const own = os.tmpdir() + path.sep + PREFIX
+  if (
+    directory === os.tmpdir() ||
+    !directory.startsWith(own) ||
+    directory.includes(path.sep, own.length)
+  ) {
+    throw new Error(`Refusing to remove ${directory}`)
+  }
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 afterEach(() => {
-  while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true })
+  while (roots.length > 0) removeTemporary(roots.pop()!)
 })
 
 function profile(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-thread-authority-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
   roots.push(root)
   return root
 }
