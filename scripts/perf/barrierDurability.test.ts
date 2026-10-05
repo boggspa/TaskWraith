@@ -63,12 +63,39 @@ function sectionOn(n: number) {
         renamedUnderway: 0,
         failed: 0,
         waitMsTotal: 12.5 * n,
-        longestWaitMs: 20 + n
+        longestWaitMs: 20 + n,
+        scoped: n,
+        threadOnly: n,
+        urgent: 2 * n,
+        hastened: 0
+      },
+      waits: {
+        urgent: {
+          count: 2 * n,
+          totalMs: 6.5 * n,
+          longestMs: 9 + n,
+          aheadTotal: 3 * n,
+          aheadMost: 3
+        },
+        normal: { count: 2 * n, totalMs: 6 * n, longestMs: 30, aheadTotal: 5 * n, aheadMost: 7 }
       },
       owed: { threads: n, files: 2 * n, directories: 1 },
+      owingRuns: n % 4,
       syncsOnCallingThread: 0
     },
-    port: { started: 9 * n, inFlight: n % 3, queued: n % 2, joined: n, peakInFlight: 4 },
+    port: {
+      started: 9 * n,
+      inFlight: n % 3,
+      queued: n % 2,
+      joined: n,
+      peakInFlight: 4,
+      queuedUrgent: 0,
+      queuedNormal: n % 2,
+      startedUrgent: 3 * n,
+      promoted: n,
+      fairStarts: 0,
+      urgencies: 0
+    },
     tickets: {
       moments: Object.fromEntries(
         MOMENTS.map((moment, place) => [
@@ -210,6 +237,37 @@ describe('what changed between the two fences', () => {
     expect(change.checkpoints.terminal).toEqual({ count: 3, bytes: 3_000, mainMs: 4.5 })
     expect(Object.keys(change.checkpoints)).toEqual(TRIGGERS)
     expect(change.tornTailsRepaired).toBe(0)
+    expect(change.unread).toEqual([])
+  })
+
+  it("reads the urgent and scoped barriers, their waits by class and the port's queues by class", () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(change.debt.barriers).toMatchObject({ scoped: 3, threadOnly: 3, urgent: 6, hastened: 0 })
+    expect(change.debt.waits).toEqual({
+      urgent: {
+        count: 6,
+        totalMs: 19.5,
+        longestMs: { atMost: 14, exact: true },
+        aheadTotal: 9,
+        aheadMost: { atMost: 3, exact: false }
+      },
+      normal: {
+        count: 6,
+        totalMs: 18,
+        longestMs: { atMost: 30, exact: false },
+        aheadTotal: 15,
+        aheadMost: { atMost: 7, exact: false }
+      }
+    })
+    expect(change.debt.owingRuns).toEqual({ before: 2, after: 1 })
+    expect(change.port).toMatchObject({
+      queuedUrgent: { before: 0, after: 0 },
+      queuedNormal: { before: 0, after: 1 },
+      startedUrgent: 9,
+      promoted: 3,
+      fairStarts: 0,
+      urgencies: { before: 0, after: 0 }
+    })
     expect(change.unread).toEqual([])
   })
 

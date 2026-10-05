@@ -29,13 +29,17 @@
  *   is under its limit (no p95 can be over it), and fails only when its p95
  *   is known: fewer than twenty waits, all begun and ended between the
  *   fences, and the longest seen between them, which by nearest rank is then
- *   the p95. Anything else is not measured.
+ *   the p95. Anything else is not measured. Beside each class, the debt's own
+ *   record of its barriers: the urgent ones for the user's moments, the rest
+ *   for a run's final record (idle and quit barriers among them), with the
+ *   syncs each found running or queued ahead of it.
  * Reported, not judged:
  * - checkpointsOnMain: the journal's whole-record checkpoints by trigger
  *   (count, bytes, the main thread's milliseconds), off and on.
  * - portSyncs: the syncs the port started, the most in flight, the queue at
- *   each fence, and each owner's syncs paid; figures the section has that
- *   are not read yet are named.
+ *   each fence (urgent and not), the urgent syncs started and those moved
+ *   ahead, and each owner's syncs paid; figures the section has that are not
+ *   read yet are named.
  * - mainBusyMsPerModelTurn: the main thread's busy time a model turn, off
  *   against on, by the median of each half of a qualified pair.
  *
@@ -354,8 +358,27 @@ function ticketRow(context, judge) {
   return row(context, 'pass', value, [], evidence)
 }
 
+/**
+ * The debt's own record of one class of settled barriers: the urgent ones a
+ * user sat in, or the rest (a run's own, idle and quit barriers alike).
+ */
+function barriersOfClass(debt, name) {
+  const waits = isPlainObject(debt) && isPlainObject(debt.waits) ? debt.waits[name] : null
+  if (!isPlainObject(waits) || !Number.isFinite(waits.count)) return null
+  const mean = (total) =>
+    waits.count > 0 && Number.isFinite(total) ? round(total / waits.count, 3) : null
+  return {
+    class: name,
+    count: waits.count,
+    meanMs: mean(waits.totalMs),
+    longestMs: waits.longestMs ?? null,
+    syncsAheadMean: mean(waits.aheadTotal),
+    syncsAheadMost: waits.aheadMost ?? null
+  }
+}
+
 /** One class of barrier wait in one window, against its limit. */
-function barrierWaitRow(context, moments, limit) {
+function barrierWaitRow(context, moments, limit, barrierClass) {
   const held = heldBack(context) ?? sectionHeldBack(context)
   if (held !== null) return row(context, 'not_measured', null, [held])
   const tickets = context.change.tickets
@@ -375,7 +398,13 @@ function barrierWaitRow(context, moments, limit) {
   const exact = counters.some(
     (each) => each.longestWaitMs.exact && each.longestWaitMs.atMost === longest
   )
-  const evidence = { moments: [...moments], tickets: noted, pendingAtStart, pendingAtEnd }
+  const evidence = {
+    moments: [...moments],
+    tickets: noted,
+    pendingAtStart,
+    pendingAtEnd,
+    barriers: barriersOfClass(context.change.debt, barrierClass)
+  }
   if (noted === 0 && pendingAtStart === 0) {
     return row(context, 'not_measured', null, ['no_tickets_in_window'], evidence)
   }
@@ -439,6 +468,10 @@ function portRow(context) {
     peakInFlight: port.peakInFlight,
     queued: port.queued,
     inFlight: port.inFlight,
+    queuedByClass: { urgent: port.queuedUrgent ?? null, normal: port.queuedNormal ?? null },
+    startedUrgent: port.startedUrgent ?? null,
+    promoted: port.promoted ?? null,
+    fairStarts: port.fairStarts ?? null,
     syncedByOwner: Object.fromEntries(
       Object.entries(owners).map(([owner, counters]) => [
         owner,
@@ -531,10 +564,10 @@ function evaluateDurabilityExits(input) {
     )
     judgedRows.ticketGates.push(ticketRow(context, true))
     judgedRows.barrierWaitUserFacing.push(
-      barrierWaitRow(context, USER_FACING, thresholds.maxUserFacingBarrierWaitP95Ms)
+      barrierWaitRow(context, USER_FACING, thresholds.maxUserFacingBarrierWaitP95Ms, 'urgent')
     )
     judgedRows.barrierWaitRunFinal.push(
-      barrierWaitRow(context, RUN_FINAL, thresholds.maxRunFinalBarrierWaitP95Ms)
+      barrierWaitRow(context, RUN_FINAL, thresholds.maxRunFinalBarrierWaitP95Ms, 'normal')
     )
   }
   for (const context of off) {

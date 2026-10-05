@@ -49,9 +49,24 @@ const SECTION_FIGURES = Object.freeze({
       renamedUnderway: COUNTER,
       failed: COUNTER,
       waitMsTotal: COUNTER,
-      longestWaitMs: MAXIMUM
+      longestWaitMs: MAXIMUM,
+      scoped: COUNTER,
+      threadOnly: COUNTER,
+      urgent: COUNTER,
+      hastened: COUNTER
+    },
+    // Settled barriers by class: the urgent ones a user sat in, and the rest.
+    waits: {
+      each: {
+        count: COUNTER,
+        totalMs: COUNTER,
+        longestMs: MAXIMUM,
+        aheadTotal: COUNTER,
+        aheadMost: MAXIMUM
+      }
     },
     owed: { threads: LEVEL, files: LEVEL, directories: LEVEL },
+    owingRuns: LEVEL,
     syncsOnCallingThread: COUNTER
   },
   port: {
@@ -59,7 +74,13 @@ const SECTION_FIGURES = Object.freeze({
     inFlight: LEVEL,
     queued: LEVEL,
     joined: COUNTER,
-    peakInFlight: MAXIMUM
+    peakInFlight: MAXIMUM,
+    queuedUrgent: LEVEL,
+    queuedNormal: LEVEL,
+    startedUrgent: COUNTER,
+    promoted: COUNTER,
+    fairStarts: COUNTER,
+    urgencies: LEVEL
   },
   tickets: {
     moments: {

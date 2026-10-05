@@ -80,7 +80,27 @@ function changeOn(overrides: Dict = {}) {
         renamedUnderway: 0,
         failed: 0,
         waitMsTotal: 900,
-        longestWaitMs: { atMost: 70, exact: true }
+        longestWaitMs: { atMost: 70, exact: true },
+        scoped: 36,
+        threadOnly: 0,
+        urgent: 8,
+        hastened: 2
+      },
+      waits: {
+        urgent: {
+          count: 8,
+          totalMs: 96,
+          longestMs: { atMost: 29, exact: true },
+          aheadTotal: 16,
+          aheadMost: { atMost: 5, exact: true }
+        },
+        normal: {
+          count: 112,
+          totalMs: 804,
+          longestMs: { atMost: 70, exact: true },
+          aheadTotal: 560,
+          aheadMost: { atMost: 14, exact: true }
+        }
       },
       owed: {
         threads: { before: 0, after: 1 },
@@ -94,7 +114,13 @@ function changeOn(overrides: Dict = {}) {
       inFlight: { before: 0, after: 1 },
       queued: { before: 0, after: 3 },
       joined: 12,
-      peakInFlight: { atMost: 2, exact: true }
+      peakInFlight: { atMost: 2, exact: true },
+      queuedUrgent: { before: 0, after: 0 },
+      queuedNormal: { before: 0, after: 3 },
+      startedUrgent: 30,
+      promoted: 4,
+      fairStarts: 1,
+      urgencies: { before: 0, after: 0 }
     },
     tickets: {
       moments: {
@@ -572,13 +598,24 @@ describe('barrier durability’s exits over an off-against-on pair', () => {
       value: 30,
       valueIs: 'upper_bound',
       tickets: 8,
-      moments: ['user_message', 'decision', 'destructive']
+      moments: ['user_message', 'decision', 'destructive'],
+      // Beside it, the urgent barriers themselves: what the user's waits queued behind.
+      barriers: {
+        class: 'urgent',
+        count: 8,
+        meanMs: 12,
+        longestMs: { atMost: 29, exact: true },
+        syncsAheadMean: 2,
+        syncsAheadMost: { atMost: 5, exact: true }
+      }
     })
     expect(result.exits.barrierWaitRunFinal.limit).toBe(250)
     expect(result.exits.barrierWaitRunFinal.windows[0]).toMatchObject({
       verdict: 'pass',
       value: 120,
-      tickets: 36
+      tickets: 36,
+      // Every barrier that is not urgent: a run's own, idle and quit ones alike.
+      barriers: { class: 'normal', count: 112, meanMs: 7.179, syncsAheadMean: 5 }
     })
   })
 
@@ -688,6 +725,13 @@ describe('barrier durability’s exits over an off-against-on pair', () => {
       queued: { before: 0, after: 3 },
       inFlight: { before: 0, after: 1 },
       syncedByOwner: { journal: 380, 'run-events': 290, detail: 50, catalogue: 0, directory: 30 },
+      queuedByClass: {
+        urgent: { before: 0, after: 0 },
+        normal: { before: 0, after: 3 }
+      },
+      startedUrgent: 30,
+      promoted: 4,
+      fairStarts: 1,
       barrierRounds: 100,
       syncsOnCallingThread: 0,
       unread: []
@@ -699,10 +743,10 @@ describe('barrier durability’s exits over an off-against-on pair', () => {
     // Queue figures the section gains later are named, not lost.
     const later = evaluate(
       pair((state, index) =>
-        index === 1 ? { change: changeOn({ unread: ['port.queuedUrgent', 'tickets.x'] }) } : {}
+        index === 1 ? { change: changeOn({ unread: ['port.laterFigure', 'tickets.x'] }) } : {}
       )
     ).exits.portSyncs.windows[0]
-    expect(later.unread).toEqual(['port.queuedUrgent'])
+    expect(later.unread).toEqual(['port.laterFigure'])
   })
 
   it('compares main-thread time per model turn off against on, by the median of each', () => {
