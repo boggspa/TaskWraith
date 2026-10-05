@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { ThreadOwnershipLineage } from './ThreadOwnershipLineage'
+import {
+  ThreadOwnershipLineage,
+  type ThreadOwnershipPublicationAttempt
+} from './ThreadOwnershipLineage'
 
 function confirmed() {
   const ledger = new ThreadOwnershipLineage()
@@ -378,7 +381,7 @@ describe('ThreadOwnershipLineage', () => {
 
   it('forgets all strong per-thread state and attempts on retirement', () => {
     const ledger = new ThreadOwnershipLineage()
-    const attempts = []
+    const attempts: ThreadOwnershipPublicationAttempt[] = []
     for (let index = 0; index < 100; index++) {
       const id = `thread-${index}`
       ledger.reanchorFromConfirmedHost(id, { revision: 1, compatibilitySequence: index })
