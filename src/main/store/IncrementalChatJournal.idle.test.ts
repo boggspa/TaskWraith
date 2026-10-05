@@ -397,3 +397,33 @@ describe('the re-anchor, counted by cause', () => {
     })
   })
 })
+
+describe('erasure, which still syncs on the calling thread under the barrier', () => {
+  let baseDir: string
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
+  })
+
+  afterEach(() => {
+    removeTemporaryDirectory(baseDir)
+  })
+
+  it('counts each erasure of a chat, by delete or by purge', () => {
+    const journal = createIncrementalChatJournal(baseDir, { noteDurabilityDebt: () => {} })
+    journal.initialize(CHAT, records(CHAT)[0])
+    journal.initialize(OTHER, records(OTHER)[0])
+    const syncs = countSyncs()
+    try {
+      journal.delete(CHAT)
+      const afterDelete = syncs.issued.length
+      journal.purge(OTHER)
+      expect(afterDelete).toBeGreaterThan(0)
+      expect(syncs.issued.length).toBeGreaterThan(afterDelete)
+    } finally {
+      syncs.dispose()
+    }
+
+    expect(journal.stats()).toMatchObject({ erasures: 2 })
+  })
+})

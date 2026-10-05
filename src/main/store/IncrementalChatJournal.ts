@@ -180,6 +180,11 @@ export interface IncrementalChatJournalStats {
   shutdownCheckpointsSkipped: number
   /** Re-anchors by cause, each synced on the calling thread, with or without the option. */
   reanchors: Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>
+  /**
+   * Erasures of one chat (`delete`, `purge`), each synced on the calling
+   * thread, with or without the option.
+   */
+  erasures: number
 }
 
 /**
@@ -240,6 +245,17 @@ export interface IncrementalChatJournalOptions {
    * written, renamed into place, and its file and the directory owed. Writing
    * any later checkpoint, the re-anchor, torn-tail repair and erasure keep
    * every sync they have.
+   *
+   * What is left on the calling thread, without a descriptor cache, each
+   * counted in `stats()`: the first checkpoint serializes the chat's record,
+   * unsynced (`checkpointsWritten`); a re-anchor serializes and syncs
+   * (`reanchors`, by cause); a compaction at the cap serializes and syncs
+   * (`compactionCapFallbacks`); torn-tail repair syncs, on a read that may
+   * repair (`tornTailsRecovered`) or before an append (`tornTailsTruncated`);
+   * and erasure syncs (`erasures`). Only the first checkpoint, and a
+   * re-anchor when a whole-record save moved the record past the journal,
+   * come with normal work; the rest follow a crash, a failing worker, or the
+   * user erasing history.
    *
    * A power cut can then take a chat's first checkpoint, name and all, or
    * leave its name with only part of its bytes. No barrier resolved for that
@@ -643,6 +659,7 @@ export function createIncrementalChatJournal(
   let compactionsQueued = 0
   let idleCompactionsRequested = 0
   let shutdownCheckpointsSkipped = 0
+  let erasures = 0
   const reanchors = Object.fromEntries(
     INCREMENTAL_CHAT_REANCHOR_CAUSES.map((cause) => [
       cause,
@@ -2734,6 +2751,7 @@ export function createIncrementalChatJournal(
       lastAppendAtMs: null,
       tombstoned: true
     })
+    erasures += 1
   }
 
   const purge = (chatId: string): void => {
@@ -2761,6 +2779,7 @@ export function createIncrementalChatJournal(
     }
     fsyncDirectory()
     states.delete(chatId)
+    erasures += 1
   }
 
   const clear = (): void => {
@@ -2827,7 +2846,8 @@ export function createIncrementalChatJournal(
     shutdownCheckpointsSkipped,
     reanchors: Object.fromEntries(
       INCREMENTAL_CHAT_REANCHOR_CAUSES.map((cause) => [cause, { ...reanchors[cause] }])
-    ) as Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>
+    ) as Record<IncrementalChatReanchorCause, IncrementalChatReanchorCounts>,
+    erasures
   })
 
   return {
