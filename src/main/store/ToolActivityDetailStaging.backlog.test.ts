@@ -261,7 +261,8 @@ describe('a thread with a 1,000-run backlog of tool detail', () => {
       queuedNormal: 0
     })
 
-    // The thread's idle barrier is running when the user's is raised, and the user's waits on it.
+    // The thread's idle barrier is running when the user's is raised. The user's
+    // asks for the journal beside it, and joins the idle one's sync, not started.
     const idle = debt.barrier(CHAT)
     await settle()
     const startedBefore = calls.started.length

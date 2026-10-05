@@ -315,23 +315,41 @@ describe('a barrier for the thread’s own debt only', () => {
     expect(debt.snapshot().barriers).toMatchObject({ raised: 0, threadOnly: 0 })
   })
 
-  it('joins a running barrier that took everything the thread owed of its own, and asks for nothing more', async () => {
+  it('syncs beside a running barrier the path of its own that one took, and settles without waiting for the rest', async () => {
     debt.note(CHAT, { file: journal, owner: 'journal' })
     debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
     debt.note(CHAT, { file: events('run-2'), owner: 'run-events', run: 'run-2' })
     const running = debt.barrier(CHAT, { run: 'run-1' })
+    let runningSettled = false
+    void running.then(() => {
+      runningSettled = true
+    })
     await settle()
 
+    let ownSettled = false
     const own = debt.barrier(CHAT, { threadOnly: true, urgent: true })
+    void own.then(() => {
+      ownSettled = true
+    })
+    await settle()
+    expect(port.asked.map((each) => [each.path, each.urgent])).toEqual([
+      [journal, false],
+      [events('run-1'), false],
+      [journal, true]
+    ])
+    // Its own sync alone settles it.
+    port.asked[2].doneAt = tick()
+    port.asked[2].resolve('synced')
+    await settle()
+    expect([ownSettled, runningSettled]).toEqual([true, false])
+
     await port.drain()
     await Promise.all([running, own])
-
-    expect(port.asked.map((each) => each.path)).toEqual([journal, events('run-1')])
-    expect(debt.snapshot().barriers).toMatchObject({ shared: 1, rounds: 1 })
+    expect(debt.snapshot().barriers).toMatchObject({ beside: 1, shared: 0, rounds: 1 })
     expect(debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 0 })
   })
 
-  it('waits behind a running barrier for one of its own when the thread wrote since, and that one takes no run’s debt', async () => {
+  it('syncs a line written since beside the running barrier, urgently, and leaves it owed to the thread’s barriers', async () => {
     debt.note(CHAT, { file: journal, owner: 'journal' })
     debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
     const running = debt.barrier(CHAT, { run: 'run-1' })
@@ -349,7 +367,8 @@ describe('a barrier for the thread’s own debt only', () => {
       [events('run-1'), false],
       [journal, true]
     ])
-    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 1, directories: 0 })
+    // It took nothing: the line is still owed, beside the second run's file.
+    expect(debt.snapshot().owed).toEqual({ threads: 1, files: 2, directories: 0 })
     expect(debt.snapshot().owingRuns).toBe(1)
   })
 })

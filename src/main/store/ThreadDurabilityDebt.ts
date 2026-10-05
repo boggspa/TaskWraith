@@ -37,6 +37,17 @@
  * for its syncs as urgent when it starts, and a running one asks for the rest
  * of its syncs as urgent and has the port move the ones still waiting ahead.
  *
+ * An urgent barrier of the thread's own debt alone never waits for another
+ * barrier. Raised while one runs or is queued on its thread, it syncs, itself
+ * and urgently, the thread's own paths that are owed and those the running
+ * barrier took that no sync has covered since, files first, and settles when
+ * those are synced. Each is synced by a sync that starts after the request,
+ * so after the path's last note: the port joins a sync that has not started
+ * and starts a new one beside a sync in flight. It takes nothing, so what it
+ * syncs stays owed to the thread's barriers, which sync it again; a user acts
+ * rarely enough for that to cost nothing that matters. With no barrier
+ * running or queued it pays the thread's own debt as any barrier does.
+ *
  * One barrier runs for a thread at a time. A barrier raised while one is
  * running joins it when nothing it would pay has been noted since that one
  * began; otherwise it joins the single barrier that follows, which starts when
@@ -194,8 +205,22 @@ export interface ThreadDurabilityDebtSnapshot {
     threadOnly: number
     /** Raised as urgent. */
     urgent: number
-    /** Barriers running or queued that an urgent one raised, because it had to wait for them. */
+    /**
+     * Barriers running or queued that an urgent one raised, because it had to
+     * wait for them. An urgent barrier of the thread's own debt alone never
+     * waits for one, so only an urgent barrier of a run or of everything
+     * raises one.
+     */
     hastened: number
+    /**
+     * Urgent barriers of the thread's own debt alone raised while another
+     * barrier ran or was queued on their thread, which synced the thread's own
+     * paths beside it instead of waiting for it. Their syncs pay no debt and
+     * are not counted by owner.
+     */
+    beside: number
+    /** Of those, the ones in which a sync failed. The thread's debt is as it was. */
+    besideFailed: number
   }
   /** Settled barriers the user sat in, and the rest. */
   waits: Record<'urgent' | 'normal', ThreadDurabilityWaitCounters>
@@ -254,6 +279,12 @@ interface Running {
   urgent: boolean
   /** The paths it has asked the port for that have not settled. */
   unsettled: Paths
+  /**
+   * The thread's own paths it took that no sync has covered since: what an
+   * urgent barrier of the thread's own debt raised meanwhile syncs itself
+   * rather than wait for this one.
+   */
+  ownUnsynced: Paths
   /**
    * Set while it is still syncing files: every name it has been asked for,
    * and the names it has yet to ask for because a file it was asked for was
@@ -314,7 +345,9 @@ export function createThreadDurabilityDebt(
     scoped: 0,
     threadOnly: 0,
     urgent: 0,
-    hastened: 0
+    hastened: 0,
+    beside: 0,
+    besideFailed: 0
   }
   const waits = { urgent: waitCounters(), normal: waitCounters() }
 
@@ -488,7 +521,10 @@ export function createThreadDurabilityDebt(
         const settledPath = (): void => {
           running.unsettled[kind].delete(path)
         }
-        request.then(settledPath, settledPath)
+        request.then(() => {
+          settledPath()
+          running.ownUnsynced[kind].delete(path)
+        }, settledPath)
         return request
       })
     )
@@ -569,10 +605,14 @@ export function createThreadDurabilityDebt(
   ): Running => {
     const taken = take(state, runs)
     barriers.rounds += 1
+    const ownUnsynced = noPaths()
+    for (const [path, entry] of taken.files) if (entry.own) ownUnsynced.files.add(path)
+    for (const [path, entry] of taken.directories) if (entry.own) ownUnsynced.directories.add(path)
     const running: Running = {
       promise: Promise.resolve(),
       urgent,
       unsettled: noPaths(),
+      ownUnsynced,
       syncing: null
     }
     state.running = running
@@ -637,6 +677,51 @@ export function createThreadDurabilityDebt(
     urgency?.raise(running.unsettled.files, running.unsettled.directories)
   }
 
+  /**
+   * An urgent barrier of the thread's own debt alone, raised while another
+   * barrier runs or is queued on the thread: the thread's own paths owed now,
+   * and those the running barrier took that no sync has covered since, synced
+   * urgently, files first. It takes nothing and waits for nothing else.
+   */
+  const beside = async (state: ThreadState): Promise<void> => {
+    barriers.beside += 1
+    const { running } = state
+    const paths: Paths = {
+      files: new Set(state.own.files),
+      directories: new Set(state.own.directories)
+    }
+    if (running) {
+      for (const path of running.ownUnsynced.files) paths.files.add(path)
+      for (const path of running.ownUnsynced.directories) paths.directories.add(path)
+    }
+    for (const kind of ['files', 'directories'] as const) {
+      if (paths[kind].size === 0) continue
+      const outcomes = await Promise.allSettled(
+        [...paths[kind]].map((path) => {
+          try {
+            const request =
+              kind === 'files' ? port.syncFile(path, URGENT) : port.syncDirectory(path, URGENT)
+            // Begun after this barrier was raised, so after the running one took it.
+            request.then(
+              () => running?.ownUnsynced[kind].delete(path),
+              () => {}
+            )
+            return request
+          } catch (error) {
+            return Promise.reject(error)
+          }
+        })
+      )
+      const failed = outcomes.find(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+      )
+      if (failed) {
+        barriers.besideFailed += 1
+        throw failed.reason
+      }
+    }
+  }
+
   const settled = (
     chatId: string,
     runs: ReadonlySet<string> | null,
@@ -691,7 +776,11 @@ export function createThreadDurabilityDebt(
       : options.run === undefined
         ? null
         : new Set([options.run])
-    const promise = settled(chatId, runs, urgent, urgency)
+    const state = threads.get(chatId)
+    const promise =
+      threadOnly && urgent && state && (state.running || state.next)
+        ? beside(state)
+        : settled(chatId, runs, urgent, urgency)
     const timed = (): void => {
       const waited = now() - raisedAt
       barriers.waitMsTotal += waited
