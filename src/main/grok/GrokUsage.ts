@@ -283,11 +283,25 @@ export interface GrokUsageProbeDeps {
 }
 
 /**
+ * Screens the TUI draws only while it runs its own sign-in, which it starts by
+ * itself on launch when it holds no usable credential and follows by opening
+ * the default browser. Each word is placed with a cursor move, so the words
+ * arrive unspaced once ANSI is stripped. The bare "Signing in" progress label
+ * is deliberately absent: a signed-in launch shows it too.
+ */
+const GROK_SIGN_IN_SCREEN =
+  /Approve\s*in\s*your\s*browser|browser\s*shows\s*this\s*code|Waiting\s*for\s*auth\s*URL|browser\s*window\s*will\s*open\s*for\s*authentication|Waiting\s*for\s*login\s*to\s*complete|Opening\s*your\s*browser\s*to\s*sign\s*in|Open\s*this\s*URL\s*in\s*your\s*browser/i
+
+/**
  * Capture `/usage` via PTY and parse it. Resolves as soon as a credit signal
  * is seen (early-out), or with an 'unavailable' snapshot on timeout /
  * clean-exit-without-data. Always kills the child. The command's terminating
  * carriage return is the only Enter sent; the probe never sends a later
- * activation keystroke.
+ * activation keystroke. A TUI that shows a sign-in screen is ended at once
+ * with an 'unavailable' snapshot. That cannot keep its browser shut: the CLI
+ * opens it about a tenth of a second after the sign-in code arrives, usually
+ * before the screen reaches the probe. Callers must not launch a CLI that
+ * reports it is signed out (resolveGrokUsageProbeBinary).
  */
 export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnapshot> {
   const timeoutMs = deps.timeoutMs ?? 12_000
@@ -336,6 +350,12 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
         }
       }
       const stripped = stripGrokAnsi(buffer)
+      // The CLI is running its own sign-in: end it now, so the sign-in stops
+      // and `/usage` is never typed into it.
+      if (GROK_SIGN_IN_SCREEN.test(stripped)) {
+        finish(parseGrokUsage('', now()))
+        return
+      }
       // Early-out once the FULL usage screen has streamed in: a used-percent
       // line ("Credits used" / "Weekly limit:") or a reset window.
       if (

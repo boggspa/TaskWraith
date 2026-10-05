@@ -581,6 +581,80 @@ describe('probeGrokUsage', () => {
     expect(snap.provider).toBe('grok')
   })
 
+  // The device-code sign-in screen as grok 1.0.46 draws it: every word is
+  // placed with a cursor move, so the stripped text runs together.
+  const SIGN_IN_SCREEN =
+    '\x1b[?2026h\x1b[14;29HApprove\x1b[14;37Hin\x1b[14;40Hyour\x1b[14;45Hbrowser to finish' +
+    '\x1b[14;63Hsigning\x1b[14;71Hin.\x1b[16;47H\x1b[1mTEST-0000\x1b[18;32H\x1b[22mMake' +
+    '\x1b[18;37Hsure\x1b[18;42Hyour\x1b[18;47Hbrowser\x1b[18;55Hshows\x1b[18;61Hthis' +
+    '\x1b[18;66Hcode.\x1b[26;40H\x1b[24mWaiting\x1b[26;48Hfor\x1b[26;52Happroval...\x1b[?2026l'
+
+  it.each([
+    ['the device-code screen', SIGN_IN_SCREEN],
+    ['the browser sign-in screen', 'A browser window will open for authentication.\r\n'],
+    ['the copy-link screen', 'Open this URL in your browser to approve:\r\nCode: TEST-0000\r\n'],
+    [
+      'the wait for a sign-in URL',
+      '\x1b[12;40HWaiting\x1b[12;48Hfor\x1b[12;52Hauth\x1b[12;57HURL...'
+    ]
+  ])('ends the probe on %s without typing /usage into it', async (_screen, screen) => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    let resolved = false
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      readyDelayMs: 100,
+      timeoutMs: 1000
+    }).then((s) => {
+      resolved = true
+      return s
+    })
+
+    pty.emit(screen)
+    await Promise.resolve()
+    // Settled on the screen itself, before /usage was due.
+    expect(resolved).toBe(true)
+    expect(pty.killed).toBe(true)
+
+    clock.advance(1000)
+    const snap = await promise
+    expect(pty.writes).not.toContain('/usage\r')
+    expect(snap.confidence).toBe('unavailable')
+    expect(snap.creditsUsedDisplay).toBe('')
+  })
+
+  it('keeps waiting through the "Signing in" progress label a signed-in launch shows', async () => {
+    const pty = new FakePty()
+    const clock = new FakeClock()
+    let resolved = false
+    const promise = probeGrokUsage({
+      spawnPty: () => pty,
+      now: () => FIXED_NOW,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      readyDelayMs: 100
+    }).then((s) => {
+      resolved = true
+      return s
+    })
+
+    pty.emit('\x1b[20;44HSigning in\x1b[21;44HPreparing workspace\x1b[22;44HFinishing up')
+    clock.advance(100)
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+    expect(pty.killed).toBe(false)
+    expect(pty.writes).toEqual(['/usage\r'])
+
+    pty.emit('Weekly limit: 98%\nNext reset: July 2, 09:04 PT\n')
+    clock.advance(250)
+    const snap = await promise
+    expect(snap.confidence).toBe('observed')
+    expect(snap.creditsUsedPercent).toBe(98)
+  })
+
   it('settles only once even if data arrives after an exit', async () => {
     const pty = new FakePty()
     const clock = new FakeClock()
