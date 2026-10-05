@@ -40,6 +40,20 @@ const TRIGGERS = [
   'other'
 ]
 
+/** One kind of sync time at a fence: `5n` syncs, their total, the longest and the bands. */
+function syncTimes(n: number, scale: number) {
+  return {
+    count: 5 * n,
+    totalMs: 12.5 * n * scale,
+    longestMs: 40 * scale + n,
+    under10Ms: 2 * n,
+    from10To50Ms: n,
+    from50To200Ms: n,
+    from200To1000Ms: n,
+    from1000Ms: 0
+  }
+}
+
 /**
  * The section as the contract gives it with the switch on, every figure
  * derived from `n` so that two fences differ in each of them.
@@ -67,7 +81,9 @@ function sectionOn(n: number) {
         scoped: n,
         threadOnly: n,
         urgent: 2 * n,
-        hastened: 0
+        hastened: 0,
+        beside: n,
+        besideFailed: 0
       },
       waits: {
         urgent: {
@@ -75,9 +91,25 @@ function sectionOn(n: number) {
           totalMs: 6.5 * n,
           longestMs: 9 + n,
           aheadTotal: 3 * n,
-          aheadMost: 3
+          aheadMost: 3,
+          waitedBehind: n,
+          behindTotalMs: 2.5 * n,
+          behindLongestMs: 4 + n,
+          ownSyncsTotalMs: 4 * n,
+          ownSyncsLongestMs: 6
         },
-        normal: { count: 2 * n, totalMs: 6 * n, longestMs: 30, aheadTotal: 5 * n, aheadMost: 7 }
+        normal: {
+          count: 2 * n,
+          totalMs: 6 * n,
+          longestMs: 30,
+          aheadTotal: 5 * n,
+          aheadMost: 7,
+          waitedBehind: 0,
+          behindTotalMs: 0,
+          behindLongestMs: 0,
+          ownSyncsTotalMs: 6 * n,
+          ownSyncsLongestMs: 30
+        }
       },
       owed: { threads: n, files: 2 * n, directories: 1 },
       owingRuns: n % 4,
@@ -97,7 +129,12 @@ function sectionOn(n: number) {
       urgencies: 0,
       queuedBackground: n % 5,
       startedBackground: 7 * n,
-      backgroundFairStarts: n
+      backgroundFairStarts: n,
+      timing: {
+        urgent: { requestToStart: syncTimes(n, 1), startToSettle: syncTimes(n, 2) },
+        normal: { requestToStart: syncTimes(n, 3), startToSettle: syncTimes(n, 4) },
+        background: { requestToStart: syncTimes(n, 5), startToSettle: syncTimes(n, 6) }
+      }
     },
     tickets: {
       moments: Object.fromEntries(
@@ -124,6 +161,7 @@ function sectionOn(n: number) {
       chats: 3
     },
     gates: { waits: 6 * n, overdue: 0, rejected: 0, waitMsTotal: 7.25 * n, longestWaitMs: 33 },
+    starts: { waits: 2 * n, overdue: 0, rejected: 0, waitMsTotal: 3.5 * n, longestWaitMs: 10 + n },
     staging: {
       threads: n % 3,
       outstanding: n % 4,
@@ -153,6 +191,7 @@ function sectionOff(n: number) {
     port: null,
     tickets: null,
     gates: null,
+    starts: null,
     staging: null
   }
 }
@@ -262,14 +301,24 @@ describe('what changed between the two fences', () => {
         totalMs: 19.5,
         longestMs: { atMost: 14, exact: true },
         aheadTotal: 9,
-        aheadMost: { atMost: 3, exact: false }
+        aheadMost: { atMost: 3, exact: false },
+        waitedBehind: 3,
+        behindTotalMs: 7.5,
+        behindLongestMs: { atMost: 9, exact: true },
+        ownSyncsTotalMs: 12,
+        ownSyncsLongestMs: { atMost: 6, exact: false }
       },
       normal: {
         count: 6,
         totalMs: 18,
         longestMs: { atMost: 30, exact: false },
         aheadTotal: 15,
-        aheadMost: { atMost: 7, exact: false }
+        aheadMost: { atMost: 7, exact: false },
+        waitedBehind: 0,
+        behindTotalMs: 0,
+        behindLongestMs: { atMost: 0, exact: false },
+        ownSyncsTotalMs: 18,
+        ownSyncsLongestMs: { atMost: 30, exact: false }
       }
     })
     expect(change.debt.owingRuns).toEqual({ before: 2, after: 1 })
@@ -294,6 +343,56 @@ describe('what changed between the two fences', () => {
     expect(change.unread).toEqual([])
   })
 
+  it("reads the port's sync times by class: each band and the total between the fences, and the longest", () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    const between = (scale: number) => ({
+      count: 15,
+      totalMs: 37.5 * scale,
+      longestMs: { atMost: 40 * scale + 5, exact: true },
+      under10Ms: 6,
+      from10To50Ms: 3,
+      from50To200Ms: 3,
+      from200To1000Ms: 3,
+      from1000Ms: 0
+    })
+    expect(change.port.timing).toEqual({
+      urgent: { requestToStart: between(1), startToSettle: between(2) },
+      normal: { requestToStart: between(3), startToSettle: between(4) },
+      background: { requestToStart: between(5), startToSettle: between(6) }
+    })
+    expect(change.unread).toEqual([])
+  })
+
+  it('splits each class of wait into the time behind another barrier and the time on its own syncs', () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(change.debt.waits.urgent).toMatchObject({
+      waitedBehind: 3,
+      behindTotalMs: 7.5,
+      behindLongestMs: { atMost: 9, exact: true },
+      ownSyncsTotalMs: 12,
+      ownSyncsLongestMs: { atMost: 6, exact: false }
+    })
+    expect(change.debt.waits.normal).toMatchObject({ waitedBehind: 0, ownSyncsTotalMs: 18 })
+  })
+
+  it('counts the barriers that synced beside a running one, and those of them that failed', () => {
+    const after = sectionOn(5)
+    after.debt.barriers.besideFailed = 2
+    const change = (barrierDurabilityChange(sectionOn(2), after) as { change: any }).change
+    expect(change.debt.barriers).toMatchObject({ beside: 3, besideFailed: 2 })
+  })
+
+  it("reads the queued starts' bounded barriers as it reads the gates", () => {
+    const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
+    expect(change.starts).toEqual({
+      waits: 6,
+      overdue: 0,
+      rejected: 0,
+      waitMsTotal: 10.5,
+      longestWaitMs: { atMost: 15, exact: true }
+    })
+  })
+
   it('reads the staging of tool detail: its levels at both fences and its counters between them', () => {
     const change = (barrierDurabilityChange(sectionOn(2), sectionOn(5)) as { change: any }).change
     expect(change.staging).toEqual({
@@ -316,27 +415,54 @@ describe('what changed between the two fences', () => {
   })
 
   it('reads what an older build does not report as null, and still differences the rest', () => {
-    // No staging, and a port without its background class.
+    // No staging, no starts and no sync times; a port without its background
+    // class, no beside barriers, and waits that are not split.
+    const SPLIT = [
+      'waitedBehind',
+      'behindTotalMs',
+      'behindLongestMs',
+      'ownSyncsTotalMs',
+      'ownSyncsLongestMs'
+    ]
     const older = (n: number) => {
       const section = sectionOn(n) as any
       delete section.staging
+      delete section.starts
+      delete section.port.timing
       delete section.port.queuedBackground
       delete section.port.startedBackground
       delete section.port.backgroundFairStarts
+      delete section.debt.barriers.beside
+      delete section.debt.barriers.besideFailed
+      for (const kind of ['urgent', 'normal']) {
+        for (const figure of SPLIT) delete section.debt.waits[kind][figure]
+      }
       return section
     }
     const result = barrierDurabilityChange(older(2), older(5))
     expect(result.ok).toBe(true)
     const change = (result as { change: any }).change
     expect(change.staging).toBeNull()
+    expect(change.starts).toBeNull()
     expect(change.port).toMatchObject({
       started: 27,
       queuedBackground: null,
       startedBackground: null,
-      backgroundFairStarts: null
+      backgroundFairStarts: null,
+      timing: null
+    })
+    expect(change.debt.barriers).toMatchObject({ raised: 12, beside: null, besideFailed: null })
+    expect(change.debt.waits.urgent).toMatchObject({
+      count: 6,
+      ...Object.fromEntries(SPLIT.map((figure) => [figure, null]))
     })
     // Named, as is every figure a section does not give, and nothing refused.
     expect(change.unread).toEqual([
+      'debt.barriers.beside',
+      'debt.barriers.besideFailed',
+      ...['normal', 'urgent'].flatMap((kind) =>
+        [...SPLIT].sort().map((figure) => `debt.waits.${kind}.${figure}`)
+      ),
       'port.backgroundFairStarts',
       'port.queuedBackground',
       'port.startedBackground'
@@ -393,6 +519,7 @@ describe('what changed between the two fences', () => {
       port: null,
       tickets: null,
       gates: null,
+      starts: null,
       threads: null,
       staging: null
     })

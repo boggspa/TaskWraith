@@ -37,6 +37,27 @@ const COUNTER = 'counter'
 const LEVEL = 'level'
 const MAXIMUM = 'maximum'
 
+/** One kind of sync time: how many, summed, the longest, and how many fell in each band. */
+const SYNC_TIMES = Object.freeze({
+  count: COUNTER,
+  totalMs: COUNTER,
+  longestMs: MAXIMUM,
+  under10Ms: COUNTER,
+  from10To50Ms: COUNTER,
+  from50To200Ms: COUNTER,
+  from200To1000Ms: COUNTER,
+  from1000Ms: COUNTER
+})
+
+/** A bounded gate's waits: the user's dispatches', and the queued starts'. */
+const GATE_WAITS = Object.freeze({
+  waits: COUNTER,
+  overdue: COUNTER,
+  rejected: COUNTER,
+  waitMsTotal: COUNTER,
+  longestWaitMs: MAXIMUM
+})
+
 /** Each figure read, by how it changes; `each` maps every owner, moment or trigger to its own. */
 const SECTION_FIGURES = Object.freeze({
   debt: {
@@ -53,16 +74,27 @@ const SECTION_FIGURES = Object.freeze({
       scoped: COUNTER,
       threadOnly: COUNTER,
       urgent: COUNTER,
-      hastened: COUNTER
+      hastened: COUNTER,
+      // Urgent barriers of a thread's own debt that synced its paths beside a
+      // running barrier instead of waiting for it, and those in which a sync failed.
+      beside: COUNTER,
+      besideFailed: COUNTER
     },
     // Settled barriers by class: the urgent ones a user sat in, and the rest.
+    // Each wait is split into its time behind another barrier on its thread
+    // and its time on the syncs that paid it.
     waits: {
       each: {
         count: COUNTER,
         totalMs: COUNTER,
         longestMs: MAXIMUM,
         aheadTotal: COUNTER,
-        aheadMost: MAXIMUM
+        aheadMost: MAXIMUM,
+        waitedBehind: COUNTER,
+        behindTotalMs: COUNTER,
+        behindLongestMs: MAXIMUM,
+        ownSyncsTotalMs: COUNTER,
+        ownSyncsLongestMs: MAXIMUM
       }
     },
     owed: { threads: LEVEL, files: LEVEL, directories: LEVEL },
@@ -85,7 +117,10 @@ const SECTION_FIGURES = Object.freeze({
     // and what started only by the bound on other syncs in a row.
     queuedBackground: LEVEL,
     startedBackground: COUNTER,
-    backgroundFairStarts: COUNTER
+    backgroundFairStarts: COUNTER,
+    // By class: each request's time until the sync that serves it starts, and
+    // each sync's time from its start to its settling.
+    timing: { each: { requestToStart: SYNC_TIMES, startToSettle: SYNC_TIMES } }
   },
   tickets: {
     moments: {
@@ -107,13 +142,10 @@ const SECTION_FIGURES = Object.freeze({
     longestAwaitMs: MAXIMUM,
     chats: LEVEL
   },
-  gates: {
-    waits: COUNTER,
-    overdue: COUNTER,
-    rejected: COUNTER,
-    waitMsTotal: COUNTER,
-    longestWaitMs: MAXIMUM
-  },
+  gates: GATE_WAITS,
+  // The bounded barriers queued starts waited for before claiming their run row
+  // durable. Null with the switch off.
+  starts: GATE_WAITS,
   threads: {
     owing: LEVEL,
     idleBarriers: COUNTER,
