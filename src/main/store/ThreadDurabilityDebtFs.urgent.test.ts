@@ -71,7 +71,14 @@ describe('urgent syncs in the port', () => {
 
   beforeEach(() => {
     calls = new HeldCalls()
-    port = createThreadDurabilityDebtFs({ fs: calls, platform: 'darwin', maxInFlight: 2 })
+    // The order within the shared places, without the place kept for an
+    // urgent sync (ThreadDurabilityDebtFs.extraPlace.test.ts).
+    port = createThreadDurabilityDebtFs({
+      fs: calls,
+      platform: 'darwin',
+      maxInFlight: 2,
+      keepUrgentPlace: false
+    })
   })
 
   it('starts urgent syncs ahead of every waiting sync that is not, each kind in the order asked', async () => {
@@ -133,7 +140,12 @@ describe('urgent syncs in the port', () => {
   })
 
   it(`starts a waiting sync that is not urgent after ${THREAD_DURABILITY_URGENT_RUN} urgent ones in a row`, async () => {
-    const one = createThreadDurabilityDebtFs({ fs: calls, platform: 'darwin', maxInFlight: 1 })
+    const one = createThreadDurabilityDebtFs({
+      fs: calls,
+      platform: 'darwin',
+      maxInFlight: 1,
+      keepUrgentPlace: false
+    })
     void one.syncFile('/p/running')
     void one.syncFile('/p/ordinary')
     let urgent = 0
@@ -159,7 +171,12 @@ describe('urgent syncs in the port', () => {
   })
 
   it(`counts the ${THREAD_DURABILITY_URGENT_RUN} again for each waiting sync that is not urgent, and only while one waits`, async () => {
-    const one = createThreadDurabilityDebtFs({ fs: calls, platform: 'darwin', maxInFlight: 1 })
+    const one = createThreadDurabilityDebtFs({
+      fs: calls,
+      platform: 'darwin',
+      maxInFlight: 1,
+      keepUrgentPlace: false
+    })
     let urgent = 0
     const ask = (): void => {
       urgent += 1

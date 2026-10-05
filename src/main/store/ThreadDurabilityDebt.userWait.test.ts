@@ -167,9 +167,10 @@ describe('a user’s barrier while another barrier runs on its thread', () => {
     const user = timed(userBarrier())
     await calls.advance(499)
 
-    // Both places were taken; its own sync started in the first one to free.
-    expect(calls.startsOf(journal)).toEqual([0, 50])
-    expect(user).toEqual({ at: 100, error: null })
+    // Both places were taken by syncs that are not urgent: its own started at
+    // once, in the place kept for an urgent sync.
+    expect(calls.startsOf(journal)).toEqual([0, 10])
+    expect(user).toEqual({ at: 60, error: null })
     expect(port.snapshot()).toMatchObject({ startedUrgent: 1 })
     expect(calls.startsOf(events('run-1'))).toEqual([0])
     await calls.advance(600)
@@ -242,14 +243,16 @@ describe('a user’s barrier while another barrier runs on its thread', () => {
     const user = timed(userBarrier())
     await calls.advance(499)
 
-    // One place: the running barrier's journal, then the user's, then the run's file.
-    expect(calls.startsOf(journal)).toEqual([0, 5])
-    expect(calls.startsOf(events('run-1'))).toEqual([10])
-    expect(user).toEqual({ at: 10, error: null })
+    // One shared place, held by the running barrier's journal: the user's
+    // started in the place kept for an urgent sync, and the run's file, never
+    // raised, only once the user's barrier had settled.
+    expect(calls.startsOf(journal)).toEqual([0, 1])
+    expect(calls.startsOf(events('run-1'))).toEqual([6])
+    expect(user).toEqual({ at: 6, error: null })
     expect(port.snapshot()).toMatchObject({ promoted: 0 })
     expect(debt.snapshot().barriers).toMatchObject({ hastened: 0 })
     await calls.advance(600)
-    expect(running).toEqual({ at: 510, error: null })
+    expect(running).toEqual({ at: 506, error: null })
   })
 
   it('syncs beside a queued barrier, raised as the running one ends, and never waits for it', async () => {
@@ -292,7 +295,7 @@ describe('a user’s barrier while another barrier runs on its thread', () => {
     const later = timed(debt.barrier(CHAT))
     await calls.advance(2_000)
 
-    expect(user).toEqual({ at: 700, error: null })
+    expect(user).toEqual({ at: 601, error: null })
     expect(later.at).not.toBeNull()
     // Some sync of the journal began after the new line and ended before the
     // later barrier settled.
@@ -304,7 +307,7 @@ describe('a user’s barrier while another barrier runs on its thread', () => {
         sync.endedAt <= later.at!
     )
     expect(covering.length).toBeGreaterThan(0)
-    expect(later).toEqual({ at: 1_300, error: null })
+    expect(later).toEqual({ at: 1_201, error: null })
   })
 
   it('leaves a barrier of the thread’s own debt that is not urgent waiting for the running one, as before', async () => {

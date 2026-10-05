@@ -109,8 +109,9 @@ describe('the time syncs take in the port', () => {
     void port.syncFile('/p/urgent', { urgent: true })
     void port.syncDirectory('/p/background', { background: true })
     await settle()
+    // The urgent one started at once, in the place kept for it.
     expect(port.snapshot().timing).toEqual({
-      urgent: { requestToStart: none(), startToSettle: none() },
+      urgent: { requestToStart: once(0), startToSettle: none() },
       normal: { requestToStart: once(0), startToSettle: none() },
       background: { requestToStart: none(), startToSettle: none() }
     })
@@ -123,9 +124,9 @@ describe('the time syncs take in the port', () => {
     await calls.finish('/p/background')
 
     expect(port.snapshot().timing).toEqual({
-      urgent: { requestToStart: once(30), startToSettle: once(700) },
+      urgent: { requestToStart: once(0), startToSettle: once(730) },
       normal: { requestToStart: once(0), startToSettle: once(30) },
-      background: { requestToStart: once(730), startToSettle: once(1_500) }
+      background: { requestToStart: once(30), startToSettle: once(2_200) }
     })
   })
 
@@ -141,10 +142,12 @@ describe('the time syncs take in the port', () => {
     await calls.finish('/p/shared')
 
     const { timing } = port.snapshot()
-    expect(timing.background.requestToStart).toEqual(once(150))
-    expect(timing.urgent.requestToStart).toEqual(once(5))
-    // Moved up to urgent before it started, it is timed as urgent.
-    expect(timing.urgent.startToSettle).toEqual(once(60))
+    // Moved up to urgent, it started at once in the place kept for an urgent
+    // sync: the background request waited 145, the urgent one nothing.
+    expect(timing.background.requestToStart).toEqual(once(145))
+    expect(timing.urgent.requestToStart).toEqual(once(0))
+    // It is timed as urgent, the class it started in.
+    expect(timing.urgent.startToSettle).toEqual(once(65))
     expect(timing.background.startToSettle).toEqual(none())
     expect(timing.normal).toEqual({ requestToStart: once(0), startToSettle: once(150) })
   })

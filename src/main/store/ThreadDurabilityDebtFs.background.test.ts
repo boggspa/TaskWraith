@@ -86,7 +86,14 @@ describe('background syncs in the port', () => {
 
   beforeEach(() => {
     calls = new HeldCalls()
-    port = createThreadDurabilityDebtFs({ fs: calls, platform: 'darwin', maxInFlight: 1 })
+    // The order within the shared place, without the place kept for an
+    // urgent sync (ThreadDurabilityDebtFs.extraPlace.test.ts).
+    port = createThreadDurabilityDebtFs({
+      fs: calls,
+      platform: 'darwin',
+      maxInFlight: 1,
+      keepUrgentPlace: false
+    })
   })
 
   it('starts one only when nothing urgent or normal waits, each class in the order asked', async () => {

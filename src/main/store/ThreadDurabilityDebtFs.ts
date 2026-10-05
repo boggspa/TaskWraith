@@ -33,6 +33,14 @@
  * others start in a row before one of them does. Background syncs that are
  * waiting are never counted as ahead of a new request (`ahead`).
  *
+ * An urgent sync that would find every place taken by syncs that are not
+ * urgent starts at once instead, in one more place kept for urgent syncs and
+ * never used by anything else: a sync paying seconds of streamed bytes can
+ * hold a place for most of a second, and the user waits for the urgent one.
+ * When an urgent sync already holds a place, or the kept place is taken, an
+ * urgent request waits as any does. The kept place takes no place from
+ * anyone, so a start in it counts toward neither bound above.
+ *
  * A request for a path whose sync is still waiting to start joins that sync:
  * it will begin after both writes, so it covers both. A request of a sooner
  * class moves the sync it joins up to that class, and an urgency's `raise`
@@ -88,6 +96,12 @@ export interface ThreadDurabilityDebtFsOptions {
   fs?: ThreadDurabilityDebtFsCalls
   /** Milliseconds, read only to time syncs. Defaults to `performance.now`. */
   now?: () => number
+  /**
+   * Keep one place beyond `maxInFlight` for an urgent sync that finds every
+   * other place taken by syncs that are not urgent. Defaults to true; tests of
+   * the order within the shared places turn it off.
+   */
+  keepUrgentPlace?: boolean
 }
 
 /** Times of one kind, in milliseconds: summed, the longest, and how many fell in each band. */
@@ -137,6 +151,8 @@ export interface ThreadDurabilityDebtFsSnapshot {
   /** Background syncs started by the bound on other syncs in a row. */
   backgroundFairStarts: number
   timing: Record<SyncClass, ThreadDurabilitySyncClassTiming>
+  /** Urgent syncs started in the place kept for them, every other place being taken by syncs that are not urgent. */
+  extraUrgentStarts: number
 }
 
 export interface ThreadDurabilityDebtFs extends ThreadDurabilityPort {
@@ -166,6 +182,8 @@ interface Task {
   syncClass: SyncClass
   started: boolean
   startedAt: number
+  /** It holds the place kept for urgent syncs. */
+  extra: boolean
 }
 
 const noTime = (): ThreadDurabilitySyncTiming => ({
@@ -231,6 +249,7 @@ export function createThreadDurabilityDebtFs(
   const now = options.now ?? (() => performance.now())
   const windows = (options.platform ?? process.platform) === 'win32'
   const maxInFlight = options.maxInFlight ?? THREAD_DURABILITY_SYNCS_IN_FLIGHT
+  const keepUrgentPlace = options.keepUrgentPlace ?? true
   if (!Number.isSafeInteger(maxInFlight) || maxInFlight < 1) {
     throw new RangeError('Thread durability port: maxInFlight must be a whole number of at least 1')
   }
@@ -242,7 +261,13 @@ export function createThreadDurabilityDebtFs(
   let queuedUrgent = 0
   let queuedNormal = 0
   let queuedBackground = 0
+  /** Syncs running: in the places every class shares, and in the one kept for urgent syncs. */
   let inFlight = 0
+  let sharedInFlight = 0
+  /** Of the syncs in the shared places, the urgent ones. */
+  let urgentShared = 0
+  let extraInFlight = false
+  let extraUrgentStarts = 0
   let started = 0
   let startedUrgent = 0
   let startedBackground = 0
@@ -283,6 +308,11 @@ export function createThreadDurabilityDebtFs(
     outcome: ThreadDurabilitySyncOutcome
   ): void => {
     inFlight -= 1
+    if (task.extra) extraInFlight = false
+    else {
+      sharedInFlight -= 1
+      if (task.syncClass === 'urgent') urgentShared -= 1
+    }
     addTime(timing[task.syncClass].startToSettle, now() - task.startedAt)
     for (const waiter of task.waiters) {
       if (error) waiter.reject(error)
@@ -335,24 +365,50 @@ export function createThreadDurabilityDebtFs(
     return task
   }
 
+  /** Hand a waiting sync to the file system, in a shared place or in the one kept for urgent syncs. */
+  const launch = (task: Task, extra: boolean): void => {
+    countQueued(task.syncClass, -1)
+    if (task.syncClass === 'urgent') startedUrgent += 1
+    else if (task.syncClass === 'background') startedBackground += 1
+    task.started = true
+    task.extra = extra
+    task.startedAt = now()
+    for (const waiter of task.waiters) {
+      addTime(timing[waiter.syncClass].requestToStart, task.startedAt - waiter.requestedAt)
+    }
+    // From here a later request for this path needs a sync of its own.
+    waiting.delete(task.key)
+    if (extra) extraInFlight = true
+    else {
+      sharedInFlight += 1
+      if (task.syncClass === 'urgent') urgentShared += 1
+    }
+    inFlight += 1
+    started += 1
+    if (inFlight > peakInFlight) peakInFlight = inFlight
+    start(task)
+  }
+
   function pump(): void {
-    while (inFlight < maxInFlight) {
+    while (sharedInFlight < maxInFlight) {
       const task = pick()
-      if (!task) return
-      countQueued(task.syncClass, -1)
-      if (task.syncClass === 'urgent') startedUrgent += 1
-      else if (task.syncClass === 'background') startedBackground += 1
-      task.started = true
-      task.startedAt = now()
-      for (const waiter of task.waiters) {
-        addTime(timing[waiter.syncClass].requestToStart, task.startedAt - waiter.requestedAt)
+      if (!task) break
+      launch(task, false)
+    }
+    // Every shared place is taken, and by nothing urgent: an urgent sync
+    // waiting starts in the place kept for it.
+    if (
+      keepUrgentPlace &&
+      !extraInFlight &&
+      queuedUrgent > 0 &&
+      sharedInFlight >= maxInFlight &&
+      urgentShared === 0
+    ) {
+      const task = urgentQueue.next(() => true)
+      if (task) {
+        extraUrgentStarts += 1
+        launch(task, true)
       }
-      // From here a later request for this path needs a sync of its own.
-      waiting.delete(task.key)
-      inFlight += 1
-      started += 1
-      if (inFlight > peakInFlight) peakInFlight = inFlight
-      start(task)
     }
   }
 
@@ -383,7 +439,16 @@ export function createThreadDurabilityDebtFs(
         joined += 1
         promote(task, syncClass)
       } else {
-        task = { key, directory, path, waiters: [], syncClass, started: false, startedAt: 0 }
+        task = {
+          key,
+          directory,
+          path,
+          waiters: [],
+          syncClass,
+          started: false,
+          startedAt: 0,
+          extra: false
+        }
         waiting.set(key, task)
         enqueue(task)
       }
@@ -441,7 +506,8 @@ export function createThreadDurabilityDebtFs(
         urgent: copyTiming(timing.urgent),
         normal: copyTiming(timing.normal),
         background: copyTiming(timing.background)
-      }
+      },
+      extraUrgentStarts
     })
   }
 }
