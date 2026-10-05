@@ -257,7 +257,9 @@ describe('thread durability port', () => {
         urgencies: 0,
         queuedBackground: 0,
         startedBackground: 0,
-        backgroundFairStarts: 0
+        backgroundFairStarts: 0,
+        // Pinned in ThreadDurabilityDebtFs.timing.test.ts.
+        timing: expect.any(Object)
       })
 
       await calls.finish('/p/b')
@@ -283,7 +285,9 @@ describe('thread durability port', () => {
         urgencies: 0,
         queuedBackground: 0,
         startedBackground: 0,
-        backgroundFairStarts: 0
+        backgroundFairStarts: 0,
+        // Pinned in ThreadDurabilityDebtFs.timing.test.ts.
+        timing: expect.any(Object)
       })
     })
 

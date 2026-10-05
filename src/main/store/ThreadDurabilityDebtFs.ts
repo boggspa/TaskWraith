@@ -38,8 +38,16 @@
  * class moves the sync it joins up to that class, and an urgency's `raise`
  * moves the syncs it names up to urgent. A sync that has started is never
  * joined, because it may have begun before the later write.
+ *
+ * Each class is timed twice: each request from the moment it is made to the
+ * start of the sync that serves it, at the class it asked for, and each sync
+ * from its start to its settling, failed or found gone included, at the class
+ * it started in. Each time is summed, kept at its longest, and counted in one
+ * of five bands: under 10 ms, 10 to 50, 50 to 200, 200 to 1,000, and 1,000 or
+ * more. A directory on Windows is not synced and not timed.
  */
 import * as nodeFs from 'node:fs'
+import { performance } from 'node:perf_hooks'
 
 import type {
   ThreadDurabilityPort,
@@ -78,6 +86,28 @@ export interface ThreadDurabilityDebtFsOptions {
   platform?: NodeJS.Platform
   /** Fault-injection seam; production calls `node:fs`. */
   fs?: ThreadDurabilityDebtFsCalls
+  /** Milliseconds, read only to time syncs. Defaults to `performance.now`. */
+  now?: () => number
+}
+
+/** Times of one kind, in milliseconds: summed, the longest, and how many fell in each band. */
+export interface ThreadDurabilitySyncTiming {
+  count: number
+  totalMs: number
+  longestMs: number
+  under10Ms: number
+  from10To50Ms: number
+  from50To200Ms: number
+  from200To1000Ms: number
+  from1000Ms: number
+}
+
+/** How long the syncs of one class waited, and how long they took. */
+export interface ThreadDurabilitySyncClassTiming {
+  /** Each request, at the class it asked for, to the start of the sync that serves it. */
+  requestToStart: ThreadDurabilitySyncTiming
+  /** Each sync, at the class it started in, from its start to its settling. */
+  startToSettle: ThreadDurabilitySyncTiming
 }
 
 export interface ThreadDurabilityDebtFsSnapshot {
@@ -106,6 +136,7 @@ export interface ThreadDurabilityDebtFsSnapshot {
   startedBackground: number
   /** Background syncs started by the bound on other syncs in a row. */
   backgroundFairStarts: number
+  timing: Record<SyncClass, ThreadDurabilitySyncClassTiming>
 }
 
 export interface ThreadDurabilityDebtFs extends ThreadDurabilityPort {
@@ -114,13 +145,16 @@ export interface ThreadDurabilityDebtFs extends ThreadDurabilityPort {
   snapshot(): ThreadDurabilityDebtFsSnapshot
 }
 
+/** How soon a waiting sync starts, soonest first. */
+type SyncClass = 'urgent' | 'normal' | 'background'
+
 interface Waiter {
   resolve(outcome: ThreadDurabilitySyncOutcome): void
   reject(error: unknown): void
+  /** The class this request asked for, and when. */
+  syncClass: SyncClass
+  requestedAt: number
 }
-
-/** How soon a waiting sync starts, soonest first. */
-type SyncClass = 'urgent' | 'normal' | 'background'
 
 const SOONER: Record<SyncClass, number> = { urgent: 0, normal: 1, background: 2 }
 
@@ -131,6 +165,30 @@ interface Task {
   waiters: Waiter[]
   syncClass: SyncClass
   started: boolean
+  startedAt: number
+}
+
+const noTime = (): ThreadDurabilitySyncTiming => ({
+  count: 0,
+  totalMs: 0,
+  longestMs: 0,
+  under10Ms: 0,
+  from10To50Ms: 0,
+  from50To200Ms: 0,
+  from200To1000Ms: 0,
+  from1000Ms: 0
+})
+
+/** Count one time of `ms` into `timing`. */
+function addTime(timing: ThreadDurabilitySyncTiming, ms: number): void {
+  timing.count += 1
+  timing.totalMs += ms
+  if (ms > timing.longestMs) timing.longestMs = ms
+  if (ms < 10) timing.under10Ms += 1
+  else if (ms < 50) timing.from10To50Ms += 1
+  else if (ms < 200) timing.from50To200Ms += 1
+  else if (ms < 1_000) timing.from200To1000Ms += 1
+  else timing.from1000Ms += 1
 }
 
 /** Tasks in the order they were queued; a task that has left its place is passed over. */
@@ -170,6 +228,7 @@ export function createThreadDurabilityDebtFs(
   options: ThreadDurabilityDebtFsOptions = {}
 ): ThreadDurabilityDebtFs {
   const fs: ThreadDurabilityDebtFsCalls = options.fs ?? nodeFs
+  const now = options.now ?? (() => performance.now())
   const windows = (options.platform ?? process.platform) === 'win32'
   const maxInFlight = options.maxInFlight ?? THREAD_DURABILITY_SYNCS_IN_FLIGHT
   if (!Number.isSafeInteger(maxInFlight) || maxInFlight < 1) {
@@ -197,6 +256,11 @@ export function createThreadDurabilityDebtFs(
   let urgentRun = 0
   /** Urgent and normal syncs started since a background one, while a background one waited. */
   let foregroundRun = 0
+  const timing: Record<SyncClass, ThreadDurabilitySyncClassTiming> = {
+    urgent: { requestToStart: noTime(), startToSettle: noTime() },
+    normal: { requestToStart: noTime(), startToSettle: noTime() },
+    background: { requestToStart: noTime(), startToSettle: noTime() }
+  }
 
   /** Count a sync of this class as waiting, or as waiting no longer. */
   const countQueued = (syncClass: SyncClass, change: 1 | -1): void => {
@@ -219,6 +283,7 @@ export function createThreadDurabilityDebtFs(
     outcome: ThreadDurabilitySyncOutcome
   ): void => {
     inFlight -= 1
+    addTime(timing[task.syncClass].startToSettle, now() - task.startedAt)
     for (const waiter of task.waiters) {
       if (error) waiter.reject(error)
       else waiter.resolve(outcome)
@@ -278,6 +343,10 @@ export function createThreadDurabilityDebtFs(
       if (task.syncClass === 'urgent') startedUrgent += 1
       else if (task.syncClass === 'background') startedBackground += 1
       task.started = true
+      task.startedAt = now()
+      for (const waiter of task.waiters) {
+        addTime(timing[waiter.syncClass].requestToStart, task.startedAt - waiter.requestedAt)
+      }
       // From here a later request for this path needs a sync of its own.
       waiting.delete(task.key)
       inFlight += 1
@@ -314,11 +383,11 @@ export function createThreadDurabilityDebtFs(
         joined += 1
         promote(task, syncClass)
       } else {
-        task = { key, directory, path, waiters: [], syncClass, started: false }
+        task = { key, directory, path, waiters: [], syncClass, started: false, startedAt: 0 }
         waiting.set(key, task)
         enqueue(task)
       }
-      task.waiters.push({ resolve, reject })
+      task.waiters.push({ resolve, reject, syncClass, requestedAt: now() })
       pump()
     })
   }
@@ -367,7 +436,17 @@ export function createThreadDurabilityDebtFs(
       urgencies,
       queuedBackground,
       startedBackground,
-      backgroundFairStarts
+      backgroundFairStarts,
+      timing: {
+        urgent: copyTiming(timing.urgent),
+        normal: copyTiming(timing.normal),
+        background: copyTiming(timing.background)
+      }
     })
   }
 }
+
+const copyTiming = (timing: ThreadDurabilitySyncClassTiming): ThreadDurabilitySyncClassTiming => ({
+  requestToStart: { ...timing.requestToStart },
+  startToSettle: { ...timing.startToSettle }
+})

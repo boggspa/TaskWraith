@@ -179,6 +179,18 @@ export interface ThreadDurabilityWaitCounters {
   /** Syncs running or ahead of it in the port when each was raised, summed and at most. */
   aheadTotal: number
   aheadMost: number
+  /** Of these, the barriers that joined a barrier running on their thread or queued behind one. */
+  waitedBehind: number
+  /**
+   * The time each spent waiting for another barrier on its thread, before the
+   * syncs that pay it began (all of its wait when it joined a running one),
+   * summed and at its longest.
+   */
+  behindTotalMs: number
+  behindLongestMs: number
+  /** The time from the start of the syncs that pay each to its settling, summed and at its longest. */
+  ownSyncsTotalMs: number
+  ownSyncsLongestMs: number
 }
 
 export interface ThreadDurabilityDebtSnapshot {
@@ -298,6 +310,17 @@ interface Queued {
   /** The runs it pays for besides the thread's own debt; null for everything. */
   runs: Set<string> | null
   urgent: boolean
+  /** When it began to pay; null until then. */
+  began: { at: number | null }
+}
+
+/** What a caller of `barrier` waits for, and where that wait begins to be its own syncs. */
+interface Wait {
+  promise: Promise<void>
+  /** When the syncs that pay it began; null while, or if, it waits for another barrier. */
+  ownFrom: { at: number | null }
+  /** It joined a barrier running on its thread or queued behind one. */
+  behind: boolean
 }
 
 interface ThreadState {
@@ -321,7 +344,12 @@ const waitCounters = (): ThreadDurabilityWaitCounters => ({
   totalMs: 0,
   longestMs: 0,
   aheadTotal: 0,
-  aheadMost: 0
+  aheadMost: 0,
+  waitedBehind: 0,
+  behindTotalMs: 0,
+  behindLongestMs: 0,
+  ownSyncsTotalMs: 0,
+  ownSyncsLongestMs: 0
 })
 
 export function createThreadDurabilityDebt(
@@ -631,7 +659,7 @@ export function createThreadDurabilityDebt(
     runs: ReadonlySet<string> | null,
     urgent: boolean,
     caller: boolean
-  ): Promise<void> => {
+  ): Queued => {
     const queued = state.next
     if (queued) {
       if (caller) barriers.shared += 1
@@ -641,17 +669,18 @@ export function createThreadDurabilityDebt(
         queued.urgent = true
         if (caller) barriers.hastened += 1
       }
-      return queued.promise
+      return queued
     }
     const next: Queued = {
       promise: Promise.resolve(),
       runs: runs === null ? null : new Set(runs),
-      urgent
+      urgent,
+      began: { at: null }
     }
     const afterRunning = (): Promise<void> => follow(chatId, state, next)
     next.promise = state.running!.promise.then(afterRunning, afterRunning)
     state.next = next
-    return next.promise
+    return next
   }
 
   const follow = (chatId: string, state: ThreadState, queued: Queued): Promise<void> => {
@@ -665,7 +694,8 @@ export function createThreadDurabilityDebt(
       if (!state.next && owesNothing(state)) threads.delete(chatId)
       return Promise.resolve()
     }
-    if (state.running) return queue(chatId, state, queued.runs, queued.urgent, false)
+    if (state.running) return queue(chatId, state, queued.runs, queued.urgent, false).promise
+    queued.began.at = now()
     return begin(chatId, state, queued.runs, queued.urgent).promise
   }
 
@@ -727,30 +757,39 @@ export function createThreadDurabilityDebt(
     runs: ReadonlySet<string> | null,
     urgent: boolean,
     urgency: ThreadDurabilityUrgency | undefined
-  ): Promise<void> => {
+  ): Wait => {
+    const atOnce = (promise: Promise<void>): Wait => ({
+      promise,
+      ownFrom: { at: now() },
+      behind: false
+    })
     const state = threads.get(chatId)
     if (!state) {
       barriers.idle += 1
-      return Promise.resolve()
+      return atOnce(Promise.resolve())
     }
     const { running } = state
     if (!running) {
       if (!owesFor(state, runs)) {
         barriers.idle += 1
-        return Promise.resolve()
+        return atOnce(Promise.resolve())
       }
       // In the moment between a barrier's end and the start of the one queued
       // behind it, a caller joins the queued one.
-      if (state.next) return queue(chatId, state, runs, urgent, true)
-      return begin(chatId, state, runs, urgent).promise
+      if (state.next) {
+        const queued = queue(chatId, state, runs, urgent, true)
+        return { promise: queued.promise, ownFrom: queued.began, behind: false }
+      }
+      return atOnce(begin(chatId, state, runs, urgent).promise)
     }
     // Whatever this caller waits for comes after the running barrier.
     if (urgent) hasten(running, urgency)
     if (!owesFor(state, runs)) {
       barriers.shared += 1
-      return running.promise
+      return { promise: running.promise, ownFrom: { at: null }, behind: true }
     }
-    return queue(chatId, state, runs, urgent, true)
+    const queued = queue(chatId, state, runs, urgent, true)
+    return { promise: queued.promise, ownFrom: queued.began, behind: true }
   }
 
   const barrier = (chatId: string, options: ThreadDurabilityBarrierOptions = {}): Promise<void> => {
@@ -777,9 +816,9 @@ export function createThreadDurabilityDebt(
         ? null
         : new Set([options.run])
     const state = threads.get(chatId)
-    const promise =
+    const wait: Wait =
       threadOnly && urgent && state && (state.running || state.next)
-        ? beside(state)
+        ? { promise: beside(state), ownFrom: { at: raisedAt }, behind: false }
         : settled(chatId, runs, urgent, urgency)
     const timed = (): void => {
       const waited = now() - raisedAt
@@ -788,10 +827,17 @@ export function createThreadDurabilityDebt(
       kind.count += 1
       kind.totalMs += waited
       if (waited > kind.longestMs) kind.longestMs = waited
+      const ownFrom = wait.ownFrom.at
+      const behindMs = ownFrom === null ? waited : Math.min(waited, Math.max(0, ownFrom - raisedAt))
+      if (wait.behind) kind.waitedBehind += 1
+      kind.behindTotalMs += behindMs
+      if (behindMs > kind.behindLongestMs) kind.behindLongestMs = behindMs
+      kind.ownSyncsTotalMs += waited - behindMs
+      if (waited - behindMs > kind.ownSyncsLongestMs) kind.ownSyncsLongestMs = waited - behindMs
       urgency?.end()
     }
-    promise.then(timed, timed)
-    return promise
+    wait.promise.then(timed, timed)
+    return wait.promise
   }
 
   const forget = (chatId: string): void => {
