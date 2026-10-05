@@ -13,6 +13,9 @@
  *
  * It keeps a bounded view of the thread: the record without its transcript,
  * the newest messages, the newest runs and any older run a held message names.
+ * Rows put in where a window begins are in it. A removal inside a window
+ * leaves it short until newer rows fill it again, as the follower never had
+ * the rows before it.
  * Each batch is applied with the shared apply code, one operation at a time, to
  * just the rows that operation touches. An operation on a row the view does
  * not hold cannot change a row it does hold, so it is noted rather than applied
@@ -1545,7 +1548,9 @@ export class HostThreadLogFollower {
     })
     next.sort((a, b) => a.index - b.index)
     staging.runs = next
-    if (at + deleteCount <= staging.runsFrom) staging.runsFrom += shift
+    // Wholly before the newest runs, it moves them; runs put in where they
+    // begin are among them, as messages put in where the window begins are.
+    if (at < staging.runsFrom && at + deleteCount <= staging.runsFrom) staging.runsFrom += shift
     else if (at < staging.runsFrom) staging.runsFrom = at
     staging.runCount = count + shift
   }

@@ -182,6 +182,7 @@ class App {
   readonly compactor: Compactor
   readonly records = new Map<number, ChatRecord>()
   record: ChatRecord
+  lastBatch: ChatRecordMutationBatch | null = null
   private clock = Date.parse(AT)
 
   constructor(
@@ -235,6 +236,7 @@ class App {
 
   private write(batch: ChatRecordMutationBatch, next: ChatRecord): ChatRecordMutationBatch {
     this.journal.append(batch)
+    this.lastBatch = batch
     this.record = next
     this.records.set(revisionOf(next), clone(next))
     return batch
@@ -298,7 +300,7 @@ function noSeedsBut(
 function expectViewOf(
   follower: HostThreadLogFollower,
   record: ChatRecord,
-  window: { messages?: number; runs?: number } = {}
+  window: { messages?: number; runs?: number; messagesFrom?: number; runsFrom?: number } = {}
 ): void {
   const view = follower.view()
   expect(view, 'the follower has a view').not.toBeNull()
@@ -320,6 +322,82 @@ function expectViewOf(
         `newest run ${index} is held`
       ).toBe(true)
     }
+  }
+  if (window.messagesFrom !== undefined) {
+    expect(view!.messageCount - view!.messages.length, 'where the message window begins').toBe(
+      window.messagesFrom
+    )
+  }
+  if (window.runsFrom !== undefined) {
+    for (let index = window.runsFrom; index < runs.length; index += 1) {
+      expect(
+        view!.runs.some((held) => held.index === index),
+        `run ${index}, in the window, is held`
+      ).toBe(true)
+    }
+  }
+}
+
+/**
+ * Where the follower's windows begin, by its rule, batch by batch from a
+ * seed: rows put in where a window begins are in it, rows put in or taken
+ * out wholly before it move it, and a splice across its start makes the rows
+ * put in its oldest. A removal inside a window leaves it short until new rows
+ * fill it: the follower never had the rows before it.
+ */
+class Windows {
+  messagesFrom: number
+  runsFrom: number
+  private messageCount: number
+  private runCount: number
+
+  constructor(
+    record: ChatRecord,
+    private readonly windowMessages: number,
+    private readonly windowRuns: number
+  ) {
+    this.messageCount = record.messages.length
+    this.runCount = record.runs.length
+    this.messagesFrom = Math.max(0, this.messageCount - windowMessages)
+    this.runsFrom = Math.max(0, this.runCount - windowRuns)
+  }
+
+  apply(batch: ChatRecordMutationBatch): void {
+    for (const operation of batch.operations) {
+      if (operation.type === 'messages_splice') {
+        const { index, deleteCount, messages } = operation
+        if (index < this.messagesFrom) {
+          if (index + deleteCount <= this.messagesFrom) {
+            this.messagesFrom += messages.length - deleteCount
+          } else this.messagesFrom = index
+        }
+        this.messageCount += messages.length - deleteCount
+      } else if (operation.type === 'runs_splice') {
+        const { index, deleteCount, runs } = operation
+        if (index < this.runsFrom) {
+          if (index + deleteCount <= this.runsFrom) this.runsFrom += runs.length - deleteCount
+          else this.runsFrom = index
+        }
+        this.runCount += runs.length - deleteCount
+      }
+    }
+    this.messagesFrom = Math.max(this.messagesFrom, this.messageCount - this.windowMessages)
+    this.runsFrom = Math.max(this.runsFrom, this.runCount - this.windowRuns)
+  }
+}
+
+/**
+ * A seeded generator (mulberry32). The low digits of a power-of-two linear
+ * congruential generator repeat with a short period: drawn one other draw
+ * apart, `% 10` gave only even numbers, and whole kinds of change went untried.
+ */
+function randomOf(seed: number): (bound: number) => number {
+  let state = seed >>> 0
+  return (bound) => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1)
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61)
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % bound
   }
 }
 
@@ -573,6 +651,24 @@ describe('following a thread log', () => {
       expect(follower.stats().seeds).toEqual(noSeedsBut({ cold: 1 }))
     })
 
+    it('holds runs put in where its newest runs begin, as it holds messages put in where its window begins', async () => {
+      const app = new App(directory)
+      const follower = follow({ windowRuns: 2 })
+      await follower.poll()
+      app.change((next) => next.runs.push(run('r0')))
+      await follower.poll()
+      expectViewOf(follower, app.record, { runs: 2 })
+      app.change((next) => next.runs.unshift(run('r-first')))
+      await follower.poll()
+      expectViewOf(follower, app.record, { runs: 2 })
+      expect(follower.view()!.runs.map((held) => held.run.runId)).toEqual(['r-first', 'r0'])
+      // With the window full, the newest two stay.
+      app.change((next) => next.runs.unshift(run('r-older')))
+      await follower.poll()
+      expect(follower.view()!.runs.map((held) => held.run.runId)).toEqual(['r-first', 'r0'])
+      expect(follower.stats().seeds).toEqual(noSeedsBut({ cold: 1 }))
+    })
+
     it('equals the record the app wrote at every revision of a random history', async () => {
       // Seeded, so a failure names its history. 400 changes over 3 seeds.
       for (const seed of [1, 7, 42]) {
@@ -586,11 +682,7 @@ describe('following a thread log', () => {
     }, 60_000)
 
     async function randomHistory(local: string, seed: number, changes: number): Promise<void> {
-      let state = seed
-      const random = (bound: number): number => {
-        state = (state * 1103515245 + 12345) % 2147483648
-        return state % bound
-      }
+      const random = randomOf(seed)
       const app = new App(
         local,
         {},
@@ -605,6 +697,7 @@ describe('following a thread log', () => {
       })
       try {
         await follower.poll()
+        const windows = new Windows(app.record, 4, 3)
         let made = 0
         for (let step = 0; step < changes; step += 1) {
           const choice = random(10)
@@ -647,12 +740,19 @@ describe('following a thread log', () => {
           } else {
             app.change((next) => next.messages.push(message(`msg-${made++}`, 'user', `${step}`)))
           }
+          windows.apply(app.lastBatch!)
           if (random(3) === 0) continue
           await catchUp(follower)
-          expectViewOf(follower, app.record, { messages: 4, runs: 3 })
+          expectViewOf(follower, app.record, {
+            messagesFrom: windows.messagesFrom,
+            runsFrom: windows.runsFrom
+          })
         }
         await catchUp(follower)
-        expectViewOf(follower, app.record, { messages: 4, runs: 3 })
+        expectViewOf(follower, app.record, {
+          messagesFrom: windows.messagesFrom,
+          runsFrom: windows.runsFrom
+        })
         expect(follower.stats().seeds).toEqual(noSeedsBut({ cold: 1 }))
         expect(follower.stats().batchesApplied).toBe(changes)
       } finally {
@@ -1336,9 +1436,21 @@ describe('following a thread log', () => {
         expect(memory.retainedBytes).toBeLessThanOrEqual(maxRetainedBytes)
         expectViewOf(follower, app.record)
       }
-      // The window shrank to what fits, and is still the newest messages.
-      expect(follower.view()!.messages.length).toBeLessThan(15)
-      expect(follower.view()!.messages.length).toBeGreaterThan(5)
+      // The window shrank to the newest messages that fit beside the record
+      // without its transcript and the newest runs, which it keeps first.
+      const view = follower.view()!
+      const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
+      let used = bytes(view.shell) + view.runs.reduce((sum, each) => sum + bytes(each.run), 0)
+      let fits = 0
+      for (const each of [...app.record.messages].reverse()) {
+        used += bytes(each)
+        if (used > maxViewBytes) break
+        fits += 1
+      }
+      expect(view.runs).toHaveLength(40)
+      expect(view.messages).toHaveLength(fits)
+      expect(fits).toBeGreaterThan(3)
+      expect(fits).toBeLessThan(15)
     })
 
     it('refuses to follow a thread whose record without its transcript is over the bound', async () => {
