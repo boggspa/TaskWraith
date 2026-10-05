@@ -259,6 +259,33 @@ async function drive(switchOn: boolean) {
 
 const JOURNAL = `chat-journal-v2/${CHAT}.mutations.jsonl`
 const CHECKPOINT_TEMPORARY = `chat-journal-v2/.${CHAT}.checkpoint.json.<pid>.<time>.tmp`
+
+/**
+ * The two ways the creating save's first checkpoint may be written under the
+ * switch, and nothing else: synced on the calling thread and owing nothing, or
+ * written without a sync and owing exactly its file and its folder. Both are
+ * accepted until the log lane's slice C1, which makes it the second, lands.
+ */
+const FIRST_CHECKPOINT_WAYS = [
+  {
+    issued: [
+      `file:${CHECKPOINT_TEMPORARY}`,
+      'directory:chat-journal-v2',
+      'directory:chat-journal-v2'
+    ],
+    owed: []
+  },
+  {
+    issued: [],
+    owed: ['directory:chat-journal-v2', `file:chat-journal-v2/${CHAT}.checkpoint.json`]
+  }
+]
+
+/** The creating save's first checkpoint: what it synced after `before`, and what it left owed. */
+function firstCheckpoint(step: { issued: string[]; paid: string[] }, before: string[] = []) {
+  expect(step.issued.slice(0, before.length)).toEqual(before)
+  return { issued: step.issued.slice(before.length), owed: [...step.paid].sort() }
+}
 const EVENTS = `run-events/${RUN}.jsonl`
 const DETAIL = `run-artifacts/${RUN}/tool-activity-details.jsonl`
 
@@ -322,11 +349,9 @@ describe('barrier durability, switched on', () => {
   it('makes no thread store sync on the calling thread: only checkpoints still sync there', async () => {
     const { steps } = await drive(true)
 
-    expect(steps.map((step) => [step.name, step.issued])).toEqual([
-      [
-        'a new thread with its first message',
-        [`file:${CHECKPOINT_TEMPORARY}`, 'directory:chat-journal-v2', 'directory:chat-journal-v2']
-      ],
+    expect(steps[0].name).toBe('a new thread with its first message')
+    expect(firstCheckpoint(steps[0])).toBeOneOf(FIRST_CHECKPOINT_WAYS)
+    expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
       ['a user message', []],
@@ -357,9 +382,10 @@ describe('barrier durability, switched on', () => {
   it('leaves each save owing what it wrote, for the thread barrier to pay', async () => {
     const { steps } = await drive(true)
 
+    expect(steps[0].name).toBe('a new thread with its first message')
+    expect(firstCheckpoint(steps[0])).toBeOneOf(FIRST_CHECKPOINT_WAYS)
     // In any order: a barrier hands the port every file at once, then every directory.
-    expect(steps.map((step) => [step.name, [...step.paid].sort()])).toEqual([
-      ['a new thread with its first message', []],
+    expect(steps.slice(1).map((step) => [step.name, [...step.paid].sort()])).toEqual([
       [
         'a run starts',
         [
@@ -945,20 +971,17 @@ describe("the catalogue's heads and tickets", () => {
   it('switched on, writes them without a sync: only new directories and checkpoints sync', async () => {
     const steps = await driveWithCatalogue(true)
 
-    expect(steps.map((step) => [step.name, step.issued])).toEqual([
-      [
-        'a new thread with its first message',
-        [
-          'directory:.',
-          'directory:thread-catalogue-v1',
-          'directory:thread-catalogue-v1/pending',
-          'directory:thread-catalogue-v1/pending/desktop',
-          'directory:thread-catalogue-v1',
-          `file:${CHECKPOINT_TEMPORARY}`,
-          'directory:chat-journal-v2',
-          'directory:chat-journal-v2'
-        ]
-      ],
+    expect(steps[0].name).toBe('a new thread with its first message')
+    // The catalogue's new folders, then the first checkpoint either way it may be written.
+    const catalogueFolders = [
+      'directory:.',
+      'directory:thread-catalogue-v1',
+      'directory:thread-catalogue-v1/pending',
+      'directory:thread-catalogue-v1/pending/desktop',
+      'directory:thread-catalogue-v1'
+    ]
+    expect(firstCheckpoint(steps[0], catalogueFolders)).toBeOneOf(FIRST_CHECKPOINT_WAYS)
+    expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
       ['a user message', []],
