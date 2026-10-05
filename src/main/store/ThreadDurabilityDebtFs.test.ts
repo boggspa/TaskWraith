@@ -254,7 +254,10 @@ describe('thread durability port', () => {
         startedUrgent: 0,
         promoted: 0,
         fairStarts: 0,
-        urgencies: 0
+        urgencies: 0,
+        queuedBackground: 0,
+        startedBackground: 0,
+        backgroundFairStarts: 0
       })
 
       await calls.finish('/p/b')
@@ -277,7 +280,10 @@ describe('thread durability port', () => {
         startedUrgent: 0,
         promoted: 0,
         fairStarts: 0,
-        urgencies: 0
+        urgencies: 0,
+        queuedBackground: 0,
+        startedBackground: 0,
+        backgroundFairStarts: 0
       })
     })
 

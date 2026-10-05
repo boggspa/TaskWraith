@@ -103,6 +103,8 @@ export type ThreadDurabilitySyncOutcome = 'synced' | 'missing'
 export interface ThreadDurabilitySyncOptions {
   /** Start it ahead of every sync that is not urgent and has not started. */
   urgent?: boolean
+  /** Nobody waits on it: start it behind every other sync. Ignored when `urgent` is set. */
+  background?: boolean
 }
 
 /** Opened by an urgent barrier when it is raised, and ended when it settles. */

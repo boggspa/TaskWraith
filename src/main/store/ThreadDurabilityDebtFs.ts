@@ -16,20 +16,28 @@
  * running more at once buys little past a few, and two at once leaves pool
  * threads for other file work.
  *
- * The rest wait their turn: urgent ones, asked for by a barrier the user is
- * sitting in, ahead of the others, and each kind in the order it was asked
- * for. While other work waits, at most THREAD_DURABILITY_URGENT_RUN urgent
- * syncs start in a row before one of the others does. While an urgency is
- * open (`urgent()`), a free place starts only an urgent sync, within that
- * same bound, so that an urgent barrier's directories, asked for when its
- * files are done, do not find the places taken by syncs that started in
- * between. Urgencies come at the rate a person acts, and each ends when its
- * barrier settles.
+ * The rest wait their turn, in three classes, each in the order it was asked
+ * for: urgent ones, asked for by a barrier the user is sitting in, then normal
+ * ones, then background ones, which nobody waits on. While normal syncs wait,
+ * at most THREAD_DURABILITY_URGENT_RUN urgent syncs start in a row before one
+ * of them does. While an urgency is open (`urgent()`), a free place starts
+ * only an urgent sync, within that same bound, so that an urgent barrier's
+ * directories, asked for when its files are done, do not find the places
+ * taken by syncs that started in between. Urgencies come at the rate a person
+ * acts, and each ends when its barrier settles.
+ *
+ * A background sync starts in a free place only when no urgent or normal sync
+ * waits and no urgency is open, so work nobody waits on never delays a sync
+ * somebody does. So that a steady flow of other syncs cannot hold it back for
+ * good, while background syncs wait at most THREAD_DURABILITY_FOREGROUND_RUN
+ * others start in a row before one of them does. Background syncs that are
+ * waiting are never counted as ahead of a new request (`ahead`).
  *
  * A request for a path whose sync is still waiting to start joins that sync:
- * it will begin after both writes, so it covers both. An urgent request moves
- * the sync it joins ahead, and so does an urgency's `raise`. A sync that has
- * started is never joined, because it may have begun before the later write.
+ * it will begin after both writes, so it covers both. A request of a sooner
+ * class moves the sync it joins up to that class, and an urgency's `raise`
+ * moves the syncs it names up to urgent. A sync that has started is never
+ * joined, because it may have begun before the later write.
  */
 import * as nodeFs from 'node:fs'
 
@@ -43,8 +51,11 @@ import type {
 /** How many syncs run at once unless the caller says otherwise. */
 export const THREAD_DURABILITY_SYNCS_IN_FLIGHT = 2
 
-/** While syncs that are not urgent wait, at most this many urgent ones start in a row. */
+/** While normal syncs wait, at most this many urgent ones start in a row. */
 export const THREAD_DURABILITY_URGENT_RUN = 64
+
+/** While background syncs wait, at most this many urgent or normal ones start in a row. */
+export const THREAD_DURABILITY_FOREGROUND_RUN = 64
 
 /** A directory sync that fails with one of these is not offered by the file system. */
 const DIRECTORY_SYNC_NOT_OFFERED = new Set(['EINVAL', 'ENOTSUP', 'ENOSYS'])
@@ -73,22 +84,28 @@ export interface ThreadDurabilityDebtFsSnapshot {
   /** Syncs handed to the file system so far. */
   started: number
   inFlight: number
-  /** Syncs waiting their turn. */
+  /** Syncs waiting their turn, of every class. */
   queued: number
   /** Requests that joined a sync of the same path that had not started. */
   joined: number
   peakInFlight: number
-  /** Of the syncs waiting, the urgent ones and the rest. */
+  /** Of the syncs waiting, the urgent ones and the normal ones. */
   queuedUrgent: number
   queuedNormal: number
   /** Of the syncs started, the urgent ones. */
   startedUrgent: number
-  /** Waiting syncs moved ahead by an urgent request or an urgency's `raise`. */
+  /** Waiting syncs moved up to a sooner class by a request that joined them, or by an urgency's `raise`. */
   promoted: number
-  /** Syncs that were not urgent, started by the bound on urgent ones in a row. */
+  /** Normal syncs started by the bound on urgent ones in a row. */
   fairStarts: number
   /** Urgencies open now. */
   urgencies: number
+  /** Of the syncs waiting, the background ones. */
+  queuedBackground: number
+  /** Of the syncs started, the background ones. */
+  startedBackground: number
+  /** Background syncs started by the bound on other syncs in a row. */
+  backgroundFairStarts: number
 }
 
 export interface ThreadDurabilityDebtFs extends ThreadDurabilityPort {
@@ -102,12 +119,17 @@ interface Waiter {
   reject(error: unknown): void
 }
 
+/** How soon a waiting sync starts, soonest first. */
+type SyncClass = 'urgent' | 'normal' | 'background'
+
+const SOONER: Record<SyncClass, number> = { urgent: 0, normal: 1, background: 2 }
+
 interface Task {
   key: string
   directory: boolean
   path: string
   waiters: Waiter[]
-  urgent: boolean
+  syncClass: SyncClass
   started: boolean
 }
 
@@ -157,18 +179,39 @@ export function createThreadDurabilityDebtFs(
   const waiting = new Map<string, Task>()
   const urgentQueue = new TaskQueue()
   const normalQueue = new TaskQueue()
+  const backgroundQueue = new TaskQueue()
   let queuedUrgent = 0
   let queuedNormal = 0
+  let queuedBackground = 0
   let inFlight = 0
   let started = 0
   let startedUrgent = 0
+  let startedBackground = 0
   let joined = 0
   let promoted = 0
   let fairStarts = 0
+  let backgroundFairStarts = 0
   let peakInFlight = 0
   let urgencies = 0
-  /** Urgent syncs started since one that was not, while one that was not waited. */
+  /** Urgent syncs started since a normal one, while a normal one waited. */
   let urgentRun = 0
+  /** Urgent and normal syncs started since a background one, while a background one waited. */
+  let foregroundRun = 0
+
+  /** Count a sync of this class as waiting, or as waiting no longer. */
+  const countQueued = (syncClass: SyncClass, change: 1 | -1): void => {
+    if (syncClass === 'urgent') queuedUrgent += change
+    else if (syncClass === 'normal') queuedNormal += change
+    else queuedBackground += change
+  }
+
+  /** Put a sync that has not started at the back of its class. */
+  const enqueue = (task: Task): void => {
+    countQueued(task.syncClass, 1)
+    if (task.syncClass === 'urgent') urgentQueue.push(task)
+    else if (task.syncClass === 'normal') normalQueue.push(task)
+    else backgroundQueue.push(task)
+  }
 
   const finish = (
     task: Task,
@@ -203,30 +246,37 @@ export function createThreadDurabilityDebtFs(
 
   /** The next sync to start, if a place may take one now. */
   const pick = (): Task | undefined => {
+    const backgroundWaits = queuedBackground > 0
+    if (backgroundWaits && foregroundRun >= THREAD_DURABILITY_FOREGROUND_RUN) {
+      backgroundFairStarts += 1
+      foregroundRun = 0
+      return backgroundQueue.next((task) => task.syncClass === 'background')
+    }
     const othersWait = queuedNormal > 0
     const othersDue = othersWait && urgentRun >= THREAD_DURABILITY_URGENT_RUN
+    let task: Task | undefined
     if (queuedUrgent > 0 && !othersDue) {
       urgentRun = othersWait ? urgentRun + 1 : 0
-      return urgentQueue.next(() => true)
-    }
-    if (othersWait && (othersDue || (queuedUrgent === 0 && urgencies === 0))) {
+      task = urgentQueue.next(() => true)
+    } else if (othersWait && (othersDue || (queuedUrgent === 0 && urgencies === 0))) {
       if (othersDue) fairStarts += 1
       urgentRun = 0
-      return normalQueue.next((task) => !task.urgent)
+      task = normalQueue.next((each) => each.syncClass === 'normal')
+    } else if (backgroundWaits && queuedUrgent === 0 && queuedNormal === 0 && urgencies === 0) {
+      foregroundRun = 0
+      return backgroundQueue.next((each) => each.syncClass === 'background')
     }
-    return undefined
+    if (task) foregroundRun = backgroundWaits ? foregroundRun + 1 : 0
+    return task
   }
 
   function pump(): void {
     while (inFlight < maxInFlight) {
       const task = pick()
       if (!task) return
-      if (task.urgent) {
-        queuedUrgent -= 1
-        startedUrgent += 1
-      } else {
-        queuedNormal -= 1
-      }
+      countQueued(task.syncClass, -1)
+      if (task.syncClass === 'urgent') startedUrgent += 1
+      else if (task.syncClass === 'background') startedBackground += 1
       task.started = true
       // From here a later request for this path needs a sync of its own.
       waiting.delete(task.key)
@@ -237,14 +287,16 @@ export function createThreadDurabilityDebtFs(
     }
   }
 
-  /** Move a waiting sync ahead of every one that is not urgent. */
-  const promote = (task: Task): void => {
-    if (task.urgent) return
-    task.urgent = true
-    queuedNormal -= 1
-    queuedUrgent += 1
+  /**
+   * Move a waiting sync up to a sooner class, at the back of it. One already
+   * in that class or a sooner one stays where it is.
+   */
+  const promote = (task: Task, syncClass: SyncClass): void => {
+    if (SOONER[task.syncClass] <= SOONER[syncClass]) return
+    countQueued(task.syncClass, -1)
+    task.syncClass = syncClass
+    enqueue(task)
     promoted += 1
-    urgentQueue.push(task)
   }
 
   const request = (
@@ -253,23 +305,18 @@ export function createThreadDurabilityDebtFs(
     options?: ThreadDurabilitySyncOptions
   ): Promise<ThreadDurabilitySyncOutcome> => {
     if (directory && windows) return Promise.resolve('synced')
-    const urgent = options?.urgent === true
+    const syncClass: SyncClass =
+      options?.urgent === true ? 'urgent' : options?.background === true ? 'background' : 'normal'
     return new Promise((resolve, reject) => {
       const key = `${directory ? 'd' : 'f'}${path}`
       let task = waiting.get(key)
       if (task) {
         joined += 1
-        if (urgent) promote(task)
+        promote(task, syncClass)
       } else {
-        task = { key, directory, path, waiters: [], urgent, started: false }
+        task = { key, directory, path, waiters: [], syncClass, started: false }
         waiting.set(key, task)
-        if (urgent) {
-          queuedUrgent += 1
-          urgentQueue.push(task)
-        } else {
-          queuedNormal += 1
-          normalQueue.push(task)
-        }
+        enqueue(task)
       }
       task.waiters.push({ resolve, reject })
       pump()
@@ -283,11 +330,11 @@ export function createThreadDurabilityDebtFs(
       raise: (files, directories) => {
         for (const path of files) {
           const task = waiting.get(`f${path}`)
-          if (task) promote(task)
+          if (task) promote(task, 'urgent')
         }
         for (const path of directories) {
           const task = waiting.get(`d${path}`)
-          if (task) promote(task)
+          if (task) promote(task, 'urgent')
         }
         pump()
       },
@@ -304,11 +351,12 @@ export function createThreadDurabilityDebtFs(
     syncFile: (path, options) => request(false, path, options),
     syncDirectory: (path, options) => request(true, path, options),
     urgent,
+    // Background syncs that are waiting start behind any request this asks about.
     ahead: (urgentRequest) => inFlight + queuedUrgent + (urgentRequest ? 0 : queuedNormal),
     snapshot: () => ({
       started,
       inFlight,
-      queued: queuedUrgent + queuedNormal,
+      queued: queuedUrgent + queuedNormal + queuedBackground,
       joined,
       peakInFlight,
       queuedUrgent,
@@ -316,7 +364,10 @@ export function createThreadDurabilityDebtFs(
       startedUrgent,
       promoted,
       fairStarts,
-      urgencies
+      urgencies,
+      queuedBackground,
+      startedBackground,
+      backgroundFairStarts
     })
   }
 }
