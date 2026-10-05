@@ -32,7 +32,11 @@ const {
 } = require('./schema.cjs')
 const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.cjs')
 const { materializePerfUserData } = require('./materializeUserData.cjs')
-const { collectRepoProvenance, detectAppVersion } = require('./repoProvenance.cjs')
+const {
+  collectRepoProvenance,
+  detectAppVersion,
+  NOT_A_GIT_CHECKOUT
+} = require('./repoProvenance.cjs')
 const { resolveUnpackagedDevUserDataPath, sanitizeDevInstanceId } = require('./devUserDataPath.cjs')
 const {
   resolveT2Home,
@@ -1862,6 +1866,12 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
   // Authoritative attach refuses dirty trees unless tests forceIsolated+clean
   if (willLaunch && provenance.dirty && !options.allowDirtyLaunch) {
+    // Cleaning cannot help a tree with no checkout of its own: only a caller
+    // that has checked its bytes some other way can vouch for it.
+    if (provenance.dirtyPaths.includes(NOT_A_GIT_CHECKOUT))
+      throw new Error(
+        `Refusing launch: ${repoRoot} is not the root of a git checkout, so git cannot say it is clean. A caller that has checked the tree's bytes itself passes allowDirtyLaunch.`
+      )
     throw new Error(
       `Refusing launch on dirty worktree (${provenance.dirtyPaths.length} paths). Clean or use T1 dry-run.`
     )
