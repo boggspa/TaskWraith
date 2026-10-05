@@ -4,8 +4,8 @@
  * from a whole record that the seed port loads off the event loop, and
  * `history.since` from the batches the follower applied. Entries, their order
  * and the pages they fall in are those of the profile store's `threadHistory`
- * over the whole record at the same revision; the projection here is that
- * store's, rule for rule.
+ * over the whole record at the same revision: both project messages through
+ * HostHistoryToolRows.
  *
  * The terminal app holds the newest entries and any older pages it asked for,
  * keyed by id. It applies a removal by dropping the id, and an append or a
@@ -48,17 +48,23 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { ThreadLogSegmentReaderFs } from '../host-shared/thread-log/ThreadLogSegmentReader'
 import {
-  HOST_HISTORY_MAX_ENTRY_TEXT,
   HOST_HISTORY_MAX_PAGE_SIZE,
   type HostHistoryCursor,
   type HostHistoryDelta,
   type HostHistorySinceRequest,
   type HostHistorySinceResult,
-  type HostHistoryToolEntry,
   type HostThreadHistoryPage,
   type HostThreadHistoryRequest,
   type HostTranscriptHistoryEntry
 } from '../shared/hostHistoryProtocol'
+import {
+  hostHistoryEntries,
+  hostHistoryEntry,
+  hostHistoryEntryRun,
+  hostHistoryFirstRuns,
+  hostHistoryRunToolRows,
+  hostHistoryShows
+} from './HostHistoryToolRows'
 import {
   HostThreadLogFollower,
   type HostThreadLogAppliedBatch,
@@ -103,71 +109,13 @@ const MAX_SETTLING_POLLS = 4
 const MAX_RECORD_LOADS = 3
 const MAX_CATCH_UP_POLLS = 8
 
-// eslint-disable-next-line no-control-regex -- the profile store's history refuses terminal controls.
-const CONTROL_CHARACTER = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/
-
-/** The profile store's check of transcript text: present, bounded, free of terminal controls. */
-function safeText(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= HOST_HISTORY_MAX_ENTRY_TEXT &&
-    !CONTROL_CHARACTER.test(value)
-  )
-}
-
-/** Whether the profile store's history shows a message. */
-function shows(message: HostThreadLogMessage): boolean {
-  const role = message.role
-  return (role === 'user' || role === 'assistant' || role === 'system') && safeText(message.content)
-}
-
-/** The run whose tool rows a shown message carries: an assistant message's run, by id. */
-function namedRun(message: HostThreadLogMessage): string | null {
-  const runId = message.runId
-  return message.role === 'assistant' && typeof runId === 'string' && runId !== '' ? runId : null
-}
-
-function toolRows(run: HostThreadLogRun | undefined): HostHistoryToolEntry[] {
-  return (
-    (run?.toolActivities as HostHistoryToolEntry[] | undefined)?.map((activity) => ({
-      ...activity
-    })) ?? []
-  )
-}
-
-/** The entry the profile store's history shows for a message, given the first run with its run id. */
-function entryOf(
-  message: HostThreadLogMessage,
-  run: HostThreadLogRun | undefined
-): HostTranscriptHistoryEntry | null {
-  if (!shows(message)) return null
-  const createdAt = Date.parse(message.timestamp as string)
-  return {
-    entryId: message.id,
-    role: message.role as 'user' | 'assistant' | 'system',
-    createdAt: Number.isFinite(createdAt) ? createdAt : 0,
-    text: message.content,
-    ...(namedRun(message) !== null ? { tools: toolRows(run) } : {})
-  }
-}
-
-/** Each run id's first run, which is the one the profile store finds for a message. */
-function firstRuns(runs: Iterable<HostThreadLogRun>): Map<string, HostThreadLogRun> {
-  const first = new Map<string, HostThreadLogRun>()
-  for (const run of runs) {
-    if (typeof run.runId === 'string' && !first.has(run.runId)) first.set(run.runId, run)
-  }
-  return first
-}
-
 /**
  * Each held run id's first held run. The view holds its runs in the record's
  * order and every run a held message names, so for a held message this is
  * the record's first run with the id.
  */
 function heldRuns(view: HostThreadLogView): Map<string, HostThreadLogRun> {
-  return firstRuns(view.runs.map((held) => held.run))
+  return hostHistoryFirstRuns(view.runs.map((held) => held.run))
 }
 
 function revisionOf(record: { readonly persistenceRevision?: unknown }): number {
@@ -183,14 +131,10 @@ function isNotFound(error: unknown): boolean {
 export function hostThreadLogHistoryEntries(
   record: HostThreadLogRecord
 ): HostTranscriptHistoryEntry[] {
-  const runs = firstRuns(record.runs as HostThreadLogRun[])
-  const entries: HostTranscriptHistoryEntry[] = []
-  for (const message of record.messages as HostThreadLogMessage[]) {
-    const runId = namedRun(message)
-    const entry = entryOf(message, runId === null ? undefined : runs.get(runId))
-    if (entry) entries.push(entry)
-  }
-  return entries
+  return hostHistoryEntries(
+    record.messages as HostThreadLogMessage[],
+    record.runs as HostThreadLogRun[]
+  )
 }
 
 /** How many of the removed numbers, ascending, are below `sequence`. */
@@ -583,9 +527,9 @@ export class HostThreadLogHistory {
     let older = 0
     for (let index = 0; index < windowStart; index += 1) {
       const message = messages[index]
-      if (!shows(message)) continue
+      if (!hostHistoryShows(message)) continue
       older += 1
-      const runId = namedRun(message)
+      const runId = hostHistoryEntryRun(message)
       if (runId === null) continue
       if (this.runs.has(runId)) this.olderHeldRuns.add(runId)
       else if (!exists.has(runId)) this.noteMissingRun(runId)
@@ -622,7 +566,10 @@ export class HostThreadLogHistory {
     for (const runId of touchedRuns) {
       const before = previousRuns.get(runId)
       const after = this.runs.get(runId)
-      if (before !== after && !isDeepStrictEqual(toolRows(before), toolRows(after))) {
+      if (
+        before !== after &&
+        !isDeepStrictEqual(hostHistoryRunToolRows(before), hostHistoryRunToolRows(after))
+      ) {
         toolsChanged.add(runId)
       }
     }
@@ -644,9 +591,9 @@ export class HostThreadLogHistory {
       const before = previous.get(message)
       // The follower hands a changed message over as a new row: this one changed as it left.
       if (!before) cause ??= 'trimmed-while-changed'
-      if (!shows(message)) continue
+      if (!hostHistoryShows(message)) continue
       this.olderEntries += 1
-      const runId = namedRun(message)
+      const runId = hostHistoryEntryRun(message)
       if (before?.entry && (runId === null || !toolsChanged.has(runId))) {
         this.keepLeftWindow(before.entry)
       }
@@ -716,10 +663,10 @@ export class HostThreadLogHistory {
     const unresolvedRuns = new Set(view.unresolvedRunIds)
     let unresolved = false
     const held = view.messages.map((message): Held => {
-      const runId = namedRun(message)
+      const runId = hostHistoryEntryRun(message)
       const run = runId === null ? undefined : this.runs.get(runId)
       const before = previous?.get(message)
-      const entry = before && before.run === run ? before.entry : entryOf(message, run)
+      const entry = before && before.run === run ? before.entry : hostHistoryEntry(message, run)
       if (entry && runId !== null && unresolvedRuns.has(runId)) unresolved = true
       return { message, run, entry, sequence: before?.sequence ?? -1 }
     })

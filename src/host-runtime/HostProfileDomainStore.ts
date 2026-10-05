@@ -36,6 +36,7 @@ import type { BigIntStats } from 'node:fs'
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import { decodeHostHistoryToolEntry } from '../shared/hostHistoryProtocol'
+import { hostHistoryEntries } from './HostHistoryToolRows'
 import {
   adoptHostThreadRecordTransferArtifact,
   type HostThreadRecordTransferIdentity
@@ -2536,32 +2537,7 @@ export class HostProfileDomainStore {
   }
 
   private historyEntries(thread: HostProfileThread): HostTranscriptHistoryEntry[] {
-    return thread.messages.flatMap((message) => {
-      if (
-        (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'system') ||
-        !safeText(message.content)
-      ) {
-        return []
-      }
-      return [
-        {
-          entryId: message.id,
-          role: message.role,
-          createdAt: Number.isFinite(Date.parse(message.timestamp))
-            ? Date.parse(message.timestamp)
-            : 0,
-          text: message.content,
-          ...(message.role === 'assistant' && message.runId
-            ? {
-                tools:
-                  thread.runs
-                    ?.find((run) => run.runId === message.runId)
-                    ?.toolActivities?.map((activity) => ({ ...activity })) ?? []
-              }
-            : {})
-        }
-      ]
-    })
+    return hostHistoryEntries(thread.messages, thread.runs ?? [])
   }
 
   private posture(posture: string): {

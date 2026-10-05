@@ -107,6 +107,74 @@ function tool(id: string, status: 'running' | 'success' | 'error'): Record<strin
   return { id, name: 'Read', category: 'read', status }
 }
 
+const ACTIVITY_STATUSES = ['running', 'success', 'error', 'warning', 'pending'] as const
+
+/**
+ * A tool activity as the app stores one on a message: rows the desktop draws
+ * and rows it leaves out (reasoning, an MCP envelope, housekeeping).
+ */
+function appActivity(id: string, kind: number, status: string): Record<string, unknown> {
+  const file = `src/f${kind}.ts`
+  switch (kind % 7) {
+    case 0:
+      return {
+        id,
+        toolName: 'Read',
+        displayName: `Read ${file}`,
+        category: 'read',
+        status,
+        parameters: { file_path: file },
+        filePath: file,
+        affectedFilePath: file
+      }
+    case 1:
+      return {
+        id,
+        toolName: 'Edit',
+        displayName: `Edited ${file}`,
+        category: 'write',
+        status,
+        parameters: { file_path: file, old_string: 'a', new_string: 'b' },
+        filePath: file,
+        diffSummary: {
+          additions: kind,
+          deletions: 1,
+          source: 'string_replace',
+          confidence: 'exact'
+        }
+      }
+    case 2:
+      return {
+        id,
+        toolName: 'run_shell_command',
+        displayName: 'Shell command',
+        category: 'shell',
+        status,
+        parameters: { command: 'npm test' }
+      }
+    case 3:
+      return { id, toolName: 'codex_reasoning', displayName: 'Thinking', category: 'task', status }
+    case 4:
+      return {
+        id,
+        toolName: 'call_mcp_tool',
+        displayName: 'Used call_mcp_tool',
+        category: 'unknown',
+        status
+      }
+    case 5:
+      return {
+        id,
+        toolName: 'provider_diagnostic',
+        displayName: 'Provider Diagnostic',
+        category: 'unknown',
+        status
+      }
+    default:
+      return { id, toolName: 'Grep', displayName: `Searched "${kind}"`, category: 'search', status }
+  }
+}
+
 function thread(extra: Partial<ChatRecord> = {}): ChatRecord {
   return {
     appChatId: CHAT,
@@ -496,7 +564,7 @@ describe('history from a followed thread log', () => {
     const id = (): string => `m${step}-${random(1_000_000)}`
     const recent = (span: number): number =>
       Math.max(0, length - 1 - random(Math.max(1, Math.min(span, length))))
-    const choice = random(20)
+    const choice = random(24)
     if (choice <= 2) {
       // A user message that names a run shows no tool rows.
       const named = random(4) === 0 ? { runId: record.runs.at(-1)?.runId ?? 'r-none' } : {}
@@ -564,6 +632,69 @@ describe('history from a followed thread log', () => {
       app.change((next) => next.runs.splice(at, 1))
     } else if (choice === 18) {
       app.change((next) => (next.title = `Thread ${step}`))
+    } else if (choice === 19) {
+      // A tool message, which the desktop draws as a stack; its own text is never shown.
+      const runId = record.runs.at(-1)?.runId
+      const count = 1 + random(3)
+      const toolActivities = Array.from({ length: count }, (_unused, index) =>
+        appActivity(`a${step}-${index}`, random(7), ACTIVITY_STATUSES[random(5)])
+      )
+      app.change((next) =>
+        next.messages.push(
+          message(id(), 'tool', random(4) === 0 ? `payload ${step}` : '', {
+            ...(runId ? { runId } : {}),
+            toolActivities
+          } as unknown as Partial<ChatMessage>)
+        )
+      )
+    } else if (choice === 20 && length > 0) {
+      // A recent message's rows change as a run streams: a status, one row more, one fewer.
+      const at = recent(6)
+      const pick = random(3)
+      const which = random(4)
+      const status = ACTIVITY_STATUSES[random(5)]
+      app.change((next) => {
+        const row = next.messages[at] as unknown as { toolActivities?: Record<string, unknown>[] }
+        const activities = row.toolActivities ?? []
+        if (pick === 0 && activities.length > 0) {
+          activities[which % activities.length].status = status
+        } else if (pick === 1) activities.push(appActivity(`a${step}`, which, 'running'))
+        else activities.splice(which % Math.max(1, activities.length), 1)
+        row.toolActivities = activities
+      })
+    } else if (choice === 21) {
+      // An ensemble lane's result, whose card draws the lane's own rows.
+      const lane = random(3)
+      const kind = random(7)
+      app.change((next) =>
+        next.messages.push(
+          message(id(), 'assistant', lane === 0 ? '' : `lane ${step}`, {
+            metadata: { kind: 'ensembleParticipant', ensembleLaneId: `lane-${lane}` },
+            toolActivities: [appActivity(`l${step}`, kind, ACTIVITY_STATUSES[random(5)])]
+          } as unknown as Partial<ChatMessage>)
+        )
+      )
+    } else if (choice === 22 && length > 0) {
+      // The rows' detail moves out of the record, as the app's save does once a run ends.
+      const at = recent(8)
+      app.change((next) => {
+        const row = next.messages[at] as unknown as { toolActivities?: Record<string, unknown>[] }
+        row.toolActivities = row.toolActivities?.map((activity) => {
+          const { parameters: _parameters, ...compact } = activity
+          return {
+            ...compact,
+            detailRef: {
+              schemaVersion: 1,
+              storage: 'run_event_artifact',
+              runId: 'r-detail',
+              activityId: activity.id,
+              offset: 0,
+              byteLength: 10,
+              sha256: 'a'.repeat(64)
+            }
+          }
+        })
+      })
     } else {
       app.change((next) => next.messages.push(message(id(), 'user', `more ${step}`)))
     }
@@ -826,14 +957,21 @@ describe('history from a followed thread log', () => {
       const real = seedPortOf(directory)
       let calls = 0
       const history = open(
-        {},
+        { windowMessages: 1 },
         {
           async seed(request) {
             calls += 1
             const record = await real.seed(request)
-            // The first seed carries tool rows that are not a list.
+            // The first seed carries, before the window, a message the history cannot read.
             if (calls === 1 && record) {
-              return { ...record, runs: [{ ...(record.runs as ChatRun[])[0], toolActivities: {} }] }
+              const unreadable = { id: 'u0', content: 'hello', timestamp: AT }
+              Object.defineProperty(unreadable, 'role', {
+                enumerable: true,
+                get: () => {
+                  throw new Error('unreadable message')
+                }
+              })
+              return { ...record, messages: [unreadable, ...record.messages] }
             }
             return record
           }
@@ -1517,6 +1655,7 @@ describe('history from a followed thread log', () => {
       const copy = fullCopyOf(app)
       const history = open({ windowMessages: 6, windowRuns: 3 })
       const random = seeded(11)
+      const drawn = { stacks: 0, lanes: 0, runs: 0 }
       for (let step = 0; step < 300; step += 1) {
         randomChange(app, random, step)
         if (app.compactor.pending > 0 && random(3) === 0) await app.compact()
@@ -1534,6 +1673,12 @@ describe('history from a followed thread log', () => {
           for (const page of served) {
             expect(page.generation).toBeGreaterThanOrEqual(HOST_THREAD_LOG_HISTORY_GENERATION_BASE)
             expect(decodeHostThreadHistoryPage(page).ok).toBe(true)
+            for (const entry of page.entries) {
+              if (!entry.tools?.length) continue
+              if (entry.role === 'tool') drawn.stacks += 1
+              else if (entry.tools[0].id.startsWith('l')) drawn.lanes += 1
+              else drawn.runs += 1
+            }
           }
         }
       }
@@ -1548,6 +1693,10 @@ describe('history from a followed thread log', () => {
           })
         )
       }
+      // Tool rows were served from tool messages, from lanes' results and from runs.
+      expect(drawn.stacks).toBeGreaterThan(50)
+      expect(drawn.lanes).toBeGreaterThan(10)
+      expect(drawn.runs).toBeGreaterThan(10)
       // Every path was taken: tail and older pages from the window and from the record.
       expect(stats.tailPages.window).toBeGreaterThan(0)
       expect(stats.tailPages.record).toBeGreaterThan(0)
