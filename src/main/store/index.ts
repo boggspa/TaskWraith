@@ -402,6 +402,7 @@ import { prepareChatForPersistence } from './ChatPersistencePreparation'
 import { createChatDetailDependencyBindings } from './ChatDetailDependencyBindings'
 import { JournalHostReferenceConnector } from './JournalHostReferenceConnector'
 import { journalPreparationEnrollment } from './JournalPreparationEnrollment'
+import { countJournalCheckpoints, type JournalCheckpointCounts } from './JournalCheckpointCounts'
 import { MainDurabilityResiduals } from './MainDurabilityResiduals'
 import { createMainResidualWindows } from './MainResidualWindows'
 import { performance as mainResidualClock } from 'node:perf_hooks'
@@ -1204,7 +1205,7 @@ const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
 let sharedCheckpointPreparationPort:
   | import('./CheckpointPreparationProtocol').CheckpointPreparationPort
   | undefined = undefined
-const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDir, {
+const incrementalJournalUncounted = createIncrementalChatJournal(incrementalChatJournalDir, {
   residualObserver: baselineResidualObserver,
   rotationEnabled: journalPreparationFlags.rotation,
   descriptorCache: incrementalJournalDescriptorCache,
@@ -1224,6 +1225,9 @@ const incrementalJournal = createIncrementalChatJournal(incrementalChatJournalDi
   canRepairOnRead: legacyStoreCanWrite,
   ...threadBarrierDurability?.journal
 })
+// Every checkpoint counted by what triggered it, whatever switch is on.
+const journalCheckpointCounts = countJournalCheckpoints(incrementalJournalUncounted)
+const incrementalJournal = journalCheckpointCounts.journal
 const journalHostReferenceConnector = checkpointPreparationWorker
   ? new JournalHostReferenceConnector({
       residualObserver: baselineResidualObserver,
@@ -9258,6 +9262,10 @@ export class AppStore {
 
   static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {
     return incrementalChatPersistence.stats()
+  }
+
+  static getJournalCheckpointCounts(): JournalCheckpointCounts {
+    return journalCheckpointCounts.snapshot()
   }
 
   static getSegmentedChatStoreStats(): SegmentedChatStoreStats {

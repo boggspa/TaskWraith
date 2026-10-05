@@ -236,7 +236,7 @@ async function drive(switchOn: boolean) {
     if (layers.built[0]) await layers.built[0].debt.barrier(CHAT)
     steps.push({ name: step.name, issued, paid: disk.paid.map(stable) })
   }
-  return { steps, profilePath }
+  return { steps, profilePath, AppStore }
 }
 
 const JOURNAL = `chat-journal-v2/${CHAT}.mutations.jsonl`
@@ -542,6 +542,25 @@ describe('the tickets each save takes', () => {
       }).read(CHAT)!.chat
       expect(loaded.messages.some((message) => message.id === 'user-2')).toBe(paid)
       release()
+    }
+  )
+})
+
+describe("the journal's checkpoints, counted by trigger", () => {
+  it.each([false, true])(
+    'are counted where they are written, and the switch (on: %s) changes none of them',
+    async (switchOn) => {
+      const { AppStore } = await drive(switchOn)
+
+      const counts = AppStore.getJournalCheckpointCounts()
+      const written = Object.entries(counts)
+        .filter(([, entry]) => entry.count > 0)
+        .map(([trigger, entry]) => [trigger, entry.count, entry.bytes > 0, entry.mainMs >= 0])
+      // The new thread's first checkpoint, and the terminal one of its small record.
+      expect(written).toEqual([
+        ['initial', 1, true, true],
+        ['terminal', 1, true, true]
+      ])
     }
   )
 })
