@@ -7,6 +7,7 @@ import type { EventLoopLagMeter } from '../perf/EventLoopLagMeter'
 describe('main perf IPC window roundtrip', () => {
   it('forwards begin/end to an isolated meter and preserves sender denial', () => {
     let finish!: () => void
+    let now = 0
     const snapshot = vi.fn(() => ({
       observedForMs: 100,
       p50Ms: 1,
@@ -19,6 +20,7 @@ describe('main perf IPC window roundtrip', () => {
     const isolated: EventLoopLagMeter = { start: vi.fn(), stop: vi.fn(), snapshot }
     const probes = createMainWindowPerfProbes({
       createMeter: () => isolated,
+      nowMs: () => now,
       setTimer: (callback) => {
         finish = callback
         return 1
@@ -36,6 +38,7 @@ describe('main perf IPC window roundtrip', () => {
     ).toBe('started')
     handler(1, { resetLagWindow: true })
     expect(snapshot).not.toHaveBeenCalled()
+    now = 100
     finish()
     expect(handler(1, { window: { action: 'end', id: 'ipc_window' } })?.window).toMatchObject({
       status: 'complete',

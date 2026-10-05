@@ -187,13 +187,22 @@ export function createMainWindowPerfProbes(
         meter.start()
         if (!gaps.start(startedAtMs)) throw new Error('Gap recorder refused')
         held = window
-        window.timer = setTimer(() => {
+        const close = () => {
           if (held !== window) return
           window.timer = undefined
+          let waiting = false
           try {
             const endedAtMs = nowMs()
             if (!Number.isFinite(endedAtMs) || endedAtMs < startedAtMs)
               throw new Error('Invalid clock')
+            if (endedAtMs < expectedEndAtMs || endedAtMs - startedAtMs < input.durationMs) {
+              // Node arms a timer on a whole millisecond of its own loop clock,
+              // so it can run up to a millisecond before this clock covers the
+              // window. No receipt until it has: wait out the rest.
+              window.timer = setTimer(close, Math.max(1, Math.ceil(expectedEndAtMs - endedAtMs)))
+              waiting = true
+              return
+            }
             let residuals: unknown = { intervalCoverage: 'unavailable' }
             if (boundaryActive) {
               try {
@@ -221,10 +230,11 @@ export function createMainWindowPerfProbes(
             cancelBoundary()
             window.receipt = { status: 'unavailable', reason: 'window_measurement_failed' }
           } finally {
-            if (!cleanup(window))
+            if (!waiting && !cleanup(window))
               window.receipt = { status: 'unavailable', reason: 'window_cleanup_failed' }
           }
-        }, input.durationMs)
+        }
+        window.timer = setTimer(close, input.durationMs)
       } catch {
         cancelBoundary()
         held = undefined

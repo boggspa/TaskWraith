@@ -87,8 +87,10 @@ describe('createMainPerfInstrumentation', () => {
     const ordinary = fakeMeter()
     const isolated = fakeMeter()
     let finish = () => {}
+    let now = 0
     const windowProbes = createMainWindowPerfProbes({
       createMeter: () => isolated.meter,
+      nowMs: () => now,
       setTimer: (callback) => {
         finish = callback
         return 1
@@ -106,6 +108,7 @@ describe('createMainPerfInstrumentation', () => {
     ).toBe('started')
     instrumentation.snapshot({ resetLagWindow: true })
     expect(isolated.resets).toEqual([])
+    now = 100
     finish()
     expect(
       instrumentation.snapshot({ window: { action: 'end', id: 'beside_0' } }).window
