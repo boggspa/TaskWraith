@@ -71,6 +71,28 @@ const PHASE_EXIT_THRESHOLDS = Object.freeze({
 })
 
 /**
+ * Barrier durability's exits (`durabilityExits.cjs`), judged per measured
+ * window of the captures of an off-against-on pair that had the switch on.
+ */
+const DURABILITY_EXIT_THRESHOLDS = Object.freeze({
+  /**
+   * Syncs of the thread's stores on the main thread (the journal's appends,
+   * run events, tool detail, catalogue publication): the phase exits' "no
+   * sync" tolerance, a few stray samples. The journal's checkpoints are not
+   * in it: barrier durability leaves them synced where they are written.
+   */
+  maxThreadStoreSyncShare: PHASE_EXIT_THRESHOLDS.maxMainSyncShare,
+  /** Syncs on the main thread that no owner is named for: none. */
+  maxUnnamedSyncShare: 0,
+  /** The main thread held in `Atomics.wait` (a synchronous wait on a sync off it): none. */
+  maxSynchronousWaitShare: 0,
+  /** A user message, an approval or answer, a destructive change: p95 of its barrier wait (ms). */
+  maxUserFacingBarrierWaitP95Ms: 50,
+  /** A run's final record: p95 of its barrier wait (ms). */
+  maxRunFinalBarrierWaitP95Ms: 250
+})
+
+/**
  * PROPOSED, UNRATIFIED cross-thread bounds: no gate consumes these before
  * Boss ratification at M1 exit. The seven acceptance rows have eight fields
  * because the async-writer row specifies both byte capacity and fallbacks.
@@ -114,6 +136,7 @@ const PROPOSED_CROSS_THREAD_BOUNDS = Object.freeze(proposedCrossThreadBounds)
 module.exports = {
   BYTES_1_5_GIB,
   BYTES_20_GIB,
+  DURABILITY_EXIT_THRESHOLDS,
   MIN_PROFILE_BYTES,
   PERF_GATE_THRESHOLDS,
   PHASE_EXIT_THRESHOLDS,

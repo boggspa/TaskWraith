@@ -310,5 +310,6 @@ module.exports = {
   DURABILITY_SWITCH,
   PAIR_WORKLOADS,
   buildDurabilityPairPlan,
-  qualifyDurabilityPair
+  qualifyDurabilityPair,
+  switchInWindow
 }
