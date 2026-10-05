@@ -79,7 +79,19 @@ const SECTION_FIGURES = Object.freeze({
       // Urgent barriers of a thread's own debt that synced its paths beside a
       // running barrier instead of waiting for it, and those in which a sync failed.
       beside: COUNTER,
-      besideFailed: COUNTER
+      besideFailed: COUNTER,
+      runRounds: COUNTER,
+      runPathsTotal: COUNTER,
+      runPathsMost: MAXIMUM
+    },
+    trickle: {
+      rounds: COUNTER,
+      started: COUNTER,
+      paid: COUNTER,
+      notedSince: COUNTER,
+      takenOver: COUNTER,
+      failed: COUNTER,
+      inFlight: LEVEL
     },
     // Settled barriers by class: the urgent ones a user sat in, and the rest.
     // Each wait is split into its time behind another barrier on its thread
@@ -153,7 +165,8 @@ const SECTION_FIGURES = Object.freeze({
     idleBarriers: COUNTER,
     idleFailed: COUNTER,
     quitThreads: COUNTER,
-    quitUnpaid: COUNTER
+    quitUnpaid: COUNTER,
+    trickles: COUNTER
   },
   // Tool detail staged without a sync, synced at the port's background class
   // and referenced only by a later save. Null with the switch off.

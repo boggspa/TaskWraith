@@ -83,7 +83,19 @@ function sectionOn(n: number) {
         urgent: 2 * n,
         hastened: 0,
         beside: n,
-        besideFailed: 0
+        besideFailed: 0,
+        runRounds: n,
+        runPathsTotal: 4 * n,
+        runPathsMost: 3 + n
+      },
+      trickle: {
+        rounds: 2 * n,
+        started: 5 * n,
+        paid: 3 * n,
+        notedSince: n,
+        takenOver: n,
+        failed: 0,
+        inFlight: n % 2
       },
       waits: {
         urgent: {
@@ -502,6 +514,27 @@ describe('what changed between the two fences', () => {
     expect(change.staging.batches.failed).toBe(2)
   })
 
+  it('reads background debt syncs and the paths paid by run barriers', () => {
+    const after = sectionOn(5)
+    after.debt.trickle.failed = 2
+    const change = (barrierDurabilityChange(sectionOn(2), after) as { change: any }).change
+    expect(change.debt.trickle).toEqual({
+      rounds: 6,
+      started: 15,
+      paid: 9,
+      notedSince: 3,
+      takenOver: 3,
+      failed: 2,
+      inFlight: { before: 0, after: 1 }
+    })
+    expect(change.debt.barriers).toMatchObject({
+      runRounds: 3,
+      runPathsTotal: 12,
+      runPathsMost: { atMost: 8, exact: true }
+    })
+    expect(change.unread).toEqual([])
+  })
+
   it('reads what an older build does not report as null, and still differences the rest', () => {
     // No staging, no starts and no sync times; a port without its background
     // class, no beside barriers, and waits that are not split.
@@ -523,6 +556,10 @@ describe('what changed between the two fences', () => {
       delete section.port.extraUrgentStarts
       delete section.debt.barriers.beside
       delete section.debt.barriers.besideFailed
+      delete section.debt.barriers.runRounds
+      delete section.debt.barriers.runPathsTotal
+      delete section.debt.barriers.runPathsMost
+      delete section.debt.trickle
       for (const kind of ['urgent', 'normal']) {
         for (const figure of SPLIT) delete section.debt.waits[kind][figure]
       }
@@ -535,6 +572,7 @@ describe('what changed between the two fences', () => {
     expect(change.starts).toBeNull()
     expect(change.usageLog).toBeNull()
     expect(change.runQueue).toBeNull()
+    expect(change.debt.trickle).toBeNull()
     expect(change.port).toMatchObject({
       started: 27,
       queuedBackground: null,
@@ -551,6 +589,9 @@ describe('what changed between the two fences', () => {
     expect(change.unread).toEqual([
       'debt.barriers.beside',
       'debt.barriers.besideFailed',
+      'debt.barriers.runPathsMost',
+      'debt.barriers.runPathsTotal',
+      'debt.barriers.runRounds',
       ...['normal', 'urgent'].flatMap((kind) =>
         [...SPLIT].sort().map((figure) => `debt.waits.${kind}.${figure}`)
       ),
@@ -629,7 +670,14 @@ describe('what changed between the two fences', () => {
   it("reads the quiet threads' figures when the section has them", () => {
     const withThreads = (n: number) => ({
       ...sectionOn(n),
-      threads: { owing: n, idleBarriers: 2 * n, idleFailed: 0, quitThreads: 0, quitUnpaid: 0 }
+      threads: {
+        owing: n,
+        idleBarriers: 2 * n,
+        idleFailed: 0,
+        quitThreads: 0,
+        quitUnpaid: 0,
+        trickles: 2 * n
+      }
     })
     const change = (barrierDurabilityChange(withThreads(1), withThreads(3)) as { change: any })
       .change
@@ -638,7 +686,8 @@ describe('what changed between the two fences', () => {
       idleBarriers: 4,
       idleFailed: 0,
       quitThreads: 0,
-      quitUnpaid: 0
+      quitUnpaid: 0,
+      trickles: 4
     })
   })
 
