@@ -300,6 +300,22 @@ describe('barrier durability, switched off', () => {
     expect(steps.map((step) => [step.name, step.issued])).toEqual(SYNCED_BEFORE_THE_SWITCH)
     expect(layers.built).toEqual([])
   })
+
+  it('reports itself off in the perf section, with the checkpoints still counted', async () => {
+    const { AppStore } = await drive(false)
+
+    expect(AppStore.getThreadBarrierDurabilityPerf()).toMatchObject({
+      enabled: false,
+      ignored: null,
+      debt: null,
+      port: null,
+      tickets: null,
+      gates: null,
+      threads: null,
+      checkpoints: { initial: { count: 1 }, terminal: { count: 1 } },
+      tornTailsRepaired: 0
+    })
+  })
 })
 
 describe('barrier durability, switched on', () => {
@@ -320,6 +336,22 @@ describe('barrier durability, switched on', () => {
       ['the run ends', [`file:${CHECKPOINT_TEMPORARY}`, 'directory:chat-journal-v2']]
     ])
     expect(layers.built).toHaveLength(1)
+  })
+
+  it('reports the layer in the perf section: its debt, tickets, gates and threads', async () => {
+    const { AppStore } = await drive(true)
+
+    const section = AppStore.getThreadBarrierDurabilityPerf()
+    expect(section).toMatchObject({
+      enabled: true,
+      ignored: null,
+      tickets: { moments: { user_message: { noted: 1 }, run_final: { noted: 1 } } },
+      gates: { waits: 0, overdue: 0, rejected: 0 },
+      checkpoints: { initial: { count: 1 }, terminal: { count: 1 } },
+      tornTailsRepaired: 0
+    })
+    expect(section.debt?.barriers.raised).toBeGreaterThan(0)
+    expect(section.threads).not.toBeNull()
   })
 
   it('leaves each save owing what it wrote, for the thread barrier to pay', async () => {
@@ -390,6 +422,9 @@ describe('a torn journal tail', () => {
         }
       })
       const journal = second.AppStore.getIncrementalChatPersistenceStats().journal
+      expect(second.AppStore.getThreadBarrierDurabilityPerf().tornTailsRepaired).toBe(
+        journal.tornTailsTruncated
+      )
       if (switchOn) {
         // The cut syncs the segment once, on the calling thread; the append does not.
         expect(disk.issued.map(stable)).toEqual([`file:${JOURNAL}`])

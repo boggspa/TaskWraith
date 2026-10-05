@@ -47479,7 +47479,8 @@ if (isGeminiMcpBridgeProcess) {
         // Agent stdout intake per provider: how much queued, how often a turn
         // ran out of budget, how deep the backlog got, and how often a stream
         // had to be paused. Lag with none of these moving is not agent output.
-        providerOutputIntake: () => orderedStreamPumpCounters()
+        providerOutputIntake: () => orderedStreamPumpCounters(),
+        threadBarrierDurability: () => AppStore.getThreadBarrierDurabilityPerf()
       }
     }), AppStore.getMainResidualWindowPort())
     mainPerfInstrumentationRef.start()

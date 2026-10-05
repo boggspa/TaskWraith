@@ -82,6 +82,10 @@ import {
 } from './CurrentChatAuthorityMetadata'
 import { createMainDurabilityRuntime } from './MainDurabilityRuntime'
 import { createThreadBarrierDurability } from './ThreadBarrierDurability'
+import {
+  readThreadBarrierDurabilityPerf,
+  type ThreadBarrierDurabilityPerfSection
+} from './ThreadBarrierDurabilityPerf'
 import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
 import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
@@ -9296,6 +9300,17 @@ export class AppStore {
 
   static getJournalCheckpointCounts(): JournalCheckpointCounts {
     return journalCheckpointCounts.snapshot()
+  }
+
+  /** The `threadBarrierDurability` section of main's perf snapshot. */
+  static getThreadBarrierDurabilityPerf(): ThreadBarrierDurabilityPerfSection {
+    return readThreadBarrierDurabilityPerf({
+      switches: threadDurabilitySwitches,
+      layer: threadBarrierDurability,
+      gate: durableMomentGate,
+      checkpoints: () => journalCheckpointCounts.snapshot(),
+      tornTailsTruncated: () => incrementalJournal.stats().tornTailsTruncated
+    })
   }
 
   static getSegmentedChatStoreStats(): SegmentedChatStoreStats {
