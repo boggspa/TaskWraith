@@ -1,3 +1,4 @@
+import { awaitRunQueueStart } from '../run/RunQueueStartWait'
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
 import type {
@@ -285,6 +286,9 @@ export class RunCoordinator {
         }
         if (lifecycleCancelled()) return declinedResult()
         try {
+          const starting = awaitRunQueueStart(normalizedPayload.appRunId)
+          if (starting) await starting
+          if (lifecycleCancelled()) return declinedResult()
           await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload, dispatchReservation)
         } catch (error) {
           if (lifecycleCancelled()) return declinedResult()

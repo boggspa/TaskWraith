@@ -89,6 +89,7 @@ import {
 } from './ThreadBarrierDurabilityPerf'
 import { DurableMomentGate, installDurableMomentGate } from '../run/DurableMomentGate'
 import { installRunQueueUserWait } from '../run/RunQueueUserWait'
+import { installRunQueueStartWait } from '../run/RunQueueStartWait'
 import { RunQueueFile } from './RunQueueFile'
 import { resolveThreadDurabilitySwitches } from './ThreadBarrierDurabilitySwitch'
 import { MainCatalogueDurability } from './MainCatalogueDurability'
@@ -1220,6 +1221,16 @@ if (runQueueFile && runQueueUserGate) {
       ? null
       : runQueueUserGate.bound(runQueueFile.awaitWritten(runQueueFile.version, { urgent: true }))
   )
+}
+// Starting leases use the same bound at normal class, counted separately.
+const runQueueStartGate = runQueueFile
+  ? new DurableMomentGate({ source: { holds: () => false, awaitChat: () => Promise.resolve() } })
+  : null
+if (runQueueFile && runQueueStartGate) {
+  installRunQueueStartWait((runId) => {
+    const version = runQueueFile.pendingStartVersion(runId)
+    return version === null ? null : runQueueStartGate.bound(runQueueFile.awaitWritten(version))
+  })
 }
 /**
  * Quit under barrier durability: what every thread owes, the usage log and the
@@ -9451,8 +9462,8 @@ export class AppStore {
       startGate: queuedStartGate,
       usage: usageJournalStore,
       runQueue:
-        runQueueFile && runQueueUserGate
-          ? { file: runQueueFile, userGate: runQueueUserGate }
+        runQueueFile && runQueueUserGate && runQueueStartGate
+          ? { file: runQueueFile, userGate: runQueueUserGate, startGate: runQueueStartGate }
           : null,
       checkpoints: () => journalCheckpointCounts.snapshot(),
       tornTailsTruncated: () => incrementalJournal.stats().tornTailsTruncated

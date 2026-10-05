@@ -14,7 +14,8 @@
  *
  * `awaitWritten(version)` resolves once a finished write holds that change or
  * a later one. A change a person makes waits for it, bounded, before its
- * reply; automatic transitions wait for nothing. While a person waits, the
+ * reply; a provider start waits for its lease generation. Other automatic
+ * transitions wait for nothing. While a person waits, the
  * port is asked for the syncs as urgent, and otherwise at its normal class,
  * since the file is what tells startup which runs had begun.
  *
@@ -108,6 +109,8 @@ export class RunQueueFile {
   /** Counts the list's changes; a write holds the version it serialized. */
   private changedVersion = 0
   private writtenVersionValue = 0
+  /** Exact generations where a job entered starting, retained only until written. */
+  private readonly startVersions = new Map<string, number>()
   /** Increased by every write on the calling thread: a write running from before renames nothing. */
   private generation = 0
   private writing: Promise<void> | null = null
@@ -178,13 +181,24 @@ export class RunQueueFile {
    */
   replace(jobs: RunQueueJob[]): number {
     this.load()
+    const previous = new Map(this.list.map((job) => [job.runId, job.status]))
     this.list = jobs.map((job) => (this.kept.has(job) ? job : copy(job)))
     this.kept = new Set(this.list)
     this.changedVersion += 1
+    for (const job of this.list) {
+      if (job.status === 'starting' && previous.get(job.runId) !== 'starting') {
+        this.startVersions.set(job.runId, this.changedVersion)
+      }
+    }
     this.counts.changes += 1
     if (this.closed) this.writeNowSync()
     else this.kick()
     return this.changedVersion
+  }
+
+  /** A lease's exact generation, not the generation of later automatic changes. */
+  pendingStartVersion(runId: string): number | null {
+    return this.startVersions.get(runId) ?? null
   }
 
   /**
@@ -393,6 +407,9 @@ export class RunQueueFile {
   private markWritten(version: number): void {
     if (version <= this.writtenVersionValue) return
     this.writtenVersionValue = version
+    for (const [runId, started] of this.startVersions) {
+      if (started <= version) this.startVersions.delete(runId)
+    }
     const ready = this.waiters.filter((waiter) => waiter.version <= version)
     if (ready.length === 0) return
     this.waiters = this.waiters.filter((waiter) => waiter.version > version)

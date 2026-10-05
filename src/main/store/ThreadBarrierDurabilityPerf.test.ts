@@ -154,7 +154,7 @@ describe('the threadBarrierDurability perf section', () => {
       gate,
       startGate,
       usage: { unsyncedSnapshot: () => usageLog },
-      runQueue: { file: { snapshot: () => runQueueFile }, userGate },
+      runQueue: { file: { snapshot: () => runQueueFile }, userGate, startGate },
       checkpoints: counts,
       tornTailsTruncated: () => 1
     })
@@ -172,7 +172,11 @@ describe('the threadBarrierDurability perf section', () => {
       threads: parts.threads,
       staging: parts.staging,
       usageLog,
-      runQueue: { ...runQueueFile, userWaits: userGate.snapshot() },
+      runQueue: {
+        ...runQueueFile,
+        userWaits: userGate.snapshot(),
+        startWaits: startGate.snapshot()
+      },
       checkpoints: counts(),
       tornTailsRepaired: 1
     })

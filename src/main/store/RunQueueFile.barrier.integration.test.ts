@@ -13,6 +13,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { RunQueueJobInput } from '../RunQueue'
+import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type {
   ThreadDurabilityPort,
   ThreadDurabilitySyncOptions,
@@ -177,6 +178,36 @@ async function barrierStore(
   return { AppStore, profilePath, disk, afterRunQueueUserChange }
 }
 
+/** Real dispatch boundary, without starting a provider process. */
+async function dispatcher(beforeAdapter?: () => Promise<void>) {
+  const { RunCoordinator } = await import('../services/RunCoordinator')
+  const start = vi.fn(async () => {})
+  const coordinator = new RunCoordinator({
+    normalizePayload: (payload) => payload as AgentRunPayload,
+    routeWithRunId: (_provider, route) => ({ ...route, appRunId: route?.appRunId }),
+    applyRuntimeProfileToPayload: (payload) => payload,
+    ensureProviderRunPreflight: async () => true,
+    authorizeBeforeAdapterRun: beforeAdapter,
+    getAdapter: () => ({ run: start }) as never,
+    sendError: vi.fn(),
+    sendExit: vi.fn()
+  })
+  return {
+    start,
+    dispatch: (signal?: AbortSignal) =>
+      coordinator.dispatch(
+        {
+          provider: 'codex',
+          appRunId: 'run-a',
+          appChatId: 'chat-a',
+          prompt: 'Run once',
+          providerSetupAbortSignal: signal
+        } as AgentRunPayload,
+        { sender: { id: 1 } }
+      )
+  }
+}
+
 describe('the run queue through the store, under barrier durability', () => {
   it('syncs nothing on the calling thread, reads every change back at once, and writes the file through the port', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
@@ -205,6 +236,145 @@ describe('the run queue through the store, under barrier durability', () => {
       syncs: { files: 1, directories: 1 },
       unwrittenChanges: 0
     })
+  })
+
+  it('starts a provider only after the lease generation is written, at normal class', async () => {
+    const { AppStore, profilePath, disk } = await barrierStore()
+    layers.port = disk.port
+    AppStore.saveRunQueueJob(job('a'))
+    await settle()
+    const held = holding(disk, profilePath)
+    layers.port = held.port
+    AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    const provider = await dispatcher()
+    await settle()
+    expect(held.calls.map((call) => call.level)).toEqual(['normal'])
+    // Even a change made before dispatch must not extend the exact lease wait.
+    AppStore.saveRunQueueJob(job('b'))
+    const dispatched = provider.dispatch()
+    await settle()
+    expect(provider.start).not.toHaveBeenCalled()
+    await held.calls[0].answer()
+    await settle()
+    expect(provider.start).not.toHaveBeenCalled()
+    expect(held.calls[1].level).toBe('normal')
+    await held.calls[1].answer()
+    expect((await dispatched).dispatched).toBe(true)
+    expect(provider.start).toHaveBeenCalledOnce()
+    expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.startWaits).toMatchObject({
+      waits: 1,
+      overdue: 0
+    })
+    expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.unwrittenChanges).toBe(1)
+  })
+
+  it('after a power cut after the lease write and before start, recovers failed without redispatch', async () => {
+    const { AppStore, profilePath, disk } = await barrierStore()
+    layers.port = disk.port
+    AppStore.saveRunQueueJob(job('a'))
+    await settle()
+    const held = holding(disk, profilePath)
+    layers.port = held.port
+    AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    let continueAdmission!: () => void
+    const pausedAdmission = new Promise<void>((resolve) => {
+      continueAdmission = resolve
+    })
+    const admitted = vi.fn(() => pausedAdmission)
+    const provider = await dispatcher(admitted)
+    const abort = new AbortController()
+    const dispatched = provider.dispatch(abort.signal)
+    await settle()
+    expect(admitted).not.toHaveBeenCalled()
+    await held.calls[0].answer()
+    await settle()
+    await held.calls[1].answer()
+    await settle()
+    expect(admitted).toHaveBeenCalledOnce()
+    expect(provider.start).not.toHaveBeenCalled()
+
+    abort.abort()
+    continueAdmission()
+    expect((await dispatched).dispatched).toBe(false)
+    await AppStore.shutdownMainDurability()
+    disk.powerLoss()
+    layers.port = disk.port
+    const restarted = await importHostOwnedStore([], undefined, { profilePath, gateOpen: true })
+    const records = restarted.AppStore.recoverRunQueueAfterStartup()
+    expect(records).toMatchObject([{ runId: 'run-a', action: 'marked_failed' }])
+    expect(restarted.AppStore.getRunQueueJobs({ statuses: ['queued'] })).toEqual([])
+    expect(restarted.AppStore.getRunQueueJob('run-a')).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'marked_failed_on_startup'
+    })
+    expect(provider.start).not.toHaveBeenCalled()
+  })
+
+  it('a power cut before the lease write leaves a queued job that starts once after restart', async () => {
+    const { AppStore, profilePath, disk } = await barrierStore()
+    layers.port = disk.port
+    AppStore.saveRunQueueJob(job('a'))
+    await settle()
+    layers.port = holding(disk, profilePath).port
+    AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    const provider = await dispatcher()
+    const abort = new AbortController()
+    const abandoned = provider.dispatch(abort.signal)
+    await settle()
+    expect(provider.start).not.toHaveBeenCalled()
+    abort.abort()
+    await AppStore.shutdownMainDurability()
+    disk.powerLoss()
+    layers.port = disk.port
+    const restarted = await importHostOwnedStore([], undefined, { profilePath, gateOpen: true })
+    expect(restarted.AppStore.recoverRunQueueAfterStartup()).toEqual([])
+    expect(restarted.AppStore.getRunQueueJob('run-a')?.status).toBe('queued')
+    restarted.AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    const resumed = await dispatcher()
+    await resumed.dispatch()
+    expect(resumed.start).toHaveBeenCalledOnce()
+    expect((await abandoned).dispatched).toBe(false)
+    expect(provider.start).not.toHaveBeenCalled()
+  })
+
+  it('starts at the one-second bound when the lease write is held and counts overdue', async () => {
+    const { AppStore, profilePath, disk } = await barrierStore()
+    layers.port = holding(disk, profilePath).port
+    AppStore.saveRunQueueJob(job('a'))
+    AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    const provider = await dispatcher()
+    const began = Date.now()
+    const dispatched = provider.dispatch()
+    await settle()
+    expect(provider.start).not.toHaveBeenCalled()
+    expect((await dispatched).dispatched).toBe(true)
+    expect(Date.now() - began).toBeGreaterThanOrEqual(900)
+    expect(provider.start).toHaveBeenCalledOnce()
+    expect(queueFile(profilePath)).toBeNull()
+    expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.startWaits).toMatchObject({
+      waits: 1,
+      overdue: 1
+    })
+  })
+
+  it('does not start a provider cancelled while its lease write waits', async () => {
+    const { AppStore, profilePath, disk } = await barrierStore()
+    const held = holding(disk, profilePath)
+    layers.port = held.port
+    AppStore.saveRunQueueJob(job('a'))
+    AppStore.updateRunQueueJob('run-a', { status: 'starting' })
+    const provider = await dispatcher()
+    const abort = new AbortController()
+    const dispatched = provider.dispatch(abort.signal)
+    await settle()
+    expect(provider.start).not.toHaveBeenCalled()
+    abort.abort()
+    AppStore.updateRunQueueJob('run-a', { status: 'cancelled' })
+    await held.calls[0].answer()
+    await settle()
+    await held.calls[1].answer()
+    expect((await dispatched).dispatched).toBe(false)
+    expect(provider.start).not.toHaveBeenCalled()
   })
 
   it('hands out copies: a caller that changes what it read changes nothing kept', async () => {
