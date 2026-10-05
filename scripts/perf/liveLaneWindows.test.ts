@@ -13,6 +13,13 @@ type LightRound = {
   status: string | null
   control?: Record<string, unknown>
 }
+/** One ask of main’s window probe, as the window keeps it. */
+type ProbeAsk = {
+  askedAtMs: number
+  answeredAtMs: number
+  answer?: unknown
+  error?: { code: string | null; message: string }
+}
 type WindowRecord = {
   repetition: number
   startedAtMs: number
@@ -39,6 +46,12 @@ type WindowRecord = {
     lanes: Record<string, Record<string, Record<string, number>>>
   } | null
   mainWindow: Record<string, unknown> | null
+  mainWindowCensored: boolean
+  mainProbe: {
+    begin: ProbeAsk | null
+    end: ProbeAsk | null
+    failedChecks: string[]
+  } | null
   host: Record<string, unknown> | null
   barrierDurability?: {
     before: Record<string, any> | null
@@ -1154,6 +1167,246 @@ describe('runLiveLaneWindows', () => {
     await expect(run(w, { readLaneActivity: undefined })).rejects.toThrow(/readers/)
     await expect(run(w, { maxHeavyQuietMs: 0 })).rejects.toThrow(/maxHeavyQuietMs/)
     await expect(run(w, { lightSettleMarginMs: -1 })).rejects.toThrow(/lightSettleMarginMs/)
+  })
+})
+
+describe('a window main’s probe answers do not measure', () => {
+  /** Main as the probe finds it: a start, then a receipt `receiptOf` may change. */
+  const mainAnswers = (
+    w: ReturnType<typeof world>,
+    receiptOf: (receipt: Record<string, any>) => unknown = (receipt) => receipt
+  ) => {
+    let start = 0
+    return async (request: { action: string; id: string; durationMs?: number }) => {
+      if (request.action === 'begin') {
+        start = w.nowMs()
+        return { status: 'started', id: request.id, startedAtMs: start, durability: { pool: 1 } }
+      }
+      return receiptOf({
+        status: 'complete',
+        id: request.id,
+        startedAtMs: start,
+        endedAtMs: start + 120_000,
+        eventLoopLag: {
+          sampling: true,
+          observedForMs: 120_000,
+          p50Ms: 1,
+          p95Ms: 28,
+          p99Ms: 40,
+          maxMs: 50,
+          meanMs: 2
+        }
+      })
+    }
+  }
+
+  it('takes a receipt that covers the window', async () => {
+    const w = world()
+    const result = await run(w, { windows: 1, readMainPerfWindow: mainAnswers(w) })
+    expect(result.windows[0].reasons).toEqual([])
+    expect(result.windows[0].mainWindow).toMatchObject({ status: 'complete' })
+  })
+
+  it.each<[string, (receipt: Record<string, any>) => unknown, string]>([
+    ['another status', (receipt) => ({ ...receipt, status: 'started' }), 'main_probe_invalid'],
+    ['another window', (receipt) => ({ ...receipt, id: 'light_beside_9' }), 'main_probe_invalid'],
+    ['no start', (receipt) => ({ ...receipt, startedAtMs: undefined }), 'main_probe_invalid'],
+    ['no end', (receipt) => ({ ...receipt, endedAtMs: null }), 'main_probe_invalid'],
+    [
+      'an end that is text',
+      (receipt) => ({ ...receipt, endedAtMs: String(receipt.endedAtMs) }),
+      'main_probe_invalid'
+    ],
+    [
+      'a window under a millisecond short',
+      (receipt) => ({ ...receipt, endedAtMs: receipt.endedAtMs - 0.4 }),
+      'main_probe_invalid'
+    ],
+    ['no lag', (receipt) => ({ ...receipt, eventLoopLag: null }), 'main_probe_invalid'],
+    [
+      'lag that was not sampled',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, sampling: false } }),
+      'main_probe_invalid'
+    ],
+    [
+      'a lag figure missing',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, p99Ms: undefined } }),
+      'main_probe_invalid'
+    ],
+    [
+      'no time observed',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, observedForMs: 0 } }),
+      'main_probe_invalid'
+    ],
+    ['no answer', () => null, 'main_probe_invalid'],
+    [
+      'an end main had not finished timing',
+      () => ({ status: 'unavailable', reason: 'window_incomplete' }),
+      'window_incomplete'
+    ]
+  ])('censors a window whose receipt has %s', async (_name, receiptOf, reason) => {
+    const w = world()
+    const result = await run(w, { windows: 1, readMainPerfWindow: mainAnswers(w, receiptOf) })
+    expect(result.windows[0].mainWindow).toBeNull()
+    expect(result.windows[0].mainWindowCensored).toBe(true)
+    expect(result.windows[0].reasons).toEqual([reason])
+    expect(result.verdict.reasons).toEqual([`window 0: ${reason}`])
+  })
+})
+
+describe('what main answered a window’s probe, kept in the window', () => {
+  const lag = {
+    sampling: true,
+    observedForMs: 120_000,
+    p50Ms: 1,
+    p95Ms: 28,
+    p99Ms: 40,
+    maxMs: 50,
+    meanMs: 2
+  }
+
+  it('keeps both of main’s answers for a window it measured, which failed no check', async () => {
+    const w = world()
+    let start = 0
+    const result = await run(w, {
+      windows: 1,
+      readMainPerfWindow: async (request: { action: string; id: string }) => {
+        if (request.action === 'begin') {
+          start = w.nowMs()
+          return { status: 'started', id: request.id, startedAtMs: start, durability: { pool: 1 } }
+        }
+        return {
+          status: 'complete',
+          id: request.id,
+          startedAtMs: start,
+          endedAtMs: start + 120_000,
+          eventLoopLag: lag
+        }
+      }
+    })
+    const window = result.windows[0]
+    expect(window.mainWindow).not.toBeNull()
+    // The start is asked as the window starts; the end once the light lane is done.
+    expect(window.mainProbe?.end?.askedAtMs).toBeGreaterThanOrEqual(window.endedAtMs)
+    expect(window.mainProbe).toEqual({
+      begin: {
+        askedAtMs: window.startedAtMs,
+        answeredAtMs: window.startedAtMs,
+        answer: {
+          status: 'started',
+          id: 'light_beside_0',
+          startedAtMs: window.startedAtMs,
+          durability: { pool: 1 }
+        }
+      },
+      end: {
+        askedAtMs: window.mainProbe?.end?.askedAtMs,
+        answeredAtMs: window.mainProbe?.end?.askedAtMs,
+        answer: {
+          status: 'complete',
+          id: 'light_beside_0',
+          startedAtMs: window.startedAtMs,
+          endedAtMs: window.startedAtMs + 120_000,
+          eventLoopLag: lag
+        }
+      },
+      failedChecks: []
+    })
+  })
+
+  it('keeps a receipt main ended short of the window, and names the check it failed', async () => {
+    const w = world()
+    let start = 0
+    const result = await run(w, {
+      windows: 1,
+      readMainPerfWindow: async (request: { action: string; id: string }) => {
+        if (request.action === 'begin') {
+          start = w.nowMs()
+          return { status: 'started', id: request.id, startedAtMs: start }
+        }
+        return {
+          status: 'complete',
+          id: request.id,
+          startedAtMs: start,
+          endedAtMs: start + 119_999.6,
+          eventLoopLag: lag
+        }
+      }
+    })
+    const window = result.windows[0]
+    expect(window.reasons).toEqual(['main_probe_invalid'])
+    expect(window.mainWindow).toBeNull()
+    expect(window.mainProbe?.failedChecks).toEqual(['end_short_of_window'])
+    expect(window.mainProbe?.end?.answer).toEqual({
+      status: 'complete',
+      id: 'light_beside_0',
+      startedAtMs: window.startedAtMs,
+      endedAtMs: window.startedAtMs + 119_999.6,
+      eventLoopLag: lag
+    })
+  })
+
+  it('keeps an answer that was not main’s as it came, and asks for no end', async () => {
+    const requests: string[] = []
+    const result = await run(world(), {
+      windows: 1,
+      readMainPerfWindow: async (request: { action: string }) => {
+        requests.push(request.action)
+        return null
+      }
+    })
+    const window = result.windows[0]
+    expect(requests).toEqual(['begin'])
+    expect(window.reasons).toEqual(['main_probe_invalid'])
+    expect(window.mainProbe).toEqual({
+      begin: { askedAtMs: window.startedAtMs, answeredAtMs: window.startedAtMs, answer: null },
+      end: null,
+      failedChecks: ['begin_not_started']
+    })
+  })
+
+  it('keeps main’s refusal to start a window', async () => {
+    const result = await run(world(), {
+      windows: 1,
+      readMainPerfWindow: async () => ({ status: 'unavailable', reason: 'window_held' })
+    })
+    const window = result.windows[0]
+    expect(window.reasons).toEqual(['window_held'])
+    expect(window.mainProbe).toEqual({
+      begin: {
+        askedAtMs: window.startedAtMs,
+        answeredAtMs: window.startedAtMs,
+        answer: { status: 'unavailable', reason: 'window_held' }
+      },
+      end: null,
+      failedChecks: ['begin_not_started']
+    })
+  })
+
+  it('keeps the error of a probe main did not answer in time', async () => {
+    const result = await run(world(), {
+      windows: 1,
+      mainProbeTimeoutMs: 1,
+      readMainPerfWindow: () => new Promise(() => {})
+    })
+    const window = result.windows[0]
+    expect(window.reasons).toEqual(['main_unresponsive'])
+    expect(window.mainProbe).toEqual({
+      begin: {
+        askedAtMs: window.startedAtMs,
+        answeredAtMs: window.startedAtMs,
+        error: { code: 'CAPTURE_TIMEOUT', message: 'main window probe timed out after 1ms' }
+      },
+      end: null,
+      failedChecks: ['begin_not_started']
+    })
+  })
+
+  it('keeps no probe record where no probe was wired', async () => {
+    const result = await run(world(), { windows: 1 })
+    expect(result.windows[0].reasons).toEqual([])
+    expect(result.windows[0].mainWindow).toBeNull()
+    expect(result.windows[0].mainProbe).toBeNull()
   })
 })
 

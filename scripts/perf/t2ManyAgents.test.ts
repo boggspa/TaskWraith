@@ -27,6 +27,13 @@ type Measures = {
     appMsPerTurn: Timings
   }
 }
+/** One ask of main’s window probe, as the window keeps it. */
+type ProbeAsk = {
+  askedAtMs: number
+  answeredAtMs: number
+  answer?: unknown
+  error?: { code: string | null; message: string }
+}
 type Window = {
   role: string
   repetition: number
@@ -69,6 +76,7 @@ type Window = {
   }
   mainWindow: Record<string, unknown> | null
   mainWindowCensored: boolean
+  mainProbe: { begin: ProbeAsk | null; end: ProbeAsk | null; failedChecks: string[] } | null
   host: {
     censored: boolean
     reasons: string[]
@@ -1929,6 +1937,140 @@ describe('a window that is not evidence says why', () => {
     })
     expect(result.windows[0].reasons).toContain('lead_in_incomplete')
     expect(result.windows[0].agents?.threads[1].rounds.completed).toBeGreaterThan(0)
+  })
+})
+
+describe('what main answered the window’s probe, kept in the window', () => {
+  const lag = {
+    sampling: true,
+    observedForMs: 20_000,
+    p50Ms: 1,
+    p95Ms: 3,
+    p99Ms: 5,
+    maxMs: 10,
+    meanMs: 2
+  }
+  const receipt = {
+    status: 'complete',
+    id: 'many_agents_0',
+    startedAtMs: T0 + 11_000,
+    endedAtMs: T0 + 31_000,
+    eventLoopLag: lag
+  }
+
+  it('keeps both of main’s answers for a window it measured, which failed no check', async () => {
+    const { mainProbe } = (await world().run()).windows[0]
+    expect(mainProbe).toEqual({
+      begin: {
+        askedAtMs: T0 + 11_000,
+        answeredAtMs: T0 + 11_000,
+        answer: { status: 'started', id: 'many_agents_0', startedAtMs: T0 + 11_000 }
+      },
+      end: { askedAtMs: T0 + 31_000, answeredAtMs: T0 + 31_000, answer: receipt },
+      failedChecks: []
+    })
+  })
+
+  it('keeps when it first asked for an end main answered late, and the answer it gave', async () => {
+    const w = world({ probeLate: 2 })
+    const { mainProbe } = (await w.run()).windows[0]
+    expect(w.probeEndAsks).toBe(3)
+    expect(mainProbe?.end).toEqual({
+      askedAtMs: T0 + 31_000,
+      answeredAtMs: T0 + 31_500,
+      answer: receipt
+    })
+    expect(mainProbe?.failedChecks).toEqual([])
+  })
+
+  it('keeps the last answer for a window main never finished timing', async () => {
+    const { mainProbe } = (await world({ probeLate: 1_000 }).run()).windows[0]
+    expect(mainProbe?.end).toEqual({
+      askedAtMs: T0 + 31_000,
+      answeredAtMs: T0 + 31_000 + 39 * 250,
+      answer: { status: 'unavailable', reason: 'window_incomplete' }
+    })
+    expect(mainProbe?.failedChecks).toEqual(['end_not_complete'])
+  })
+
+  it.each<[string, (receipt: Record<string, any>) => unknown, string]>([
+    ['another status', (receipt) => ({ ...receipt, status: 'started' }), 'end_not_complete'],
+    ['another window', (receipt) => ({ ...receipt, id: 'many_agents_1' }), 'end_other_window'],
+    ['no start', (receipt) => ({ ...receipt, startedAtMs: undefined }), 'end_started_at_invalid'],
+    [
+      'a start that is null',
+      (receipt) => ({ ...receipt, startedAtMs: null }),
+      'end_started_at_invalid'
+    ],
+    ['no end', (receipt) => ({ ...receipt, endedAtMs: null }), 'end_ended_at_invalid'],
+    [
+      'an end that is text',
+      (receipt) => ({ ...receipt, endedAtMs: String(receipt.endedAtMs) }),
+      'end_ended_at_invalid'
+    ],
+    [
+      'a shorter window',
+      (receipt) => ({ ...receipt, endedAtMs: receipt.endedAtMs - 1 }),
+      'end_short_of_window'
+    ],
+    ['no lag', (receipt) => ({ ...receipt, eventLoopLag: null }), 'lag_missing'],
+    [
+      'lag that was not sampled',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, sampling: false } }),
+      'lag_not_sampling'
+    ],
+    [
+      'a lag figure missing',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, p99Ms: undefined } }),
+      'lag_figure_invalid:p99Ms'
+    ],
+    [
+      'no time observed',
+      (receipt) => ({ ...receipt, eventLoopLag: { ...receipt.eventLoopLag, observedForMs: 0 } }),
+      'lag_observed_nothing'
+    ]
+  ])(
+    'keeps a receipt with %s as main gave it, and names its check',
+    async (_name, change, check) => {
+      const { mainProbe } = (await world({ probeReceipt: change }).run()).windows[0]
+      expect(mainProbe?.end?.answer).toEqual(change(receipt))
+      expect(mainProbe?.failedChecks).toEqual([check])
+    }
+  )
+
+  it('keeps main’s refusal to start the window, and no end', async () => {
+    const refusal = { status: 'unavailable', reason: 'window_held' }
+    const { mainProbe } = (await world({ probeBegin: () => refusal }).run()).windows[0]
+    expect(mainProbe).toEqual({
+      begin: { askedAtMs: T0 + 11_000, answeredAtMs: T0 + 11_000, answer: refusal },
+      end: null,
+      failedChecks: ['begin_not_started']
+    })
+  })
+
+  it('keeps a snapshot with no window as no answer', async () => {
+    const { mainProbe } = (await world({ probeNoWindow: true }).run()).windows[0]
+    expect(mainProbe?.begin).toEqual({
+      askedAtMs: T0 + 11_000,
+      answeredAtMs: T0 + 11_000,
+      answer: null
+    })
+    expect(mainProbe?.failedChecks).toEqual(['begin_not_started'])
+  })
+
+  it('keeps the error of a probe that failed or was not answered in time', async () => {
+    const failed = (await world({ probeFails: true }).run()).windows[0].mainProbe
+    expect(failed?.begin).toEqual({
+      askedAtMs: T0 + 11_000,
+      answeredAtMs: T0 + 11_000,
+      error: { code: null, message: 'main went away' }
+    })
+    expect(failed?.end).toBeNull()
+    const hung = (await world({ probeHangs: true }).run({ callTimeoutMs: 30 })).windows[0].mainProbe
+    expect(hung?.begin?.error).toEqual({
+      code: 'CAPTURE_TIMEOUT',
+      message: 'main window probe timed out after 30ms'
+    })
   })
 })
 

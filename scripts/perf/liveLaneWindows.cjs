@@ -40,6 +40,7 @@ const { WORK_SPAN_KINDS } = require('./collectors/hostSpans.cjs')
 const { timingsByKind } = require('./collectors/hostRecentSpanWindows.cjs')
 const { awaitWithTimeout } = require('./boundedAwait.cjs')
 const { barrierDurabilityAtFences } = require('./barrierDurability.cjs')
+const { askMainProbe, failedMainProbeChecks, mainProbeAnswer } = require('./mainWindowProbe.cjs')
 const {
   d1CountersOf,
   d1Delta,
@@ -297,25 +298,22 @@ async function runLiveLaneWindows(options) {
   const sleep = options.sleep || defaultSleep
   const hostUnion = options.hostUnion || null
   const onWindow = typeof options.onWindow === 'function' ? options.onWindow : null
-  const probeMain = async (request) => {
+  // Each ask of main's window probe is kept in `asks` as main answered it.
+  const probeMain = async (request, asks) => {
     if (typeof options.readMainPerfWindow !== 'function') {
       return { status: 'unavailable', reason: 'main_window_probe_absent' }
     }
-    try {
-      const result = await awaitWithTimeout(
-        Promise.resolve().then(() => options.readMainPerfWindow(request)),
-        options.mainProbeTimeoutMs ?? 5_000,
-        'main window probe'
-      )
-      return isPlainObject(result)
-        ? result
-        : { status: 'unavailable', reason: 'main_probe_invalid' }
-    } catch (error) {
-      return {
-        status: 'unavailable',
-        reason: error?.code === 'CAPTURE_TIMEOUT' ? 'main_unresponsive' : 'main_probe_failed'
-      }
-    }
+    const asked = await askMainProbe(
+      () =>
+        awaitWithTimeout(
+          Promise.resolve().then(() => options.readMainPerfWindow(request)),
+          options.mainProbeTimeoutMs ?? 5_000,
+          'main window probe'
+        ),
+      nowMs
+    )
+    asks[request.action] = asked
+    return mainProbeAnswer(asked)
   }
 
   const sleepUntil = async (atMs) => {
@@ -392,30 +390,26 @@ async function runLiveLaneWindows(options) {
     const d1Before = await readD1()
     const barrierBefore = await readBarrier()
     const windowId = `light_beside_${repetition}`
-    const mainWindowBegin = await probeMain({ action: 'begin', id: windowId, durationMs: windowMs })
+    const mainAsks = { begin: null, end: null }
+    const mainWindowBegin = await probeMain(
+      { action: 'begin', id: windowId, durationMs: windowMs },
+      mainAsks
+    )
     const startedAtMs = nowMs()
     const endedAtMs = startedAtMs + windowMs
     const light = await lanes.runLight({ untilMs: endedAtMs })
     const mainWindowEnd =
       mainWindowBegin.status === 'started'
-        ? await probeMain({ action: 'end', id: windowId })
+        ? await probeMain({ action: 'end', id: windowId }, mainAsks)
         : mainWindowBegin
+    const failedChecks = failedMainProbeChecks({
+      begin: mainWindowBegin,
+      end: mainWindowEnd,
+      windowId,
+      windowMs
+    })
     let mainWindow = null
-    if (
-      mainWindowBegin.status === 'started' &&
-      mainWindowBegin.id === windowId &&
-      mainWindowEnd.status === 'complete' &&
-      mainWindowEnd.id === windowId &&
-      finiteNonNegative(mainWindowEnd.startedAtMs) &&
-      finiteNonNegative(mainWindowEnd.endedAtMs) &&
-      mainWindowEnd.endedAtMs - mainWindowEnd.startedAtMs >= windowMs &&
-      isPlainObject(mainWindowEnd.eventLoopLag) &&
-      mainWindowEnd.eventLoopLag.sampling === true &&
-      mainWindowEnd.eventLoopLag.observedForMs > 0 &&
-      ['p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs', 'observedForMs'].every((name) =>
-        finiteNonNegative(mainWindowEnd.eventLoopLag[name])
-      )
-    ) {
+    if (failedChecks.length === 0) {
       mainWindow = { ...mainWindowEnd, durabilityBefore: mainWindowBegin.durability ?? null }
     } else if (typeof options.readMainPerfWindow === 'function') {
       reasons.push(mainWindowEnd.reason ?? 'main_probe_invalid')
@@ -573,6 +567,9 @@ async function runLiveLaneWindows(options) {
       main: mainEvidence,
       mainWindow,
       mainWindowCensored: mainWindow === null,
+      // What main answered, as it came, and the checks those answers failed.
+      mainProbe:
+        typeof options.readMainPerfWindow === 'function' ? { ...mainAsks, failedChecks } : null,
       mainX1b: mainLoopGapEvidence(mainWindow),
       host: null
     })

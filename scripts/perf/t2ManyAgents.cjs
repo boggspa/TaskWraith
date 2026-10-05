@@ -73,6 +73,7 @@ const {
 } = require('./manyAgentMetrics.cjs')
 const { createManyAgentLanes } = require('./manyAgentRounds.cjs')
 const { askForWindowEnd, readMainPerfWindow, readMainWorkSpanWindow } = require('./t2LiveLanes.cjs')
+const { askMainProbe, failedMainProbeChecks, mainProbeAnswer } = require('./mainWindowProbe.cjs')
 
 const DEFAULT_OPTIONS = Object.freeze({
   windowMs: 120_000,
@@ -92,7 +93,6 @@ const WINDOW_ROLE = 'many-agents'
 const BATCH_SIZE = 8
 const RING_FIELDS = Object.freeze(['recorded', 'dropped', 'sampledOut', 'rejected', 'degraded'])
 const KIND_SET = new Set(WORK_SPAN_KINDS)
-const LAG_FIELDS = Object.freeze(['p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs', 'observedForMs'])
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -493,18 +493,16 @@ async function runT2ManyAgents(options) {
   // which journal path the window's saves took: a window it cannot say that
   // for is not judged on its counters.
   const readBarrier = () => readBarrierDurability(page, { timeoutMs: settings.callTimeoutMs })
-  const probeMain = async (request) => {
-    try {
-      const result = await readMainPerfWindow(page, request, settings.callTimeoutMs)
-      return isPlainObject(result)
-        ? result
-        : { status: 'unavailable', reason: 'main_probe_invalid' }
-    } catch (error) {
-      return {
-        status: 'unavailable',
-        reason: error?.code === 'CAPTURE_TIMEOUT' ? 'main_unresponsive' : 'main_probe_failed'
-      }
-    }
+  // Each ask of main's window probe is kept in `asks` as main answered it; asked
+  // again for an end, the record keeps when it was first asked.
+  const probeMain = async (request, asks) => {
+    const asked = await askMainProbe(
+      () => readMainPerfWindow(page, request, settings.callTimeoutMs),
+      nowMs
+    )
+    const first = asks[request.action]
+    asks[request.action] = first ? { ...asked, askedAtMs: first.askedAtMs } : asked
+    return mainProbeAnswer(asked)
   }
   /** A profile marker beside a probe, so the window can be placed in main's CPU profile. */
   const mark = async (windowId, failure) => {
@@ -595,18 +593,21 @@ async function runT2ManyAgents(options) {
     const windowId = 'many_agents_0'
     const mainBefore = await readMainAt(nowMs())
     await mark(windowId, 'window_start_marker_failed')
-    const probeBegin = await probeMain({
-      action: 'begin',
-      id: windowId,
-      durationMs: settings.windowMs
-    })
+    const mainAsks = { begin: null, end: null }
+    const probeBegin = await probeMain(
+      { action: 'begin', id: windowId, durationMs: settings.windowMs },
+      mainAsks
+    )
     const startedAtMs = nowMs()
     const endedAtMs = startedAtMs + settings.windowMs
     await sleepUntil(endedAtMs)
     let probeEnd = probeBegin
     if (probeBegin.status === 'started') {
       // Main ends its window on its own timer, which a busy loop runs late.
-      probeEnd = await askForWindowEnd(() => probeMain({ action: 'end', id: windowId }), sleep)
+      probeEnd = await askForWindowEnd(
+        () => probeMain({ action: 'end', id: windowId }, mainAsks),
+        sleep
+      )
       await mark(windowId, 'window_end_marker_failed')
     }
     const mainAtEnd = await readMainAt(endedAtMs)
@@ -614,20 +615,14 @@ async function runT2ManyAgents(options) {
     // any of them out of main's ring; the reads after the drain add the rest.
     const spansAtEnd = []
     for (const batch of batches) spansAtEnd.push(await readMain(batch, startedAtMs, endedAtMs))
+    const failedChecks = failedMainProbeChecks({
+      begin: probeBegin,
+      end: probeEnd,
+      windowId,
+      windowMs: settings.windowMs
+    })
     let mainWindow = null
-    if (
-      probeBegin.status === 'started' &&
-      probeBegin.id === windowId &&
-      probeEnd.status === 'complete' &&
-      probeEnd.id === windowId &&
-      finiteNonNegative(probeEnd.startedAtMs) &&
-      finiteNonNegative(probeEnd.endedAtMs) &&
-      probeEnd.endedAtMs - probeEnd.startedAtMs >= settings.windowMs &&
-      isPlainObject(probeEnd.eventLoopLag) &&
-      probeEnd.eventLoopLag.sampling === true &&
-      LAG_FIELDS.every((name) => finiteNonNegative(probeEnd.eventLoopLag[name])) &&
-      probeEnd.eventLoopLag.observedForMs > 0
-    ) {
+    if (failedChecks.length === 0) {
       mainWindow = { ...probeEnd, durabilityBefore: probeBegin.durability ?? null }
     } else reasons.push(probeEnd.reason ?? 'main_probe_invalid')
 
@@ -800,6 +795,8 @@ async function runT2ManyAgents(options) {
       main,
       mainWindow,
       mainWindowCensored: mainWindow === null,
+      // What main answered, as it came, and the checks those answers failed.
+      mainProbe: { ...mainAsks, failedChecks },
       host
     }
     if (typeof options.onWindow === 'function') {
