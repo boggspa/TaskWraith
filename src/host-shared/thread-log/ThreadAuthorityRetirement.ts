@@ -18,6 +18,10 @@
  * Refinements (per the approved I7 GO):
  *  - Keep admission/hold through authority retirement directory sync; ordinary
  *    adopt behavior is preserved.
+ *  - Retirement runs under an opaque reservation minted by the registry; the
+ *    reservation re-validates the mark, writer liveness, profile authority
+ *    and erasure generation at every pre/post check, and carries the
+ *    catalogue's erasing state instead of a hardcoded false.
  *  - Directory sync failure is uncertain retirement, not durable success.
  *  - Final exact mark/reservation/liveness/erasure checks before adoption
  *    and unlink.
@@ -25,7 +29,7 @@
  *    registry is the seam future preparation will plug into.
  */
 import { isSafeChatId } from '../../shared/ChatPath'
-import type { ThreadOwnerEpoch } from './ThreadOwnership'
+import type { ThreadOwnershipReservation } from './ThreadOwnership'
 
 /**
  * Marker that a retirement is on the orphan pathway. Ordinary routes do not
@@ -44,13 +48,9 @@ export const ORPHAN_RETIREMENT_TOKEN = Symbol.for('taskwraith.thread-authority.o
  */
 export interface ThreadAuthorityRetirementObservation {
   /** Reservation the mark was read under. */
-  readonly reservation: ThreadOwnerEpoch
+  readonly reservation: ThreadOwnershipReservation
   /** Whether the mark file is unchanged from the admission capture. */
   readonly exactMarkWitness: () => boolean
-  /** Whether the writer's process has ended. */
-  readonly writerEnded: boolean
-  /** Whether the catalogue is erasing this thread. */
-  readonly erasing: boolean
 }
 
 /**
@@ -66,7 +66,7 @@ export type ThreadAuthorityRetirementOutcome =
   | { readonly kind: 'retired' }
   | {
       readonly kind: 'uncertain'
-      readonly reason: 'sync_failed' | 'witness_changed' | 'remove_failed'
+      readonly reason: 'sync_failed' | 'witness_changed'
     }
   | {
       readonly kind: 'busy'
@@ -76,7 +76,7 @@ export type ThreadAuthorityRetirementOutcome =
 /** Context an orphan retirement requires. */
 export interface ThreadAuthorityRetirementContext {
   /** Reservation the orphan adoption is committed under. */
-  readonly reservation: ThreadOwnerEpoch
+  readonly reservation: ThreadOwnershipReservation
   /** State captured at admission, verified again after the sync. */
   readonly observation: ThreadAuthorityRetirementObservation
   /** Combined unlink + sync; throws on any failure. */
@@ -101,19 +101,25 @@ export async function retireOrphanThreadAuthority(
 ): Promise<ThreadAuthorityRetirementOutcome> {
   if (!isSafeChatId(threadId)) return { kind: 'busy', reason: 'damaged' }
   const { observation } = context
-  if (
-    context.reservation.host !== observation.reservation.host ||
-    context.reservation.grant !== observation.reservation.grant
-  ) {
+  // The reservation re-runs every admission probe (exact mark, writer
+  // liveness, profile authority, erasure generation): a thread that changed
+  // under the reservation is damaged, never retired.
+  try {
+    context.reservation.revalidate()
+  } catch {
     return { kind: 'busy', reason: 'damaged' }
   }
-  if (!observation.writerEnded) return { kind: 'busy', reason: 'live_writer' }
-  if (observation.erasing) return { kind: 'busy', reason: 'erasing' }
+  if (observation.reservation !== context.reservation) {
+    return { kind: 'busy', reason: 'damaged' }
+  }
+  // Only the reservation can say whether the catalogue is erasing the
+  // thread; a hardcoded false here would retire a mark mid-erasure.
+  if (context.reservation.erasing()) return { kind: 'busy', reason: 'erasing' }
   if (!observation.exactMarkWitness()) return { kind: 'busy', reason: 'damaged' }
   try {
     await context.removeAndSync()
   } catch {
-    return { kind: 'uncertain', reason: 'remove_failed' }
+    return { kind: 'uncertain', reason: 'sync_failed' }
   }
   if (observation.exactMarkWitness()) return { kind: 'uncertain', reason: 'witness_changed' }
   return { kind: 'retired' }

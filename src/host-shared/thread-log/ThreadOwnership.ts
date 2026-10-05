@@ -34,6 +34,38 @@ export function sameThreadOwnerEpoch(a: ThreadOwnerEpoch, b: ThreadOwnerEpoch): 
 }
 
 /**
+ * Opaque, per-thread reservation held across preparation, adoption,
+ * retirement and directory sync. Re-validates the exact authority mark,
+ * writer liveness, profile authority and erasure generation throughout.
+ *
+ * A reservation is minted by the Host thread owner registry for one thread
+ * at preparation time and released by the same. Callers do not inspect its
+ * fields; they pass it to adoption, retirement and any directory sync.
+ */
+export interface ThreadOwnershipReservation {
+  readonly threadId: string
+  readonly epoch: ThreadOwnerEpoch
+  /** Re-validates the exact authority mark; throws ReservationInvalid if the mark moved or vanished. */
+  readonly revalidate: () => void
+  /** Whether the catalogue is currently erasing the thread; true => reject retirement as busy. */
+  readonly erasing: () => boolean
+}
+
+export class ReservationInvalid extends Error {
+  constructor(
+    public readonly reason:
+      | 'mark_moved'
+      | 'writer_alive'
+      | 'profile_authority_lost'
+      | 'erasure_changed'
+      | 'not_minted'
+  ) {
+    super(`Reservation invalid: ${reason}`)
+    this.name = 'ReservationInvalid'
+  }
+}
+
+/**
  * Why a claim was refused.
  * - `disabled`: this Host does not grant claims at all.
  * - `owned_by_other_writer`: another desktop writer holds the thread, or may

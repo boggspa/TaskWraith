@@ -10,6 +10,7 @@ import { adoptPreparedThreadRecord } from './ThreadCatalogueAdoption'
 import type { ThreadCatalogueRecoveryHold, ThreadCatalogueProjection } from './ThreadCatalogue'
 import { ThreadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
 import { ORPHAN_RETIREMENT_TOKEN } from '../thread-log/ThreadAuthorityRetirement'
+import type { ThreadOwnershipReservation } from '../thread-log/ThreadOwnership'
 
 /**
  * How long a recovery hold survives with no token-bearing request naming it.
@@ -50,6 +51,21 @@ export function recoveryHoldHasOwner(
     return hold.hostWriterId === identity.hostWriterId && !hold.desktopWriterId
   return false
 }
+
+/** What an orphan keep-custody end (`endOrphan`, `endOrphanViaReservation`) did. */
+export type ThreadCatalogueOrphanEndOutcome =
+  | { readonly kind: 'released' }
+  | { readonly kind: 'uncertain'; readonly reason: 'sync_failed' | 'release_refused' }
+  | {
+      readonly kind: 'busy'
+      readonly reason:
+        | 'wrong_token'
+        | 'token_mismatch'
+        | 'not_host_writer'
+        | 'live_desktop'
+        | 'live_work'
+        | 'damaged'
+    }
 
 /** Runs on the source-authoritative parent, never inside its decoder. */
 export class ThreadCatalogueRecoveryController {
@@ -151,6 +167,32 @@ export class ThreadCatalogueRecoveryController {
       throw error
     }
     throw new Error('Desktop owns recovery while it is running')
+  }
+
+  /**
+   * Orphan pathway guard: only the writer that holds THIS thread's recovery
+   * hold can block its orphan recovery. An unrelated live desktop — one
+   * whose writerId does not hold this hold — does not block, and a hold the
+   * Host owns is not blocked by any desktop. Ordinary recovery keeps
+   * `assertNoLiveDesktop`, which blocks on ANY live desktop.
+   */
+  private assertNoLiveDeadWriter(held: ThreadCatalogueRecoveryHold): void {
+    // For the orphan pathway, only the dead writer holding this thread
+    // matters. An unrelated live desktop does not block recovery of this
+    // thread. If the desktop currently owns the thread (writerId matches
+    // the hold's desktop writer), block.
+    const desktop =
+      this.desktop ?? this.options.publisher.catalogue.currentRegisteredWriter('desktop')
+    if (!desktop) return
+    if (held.desktopWriterId !== desktop.writerId) return
+    if (!desktop.pid) throw new Error('Desktop recovery identity is unresolved')
+    try {
+      process.kill(desktop.pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
+      throw error
+    }
+    throw new Error('Desktop owns recovery for this thread while it is running')
   }
 
   beginHost(chatId: string): ThreadCatalogueRecoveryHold {
@@ -304,33 +346,63 @@ export class ThreadCatalogueRecoveryController {
     chatId: string,
     token: string,
     orphanToken: symbol
-  ): Promise<
-    | { readonly kind: 'released' }
-    | { readonly kind: 'uncertain'; readonly reason: 'sync_failed' | 'release_refused' }
-    | {
-        readonly kind: 'busy'
-        readonly reason:
-          | 'wrong_token'
-          | 'token_mismatch'
-          | 'not_host_writer'
-          | 'live_desktop'
-          | 'live_work'
-      }
-  > {
+  ): Promise<ThreadCatalogueOrphanEndOutcome> {
     this.options.assertAuthority()
-    if (orphanToken !== ORPHAN_RETIREMENT_TOKEN)
-      return { kind: 'busy', reason: 'wrong_token' }
+    if (orphanToken !== ORPHAN_RETIREMENT_TOKEN) return { kind: 'busy', reason: 'wrong_token' }
+    const held = this.resolveOrphanHold(chatId, token)
+    if ('kind' in held) return held
+    return this.endOrphanHeld(chatId, token, held)
+  }
+
+  /**
+   * Orphan keep-custody end under an explicit ownership reservation: the
+   * same pathway as `endOrphan`, but the reservation's `revalidate()` runs
+   * first and its liveness probe — not a system-wide desktop scan — is what
+   * proves the dead writer is still dead. A reservation that fails to
+   * revalidate is `busy/damaged` and the hold is not touched.
+   */
+  async endOrphanViaReservation(
+    chatId: string,
+    token: string,
+    orphanToken: symbol,
+    reservation: ThreadOwnershipReservation
+  ): Promise<ThreadCatalogueOrphanEndOutcome> {
+    this.options.assertAuthority()
+    if (orphanToken !== ORPHAN_RETIREMENT_TOKEN) return { kind: 'busy', reason: 'wrong_token' }
+    try {
+      reservation.revalidate()
+    } catch {
+      return { kind: 'busy', reason: 'damaged' }
+    }
+    const held = this.resolveOrphanHold(chatId, token)
+    if ('kind' in held) return held
+    return this.endOrphanHeld(chatId, token, held)
+  }
+
+  private resolveOrphanHold(
+    chatId: string,
+    token: string
+  ): ThreadCatalogueRecoveryHold | Extract<ThreadCatalogueOrphanEndOutcome, { kind: 'busy' }> {
     const pending = this.pending.get(chatId)
     const held = pending?.hold ?? this.options.publisher.catalogue.recoveryHold(chatId)
     if (!held || held === 'unreadable' || held.token !== token)
       return { kind: 'busy', reason: 'token_mismatch' }
     if (!held.hostWriterId) return { kind: 'busy', reason: 'not_host_writer' }
+    return held
+  }
+
+  private endOrphanHeld(
+    chatId: string,
+    token: string,
+    held: ThreadCatalogueRecoveryHold
+  ): ThreadCatalogueOrphanEndOutcome {
     try {
-      this.assertNoLiveDesktop()
+      this.assertNoLiveDeadWriter(held)
     } catch {
       // A desktop whose pid is unresolved, or one that is alive, is the
       // same outcome from the orphan pathway's point of view: the hold
-      // cannot be released while a live recovery identity exists.
+      // cannot be released while a live recovery identity holds this
+      // thread. An unrelated live desktop does not reach this branch.
       return { kind: 'busy', reason: 'live_desktop' }
     }
     if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
@@ -344,6 +416,9 @@ export class ThreadCatalogueRecoveryController {
       return { kind: 'uncertain', reason: 'sync_failed' }
     }
     if (!released) return { kind: 'uncertain', reason: 'release_refused' }
+    // Capture the pending entry before deleting it: the timer and release
+    // closure belong to the entry, not the hold.
+    const pending = this.pending.get(chatId)
     this.pending.delete(chatId)
     if (pending?.timer) clearTimeout(pending.timer)
     pending?.release()

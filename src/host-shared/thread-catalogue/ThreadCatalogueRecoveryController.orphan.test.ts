@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ThreadCatalogueRecoveryController } from './ThreadCatalogueRecoveryController'
 import type { ThreadCatalogueRecoveryHold } from './ThreadCatalogue'
 import { ORPHAN_RETIREMENT_TOKEN } from '../thread-log/ThreadAuthorityRetirement'
+import { ReservationInvalid, type ThreadOwnershipReservation } from '../thread-log/ThreadOwnership'
 
 const CHAT = 'chat-orphan-1'
 const TOKEN = 'token-orphan-1'
@@ -34,6 +35,24 @@ function makeHold(
     hostWriterId: HOST_WRITER,
     hostIncarnation: 'host-incarnation-1',
     ...overrides
+  }
+}
+
+/**
+ * A caller-built reservation that is not minted by the Host thread owner
+ * registry. Tests steer its `revalidate` and `erasing` probes independently
+ * of any real reservation, mirroring the helper used in
+ * `HostThreadOwnerRegistry.orphan.test.ts`.
+ */
+function foreignReservation(
+  onRevalidate: () => void = () => undefined,
+  erasing: () => boolean = () => false
+): ThreadOwnershipReservation {
+  return {
+    threadId: CHAT,
+    epoch: { host: HOST_WRITER, grant: 1 },
+    revalidate: onRevalidate,
+    erasing
   }
 }
 
@@ -132,16 +151,129 @@ describe('ThreadCatalogueRecoveryController.orphan keep-custody end', () => {
   })
 
   it('refuses when a desktop is registered without a resolvable pid', async () => {
-    // assertNoLiveDesktop() probes process.kill on the desktop's pid. A
-    // missing pid triggers an `unresolved` path that throws synchronously;
-    // the controller surfaces that as busy/live_desktop because it cannot
-    // prove the desktop is gone. We assert that exact surface here; the
-    // pid-alive branch is exercised by integration tests against the real
-    // gate.
-    const harness = buildHarness({ desktopWriter: { writerId: 'desk-orphan', pid: undefined } })
+    // The orphan pathway only blocks on the desktop that owns THIS thread's
+    // hold. The hold here names that desktop as `desktopWriterId`; the
+    // unresolved pid short-circuits the liveness probe and the controller
+    // returns busy/live_desktop because it cannot prove the owning desktop
+    // is gone. We assert that exact surface here; the pid-alive branch is
+    // exercised below by mocking process.kill.
+    const harness = buildHarness({
+      hold: makeHold({ hostWriterId: HOST_WRITER, desktopWriterId: 'desk-orphan' }),
+      desktopWriter: { writerId: 'desk-orphan', pid: undefined }
+    })
     const outcome = await harness.controller.endOrphan(CHAT, TOKEN, ORPHAN_RETIREMENT_TOKEN)
     expect(outcome).toEqual({ kind: 'busy', reason: 'live_desktop' })
     expect(harness.catalogue.releaseCalls).toBe(0)
+  })
+
+  it('does not block on a live desktop that is unrelated to this thread', async () => {
+    // A desktop with a resolvable pid is registered, but it does not own
+    // this thread's hold (the hold is host-owned; no desktopWriterId).
+    // The orphan pathway must proceed, even when the unrelated desktop is
+    // alive: `assertNoLiveDeadWriter` only checks the desktop whose
+    // writerId matches the hold.
+    const livePid = process.pid
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const harness = buildHarness({
+        desktopWriter: { writerId: 'some-other-desktop', pid: livePid }
+      })
+      const outcome = await harness.controller.endOrphan(CHAT, TOKEN, ORPHAN_RETIREMENT_TOKEN)
+      expect(outcome).toEqual({ kind: 'released' })
+      expect(harness.catalogue.releaseCalls).toBe(1)
+      // process.kill must not have been called: the unrelated desktop is
+      // never probed.
+      expect(killSpy).not.toHaveBeenCalled()
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('blocks when the desktop that owns this thread is alive', async () => {
+    // The hold names a desktopWriterId matching the registered desktop.
+    // A pid-alive probe (process.kill returns without throwing) means the
+    // orphan pathway refuses, even though the global desktop presence check
+    // was retired: ordinary recovery's restrictions (no live recovery
+    // identity for the thread's owner) still hold on the orphan route.
+    const livePid = process.pid
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const harness = buildHarness({
+        hold: makeHold({ hostWriterId: HOST_WRITER, desktopWriterId: 'desk-orphan' }),
+        desktopWriter: { writerId: 'desk-orphan', pid: livePid }
+      })
+      const outcome = await harness.controller.endOrphan(CHAT, TOKEN, ORPHAN_RETIREMENT_TOKEN)
+      expect(outcome).toEqual({ kind: 'busy', reason: 'live_desktop' })
+      expect(harness.catalogue.releaseCalls).toBe(0)
+      expect(killSpy).toHaveBeenCalledWith(livePid, 0)
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('does not block when the desktop that owned this thread has ended', async () => {
+    // The hold names a desktopWriterId matching the registered desktop,
+    // but process.kill throws ESRCH: the owning desktop is dead and the
+    // orphan pathway proceeds.
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      const error = Object.assign(new Error('no such process'), {
+        code: 'ESRCH'
+      }) as NodeJS.ErrnoException
+      throw error
+    })
+    try {
+      const harness = buildHarness({
+        hold: makeHold({ hostWriterId: HOST_WRITER, desktopWriterId: 'desk-orphan' }),
+        desktopWriter: { writerId: 'desk-orphan', pid: 99999 }
+      })
+      const outcome = await harness.controller.endOrphan(CHAT, TOKEN, ORPHAN_RETIREMENT_TOKEN)
+      expect(outcome).toEqual({ kind: 'released' })
+      expect(harness.catalogue.releaseCalls).toBe(1)
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('endOrphanViaReservation returns busy/damaged when reservation.revalidate throws', async () => {
+    // The reservation pathway runs revalidate() before any state
+    // inspection. A foreign reservation that throws must not touch the
+    // hold: releaseRecoveryHold is never called.
+    const reservation = foreignReservation(() => {
+      throw new ReservationInvalid('mark_moved')
+    })
+    const harness = buildHarness({})
+    const outcome = await harness.controller.endOrphanViaReservation(
+      CHAT,
+      TOKEN,
+      ORPHAN_RETIREMENT_TOKEN,
+      reservation
+    )
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    expect(harness.catalogue.releaseCalls).toBe(0)
+  })
+
+  it('endOrphanViaReservation proceeds when reservation holds', async () => {
+    // A foreign reservation whose revalidate does not throw follows the
+    // normal endOrphan path. The unrelated-desktop branch from above is
+    // reused: a live desktop that does not own this thread does not block.
+    const livePid = process.pid
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const reservation = foreignReservation()
+      const harness = buildHarness({
+        desktopWriter: { writerId: 'some-other-desktop', pid: livePid }
+      })
+      const outcome = await harness.controller.endOrphanViaReservation(
+        CHAT,
+        TOKEN,
+        ORPHAN_RETIREMENT_TOKEN,
+        reservation
+      )
+      expect(outcome).toEqual({ kind: 'released' })
+      expect(harness.catalogue.releaseCalls).toBe(1)
+    } finally {
+      killSpy.mockRestore()
+    }
   })
 
   it('refuses when the chat has live work', async () => {

@@ -56,6 +56,7 @@ import {
 } from '../host-shared/thread-log/ThreadAuthorityRetirement'
 import {
   HostThreadOwnerTable,
+  ReservationInvalid,
   type HostDesktopPresence,
   type HostThreadOwnerTableSnapshot,
   type HostWriteDecision,
@@ -67,6 +68,7 @@ import {
   type ThreadClaimRequest,
   type ThreadReleaseMessage,
   type ThreadWriter,
+  type ThreadOwnershipReservation,
   type ThreadOwnerEpoch
 } from '../host-shared/thread-log/ThreadOwnership'
 
@@ -90,6 +92,12 @@ export interface HostThreadOwnerRegistryOptions {
   otherDesktopUnattached(writerId: string): boolean
   /** Synchronous metadata witness captured before publication's asynchronous reads. */
   publicationWitness?(threadId: string): () => boolean
+  /** Whether the catalogue is currently erasing the thread; true blocks reservation and retirement. */
+  erasing?(threadId: string): boolean
+  /** Current erasure generation of the thread; a change invalidates a minted reservation. */
+  erasureGeneration?(threadId: string): string | null
+  /** Existing profile authority; a throw means authority was lost and reservations cannot mint or revalidate. */
+  assertProfileAuthority?(): void
   /** Whether an authority file's writer still runs. By default, signal 0 to its process id. */
   liveness?(writer: ThreadAuthorityWriter): ThreadWriterLiveness
 }
@@ -135,6 +143,13 @@ export class HostThreadOwnerRegistry {
   private readonly liveness: (writer: ThreadAuthorityWriter) => ThreadWriterLiveness
   /** The latest decision queued for each thread that has one waiting or running. */
   private readonly queues = new Map<string, Promise<void>>()
+  /**
+   * Threads whose last remove+sync is known to have failed after the unlink:
+   * the name is gone from the live view but its absence may not survive a
+   * power loss. The next retirement retries the directory sync even when
+   * the file is already absent.
+   */
+  private readonly syncFailed = new Set<string>()
 
   constructor(private readonly options: HostThreadOwnerRegistryOptions) {
     this.table = new HostThreadOwnerTable({
@@ -345,42 +360,128 @@ export class HostThreadOwnerRegistry {
    * and the witness is read again after the sync so a racing recreate is
    * caught and reported as uncertain retirement, not durable success.
    *
-   * The reservation must match the mark's recorded epoch: a writer cannot
-   * ask for retirement on a mark it never captured, and a future Host
-   * incarnation cannot retire a mark by an older host's grant.
+   * The reservation must be one minted by `reserveOwnership` for this mark:
+   * a writer cannot ask for retirement on a mark it never captured, and a
+   * future Host incarnation cannot retire a mark by an older host's grant.
+   * A mark that is already absent at admission is `busy/damaged`, never
+   * `retired`: an absence the registry did not sync itself may not survive
+   * a power loss. When a previous directory sync is known to have failed
+   * (the mark was unlinked but its absence may not be durable), the sync is
+   * retried inside this call; a retry that fails is `uncertain/sync_failed`
+   * so the caller holds, and a retry that succeeds is `retired`.
    */
   async retireOrphanAuthority(
     threadId: string,
-    reservation: ThreadOwnerEpoch
+    reservation: ThreadOwnershipReservation
   ): Promise<ThreadAuthorityRetirementOutcome> {
     requireThreadId(threadId)
     if (!this.options.enabled) return { kind: 'busy', reason: 'damaged' }
     return this.serial(threadId, async () => {
+      try {
+        reservation.revalidate()
+      } catch (error) {
+        // `mark_moved` is damage too — unless this registry itself unlinked
+        // the mark and still owes its directory sync, which is decided on
+        // the read below. Every other probe failure refuses here.
+        if (error instanceof ReservationInvalid && error.reason === 'mark_moved') {
+          // Fall through to the read: an absent mark with a recorded sync
+          // debt is retried, not refused.
+        } else {
+          return { kind: 'busy', reason: 'damaged' }
+        }
+      }
       const read = await this.options.files.read(threadId)
-      if (read.kind === 'none') return { kind: 'retired' }
       if (read.kind === 'damaged') return { kind: 'busy', reason: 'damaged' }
+      if (read.kind === 'none') {
+        // Not retired on absence alone: an absent mark may be the residue
+        // of a remove that died before its directory sync. Only a recorded
+        // sync debt earns a retry here; anything else is damage the caller
+        // must hold on.
+        if (!this.syncFailed.has(threadId)) return { kind: 'busy', reason: 'damaged' }
+        try {
+          await this.options.files.remove(threadId)
+          this.syncFailed.delete(threadId)
+          return { kind: 'retired' }
+        } catch {
+          return { kind: 'uncertain', reason: 'sync_failed' }
+        }
+      }
       const record = read.record
-      if (record.epoch.host !== reservation.host || record.epoch.grant !== reservation.grant) {
+      if (
+        record.epoch.host !== reservation.epoch.host ||
+        record.epoch.grant !== reservation.epoch.grant
+      ) {
         return { kind: 'busy', reason: 'damaged' }
       }
       if (!this.writerEnded(record.writer)) return { kind: 'busy', reason: 'live_writer' }
-      const witness = this.options.publicationWitness?.(threadId)
-      if (!witness || !witness()) return { kind: 'busy', reason: 'damaged' }
+      if (this.erasing(threadId)) return { kind: 'busy', reason: 'erasing' }
       return retireOrphanThreadAuthority(threadId, {
         reservation,
         observation: {
-          reservation: record.epoch,
-          exactMarkWitness: witness,
-          writerEnded: true,
-          erasing: false
+          reservation,
+          exactMarkWitness: this.options.publicationWitness?.(threadId) ?? (() => false)
         },
         removeAndSync: async () => {
           // The unlinked file + temp sibling + directory sync are awaited
           // together: the orphan hold stays open across the await, so a power
-          // loss during the sync cannot resurrect the mark.
-          await this.options.files.remove(threadId)
+          // loss during the sync cannot resurrect the mark. A failure is
+          // recorded so a later call retries the directory sync even when
+          // the name is already gone.
+          try {
+            await this.options.files.remove(threadId)
+            this.syncFailed.delete(threadId)
+          } catch {
+            this.syncFailed.add(threadId)
+            throw new Error('authority remove or directory sync failed')
+          }
         }
       })
+    })
+  }
+
+  /**
+   * Mint an opaque, per-thread reservation. Held across preparation, adoption,
+   * retirement and directory sync. Re-validates the exact authority mark,
+   * writer liveness, profile authority, and erasure generation on every
+   * `revalidate()` call.
+   *
+   * Reservation is minted only when:
+   *  - the mark is present and unchanged at admission
+   *  - the writer has ended
+   *  - the catalogue is NOT currently erasing the thread
+   *  - profile authority is held
+   *
+   * Returns null when any condition fails; the caller decides whether to retry.
+   */
+  async reserveOwnership(threadId: string): Promise<ThreadOwnershipReservation | null> {
+    requireThreadId(threadId)
+    if (!this.options.enabled) return null
+    return this.serial(threadId, async () => {
+      const witness = this.options.publicationWitness?.(threadId)
+      if (!witness) return null
+      const read = await this.options.files.read(threadId)
+      // The mark must have been present and unmoved for the whole read.
+      if (!witness()) return null
+      if (read.kind !== 'held') return null
+      const record = read.record
+      if (!this.writerEnded(record.writer)) return null
+      if (this.erasing(threadId)) return null
+      if (!this.profileAuthorityHeld()) return null
+      const writer = record.writer
+      const epoch = record.epoch
+      const generation = this.erasureGeneration(threadId)
+      return {
+        threadId,
+        epoch,
+        revalidate: () => {
+          if (!witness()) throw new ReservationInvalid('mark_moved')
+          if (this.liveness(writer) === 'alive') throw new ReservationInvalid('writer_alive')
+          if (!this.profileAuthorityHeld()) throw new ReservationInvalid('profile_authority_lost')
+          if (this.erasureGeneration(threadId) !== generation)
+            throw new ReservationInvalid('erasure_changed')
+        },
+        erasing: () => this.erasing(threadId)
+      }
     })
   }
 
@@ -405,6 +506,27 @@ export class HostThreadOwnerRegistry {
   /** A writer whose process has ended holds nothing, and no app process running means none can. */
   private writerEnded(writer: ThreadAuthorityWriter): boolean {
     return this.options.desktopPresence() === 'none' || this.liveness(writer) === 'dead'
+  }
+
+  /** Whether the catalogue is currently erasing the thread. */
+  private erasing(threadId: string): boolean {
+    return this.options.erasing?.(threadId) ?? false
+  }
+
+  /** Current erasure generation; part of a reservation's captured identity. */
+  private erasureGeneration(threadId: string): string | null {
+    return this.options.erasureGeneration?.(threadId) ?? null
+  }
+
+  /** Profile authority must hold for a reservation to mint or revalidate. */
+  private profileAuthorityHeld(): boolean {
+    if (!this.options.enabled) return false
+    try {
+      this.options.assertProfileAuthority?.()
+      return true
+    } catch {
+      return false
+    }
   }
 
   /** The table keeps a writer until told it is gone; the writer's own authority file can tell. */

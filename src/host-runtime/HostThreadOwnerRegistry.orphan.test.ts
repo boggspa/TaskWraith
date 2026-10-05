@@ -6,7 +6,11 @@ import {
   type ThreadAuthorityFileHandle,
   type ThreadAuthorityFs
 } from '../host-shared/thread-log/ThreadAuthorityFile'
-import type { HostDesktopPresence } from '../host-shared/thread-log/ThreadOwnership'
+import {
+  ReservationInvalid,
+  type HostDesktopPresence,
+  type ThreadOwnershipReservation
+} from '../host-shared/thread-log/ThreadOwnership'
 import { HostThreadOwnerRegistry } from './HostThreadOwnerRegistry'
 
 const THREAD = 'thread-1'
@@ -113,6 +117,19 @@ function makeWitness(memory: MemoryFs): (threadId: string) => () => boolean {
   }
 }
 
+/** A caller-built reservation that is not minted by the registry. */
+function foreignReservation(
+  epoch: { host: string; grant: number },
+  onRevalidate: () => void = () => undefined
+): ThreadOwnershipReservation {
+  return {
+    threadId: THREAD,
+    epoch,
+    revalidate: onRevalidate,
+    erasing: () => false
+  }
+}
+
 class Machine {
   readonly files: ThreadAuthorityFiles
   readonly fileSystem: MemoryFs
@@ -120,8 +137,12 @@ class Machine {
   readonly desks = new Map<string, { pid: number; attached: boolean }>()
   /** Pids whose liveness cannot be decided. */
   readonly unresolved = new Set<number>()
-  /** Times the directory sync threw, so tests can assert the policy reacted. */
-  readonly syncFailures = 0
+  /** Whether the catalogue is currently erasing the thread. */
+  erasing = false
+  /** Current erasure generation; a change invalidates minted reservations. */
+  erasureGeneration: string | null = null
+  /** Throws when profile authority is asserted. */
+  authorityLost = false
 
   constructor(fileSystem: MemoryFs = new MemoryFs(), profile = PROFILE) {
     this.fileSystem = fileSystem
@@ -160,6 +181,11 @@ class Machine {
       publicationWitness: makeWitness(this.fileSystem),
       desktopPresence: () => this.presence(),
       otherDesktopUnattached: () => false,
+      erasing: () => this.erasing,
+      erasureGeneration: () => this.erasureGeneration,
+      assertProfileAuthority: () => {
+        if (this.authorityLost) throw new Error('profile authority lost')
+      },
       liveness: ({ pid }) => {
         if (this.unresolved.has(pid)) return 'unresolved'
         return [...this.desks.values()].some((desk) => desk.pid === pid) ? 'alive' : 'dead'
@@ -180,33 +206,73 @@ class Machine {
 }
 
 describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
-  it('retires a dead writer’s caught-up mark when the reservation matches', async () => {
+  it('mints a reservation and retires a dead writer’s caught-up mark with it', async () => {
     const machine = new Machine()
     machine.start('desk-a', 4101)
     machine.full.set(THREAD, 4)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
+    const reservation = await host.reserveOwnership(THREAD)
+    expect(reservation).not.toBeNull()
+    expect(reservation!.epoch).toEqual({ host: 'host-a', grant: 1 })
+    expect(() => reservation!.revalidate()).not.toThrow()
+    const outcome = await host.retireOrphanAuthority(THREAD, reservation!)
     expect(outcome).toEqual({ kind: 'retired' })
     expect((await machine.files.read(THREAD)).kind).toBe('none')
   })
 
-  it('returns retired immediately when no mark exists on disk', async () => {
+  it('mints no reservation when no mark exists on disk', async () => {
     const machine = new Machine()
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
-    expect(outcome).toEqual({ kind: 'retired' })
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
   })
 
-  it('refuses when the reservation does not match the recorded epoch', async () => {
+  it('returns busy damaged (not retired) when the mark is already absent at admission', async () => {
+    const machine = new Machine()
+    const host = machine.host()
+    // A previous sync failure left no file and no recorded debt: the registry
+    // cannot vouch for the absence, and must not call it retired.
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 1 })
+    )
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+  })
+
+  it('refuses when the reservation epoch does not match the recorded epoch', async () => {
     const machine = new Machine()
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 99 })
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 99 })
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    expect((await machine.files.read(THREAD)).kind).toBe('held')
+  })
+
+  it('returns busy damaged when the reservation revalidate throws', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    const host = machine.host()
+    let revalidations = 0
+    const reservation = foreignReservation({ host: 'host-a', grant: 1 }, () => {
+      revalidations += 1
+      throw new ReservationInvalid('mark_moved')
+    })
+    const outcome = await host.retireOrphanAuthority(THREAD, reservation)
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    // revalidate() runs twice by design: the registry revalidates first to
+    // short-circuit 'mark_moved' (so it can fall through and retry the
+    // directory sync when the mark is absent and a sync debt is recorded),
+    // and the retirement module revalidates again before the final
+    // erase check. Both calls observe the same ReservationInvalid.
+    expect(revalidations).toBe(2)
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 
@@ -215,9 +281,59 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 1 })
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'live_writer' })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
+  })
+
+  it('mints no reservation while the catalogue is erasing the thread', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    machine.erasing = true
+    const host = machine.host()
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 1 })
+    )
+    expect(outcome).toEqual({ kind: 'busy', reason: 'erasing' })
+  })
+
+  it('mints no reservation when profile authority is lost', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    const host = machine.host()
+    machine.authorityLost = true
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
+    // A reservation minted while authority held fails revalidation once the
+    // authority lapses.
+    machine.authorityLost = false
+    const reservation = await host.reserveOwnership(THREAD)
+    machine.authorityLost = true
+    expect(() => reservation!.revalidate()).toThrow(ReservationInvalid)
+    const outcome = await host.retireOrphanAuthority(THREAD, reservation!)
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+  })
+
+  it('invalidates a minted reservation when the erasure generation changes', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    machine.erasureGeneration = 'gen-1'
+    const host = machine.host()
+    const reservation = await host.reserveOwnership(THREAD)
+    expect(reservation).not.toBeNull()
+    machine.erasureGeneration = 'gen-2'
+    expect(() => reservation!.revalidate()).toThrow(ReservationInvalid)
   })
 
   it('refuses when the file cannot be read', async () => {
@@ -228,22 +344,30 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     machine.end('desk-a')
     memory.scribble(threadAuthorityFilePath(PROFILE, THREAD), '{damaged')
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 1 })
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
   })
 
-  it('returns busy-damaged when the registry is disabled', async () => {
+  it('returns busy damaged when the registry is disabled', async () => {
     const machine = new Machine()
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
     const host = machine.host('host-a', false)
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
+    expect(await host.reserveOwnership(THREAD)).toBeNull()
+    const outcome = await host.retireOrphanAuthority(
+      THREAD,
+      foreignReservation({ host: 'host-a', grant: 1 })
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 
-  it('returns uncertain when the directory sync fails and leaves the mark unlinked', async () => {
+  it('returns uncertain sync_failed when the directory sync fails and leaves the mark unlinked', async () => {
     const memory = new MemoryFs()
     const machine = new Machine(memory)
     machine.start('desk-a', 4101)
@@ -251,12 +375,58 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     machine.end('desk-a')
     memory.failNextSync = true
     const host = machine.host()
-    const outcome = await host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
-    expect(outcome).toEqual({ kind: 'uncertain', reason: 'remove_failed' })
-    // The mark was unlinked; only the directory sync failed. A later
-    // restart would re-list the durably-stored file (none), so the policy
-    // does not paper over the problem.
+    const reservation = await host.reserveOwnership(THREAD)
+    const outcome = await host.retireOrphanAuthority(THREAD, reservation!)
+    expect(outcome).toEqual({ kind: 'uncertain', reason: 'sync_failed' })
+    // The mark was unlinked; only the directory sync failed. The registry
+    // records the debt so the next call retries the sync instead of
+    // reporting damage.
     expect((await machine.files.read(THREAD)).kind).toBe('none')
+  })
+
+  it('retries the directory sync on the next call when a previous sync failed', async () => {
+    const memory = new MemoryFs()
+    const machine = new Machine(memory)
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    memory.failNextSync = true
+    const host = machine.host()
+    const reservation = await host.reserveOwnership(THREAD)
+    expect(await host.retireOrphanAuthority(THREAD, reservation!)).toEqual({
+      kind: 'uncertain',
+      reason: 'sync_failed'
+    })
+    // The mark is gone but its absence is not durable. The retry syncs the
+    // directory even though there is nothing left to unlink, and only then
+    // calls the retirement durable.
+    expect(await host.retireOrphanAuthority(THREAD, reservation!)).toEqual({ kind: 'retired' })
+    expect((await machine.files.read(THREAD)).kind).toBe('none')
+  })
+
+  it('revalidates a minted reservation across the serial queue boundary', async () => {
+    const memory = new MemoryFs()
+    const machine = new Machine(memory)
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    const host = machine.host()
+    const reservation = await host.reserveOwnership(THREAD)
+    // Stall the retirement's file read inside the serial queue; while it
+    // waits, the catalogue's erasure generation moves. The retirement must
+    // notice through the reservation's revalidate — re-run after the async
+    // boundary — even though admission passed.
+    let finish!: () => void
+    memory.hold = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const retiring = host.retireOrphanAuthority(THREAD, reservation!)
+    machine.erasureGeneration = 'gen-2'
+    memory.hold = null
+    finish()
+    const outcome = await retiring
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 
   it('serializes with a queued request on the same thread', async () => {
@@ -270,11 +440,13 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     memory.hold = new Promise<void>((resolve) => {
       finish = resolve
     })
-    const retiring = host.retireOrphanAuthority(THREAD, { host: 'host-a', grant: 1 })
+    const reserving = host.reserveOwnership(THREAD)
     const reread = machine.files.read(THREAD)
     memory.hold = null
     finish()
-    const [outcome] = await Promise.all([retiring, reread])
+    const [reservation] = await Promise.all([reserving, reread])
+    expect(reservation).not.toBeNull()
+    const outcome = await host.retireOrphanAuthority(THREAD, reservation!)
     expect(outcome).toEqual({ kind: 'retired' })
     expect((await machine.files.read(THREAD)).kind).toBe('none')
   })

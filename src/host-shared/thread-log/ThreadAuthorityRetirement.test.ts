@@ -7,9 +7,10 @@ import {
   type ThreadAuthorityRetirementOutcome,
   type ThreadAuthorityRetirementRemoveAndSync
 } from './ThreadAuthorityRetirement'
+import { ReservationInvalid, type ThreadOwnershipReservation } from './ThreadOwnership'
 
 const THREAD = 'thread-1'
-const RESERVATION = { host: 'host-0', grant: 7 }
+const EPOCH = { host: 'host-0', grant: 7 }
 
 class TestFs {
   removeCalls = 0
@@ -21,6 +22,31 @@ class TestFs {
       this.failNext = false
       throw new Error('forced remove failure')
     }
+  }
+}
+
+/**
+ * A reservation double that records its revalidate calls and lets a test
+ * steer its probes. `failRevalidate` stands in for a registry-minted
+ * reservation whose mark moved, writer revived, authority lapsed or erasure
+ * generation changed.
+ */
+class TestReservation implements ThreadOwnershipReservation {
+  readonly threadId = THREAD
+  readonly epoch = EPOCH
+  revalidateCalls = 0
+  failRevalidate: ReservationInvalid | null = null
+  erasingValue = false
+  erasingCalls = 0
+
+  revalidate = (): void => {
+    this.revalidateCalls += 1
+    if (this.failRevalidate) throw this.failRevalidate
+  }
+
+  erasing = (): boolean => {
+    this.erasingCalls += 1
+    return this.erasingValue
   }
 }
 
@@ -47,23 +73,18 @@ function constantWitness(value: boolean): () => boolean {
 }
 
 function observation(
-  witness: () => boolean = realisticWitness(),
-  partial: Partial<Omit<ThreadAuthorityRetirementObservation, 'exactMarkWitness'>> = {}
+  reservationValue: ThreadOwnershipReservation,
+  witness: () => boolean = realisticWitness()
 ): ThreadAuthorityRetirementObservation {
-  return {
-    reservation: RESERVATION,
-    exactMarkWitness: witness,
-    writerEnded: true,
-    erasing: false,
-    ...partial
-  }
+  return { reservation: reservationValue, exactMarkWitness: witness }
 }
 
 function context(
+  reservationValue: ThreadOwnershipReservation,
   removeAndSync: ThreadAuthorityRetirementRemoveAndSync,
   observationValue: ThreadAuthorityRetirementObservation
 ): ThreadAuthorityRetirementContext {
-  return { reservation: RESERVATION, removeAndSync, observation: observationValue }
+  return { reservation: reservationValue, removeAndSync, observation: observationValue }
 }
 
 describe('ThreadAuthorityRetirement.orphan keep-custody policy', () => {
@@ -72,82 +93,105 @@ describe('ThreadAuthorityRetirement.orphan keep-custody policy', () => {
     expect(ORPHAN_RETIREMENT_TOKEN).not.toBe(Symbol.for('something-else'))
   })
 
-  it('retires the mark when preconditions pass and remove+sync succeed', async () => {
+  it('retires the mark when the reservation holds and remove+sync succeed', async () => {
     const fs = new TestFs()
-    const obs = observation()
+    const reservation = new TestReservation()
     const outcome: ThreadAuthorityRetirementOutcome = await retireOrphanThreadAuthority(
       THREAD,
-      context(fs.removeAndSync, obs)
+      context(reservation, fs.removeAndSync, observation(reservation))
     )
     expect(outcome).toEqual({ kind: 'retired' })
     expect(fs.removeCalls).toBe(1)
+    // The reservation is revalidated at the pre-check and consulted for the
+    // catalogue's erasing state; the witness is what confirms the removal.
+    expect(reservation.revalidateCalls).toBe(1)
+    expect(reservation.erasingCalls).toBeGreaterThanOrEqual(1)
   })
 
-  it('refuses when the writer has not ended', async () => {
+  it('returns busy damaged when the reservation revalidate throws', async () => {
     const fs = new TestFs()
-    const obs = observation(realisticWitness(), { writerEnded: false })
-    const outcome = await retireOrphanThreadAuthority(THREAD, context(fs.removeAndSync, obs))
-    expect(outcome).toEqual({ kind: 'busy', reason: 'live_writer' })
+    const reservation = new TestReservation()
+    reservation.failRevalidate = new ReservationInvalid('mark_moved')
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(reservation))
+    )
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect(fs.removeCalls).toBe(0)
+    expect(reservation.erasingCalls).toBe(0)
   })
 
-  it('refuses when the catalogue is erasing this thread', async () => {
+  it('honors the reservation erasing probe: true refuses as busy erasing', async () => {
     const fs = new TestFs()
-    const obs = observation(realisticWitness(), { erasing: true })
-    const outcome = await retireOrphanThreadAuthority(THREAD, context(fs.removeAndSync, obs))
+    const reservation = new TestReservation()
+    reservation.erasingValue = true
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(reservation))
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'erasing' })
     expect(fs.removeCalls).toBe(0)
   })
 
   it('refuses when the exact mark witness already shows damage', async () => {
     const fs = new TestFs()
-    const obs = observation(constantWitness(false))
-    const outcome = await retireOrphanThreadAuthority(THREAD, context(fs.removeAndSync, obs))
+    const reservation = new TestReservation()
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(reservation, constantWitness(false)))
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect(fs.removeCalls).toBe(0)
   })
 
-  it('refuses when the reservation does not match the captured observation', async () => {
+  it('refuses when the observation carries a different reservation than the context', async () => {
     const fs = new TestFs()
-    const obs = observation()
-    const outcome = await retireOrphanThreadAuthority(THREAD, {
-      reservation: { host: 'host-0', grant: 99 },
-      removeAndSync: fs.removeAndSync,
-      observation: obs
-    })
+    const reservation = new TestReservation()
+    const other = new TestReservation()
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(other))
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect(fs.removeCalls).toBe(0)
   })
 
-  it('returns uncertain when remove+sync throws and the witness was healthy', async () => {
+  it('returns uncertain sync_failed when remove+sync throws and the witness was healthy', async () => {
     const fs = new TestFs()
     fs.failNext = true
-    const obs = observation()
-    const outcome = await retireOrphanThreadAuthority(THREAD, context(fs.removeAndSync, obs))
-    expect(outcome).toEqual({ kind: 'uncertain', reason: 'remove_failed' })
+    const reservation = new TestReservation()
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(reservation))
+    )
+    expect(outcome).toEqual({ kind: 'uncertain', reason: 'sync_failed' })
     expect(fs.removeCalls).toBe(1)
   })
 
-  it('returns uncertain when the witness still reads the captured file after sync', async () => {
+  it('refuses to call it retired when the witness cannot confirm the mark was removed', async () => {
     const fs = new TestFs()
     // Witness always returns true: a successful remove would have changed
     // the file identity, so the post-sync check sees a race and refuses to
     // call the retirement durable.
-    const obs = observation(constantWitness(true))
-    const outcome = await retireOrphanThreadAuthority(THREAD, context(fs.removeAndSync, obs))
+    const reservation = new TestReservation()
+    const outcome = await retireOrphanThreadAuthority(
+      THREAD,
+      context(reservation, fs.removeAndSync, observation(reservation, constantWitness(true)))
+    )
     expect(outcome).toEqual({ kind: 'uncertain', reason: 'witness_changed' })
+    expect(outcome).not.toEqual({ kind: 'retired' })
     expect(fs.removeCalls).toBe(1)
   })
 
   it('refuses a thread id that escapes the chat-path safety check', async () => {
     const fs = new TestFs()
-    const obs = observation()
-    const outcome = await retireOrphanThreadAuthority('../escape', {
-      reservation: RESERVATION,
-      removeAndSync: fs.removeAndSync,
-      observation: obs
-    })
+    const reservation = new TestReservation()
+    const outcome = await retireOrphanThreadAuthority(
+      '../escape',
+      context(reservation, fs.removeAndSync, observation(reservation))
+    )
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect(fs.removeCalls).toBe(0)
+    expect(reservation.revalidateCalls).toBe(0)
   })
 })
