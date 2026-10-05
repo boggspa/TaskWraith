@@ -1033,8 +1033,11 @@ describe('who may write a thread: the claims an app process holds', () => {
  *   to its log and publishes by compare-and-swap) only where a scenario budgets
  *   for it, and only while it is the one app process alive: the app is
  *   single-instance, and two of them appending to one log is not this protocol.
- *   The scenarios that pass keep such saves away from Host runs and from a
- *   process dying: the last tests in this file show what happens otherwise.
+ *   The scenarios keep such saves away from Host runs and from a process
+ *   dying. The table is given every log's revision here, which the Host's
+ *   registry gives only for a log an authority file marks: a save made without
+ *   holding the thread has no file, and the last tests in this file show what
+ *   that decides.
  * - A message that can no longer change anything (a reply to a superseded
  *   claim, anything carrying an epoch that is no longer current) is delivered
  *   as soon as it becomes so, checked to change nothing, and dropped. That is
@@ -2040,40 +2043,59 @@ describe('who may write a thread: every interleaving inside the bounds', () => {
 })
 
 /*
- * What two revisions cannot tell apart.
+ * What the caller's facts decide.
  *
- * The rules read a log above the full copy as work the Host must not write
- * over and must fold before it takes the thread. That is true of a log its
- * holder wrote. It is not true of a save made the way the app saves today,
- * before any grant: the app appends to its log first, and the Host may refuse
- * that save or have changed the thread already. The table is given two
- * revisions and cannot tell one log from the other. These are the shortest
- * traces, pinned so that whoever closes the gap sees these tests change.
+ * Two revisions cannot tell a log its holder wrote and has not published from
+ * saves the app logged before the Host judged them, which the Host may have
+ * refused or overtaken. Folding such saves, or letting a claim carry them on,
+ * would drop a Host write. The thread's authority file tells the two apart, so
+ * the Host's registry gives the table a log revision only while the thread has
+ * one. Each situation below is one the table could not decide from revisions
+ * alone, given the facts the registry gives without the file and with it.
  */
-describe('who may write a thread: what two revisions cannot tell apart', () => {
-  it('lets a Host run that is already live write on past a save made without holding the thread', () => {
-    const result = explore({ ...NOTHING, todaySaves: 1, hostWrites: 1, runs: 1 })
-    expect(result.violation).toBe(
-      [
-        'the Host wrote over unpublished desktop work',
-        '1. a Host run starts on the thread',
-        '2. desk-0 saves without holding the thread',
-        '3. the Host run changes the thread'
-      ].join('\n')
-    )
+describe('who may write a thread: what the caller’s facts decide', () => {
+  it('folds only a log an authority file marks, and writes past saves made without holding the thread', () => {
+    const table = new HostThreadOwnerTable({ incarnation: 'host-a' })
+    // The Host changed the thread to revision 2. A process that did not hold it
+    // then saved twice on a copy without that change, to revision 3, and died.
+    const unmarked: HostWriteFacts = { fullCopyRevision: 2, logRevision: null, desktop: 'none' }
+    expect(table.requestHostWrite(THREAD, unmarked, 0)).toEqual({ kind: 'write' })
+    // Had the thread's holder written that log, its file would mark it.
+    expect(table.requestHostWrite(THREAD, beforeWrite(2, 3, 'none'), 0)).toEqual({
+      kind: 'fold_first',
+      revision: 3
+    })
+
+    // A Host run is live at revision 1 when a process that does not hold the
+    // thread logs a save at 2, which the Host refuses. The process lives on,
+    // and the Host's next change goes ahead.
+    const refusedSave: HostWriteFacts = {
+      fullCopyRevision: 1,
+      logRevision: null,
+      desktop: 'attached'
+    }
+    expect(table.requestHostWrite(THREAD, refusedSave, 0)).toEqual({ kind: 'write' })
+    // A live holder's unpublished log, marked by its file, would stop it.
+    expect(table.requestHostWrite(THREAD, beforeWrite(1, 2, 'attached'), 0)).toEqual({
+      kind: 'busy',
+      reason: 'thread_busy_in_desktop'
+    })
   })
 
-  it('folds a log that was extended without the Host change before it, once its writer is dead', () => {
-    const result = explore({ ...NOTHING, todaySaves: 2, hostWrites: 1, deaths: 1 })
-    expect(result.violation).toBe(
-      [
-        'the Host folded a log that lacks a write the full copy held',
-        '1. the Host changes the thread',
-        '2. desk-0 saves without holding the thread',
-        '3. desk-0 saves without holding the thread',
-        '4. desk-0 dies',
-        '5. the Host folds the log into the full copy'
-      ].join('\n')
-    )
+  it('lets a claim carry on only a log an authority file marks', () => {
+    const table = new HostThreadOwnerTable({ incarnation: 'host-a' })
+    // As above: a full copy at 2, and saves to 3 made without holding the
+    // thread on a copy without the Host's change. A new process read the log
+    // where it leads, and claims to carry it on.
+    expect(refusal(table.claim(claim('desk-b', 2, 3), onDisk(2, null)))).toEqual({
+      reason: 'host_behind',
+      revision: 2
+    })
+    expect(table.writerOf(THREAD)).toEqual({ kind: 'host' })
+    // A dead holder's log, marked by its file, is the newest state of the thread.
+    expect(granted(table.claim(claim('desk-b', 2, 3, 2), onDisk(2, 3)))).toEqual({
+      host: 'host-a',
+      grant: 1
+    })
   })
 })

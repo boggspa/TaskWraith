@@ -116,12 +116,14 @@ export interface ThreadDurableFacts {
   /** Revision of the Host's full copy, or null when it has none. */
   readonly fullCopyRevision: number | null
   /**
-   * Head revision of the thread's log, or null when there is none. Above the
-   * full copy it is read as work its writer has not published. That holds for
-   * a log the thread's holder wrote. The table compares revisions only: it
-   * cannot tell such a log from one a process extended without holding the
-   * thread, on a copy that lacked a Host change. Telling them apart is the
-   * caller's job.
+   * Head revision of the thread's log. The caller gives it only while the
+   * thread has an authority file, and null otherwise or when there is no log.
+   * Above the full copy it is read as work the file's writer has not
+   * published. While the writer lives it publishes that work itself; once it
+   * has ended, the Host folds it before writing, or a new process carries it
+   * on from its head. Revisions alone cannot tell that work from saves the app
+   * logged before the Host refused or overtook them; the file can, and without
+   * it a log above the full copy is a mirror the table never sees.
    */
   readonly logRevision: number | null
 }
