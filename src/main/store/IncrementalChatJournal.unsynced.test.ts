@@ -891,7 +891,7 @@ describe.skipIf(process.platform === 'win32')(
         expect(fs.existsSync(sealedPath)).toBe(false)
       })
 
-      it('can be left with a chain replay refuses, when the new segment reaches the disk and the end of the sealed one does not', async () => {
+      it('sets the new segment aside, when it reaches the disk and the end of the sealed one does not, and loads what the barrier covered', async () => {
         const { records, batches } = chain(3)
         const journal = rotating()
         journal.initialize(CHAT, records[0])
@@ -911,7 +911,33 @@ describe.skipIf(process.platform === 'win32')(
         // The sealed segment ends at revision 2 and the new one starts from 3.
         expect(fs.readFileSync(sealedPath, 'utf8')).toBe(`${JSON.stringify(batches[0])}\n`)
         expect(fs.readFileSync(activePath, 'utf8')).toBe(`${JSON.stringify(batches[2])}\n`)
+        // A journal that syncs as it writes never leaves this, and refuses it as it always has.
         expect(() => createIncrementalChatJournal(baseDir).replay(CHAT)).toThrow('revision gap')
+
+        // One that leaves syncing to the barrier loads the chain up to the gap.
+        const noted: ThreadDurabilityDebtNote[] = []
+        const restarted = createIncrementalChatJournal(baseDir, {
+          noteDurabilityDebt: (_chatId, note) => noted.push(note)
+        })
+        expect(restarted.replay(CHAT)).toMatchObject({
+          record: records[1],
+          revision: 2,
+          appliedBatches: 1
+        })
+        // The segment past the gap is kept under a name nothing parses, and the move is owed.
+        const setAside = path.join(baseDir, `${CHAT}.set-aside.mutations.jsonl`)
+        expect(fs.existsSync(activePath)).toBe(false)
+        expect(fs.readFileSync(setAside, 'utf8')).toBe(`${JSON.stringify(batches[2])}\n`)
+        expect(noted).toEqual([
+          { file: setAside, owner: 'journal', renamedFrom: activePath },
+          { directory: baseDir }
+        ])
+        expect(restarted.stats().segmentsSetAside).toBe(1)
+        // The thread goes on from revision 2.
+        restarted.append(batches[1])
+        expect(
+          createIncrementalChatJournal(baseDir, { noteDurabilityDebt: () => {} }).replay(CHAT)
+        ).toMatchObject({ record: records[2], revision: 3 })
       })
 
       it('owes the removal of an adopted sealed segment to the next barrier', async () => {

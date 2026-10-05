@@ -31,6 +31,7 @@ export const MAX_PENDING_DEFERRED_FSYNCS = 64
 export const INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES = [
   '.checkpoint.json',
   '.sealed.mutations.jsonl',
+  '.set-aside.mutations.jsonl',
   '.mutations.jsonl',
   '.tombstone'
 ] as const
@@ -106,9 +107,15 @@ export interface IncrementalChatJournalStats {
   /** Torn fragments cut in place before an append; see `repairTornTailBeforeAppend`. */
   tornTailsTruncated: number
   tornTailBytesTruncated: number
-  /** Appends refused because the active segment holds an invalid complete line. */
+  /**
+   * Appends refused because the active segment holds an invalid complete line,
+   * or, under `noteDurabilityDebt`, a line that does not chain after lines of
+   * its own segment that did.
+   */
   corruptSegmentRejects: number
   tombstoneRejects: number
+  /** Segments set aside because they do not chain; see `noteDurabilityDebt`. */
+  segmentsSetAside: number
 }
 
 /**
@@ -167,6 +174,31 @@ export interface IncrementalChatJournalOptions {
    * `drainDeferredDurability` have nothing to wait for, because nothing was
    * issued here. Writing a checkpoint, the re-anchor, torn-tail repair and
    * erasure keep every sync they have.
+   *
+   * A power cut can then leave segments that do not chain: a segment that
+   * reached the disk while the end of the one before it did not, or segments
+   * whose checkpoint did not. No barrier resolved for anything after such a
+   * gap, since a barrier pays the segments before it, so with this option a
+   * load takes the longest chain from the checkpoint with no gap and never
+   * throws for one. How the rules for a segment's bytes meet:
+   * - bytes after a segment's last newline are a torn tail, and an invalid
+   *   complete line ends what its segment adds in the same way: neither is
+   *   replayed, nor anything after it in that segment. A read that may repair
+   *   (`canRepairOnRead`) rewrites the segment without them, as it always
+   *   has; otherwise the next append cuts a torn tail first, and is refused
+   *   after an invalid complete line;
+   * - a valid line that does not chain, after lines of its own segment that
+   *   did, ends what that segment adds too. It is left where it is, even by a
+   *   read that may repair, and an append after it is refused until a
+   *   checkpoint, a re-anchor or erasure replaces the segment;
+   * - a segment whose first line past the head does not chain, or any segment
+   *   without a checkpoint, is set aside whole: renamed, or added, to
+   *   `<chat>.set-aside.mutations.jsonl`, which nothing parses, which erasure
+   *   and the next checkpoint remove, and which is counted and logged by chat
+   *   id and revisions only. A read that may not repair, or that the write
+   *   gate refuses, leaves it where it is and reads past it, and the next
+   *   append moves it before it writes.
+   * Without this option a gap throws, as it always has.
    */
   noteDurabilityDebt?: NoteThreadDurabilityDebt
   now?: () => number
@@ -260,6 +292,13 @@ interface ParsedJournal {
   bytes: number
   torn: boolean
   validContent: string
+}
+
+/** A segment that does not chain, by its name and the revisions of its first and last lines. */
+interface SetAsideSegment {
+  filePath: string
+  first: number
+  last: number
 }
 
 const DEFAULT_MAX_JOURNAL_BYTES = 16 * 1024 * 1024
@@ -393,6 +432,17 @@ export function createIncrementalChatJournal(
   let tornTailsTruncated = 0
   let tornTailBytesTruncated = 0
   let corruptSegmentRejects = 0
+  let segmentsSetAside = 0
+  /** Chats whose active segment stops at a line that does not chain: no line may follow it. */
+  const brokenChains = new Set<string>()
+  /**
+   * Segments a read found not to chain and could not move, because reads may
+   * not change the directory here or the write gate refused: moved by the next
+   * write to the chat, before it writes.
+   */
+  const unmovedSetAside = new Map<string, readonly SetAsideSegment[]>()
+  /** Set-aside segments already logged, so one left in place is logged once. */
+  const setAsideLogged = new Set<string>()
   let tombstoneRejects = 0
   /** Segments whose tail the writer must inspect before its next append lands. */
   const suspectTailPaths = new Set<string>()
@@ -802,7 +852,9 @@ export function createIncrementalChatJournal(
   // a torn sealed suffix with active bytes and rewrite them as one file.
   const sealedPath = (chatId: string): string =>
     path.join(baseDir, `${chatId}.sealed.mutations.jsonl`)
-  const parseJournal = (chatId: string): ParsedJournal => {
+  const setAsidePath = (chatId: string): string =>
+    path.join(baseDir, `${chatId}.set-aside.mutations.jsonl`)
+  const parseSegments = (chatId: string): { sealed: ParsedJournal; active: ParsedJournal } => {
     const sealed = parseSegment(chatId, sealedPath(chatId))
     const active = parseSegment(chatId, journalPath(chatId))
     if (canRepair()) {
@@ -813,11 +865,164 @@ export function createIncrementalChatJournal(
       if (sealed.torn) suspectTailPaths.add(sealedPath(chatId))
       if (active.torn) suspectTailPaths.add(journalPath(chatId))
     }
+    return { sealed, active }
+  }
+  const parseJournal = (chatId: string): ParsedJournal => {
+    const { sealed, active } = parseSegments(chatId)
     return {
       batches: [...sealed.batches, ...active.batches],
       bytes: sealed.bytes + active.bytes,
       torn: sealed.torn || active.torn,
       validContent: ''
+    }
+  }
+
+  /**
+   * Under `noteDurabilityDebt`: the longest chain from the checkpoint with no
+   * gap, through the sealed segment and then the active one. A segment whose
+   * first line past the head does not chain, or any segment when there is no
+   * checkpoint, is not part of it; a line that does not chain after lines of
+   * its own segment that did ends what that segment adds.
+   */
+  const chainUnderDebt = (
+    chatId: string,
+    checkpointRevision: number | null
+  ): {
+    batches: ChatRecordMutationBatch[]
+    revision: number | null
+    skipped: number
+    entries: number
+    bytes: number
+    aside: SetAsideSegment[]
+    broken: boolean
+    torn: boolean
+  } => {
+    const { sealed, active } = parseSegments(chatId)
+    let head = checkpointRevision
+    const batches: ChatRecordMutationBatch[] = []
+    const aside: SetAsideSegment[] = []
+    let skipped = 0
+    let entries = 0
+    let bytes = 0
+    let broken = false
+    for (const [filePath, parsed] of [
+      [sealedPath(chatId), sealed],
+      [journalPath(chatId), active]
+    ] as const) {
+      let applied = 0
+      let chains = true
+      if (head === null) chains = parsed.batches.length === 0
+      else {
+        for (const batch of parsed.batches) {
+          if (batch.revision <= head) {
+            skipped += 1
+            continue
+          }
+          if (batch.baseRevision !== head) {
+            if (applied === 0) chains = false
+            else if (filePath === journalPath(chatId)) broken = true
+            break
+          }
+          batches.push(batch)
+          head = batch.revision
+          applied += 1
+        }
+      }
+      if (chains) {
+        entries += parsed.batches.length
+        bytes += parsed.bytes
+      } else {
+        aside.push({
+          filePath,
+          first: parsed.batches[0].revision,
+          last: parsed.batches[parsed.batches.length - 1].revision
+        })
+      }
+    }
+    return {
+      batches,
+      revision: head,
+      skipped,
+      entries,
+      bytes,
+      aside,
+      broken,
+      torn: sealed.torn || active.torn
+    }
+  }
+
+  /**
+   * Move segments that do not chain out of every reader's way, kept until
+   * erasure or the next checkpoint. A read moves them only where reads may
+   * change the directory (`canRepairOnRead`) and the write gate allows it;
+   * otherwise they stay where they are, are read past, and are moved by the
+   * next write to the chat before it writes, so that no line is ever written
+   * after one that does not chain.
+   */
+  const setAside = (chatId: string, aside: readonly SetAsideSegment[], writing: boolean): void => {
+    if (aside.length === 0) {
+      unmovedSetAside.delete(chatId)
+      return
+    }
+    for (const { filePath, first, last } of aside) {
+      const logged = `${filePath}:${first}:${last}`
+      if (setAsideLogged.has(logged)) continue
+      setAsideLogged.add(logged)
+      console.warn(
+        `[incremental-chat] a segment of ${chatId} does not chain and is set aside: ` +
+          `revisions ${first} to ${last}`
+      )
+    }
+    let may = noteDebt !== undefined && (writing ? canWrite() : canRepair())
+    if (may && !writing) {
+      try {
+        options.beforeSourceMutation?.(chatId)
+      } catch {
+        may = false
+      }
+    }
+    if (!may || !noteDebt) {
+      unmovedSetAside.set(chatId, aside)
+      return
+    }
+    invalidatePreparation(chatId)
+    options.descriptorCache?.retireSync([chatId])
+    for (const { filePath } of aside) {
+      const target = setAsidePath(chatId)
+      if (fs.existsSync(target)) {
+        // One name per chat, so that erasure finds it: a second one is added to it.
+        fs.appendFileSync(target, fs.readFileSync(filePath))
+        fs.unlinkSync(filePath)
+        noteDebt(chatId, { file: target, owner: 'journal' })
+      } else {
+        fs.renameSync(filePath, target)
+        noteDebt(chatId, { file: target, owner: 'journal', renamedFrom: filePath })
+      }
+      suspectTailPaths.delete(filePath)
+      segmentsSetAside += 1
+    }
+    noteDebt(chatId, { directory: baseDir })
+    unmovedSetAside.delete(chatId)
+  }
+
+  /** A write is about to change the chat's segments: first move what a read could not. */
+  const moveUnmovedSetAside = (chatId: string): void => {
+    const unmoved = unmovedSetAside.get(chatId)
+    if (unmoved) setAside(chatId, unmoved, true)
+  }
+
+  /** The chat's segments are gone or rewritten: nothing is broken or waits to be moved. */
+  const forgetChainDamage = (chatId: string): void => {
+    brokenChains.delete(chatId)
+    unmovedSetAside.delete(chatId)
+  }
+
+  /** Remove what a checkpoint or erasure leaves no reader for: the set-aside segments. */
+  const removeSetAside = (chatId: string): void => {
+    try {
+      fs.unlinkSync(setAsidePath(chatId))
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
   }
 
@@ -888,6 +1093,25 @@ export function createIncrementalChatJournal(
     if (existing) return existing
     const tombstoned = fs.existsSync(tombstonePath(chatId))
     const checkpoint = tombstoned ? null : readCheckpoint(chatId)
+    if (noteDebt && !tombstoned) {
+      const chained = chainUnderDebt(chatId, checkpoint?.revision ?? null)
+      setAside(chatId, chained.aside, false)
+      if (chained.broken) brokenChains.add(chatId)
+      else brokenChains.delete(chatId)
+      const firstMs = Date.parse(chained.batches[0]?.savedAt ?? '')
+      const lastMs = Date.parse(chained.batches.at(-1)?.savedAt ?? '')
+      const loaded: RuntimeState = {
+        headRevision: checkpoint ? chained.revision : null,
+        journalEntries: chained.entries,
+        journalBytes: chained.bytes,
+        dirtySinceMs: chained.entries > 0 ? (Number.isFinite(firstMs) ? firstMs : now()) : null,
+        lastAppendAtMs: chained.entries > 0 ? (Number.isFinite(lastMs) ? lastMs : now()) : null,
+        tombstoned
+      }
+      skippedDuplicateBatches += chained.skipped
+      states.set(chatId, loaded)
+      return loaded
+    }
     const parsed = tombstoned
       ? { batches: [], bytes: 0, torn: false, validContent: '' }
       : parseJournal(chatId)
@@ -953,6 +1177,8 @@ export function createIncrementalChatJournal(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }
+    removeSetAside(chatId)
+    forgetChainDamage(chatId)
     fsyncDirectory()
     checkpointsWritten += 1
     checkpointBytesWritten += bytes
@@ -979,6 +1205,24 @@ export function createIncrementalChatJournal(
         appliedBatches: 0,
         skippedBatches: 0,
         recoveredTornTail: false
+      }
+    }
+    if (noteDebt) {
+      const chained = chainUnderDebt(chatId, recordRevision(checkpoint.record))
+      setAside(chatId, chained.aside, false)
+      if (chained.broken) brokenChains.add(chatId)
+      const record = applyChatRecordMutations(checkpoint.record, chained.batches)
+      replayedBatches += chained.batches.length
+      skippedDuplicateBatches += chained.skipped
+      state.headRevision = recordRevision(record)
+      state.journalEntries = chained.entries
+      state.journalBytes = chained.bytes
+      return {
+        record,
+        revision: recordRevision(record),
+        appliedBatches: chained.batches.length,
+        skippedBatches: chained.skipped,
+        recoveredTornTail: chained.torn && canRepair()
       }
     }
     const parsed = parseJournal(chatId)
@@ -1129,6 +1373,8 @@ export function createIncrementalChatJournal(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }
+    removeSetAside(chatId)
+    forgetChainDamage(chatId)
     // The checkpoint above is on the disk and holds every line just removed.
     // A removal the disk never hears of brings back lines replay passes over.
     if (noteDebt) noteDebt(chatId, { directory: baseDir })
@@ -1176,6 +1422,8 @@ export function createIncrementalChatJournal(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }
+    removeSetAside(chatId)
+    forgetChainDamage(chatId)
     fsyncDirectory()
     state.headRevision = revision
     state.journalEntries = 0
@@ -1306,6 +1554,8 @@ export function createIncrementalChatJournal(
     if (fs.existsSync(sealedPath(chatId))) return null
     // A tail known to be torn is repaired by the next append, never sealed as it is.
     if (suspectTailPaths.has(journalPath(chatId))) return null
+    // Nor is a segment that stops at a line that does not chain.
+    if (brokenChains.has(chatId)) return null
     options.beforeSourceMutation?.(chatId)
     if (!canWrite() || fs.existsSync(tombstonePath(chatId))) return null
     const revision = state.headRevision
@@ -1359,7 +1609,11 @@ export function createIncrementalChatJournal(
           `${state.headRevision} != ${batch.baseRevision}`
       )
     }
-    if (suspectTailPaths.size > 0 && !repairSuspectTails(batch.chatId, state)) {
+    moveUnmovedSetAside(batch.chatId)
+    if (
+      brokenChains.has(batch.chatId) ||
+      (suspectTailPaths.size > 0 && !repairSuspectTails(batch.chatId, state))
+    ) {
       corruptSegmentRejects += 1
       throw new Error(
         `Incremental chat journal for ${batch.chatId} is damaged; refusing to append after it`
@@ -1496,6 +1750,13 @@ export function createIncrementalChatJournal(
     }
     options.beforeSourceMutation?.(chatId)
     if (fs.existsSync(tombstonePath(chatId))) return 'superseded'
+    // The worker folds whole segments, never one that stops at a line that
+    // does not chain. (A segment a read left in place because it does not
+    // chain at all is never counted, so a chat with only that is unchanged.)
+    if (brokenChains.has(chatId)) {
+      observeResidual(options.residualObserver, 'preparationRefusals')
+      return 'unavailable'
+    }
     const entries = state.journalEntries
     const rotated = options.rotationEnabled
       ? (rotatedSources.get(chatId) ?? rotateForPreparation(chatId))
@@ -1585,6 +1846,7 @@ export function createIncrementalChatJournal(
         options.descriptorCache!.retireSealedSync(chatId)
         fs.unlinkSync(sealedPath(chatId))
         options.descriptorCache!.completeSealedUnlink(chatId)
+        removeSetAside(chatId)
         noteDebt?.(chatId, { directory: baseDir })
         preparationEpochs.set(chatId, epoch + 1)
         captureEpochs.set(chatId, (captureEpochs.get(chatId) ?? 0) + 1)
@@ -1603,6 +1865,7 @@ export function createIncrementalChatJournal(
       checkpointBytesWritten += prepared.identity.size
       options.descriptorCache?.retireSync([chatId])
       fs.unlinkSync(journalPath(chatId))
+      removeSetAside(chatId)
       // As in `checkpoint`: the adopted checkpoint is on the disk already.
       if (noteDebt) noteDebt(chatId, { directory: baseDir })
       else fsyncDirectory()
@@ -1741,7 +2004,13 @@ export function createIncrementalChatJournal(
     assertChatId(chatId)
     atomicWrite(tombstonePath(chatId), '')
     options.descriptorCache?.retireSync([chatId])
-    for (const filePath of [journalPath(chatId), sealedPath(chatId), checkpointPath(chatId)]) {
+    forgetChainDamage(chatId)
+    for (const filePath of [
+      journalPath(chatId),
+      sealedPath(chatId),
+      setAsidePath(chatId),
+      checkpointPath(chatId)
+    ]) {
       try {
         fs.unlinkSync(filePath)
       } catch (error: unknown) {
@@ -1765,9 +2034,11 @@ export function createIncrementalChatJournal(
     assertWritable()
     assertChatId(chatId)
     options.descriptorCache?.retireSync([chatId])
+    forgetChainDamage(chatId)
     for (const filePath of [
       journalPath(chatId),
       sealedPath(chatId),
+      setAsidePath(chatId),
       checkpointPath(chatId),
       tombstonePath(chatId)
     ]) {
@@ -1805,6 +2076,8 @@ export function createIncrementalChatJournal(
       }
     }
     states.clear()
+    brokenChains.clear()
+    unmovedSetAside.clear()
   }
 
   const stats = (): IncrementalChatJournalStats => ({
@@ -1825,7 +2098,8 @@ export function createIncrementalChatJournal(
     tornTailsTruncated,
     tornTailBytesTruncated,
     corruptSegmentRejects,
-    tombstoneRejects
+    tombstoneRejects,
+    segmentsSetAside
   })
 
   return {

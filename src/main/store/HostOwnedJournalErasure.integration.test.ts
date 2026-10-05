@@ -324,6 +324,7 @@ describe('Host-owned erasure of a rotated journal', () => {
     expect(INCREMENTAL_CHAT_JOURNAL_ARTIFACT_SUFFIXES).toEqual([
       '.checkpoint.json',
       '.sealed.mutations.jsonl',
+      '.set-aside.mutations.jsonl',
       '.mutations.jsonl',
       '.tombstone'
     ])
