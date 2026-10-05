@@ -22,11 +22,12 @@
  * It does the same where the last source write did not reach the disk while
  * the publication made for it did.
  *
- * Each state is lived through in a profile of its own, and the catalogue's
- * files are then put in that state directly. A power loss that rewrote the
- * source file would change its witness whatever it held, so every row would
- * read as stale and nothing here would be tested; the source file is never
- * touched once it is written.
+ * Each case lives through the thread once, in a profile of its own. Each
+ * state starts from the profile as that life left it, restored in place, and
+ * the catalogue's files are then put in that state directly. A power loss
+ * that rewrote the source file would change its witness whatever it held, so
+ * every row would read as stale and nothing here would be tested; the source
+ * file is never touched once it is written, and a restore leaves it alone.
  */
 import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
@@ -64,6 +65,8 @@ function removeTemporaryDirectory(directory: string): void {
 
 const CHAT = 'chat-1'
 const READER = { runtimeInstanceId: 'reader', segmented: false }
+/** The source file, relative to its profile. */
+const SOURCE = path.join('chats', `${CHAT}.json`)
 
 /** Where the source writer's head is, and every head it wrote, by name. */
 const HEADS = [
@@ -105,6 +108,31 @@ function record(revision: number): ChatRecord {
     messages: [],
     runs: []
   } as ChatRecord
+}
+
+/** Every file and folder under `directory`, relative to it, each folder before what it holds. */
+function entriesUnder(directory: string, within = ''): { files: string[]; folders: string[] } {
+  const files: string[] = []
+  const folders: string[] = []
+  for (const entry of fs.readdirSync(path.join(directory, within), { withFileTypes: true })) {
+    const name = path.join(within, entry.name)
+    if (!entry.isDirectory()) {
+      files.push(name)
+      continue
+    }
+    folders.push(name)
+    const inner = entriesUnder(directory, name)
+    files.push(...inner.files)
+    folders.push(...inner.folders)
+  }
+  return { files, folders }
+}
+
+/** A profile as one life of the thread left it, but for its source file. */
+interface Kept {
+  files: Map<string, Buffer>
+  folders: Set<string>
+  proven: Set<string>
 }
 
 /** One profile, and what the catalogue held in it as the thread was lived through. */
@@ -221,6 +249,41 @@ class Profile {
     if (row === 'third') expect(this.index(resolver)).toBe('ready')
   }
 
+  /** The profile as it is now, but for its source file: what each state of a case starts from. */
+  keep(): Kept {
+    const { files, folders } = entriesUnder(this.location)
+    return {
+      files: new Map(
+        files
+          .filter((name) => name !== SOURCE)
+          .map((name) => [name, fs.readFileSync(path.join(this.location, name))])
+      ),
+      folders: new Set(folders),
+      proven: new Set(this.proven)
+    }
+  }
+
+  /**
+   * The profile back as `keep` found it, its source file untouched: each file
+   * a state added removed on its own, each it changed written back, and each
+   * folder it made removed once empty.
+   */
+  restore(kept: Kept): void {
+    const { files, folders } = entriesUnder(this.location)
+    for (const name of files)
+      if (name !== SOURCE && !kept.files.has(name)) fs.rmSync(path.join(this.location, name))
+    for (const name of folders.reverse())
+      if (!kept.folders.has(name)) fs.rmdirSync(path.join(this.location, name))
+    for (const [name, bytes] of kept.files) {
+      const file = path.join(this.location, name)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      if (!fs.existsSync(file) || !fs.readFileSync(file).equals(bytes))
+        fs.writeFileSync(file, bytes)
+    }
+    this.proven.clear()
+    for (const debt of kept.proven) this.proven.add(debt)
+  }
+
   /** The catalogue as the power loss left it, one file at a time. */
   leave(head: HeadState, second: TicketState, third: TicketState): void {
     const slot = `${this.directory}/desktop/${CHAT}.json`
@@ -281,13 +344,16 @@ describe.skipIf(process.platform === 'win32')(
         const unsettled: string[] = []
         const ready: string[] = []
         let made = 0
+        const profile = new Profile(`${root}/profile`)
+        profile.live(sources, row)
+        const lived = profile.keep()
 
         for (const head of HEADS) {
           for (const second of TICKETS) {
             for (const third of TICKETS) {
               const state = `head ${head}, second ticket ${second}, third ticket ${third}`
-              const profile = new Profile(`${root}/state-${++made}`)
-              profile.live(sources, row)
+              profile.restore(lived)
+              made += 1
               profile.leave(head, second, third)
               // The machine is back: the writer that was running is gone.
               const resolver = profile.catalogue('desktop-2', ['desktop-1'])
@@ -316,7 +382,10 @@ describe.skipIf(process.platform === 'win32')(
         expect(unsettled).toEqual([])
         // Rows that are ready at once are checked above, so the check is not empty.
         expect(ready).toHaveLength(readyAtOnce)
-      }
+      },
+      // A case is one life and 81 imports, about 2 s at a load average of 5:
+      // room for a machine running much else.
+      20_000
     )
   }
 )
