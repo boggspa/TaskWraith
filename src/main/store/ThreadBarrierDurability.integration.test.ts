@@ -261,25 +261,13 @@ const JOURNAL = `chat-journal-v2/${CHAT}.mutations.jsonl`
 const CHECKPOINT_TEMPORARY = `chat-journal-v2/.${CHAT}.checkpoint.json.<pid>.<time>.tmp`
 
 /**
- * The two ways the creating save's first checkpoint may be written under the
- * switch, and nothing else: synced on the calling thread and owing nothing, or
- * written without a sync and owing exactly its file and its folder. Both are
- * accepted until the log lane's slice C1, which makes it the second, lands.
+ * The creating save's first checkpoint under the switch (0883f8f97): written
+ * without a sync, owing exactly its file and its folder to the thread's barrier.
  */
-const FIRST_CHECKPOINT_WAYS = [
-  {
-    issued: [
-      `file:${CHECKPOINT_TEMPORARY}`,
-      'directory:chat-journal-v2',
-      'directory:chat-journal-v2'
-    ],
-    owed: []
-  },
-  {
-    issued: [],
-    owed: ['directory:chat-journal-v2', `file:chat-journal-v2/${CHAT}.checkpoint.json`]
-  }
-]
+const FIRST_CHECKPOINT_OWED = {
+  issued: [],
+  owed: ['directory:chat-journal-v2', `file:chat-journal-v2/${CHAT}.checkpoint.json`]
+}
 
 /** The creating save's first checkpoint: what it synced after `before`, and what it left owed. */
 function firstCheckpoint(step: { issued: string[]; paid: string[] }, before: string[] = []) {
@@ -350,7 +338,7 @@ describe('barrier durability, switched on', () => {
     const { steps } = await drive(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
-    expect(firstCheckpoint(steps[0])).toBeOneOf(FIRST_CHECKPOINT_WAYS)
+    expect(firstCheckpoint(steps[0])).toEqual(FIRST_CHECKPOINT_OWED)
     expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
@@ -383,7 +371,7 @@ describe('barrier durability, switched on', () => {
     const { steps } = await drive(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
-    expect(firstCheckpoint(steps[0])).toBeOneOf(FIRST_CHECKPOINT_WAYS)
+    expect(firstCheckpoint(steps[0])).toEqual(FIRST_CHECKPOINT_OWED)
     // In any order: a barrier hands the port every file at once, then every directory.
     expect(steps.slice(1).map((step) => [step.name, [...step.paid].sort()])).toEqual([
       [
@@ -972,7 +960,7 @@ describe("the catalogue's heads and tickets", () => {
     const steps = await driveWithCatalogue(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
-    // The catalogue's new folders, then the first checkpoint either way it may be written.
+    // The catalogue's new folders, and the first checkpoint written without a sync.
     const catalogueFolders = [
       'directory:.',
       'directory:thread-catalogue-v1',
@@ -980,7 +968,7 @@ describe("the catalogue's heads and tickets", () => {
       'directory:thread-catalogue-v1/pending/desktop',
       'directory:thread-catalogue-v1'
     ]
-    expect(firstCheckpoint(steps[0], catalogueFolders)).toBeOneOf(FIRST_CHECKPOINT_WAYS)
+    expect(firstCheckpoint(steps[0], catalogueFolders)).toEqual(FIRST_CHECKPOINT_OWED)
     expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
