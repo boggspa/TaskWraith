@@ -17,6 +17,7 @@ import {
   type ThreadCatalogueTicket
 } from '../../host-shared/thread-catalogue/ThreadCatalogue'
 import { MainCatalogueUnsyncedDurability } from './MainCatalogueUnsyncedDurability'
+import type { ThreadCatalogueDeferredDurability } from '../../host-shared/thread-catalogue/ThreadCatalogueDurability'
 import {
   countSyncs,
   watchCrashDisk,
@@ -88,18 +89,18 @@ interface Resolver {
  */
 function catalogues(
   profile: string,
-  unsynced: MainCatalogueUnsyncedDurability | undefined,
-  options: { writerId?: string; retired?: readonly string[] } = {}
+  unsynced: ThreadCatalogueDeferredDurability | undefined,
+  options: { writerId?: string; retired?: readonly string[]; writer?: 'desktop' | 'host' } = {}
 ): { source: ThreadCatalogue; resolver: Resolver } {
   const writerId = options.writerId ?? 'desktop-1'
   const proven = new Set<string>()
   const make = (
-    deferredDurability: MainCatalogueUnsyncedDurability | undefined,
+    deferredDurability: ThreadCatalogueDeferredDurability | undefined,
     lifecycle: (writerId: string) => 'active' | 'retired'
   ): ThreadCatalogue =>
     new ThreadCatalogue({
       profilePath: profile,
-      writer: 'desktop',
+      writer: options.writer ?? 'desktop',
       writerId,
       canWrite: () => true,
       writerLifecycle: (_writer, id) => lifecycle(id),
@@ -305,15 +306,31 @@ describe('catalogue publication that owes nothing to any barrier', () => {
       await expect(writer.awaitDurable()).resolves.toBeUndefined()
       expect(syncs.issued).toEqual([])
     })
+
+    it('prepares only publication directories and never creates an absent profile', () => {
+      const writer = unsynced()
+      expect(writer.prepareDirectory(head())).toBe(true)
+      expect(writer.prepareDirectory(ticketOf('operation'))).toBe(true)
+      expect(writer.prepareDirectory(path.join(directory, 'resolved', `${CHAT}.json`))).toBe(false)
+      expect(writer.prepareDirectory(path.join(directory, 'desktop', '.json'))).toBe(false)
+      const missing = path.join(profile, 'absent-profile')
+      expect(() =>
+        new MainCatalogueUnsyncedDurability({ profilePath: missing }).prepareDirectory(
+          path.join(missing, 'thread-catalogue-v1', 'desktop', `${CHAT}.json`)
+        )
+      ).toThrow('Thread catalogue profile is absent')
+      expect(fs.existsSync(missing)).toBe(false)
+      expect(syncs.issued).toEqual([])
+    })
   })
 
   describe('under a real catalogue', () => {
-    it('publishes a head and its ticket with no sync beyond the ones that make new directories', () => {
+    it('publishes a head and its ticket without syncing even their first directories', () => {
       const { source } = catalogues(profile, unsynced())
       source.registerWriter()
-      publish(source, 1)
       const before = syncs.issued.length
 
+      publish(source, 1)
       const ticket = publish(source, 2)
 
       expect(syncs.issued).toHaveLength(before)
@@ -323,12 +340,51 @@ describe('catalogue publication that owes nothing to any barrier', () => {
     it('a catalogue that syncs pays two syncs for each of the same three writes', () => {
       const { source } = catalogues(profile, undefined)
       source.registerWriter()
+      const registered = syncs.issued.length
       publish(source, 1)
       const before = syncs.issued.length
 
       publish(source, 2)
 
+      expect(registered).toBe(8)
+      expect(before - registered).toBe(11)
       expect(syncs.issued).toHaveLength(before + 6)
+    })
+
+    it('keeps directory preparation strict for an existing deferred writer', () => {
+      const { source } = catalogues(profile, {
+        write: (target, text) => fs.writeFileSync(target, text),
+        awaitDurable: async () => {}
+      })
+      source.registerWriter()
+      const before = syncs.issued.length
+
+      publish(source, 1)
+
+      expect(syncs.issued).toHaveLength(before + 5)
+    })
+
+    it('keeps Host publication strict even when given the unsynced desktop seam', () => {
+      const { source } = catalogues(profile, unsynced(), { writer: 'host' })
+      source.registerWriter()
+      const before = syncs.issued.length
+
+      publish(source, 1)
+
+      expect(syncs.issued).toHaveLength(before + 11)
+    })
+
+    it('does not cache unsynced directories as durable for a later strict resolution', () => {
+      const { source } = catalogues(profile, unsynced())
+      source.registerWriter()
+      publish(source, 1)
+      const before = syncs.issued.length
+
+      expect(resolve({ catalogue: source, proven: new Set() }, 1)).toBe(true)
+
+      // The catalogue's name and the resolved directory's name, then the
+      // resolved file and its directory. Publication paid none of these.
+      expect(syncs.issued).toHaveLength(before + 4)
     })
 
     it('publishes a long run on many threads without one sync once their directories are made', () => {
@@ -346,7 +402,7 @@ describe('catalogue publication that owes nothing to any barrier', () => {
       expect(syncs.issued).toHaveLength(before)
     })
 
-    it('still syncs once on the calling thread when the resolver removed the thread’s ticket directory since the last publication', () => {
+    it('recreates a ticket directory removed by the resolver without a calling-thread sync', () => {
       const { source, resolver } = catalogues(profile, unsynced())
       source.registerWriter()
       publish(source, 1)
@@ -356,9 +412,7 @@ describe('catalogue publication that owes nothing to any barrier', () => {
 
       publish(source, 2)
 
-      // The catalogue makes the directory again, and syncs its parent itself,
-      // before it hands the ticket to the seam.
-      expect(syncs.issued).toHaveLength(before + 1)
+      expect(syncs.issued).toHaveLength(before)
     })
 
     it('keeps the controls, the resolution and the erasure fence on the strict route', () => {
@@ -408,6 +462,19 @@ describe.skipIf(process.platform === 'win32')(
     const ticketDirectory = (chatId = CHAT): string =>
       path.join(source.directory, 'pending', 'desktop', chatId)
 
+    const flushTicketNames = (): void => {
+      // A persisted ticket needs every parent name as well. Publication no
+      // longer syncs these; this models the system writing them out itself.
+      for (const directory of [
+        ticketDirectory(),
+        path.join(source.directory, 'pending', 'desktop'),
+        path.join(source.directory, 'pending'),
+        source.directory,
+        profile
+      ])
+        disk.flushedAnyway(directory)
+    }
+
     /**
      * The machine comes back: the old writer's process is gone, a new one
      * writes with a new id, and the resolver takes the old writer as retired,
@@ -422,6 +489,32 @@ describe.skipIf(process.platform === 'win32')(
       ))
       source.registerWriter()
     }
+
+    it('reconstructs a lost publication directory tree while strict controls survive', () => {
+      source.holdRecovery({
+        chatId: 'held',
+        token: 'token',
+        desktopWriterId: 'desktop-1',
+        hostIncarnation: 'incarnation'
+      })
+      source.beginErasure('erased')
+      const before = disk.issued.length
+      publish(source, 1)
+      expect(disk.issued).toHaveLength(before)
+
+      restart()
+
+      expect(fs.existsSync(source.directory)).toBe(false)
+      expect(source.recoveryHold('held')).toMatchObject({ token: 'token' })
+      expect(source.read('erased')).toEqual({ status: 'erasing' })
+      expect(resolver.catalogue.read(CHAT)).toEqual({ status: 'repair-pending' })
+      expect(index(resolver, 1)).toBe('ready')
+      const resolved = disk.issued.length
+      publish(source, 2)
+      expect(disk.issued).toHaveLength(resolved)
+      expect(index(resolver, 2)).toBe('ready')
+      expect(resolver.catalogue.repairChatIds()).toEqual([])
+    })
 
     it('loses the heads and tickets nothing made safe, and the worker derives each thread again from its sources', () => {
       for (const chatId of [CHAT, OTHER]) {
@@ -471,6 +564,7 @@ describe.skipIf(process.platform === 'win32')(
         ticketDirectory()
       ])
         disk.flushedAnyway(target)
+      flushTicketNames()
 
       restart()
 
@@ -507,7 +601,7 @@ describe.skipIf(process.platform === 'win32')(
       // A sync of the ticket's directory by someone else before its bytes
       // reached the disk: the resolver's acknowledgement syncs that
       // directory, for one.
-      disk.flushedAnyway(ticketDirectory())
+      flushTicketNames()
       expect(finish(source, ticket, 2)).toBe(true)
 
       restart()

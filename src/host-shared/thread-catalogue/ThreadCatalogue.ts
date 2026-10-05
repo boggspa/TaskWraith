@@ -283,13 +283,14 @@ export class ThreadCatalogue {
       throw new Error('Thread catalogue publication exceeds its metadata budget')
     }
     const directory = path.dirname(filePath)
-    this.ensureDurableDirectory(directory)
     const publication =
       this.options.writer === 'desktop' &&
       (directory === path.join(this.directory, 'desktop') ||
         directory.startsWith(path.join(this.directory, 'pending', 'desktop') + path.sep))
-    if (publication && this.options.deferredDurability) {
-      this.options.deferredDurability.write(
+    const deferred = publication ? this.options.deferredDurability : undefined
+    if (!deferred?.prepareDirectory?.(filePath)) this.ensureDurableDirectory(directory)
+    if (deferred) {
+      deferred.write(
         filePath,
         text,
         () => this.options.beforeAtomicRename?.(filePath),

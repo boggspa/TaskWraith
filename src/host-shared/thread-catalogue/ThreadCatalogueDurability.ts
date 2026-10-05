@@ -15,6 +15,8 @@ export interface ThreadCatalogueDurabilityPorts<File> {
 }
 
 export interface ThreadCatalogueDeferredDurability {
+  /** True only when this writer prepared a rebuildable publication's directory. */
+  prepareDirectory?(filePath: string): boolean
   write(filePath: string, text: string, beforeRename?: () => void, afterRename?: () => void): void
   awaitDurable(): Promise<void>
 }

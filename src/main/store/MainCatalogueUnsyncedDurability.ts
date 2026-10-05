@@ -45,13 +45,15 @@ export interface MainCatalogueUnsyncedDurabilitySnapshot {
 const DIRECTORY_SYNC_NOT_OFFERED = new Set(['EINVAL', 'ENOTSUP', 'ENOSYS'])
 
 export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredDurability {
+  private readonly profilePath: string
   private readonly heads: string
   private readonly tickets: string
   private writes = 0
   private strictWrites = 0
 
   constructor(options: MainCatalogueUnsyncedDurabilityOptions) {
-    const catalogue = path.join(path.resolve(options.profilePath), 'thread-catalogue-v1')
+    this.profilePath = path.resolve(options.profilePath)
+    const catalogue = path.join(this.profilePath, 'thread-catalogue-v1')
     this.heads = path.join(catalogue, 'desktop')
     this.tickets = path.join(catalogue, 'pending', 'desktop')
   }
@@ -68,6 +70,16 @@ export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredD
           ? path.basename(directory)
           : null
     return thread !== null && isSafeChatId(thread)
+  }
+
+  prepareDirectory(filePath: string): boolean {
+    const target = path.resolve(filePath)
+    if (!this.isPublication(target)) return false
+    // The profile owner creates the root. Only rebuildable publication names
+    // may disappear on a power loss; no directory here becomes barrier debt.
+    if (!fs.existsSync(this.profilePath)) throw new Error('Thread catalogue profile is absent')
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 })
+    return true
   }
 
   write(filePath: string, text: string, beforeRename?: () => void, afterRename?: () => void): void {
