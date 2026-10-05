@@ -19,10 +19,14 @@
  * Each batch is applied with the shared apply code, one operation at a time, to
  * just the rows that operation touches. An operation on a row the view does
  * not hold cannot change a row it does hold, so it is noted rather than applied
- * and needs no reseed. The view is built again from a seed, a whole record that
- * a port loads off the event loop, only when the log cannot take it forward:
- * the lines it needs were folded away, the thread was re-anchored, or the bytes
- * it had read were rewritten.
+ * and needs no reseed. The view is built again from a seed only when the log
+ * cannot take it forward: the lines it needs were folded away, the thread was
+ * re-anchored, or the bytes it had read were rewritten. A port loads the seed
+ * off the event loop: a whole record, which the follower cuts to its window,
+ * or a window the port cut where it loaded the record, with the follower's own
+ * cut (`HostThreadLogFollower.windowOf`), so that only the window crosses to
+ * the event loop. Such a window says where the load read each segment to, and
+ * the follower reads on from there rather than reading those lines again.
  *
  * Why no batch is missed or applied twice, however the app's files move:
  * - Only a batch that continues the view's revision is applied.
@@ -138,6 +142,80 @@ export interface HostThreadLogRecord extends ThreadLogRecord {
   readonly [key: string]: unknown
 }
 
+/** The bounds a follower keeps its view to. */
+export interface HostThreadLogWindowBounds {
+  readonly messages: number
+  readonly runs: number
+  readonly maxViewBytes: number
+}
+
+/** A held run as a window carries it: with its bytes as JSON. */
+export interface HostThreadLogWindowRun {
+  readonly index: number
+  readonly run: HostThreadLogRun
+  readonly bytes: number
+}
+
+/**
+ * The view a follower with `bounds` builds from a whole record, with every
+ * fact it keeps about the rows outside it: what `HostThreadLogFollower.windowOf`
+ * gives.
+ */
+export interface HostThreadLogWindowCut {
+  readonly bounds: HostThreadLogWindowBounds
+  readonly revision: number
+  readonly shell: Readonly<Record<string, unknown>>
+  readonly shellBytes: number
+  readonly messageCount: number
+  readonly messages: readonly HostThreadLogMessage[]
+  readonly messageBytes: readonly number[]
+  readonly runCount: number
+  /** Where the newest runs begin: every run from here on is held. */
+  readonly runsFrom: number
+  readonly runs: readonly HostThreadLogWindowRun[]
+  /** Held messages whose id an older message has too. */
+  readonly ambiguousMessageIds: readonly string[]
+  /** Ids a held run shares with a run not held. */
+  readonly ambiguousRunIds: readonly string[]
+  /** Runs a held message names that the record does not have. */
+  readonly missingRunIds: readonly string[]
+}
+
+/** How far a load read one segment: every line before `offset` is in the record it built. */
+export interface HostThreadLogReadPosition {
+  readonly dev: bigint
+  readonly ino: bigint
+  readonly offset: number
+}
+
+/** What a record's messages before a window show, worked out where the record was whole. */
+export interface HostThreadLogEntriesBefore {
+  /** Messages before the window that a history shows. */
+  readonly shown: number
+  /** Runs those entries name that the window holds. */
+  readonly heldRunIds: readonly string[]
+  /** Runs those entries name that the record does not have, the first up to a history's bound. */
+  readonly missingRunIds: readonly string[]
+  /** More were missing than that bound. */
+  readonly missingOverflow: boolean
+}
+
+/** A seed cut to the follower's window where the record was loaded, off the event loop. */
+export interface HostThreadLogWindowSeed extends HostThreadLogWindowCut {
+  readonly kind: 'window'
+  /** Where the load read each segment to; the follower reads on from there. */
+  readonly readFrom: readonly HostThreadLogReadPosition[]
+  /** For a history kept beside the view. The follower hands it to its observer. */
+  readonly entriesBefore: HostThreadLogEntriesBefore
+}
+
+/** Whether a seed is a window rather than a whole record. */
+export function isHostThreadLogWindowSeed(
+  seed: HostThreadLogRecord | HostThreadLogWindowSeed
+): seed is HostThreadLogWindowSeed {
+  return seed.kind === 'window' && !('appChatId' in seed)
+}
+
 /** Why a view was built from a seed. */
 export type HostThreadLogSeedReason =
   /** The first view of the thread, or the first since the thread had no log. */
@@ -176,6 +254,11 @@ export const HOST_THREAD_LOG_SEED_REASONS: readonly HostThreadLogSeedReason[] = 
 export interface HostThreadLogSeedRequest {
   readonly chatId: string
   readonly reason: HostThreadLogSeedReason
+  /**
+   * The follower's bounds. A port that cuts the record where it loads it
+   * answers with a window cut to them; any port may answer with the record.
+   */
+  readonly window?: HostThreadLogWindowBounds
 }
 
 /** Loads a thread's record off the event loop. */
@@ -183,10 +266,13 @@ export interface HostThreadLogSeedPort {
   /**
    * The thread's record at the head of its log, as the app's own load builds
    * it when it leaves syncing to the thread barrier: the checkpoint and the
-   * longest chain of lines from it. Null when the thread has no checkpoint.
-   * The follower takes the record over and never changes its rows.
+   * longest chain of lines from it; or, when the request names a window, that
+   * record cut to it. Null when the thread has no checkpoint. The follower
+   * takes what it is given over and never changes its rows.
    */
-  seed(request: HostThreadLogSeedRequest): Promise<HostThreadLogRecord | null>
+  seed(
+    request: HostThreadLogSeedRequest
+  ): Promise<HostThreadLogRecord | HostThreadLogWindowSeed | null>
 }
 
 /** What one applied batch did to the view. */
@@ -231,6 +317,8 @@ export type HostThreadLogStop = 'corrupt' | 'gap' | 'unapplicable'
 export interface HostThreadLogFollowerObserver {
   /** A view was built from `record`, the whole record the seed returned. */
   seeded?(record: HostThreadLogRecord): void
+  /** A view was built from a window the seed returned. */
+  seededWindow?(seed: HostThreadLogWindowSeed): void
   /** A batch was applied. `trimmed` are the messages that left the window after it, oldest first. */
   applied?(applied: HostThreadLogAppliedBatch, trimmed: readonly HostThreadLogMessage[]): void
   /** The view was dropped. */
@@ -366,6 +454,23 @@ interface Source {
   stop: HostThreadLogStop | null
   /** Neither under a name when the view was seeded nor opened since: every line in it is new. */
   readonly fresh: boolean
+}
+
+/** A port for a follower that is never polled. */
+const NO_SEEDS: HostThreadLogSeedPort = {
+  seed: () => Promise.reject(new Error('This follower takes no seeds'))
+}
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((each) => typeof each === 'string')
+}
+
+function isByteCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
 interface HeldRun {
@@ -534,6 +639,8 @@ export class HostThreadLogFollower {
   private refusedRevision: number | null = null
   /** Files the view may meet again: those under either name after its seed, and each opened since. */
   private knownFiles: FileIdentity[] = []
+  /** Where the load behind a window seed read each segment to; a file opened is read on from there. */
+  private readFrom: HostThreadLogReadPosition[] = []
 
   // Retained batches.
   private retained: HostThreadLogAppliedBatch[] = []
@@ -645,6 +752,43 @@ export class HostThreadLogFollower {
     return this.polling
   }
 
+  /**
+   * The view a follower with `bounds` builds from `record`, with all it keeps
+   * about the rows outside it, for a load off the event loop to hand over in
+   * place of the whole record. Rows are shared with the record, not copied.
+   */
+  static windowOf(
+    record: HostThreadLogRecord,
+    bounds: HostThreadLogWindowBounds
+  ): HostThreadLogWindowCut {
+    const appChatId = record.appChatId
+    if (!isFollowableThreadId(appChatId)) throw new Error('Thread log window: unsafe chat id')
+    const cutter = new HostThreadLogFollower({
+      chatId: appChatId,
+      directory: '.',
+      seedPort: NO_SEEDS,
+      windowMessages: bounds.messages,
+      windowRuns: bounds.runs,
+      maxViewBytes: bounds.maxViewBytes
+    })
+    cutter.buildView(record, revisionOf(record))
+    return {
+      bounds: cutter.bounds(),
+      revision: cutter.revision,
+      shell: cutter.shell,
+      shellBytes: cutter.shellBytes,
+      messageCount: cutter.messageCount,
+      messages: cutter.messages,
+      messageBytes: cutter.messageBytes,
+      runCount: cutter.runCount,
+      runsFrom: cutter.runsFrom,
+      runs: cutter.runs.map(({ index, run, bytes }) => ({ index, run, bytes })),
+      ambiguousMessageIds: [...cutter.ambiguousMessageIds],
+      ambiguousRunIds: [...cutter.ambiguousRunIds],
+      missingRunIds: [...cutter.missingRunIds]
+    }
+  }
+
   /** Build the view again from a seed at the next poll. */
   requestSeed(): void {
     if (this.state === 'following') this.seedDue = 'requested'
@@ -672,6 +816,16 @@ export class HostThreadLogFollower {
   /** The view's revision, or null while there is none. */
   get headRevision(): number | null {
     return this.state === 'following' ? this.revision : null
+  }
+
+  /** How far each segment it holds open was read: every line before its offset is in the view. */
+  readPositions(): HostThreadLogReadPosition[] {
+    if (this.state !== 'following') return []
+    return this.sources.map(({ identity, offset }) => ({
+      dev: identity.dev,
+      ino: identity.ino,
+      offset
+    }))
   }
 
   /**
@@ -781,9 +935,9 @@ export class HostThreadLogFollower {
     // What the log's checkpoint was before the seed was asked for: a seed
     // behind it did not come from this log.
     const before = this.readCheckpointHead()
-    let record: HostThreadLogRecord | null
+    let seed: HostThreadLogRecord | HostThreadLogWindowSeed | null
     try {
-      record = await this.seedPort.seed({ chatId: this.chatId, reason })
+      seed = await this.seedPort.seed({ chatId: this.chatId, reason, window: this.bounds() })
     } catch (error) {
       if (!this.closed) {
         this.seedDue = reason
@@ -792,27 +946,36 @@ export class HostThreadLogFollower {
       throw error
     }
     if (this.closed) return { status: 'absent' }
-    if (!record) {
+    if (!seed) {
       this.state = 'absent'
       return { status: 'absent' }
     }
-    if (
-      record.appChatId !== this.chatId ||
-      !Array.isArray(record.messages) ||
-      !Array.isArray(record.runs)
-    ) {
+    const window = isHostThreadLogWindowSeed(seed) ? seed : null
+    const record = isHostThreadLogWindowSeed(seed) ? null : seed
+    const revision = window
+      ? this.isWindowOfThis(window)
+        ? window.revision
+        : null
+      : record && this.isRecordOfThis(record)
+        ? revisionOf(record)
+        : null
+    if (revision === null) {
       this.seedDue = reason
       this.state = 'unseeded'
-      throw new Error('Thread log seed is not a record of this thread')
+      throw new Error(
+        window
+          ? 'Thread log seed is not a window of this thread'
+          : 'Thread log seed is not a record of this thread'
+      )
     }
-    const revision = revisionOf(record)
     const head = typeof before === 'object' ? before : null
     if (head && head.revision > revision) {
       this.seedsRefused += 1
       return this.refuse('seed-behind-checkpoint', head.identity)
     }
     this.seeds[reason] += 1
-    this.buildView(record, revision)
+    if (window) this.adoptWindow(window)
+    else if (record) this.buildView(record, revision)
     this.checkpoint = head
     if (!this.withinBudget()) return this.refuse('over-budget', head?.identity ?? null)
     this.state = 'following'
@@ -823,9 +986,88 @@ export class HostThreadLogFollower {
       const identity = this.identityAt(filePath)
       if (identity) this.know(identity)
     }
-    const seeded = record
-    this.notify(() => this.observer?.seeded?.(seeded))
+    if (window) this.notify(() => this.observer?.seededWindow?.(window))
+    else if (record) this.notify(() => this.observer?.seeded?.(record))
     return null
+  }
+
+  private bounds(): HostThreadLogWindowBounds {
+    return {
+      messages: this.windowMessages,
+      runs: this.windowRuns,
+      maxViewBytes: this.maxViewBytes
+    }
+  }
+
+  private isRecordOfThis(record: HostThreadLogRecord): boolean {
+    return (
+      record.appChatId === this.chatId &&
+      Array.isArray(record.messages) &&
+      Array.isArray(record.runs)
+    )
+  }
+
+  /**
+   * Whether a window is one this follower's own cut of a record of this thread
+   * could give: its bounds, its revision, sizes for every row, every newest
+   * run held and the runs in order. A window that is not is refused whole.
+   */
+  private isWindowOfThis(seed: HostThreadLogWindowSeed): boolean {
+    const { bounds, shell, messages, messageBytes, runs } = seed
+    if (
+      !isPlainObject(bounds) ||
+      bounds.messages !== this.windowMessages ||
+      bounds.runs !== this.windowRuns ||
+      bounds.maxViewBytes !== this.maxViewBytes ||
+      !isPlainObject(shell) ||
+      shell.appChatId !== this.chatId ||
+      'messages' in shell ||
+      'runs' in shell ||
+      !isByteCount(seed.revision) ||
+      revisionOf(shell) !== seed.revision ||
+      !isByteCount(seed.shellBytes) ||
+      !Array.isArray(messages) ||
+      !Array.isArray(messageBytes) ||
+      messageBytes.length !== messages.length ||
+      !messageBytes.every(isByteCount) ||
+      !messages.every((message) => isPlainObject(message) && typeof message.id === 'string') ||
+      !isByteCount(seed.messageCount) ||
+      seed.messageCount < messages.length ||
+      !isByteCount(seed.runCount) ||
+      !isByteCount(seed.runsFrom) ||
+      seed.runsFrom > seed.runCount ||
+      !Array.isArray(runs) ||
+      !isStringList(seed.ambiguousMessageIds) ||
+      !isStringList(seed.ambiguousRunIds) ||
+      !isStringList(seed.missingRunIds) ||
+      !Array.isArray(seed.readFrom) ||
+      !seed.readFrom.every(
+        (position) =>
+          isPlainObject(position) &&
+          typeof position.dev === 'bigint' &&
+          typeof position.ino === 'bigint' &&
+          isByteCount(position.offset)
+      )
+    ) {
+      return false
+    }
+    let previous = -1
+    let newest = 0
+    for (const held of runs) {
+      if (
+        !isPlainObject(held) ||
+        !isByteCount(held.index) ||
+        held.index <= previous ||
+        held.index >= seed.runCount ||
+        !isPlainObject(held.run) ||
+        !isByteCount(held.bytes)
+      ) {
+        return false
+      }
+      previous = held.index
+      if (held.index >= seed.runsFrom) newest += 1
+    }
+    return newest === seed.runCount - seed.runsFrom
   }
 
   private refuse(
@@ -1031,8 +1273,13 @@ export class HostThreadLogFollower {
    */
   private open(role: SegmentRole, expected: FileIdentity): Source | 'moved' | null {
     const filePath = role === 'sealed' ? this.paths.sealed : this.paths.active
-    let offset = 0
-    if (this.longLine && sameFile(this.longLine.identity, expected)) {
+    // The load behind a window seed read this file to here: the lines before it are in the view.
+    let offset = this.readFrom.find((position) => sameFile(position, expected))?.offset ?? 0
+    if (
+      this.longLine &&
+      sameFile(this.longLine.identity, expected) &&
+      this.longLine.offset >= offset
+    ) {
       const after = this.lineEndAfter(filePath, expected, this.longLine.offset)
       // The long line has not ended yet: nothing past it can be read.
       if (after === null) return null
@@ -1206,6 +1453,7 @@ export class HostThreadLogFollower {
     const had = this.state === 'following'
     this.closeSources()
     this.knownFiles = []
+    this.readFrom = []
     this.checkpoint = null
     this.stoppedAt = null
     this.revision = 0
@@ -1278,6 +1526,31 @@ export class HostThreadLogFollower {
     )
     this.retained = []
     this.retainedBytes = 0
+    this.readFrom = []
+    this.trim()
+  }
+
+  /** Take over a window this follower's own cut gave, as `buildView` leaves the view. */
+  private adoptWindow(seed: HostThreadLogWindowSeed): void {
+    this.revision = seed.revision
+    this.savedAt = null
+    this.shell = { ...seed.shell }
+    this.shellBytes = seed.shellBytes
+    this.messageCount = seed.messageCount
+    this.messages = seed.messages.slice()
+    this.messageBytes = seed.messageBytes.slice()
+    this.messagesBytes = this.messageBytes.reduce((sum, bytes) => sum + bytes, 0)
+    this.ambiguousMessageIds = new Set(seed.ambiguousMessageIds)
+    this.runCount = seed.runCount
+    this.runsFrom = seed.runsFrom
+    this.countRunReferences()
+    this.runs = seed.runs.map(({ index, run, bytes }) => ({ index, run, bytes }))
+    this.runsBytes = this.runs.reduce((sum, each) => sum + each.bytes, 0)
+    this.ambiguousRunIds = new Set(seed.ambiguousRunIds)
+    this.missingRunIds = new Set(seed.missingRunIds)
+    this.retained = []
+    this.retainedBytes = 0
+    this.readFrom = seed.readFrom.map(({ dev, ino, offset }) => ({ dev, ino, offset }))
     this.trim()
   }
 

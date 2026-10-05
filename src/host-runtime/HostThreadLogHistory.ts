@@ -2,7 +2,10 @@
  * History for a thread the Host follows by its log, in the shapes the wire
  * already has: a page of the tail from the follower's window, an older page
  * from a whole record that the seed port loads off the event loop, and
- * `history.since` from the batches the follower applied. Entries, their order
+ * `history.since` from the batches the follower applied. A window seed says
+ * what the rows before it show, worked out where the record was whole
+ * (`hostThreadLogEntriesBefore`), as a whole record lets this work it out
+ * itself; so the numbers are the same however the seed came. Entries, their order
  * and the pages they fall in are those of the profile store's `threadHistory`
  * over the whole record at the same revision: both project messages through
  * HostHistoryToolRows.
@@ -67,12 +70,16 @@ import {
 } from './HostHistoryToolRows'
 import {
   HostThreadLogFollower,
+  isHostThreadLogWindowSeed,
   type HostThreadLogAppliedBatch,
+  type HostThreadLogEntriesBefore,
   type HostThreadLogFollowerOptions,
   type HostThreadLogMessage,
   type HostThreadLogRecord,
   type HostThreadLogRun,
-  type HostThreadLogView
+  type HostThreadLogView,
+  type HostThreadLogWindowCut,
+  type HostThreadLogWindowSeed
 } from './HostThreadLogFollower'
 
 /**
@@ -134,6 +141,73 @@ export function hostThreadLogHistoryEntries(
   return hostHistoryEntries(
     record.messages as HostThreadLogMessage[],
     record.runs as HostThreadLogRun[]
+  )
+}
+
+/**
+ * What the messages before `windowStart` show: how many entries, and the runs
+ * those entries name, sorted into those `held` has and those the record lacks
+ * (the first MAX_MISSING_RUN_REFERENCES of them, in message order). A run the
+ * record has but the window does not hold is neither: a change to it arrives
+ * as an operation on a run the view does not hold.
+ */
+function entriesBefore(
+  messages: readonly HostThreadLogMessage[],
+  runs: readonly HostThreadLogRun[],
+  windowStart: number,
+  held: { has(runId: string): boolean }
+): HostThreadLogEntriesBefore {
+  const exists = new Set<string>()
+  for (const run of runs) if (typeof run.runId === 'string') exists.add(run.runId)
+  const heldRunIds = new Set<string>()
+  const missingRunIds = new Set<string>()
+  let missingOverflow = false
+  let shown = 0
+  for (let index = 0; index < windowStart; index += 1) {
+    const message = messages[index]
+    if (!hostHistoryShows(message)) continue
+    shown += 1
+    const runId = hostHistoryEntryRun(message)
+    if (runId === null) continue
+    if (held.has(runId)) heldRunIds.add(runId)
+    else if (!exists.has(runId) && !missingRunIds.has(runId)) {
+      if (missingRunIds.size >= MAX_MISSING_RUN_REFERENCES) missingOverflow = true
+      else missingRunIds.add(runId)
+    }
+  }
+  return {
+    shown,
+    heldRunIds: [...heldRunIds],
+    missingRunIds: [...missingRunIds],
+    missingOverflow
+  }
+}
+
+/** What the rows of `record` before the window `cut` show, for a window seed to carry. */
+export function hostThreadLogEntriesBefore(
+  record: HostThreadLogRecord,
+  cut: HostThreadLogWindowCut
+): HostThreadLogEntriesBefore {
+  return entriesBefore(
+    record.messages as HostThreadLogMessage[],
+    record.runs as HostThreadLogRun[],
+    cut.messageCount - cut.messages.length,
+    hostHistoryFirstRuns(cut.runs.map((held) => held.run))
+  )
+}
+
+function isEntriesBefore(value: unknown): value is HostThreadLogEntriesBefore {
+  const before = value as Partial<HostThreadLogEntriesBefore> | null
+  const isIdList = (list: unknown): boolean =>
+    Array.isArray(list) && list.every((each) => typeof each === 'string')
+  return (
+    !!before &&
+    typeof before === 'object' &&
+    Number.isSafeInteger(before.shown) &&
+    (before.shown as number) >= 0 &&
+    isIdList(before.heldRunIds) &&
+    isIdList(before.missingRunIds) &&
+    typeof before.missingOverflow === 'boolean'
   )
 }
 
@@ -341,6 +415,7 @@ export class HostThreadLogHistory {
       ...followerOptions,
       observer: {
         seeded: (record) => this.observe(() => this.seeded(record)),
+        seededWindow: (seed) => this.observe(() => this.seededWindow(seed)),
         applied: (applied, trimmed) => this.observe(() => this.applied(applied, trimmed)),
         dropped: () => this.observe(() => this.reset())
       }
@@ -507,10 +582,34 @@ export class HostThreadLogHistory {
   }
 
   private seeded(record: HostThreadLogRecord): void {
+    const view = this.follower.view()
+    this.seededWith(
+      view,
+      view &&
+        entriesBefore(
+          record.messages as HostThreadLogMessage[],
+          record.runs as HostThreadLogRun[],
+          view.messageCount - view.messages.length,
+          heldRuns(view)
+        )
+    )
+  }
+
+  private seededWindow(seed: HostThreadLogWindowSeed): void {
+    if (!isEntriesBefore(seed.entriesBefore)) {
+      this.reset()
+      throw new Error('Thread log window does not say what the rows before it show')
+    }
+    this.seededWith(this.follower.view(), seed.entriesBefore)
+  }
+
+  private seededWith(
+    view: HostThreadLogView | null,
+    before: HostThreadLogEntriesBefore | null
+  ): void {
     this.reset()
     this.tooLong = false
-    const view = this.follower.view()
-    if (!view) return
+    if (!view || !before) return
     // Batches applied before the seed and not served: those past it were another lineage's.
     this.unserved = this.unserved.filter((each) => {
       if (each.revision <= view.revision) return true
@@ -518,23 +617,10 @@ export class HostThreadLogHistory {
       return false
     })
     this.runs = heldRuns(view)
-    const messages = record.messages as HostThreadLogMessage[]
-    const exists = new Set<string>()
-    for (const run of record.runs as HostThreadLogRun[]) {
-      if (typeof run.runId === 'string') exists.add(run.runId)
-    }
-    const windowStart = view.messageCount - view.messages.length
-    let older = 0
-    for (let index = 0; index < windowStart; index += 1) {
-      const message = messages[index]
-      if (!hostHistoryShows(message)) continue
-      older += 1
-      const runId = hostHistoryEntryRun(message)
-      if (runId === null) continue
-      if (this.runs.has(runId)) this.olderHeldRuns.add(runId)
-      else if (!exists.has(runId)) this.noteMissingRun(runId)
-    }
-    this.olderEntries = older
+    for (const runId of before.heldRunIds) this.olderHeldRuns.add(runId)
+    for (const runId of before.missingRunIds) this.noteMissingRun(runId)
+    if (before.missingOverflow) this.olderRunsOverflow = true
+    this.olderEntries = before.shown
     const projected = this.project(view, null)
     this.held = projected.held
     if (projected.unresolved) {
@@ -1022,7 +1108,9 @@ export class HostThreadLogHistory {
     const generation = this.generation
     for (let load = 0; load < MAX_RECORD_LOADS; load += 1) {
       this.recordLoads += 1
-      const record = await this.seedPort.seed({ chatId: this.chatId, reason: 'requested' })
+      const loaded = await this.seedPort.seed({ chatId: this.chatId, reason: 'requested' })
+      // Asked for without a window, a port answers with the whole record.
+      const record = loaded && !isHostThreadLogWindowSeed(loaded) ? loaded : null
       if (
         !record ||
         record.appChatId !== this.chatId ||

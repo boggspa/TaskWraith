@@ -49,10 +49,12 @@ import {
 import { classifyHistoryResult } from '../tui/historyReconcile'
 import type { TuiHistoryState } from '../tui/state'
 import { HOST_PROFILE_CHATS_DIRECTORY, HostProfileDomainStore } from './HostProfileDomainStore'
-import type {
-  HostThreadLogRecord,
-  HostThreadLogSeedPort,
-  HostThreadLogSeedRequest
+import {
+  HostThreadLogFollower,
+  type HostThreadLogRecord,
+  type HostThreadLogSeedPort,
+  type HostThreadLogSeedRequest,
+  type HostThreadLogWindowSeed
 } from './HostThreadLogFollower'
 import {
   HOST_THREAD_LOG_HISTORY_GENERATION_BASE,
@@ -60,6 +62,7 @@ import {
   HOST_THREAD_LOG_HISTORY_MAX_RETAINED_BATCHES,
   HOST_THREAD_LOG_HISTORY_SEQUENCE_SPAN,
   HostThreadLogHistory,
+  hostThreadLogEntriesBefore,
   hostThreadLogHistoryEntries,
   type HostThreadLogHistoryGenerationCause,
   type HostThreadLogHistoryOptions
@@ -322,8 +325,10 @@ function appLoad(directory: string): ChatRecord | null {
   }).replay(CHAT).record
 }
 
-function seedPortOf(directory: string): HostThreadLogSeedPort & {
+/** The app's own load as a seed: always the whole record. */
+function seedPortOf(directory: string): {
   readonly requests: HostThreadLogSeedRequest[]
+  seed(request: HostThreadLogSeedRequest): Promise<HostThreadLogRecord | null>
 } {
   const requests: HostThreadLogSeedRequest[] = []
   return {
@@ -335,6 +340,45 @@ function seedPortOf(directory: string): HostThreadLogSeedPort & {
     }
   }
 }
+
+/**
+ * The app's own load cut to the follower's window, with what the rows before
+ * it show, as a load off the event loop hands it over; the whole record when
+ * no window is asked for, as for an older page.
+ */
+function windowSeedPortOf(directory: string): HostThreadLogSeedPort & {
+  readonly requests: HostThreadLogSeedRequest[]
+  windows: number
+} {
+  const requests: HostThreadLogSeedRequest[] = []
+  const port = {
+    requests,
+    windows: 0,
+    async seed(request: HostThreadLogSeedRequest) {
+      requests.push(request)
+      await settle()
+      const record = appLoad(directory) as unknown as HostThreadLogRecord | null
+      if (!record || !request.window) return record
+      const cut = HostThreadLogFollower.windowOf(record, request.window)
+      const seed: HostThreadLogWindowSeed = {
+        kind: 'window',
+        ...cut,
+        readFrom: [],
+        entriesBefore: hostThreadLogEntriesBefore(record, cut)
+      }
+      port.windows += 1
+      // As it crosses from a worker: a copy.
+      return structuredClone(seed)
+    }
+  }
+  return port
+}
+
+/** The two ways a seed arrives: the whole record, or a window cut where it was loaded. */
+const SEED_PORTS = [
+  ['whole records', seedPortOf],
+  ['windows', windowSeedPortOf]
+] as const
 
 /** The profile store over a copy of the app's record: the history every page must equal. */
 class FullCopy {
@@ -1650,129 +1694,182 @@ describe('history from a followed thread log', () => {
   })
 
   describe('pages', () => {
-    it('equal the full copy at every revision of a random history, across rotation and compaction', async () => {
-      const app = new App(directory, { maxJournalBytes: 24 * 1024 })
-      const copy = fullCopyOf(app)
-      const history = open({ windowMessages: 6, windowRuns: 3 })
-      const random = seeded(11)
-      const drawn = { stacks: 0, lanes: 0, runs: 0 }
-      for (let step = 0; step < 300; step += 1) {
-        randomChange(app, random, step)
-        if (app.compactor.pending > 0 && random(3) === 0) await app.compact()
-        const record = app.records.get(revisionOf(app.record))!
-        for (const limit of step % 25 === 0 ? [2, 20, 3] : [2, 20]) {
-          const expected = copy.pages(record, limit)
-          const served = await pagesOf(history, limit)
-          expect(
-            served.map((page) => page.entries),
-            `revision ${revisionOf(record)}, ${limit} a page`
-          ).toEqual(expected.map((page) => page.entries))
-          expect(served.map((page) => page.nextBefore !== undefined)).toEqual(
-            expected.map((page) => page.nextBefore !== undefined)
-          )
-          for (const page of served) {
-            expect(page.generation).toBeGreaterThanOrEqual(HOST_THREAD_LOG_HISTORY_GENERATION_BASE)
-            expect(decodeHostThreadHistoryPage(page).ok).toBe(true)
-            for (const entry of page.entries) {
-              if (!entry.tools?.length) continue
-              if (entry.role === 'tool') drawn.stacks += 1
-              else if (entry.tools[0].id.startsWith('l')) drawn.lanes += 1
-              else drawn.runs += 1
+    it.each(SEED_PORTS)(
+      'equal the full copy at every revision of a random history, across rotation and compaction, seeded with %s',
+      async (_, portOf) => {
+        const app = new App(directory, { maxJournalBytes: 24 * 1024 })
+        const copy = fullCopyOf(app)
+        const port = portOf(directory)
+        const history = open({ windowMessages: 6, windowRuns: 3 }, port)
+        const random = seeded(11)
+        const drawn = { stacks: 0, lanes: 0, runs: 0 }
+        for (let step = 0; step < 300; step += 1) {
+          randomChange(app, random, step)
+          if (app.compactor.pending > 0 && random(3) === 0) await app.compact()
+          const record = app.records.get(revisionOf(app.record))!
+          for (const limit of step % 25 === 0 ? [2, 20, 3] : [2, 20]) {
+            const expected = copy.pages(record, limit)
+            const served = await pagesOf(history, limit)
+            expect(
+              served.map((page) => page.entries),
+              `revision ${revisionOf(record)}, ${limit} a page`
+            ).toEqual(expected.map((page) => page.entries))
+            expect(served.map((page) => page.nextBefore !== undefined)).toEqual(
+              expected.map((page) => page.nextBefore !== undefined)
+            )
+            for (const page of served) {
+              expect(page.generation).toBeGreaterThanOrEqual(
+                HOST_THREAD_LOG_HISTORY_GENERATION_BASE
+              )
+              expect(decodeHostThreadHistoryPage(page).ok).toBe(true)
+              for (const entry of page.entries) {
+                if (!entry.tools?.length) continue
+                if (entry.role === 'tool') drawn.stacks += 1
+                else if (entry.tools[0].id.startsWith('l')) drawn.lanes += 1
+                else drawn.runs += 1
+              }
             }
           }
         }
+        const stats = history.stats()
+        if (process.env.HISTORY_TEST_REPORT === '1') {
+          console.log(
+            JSON.stringify({
+              revisions: revisionOf(app.record),
+              stats,
+              journal: app.journal.stats().compactionsAdopted,
+              follower: history.follower.stats()
+            })
+          )
+        }
+        // Tool rows were served from tool messages, from lanes' results and from runs.
+        expect(drawn.stacks).toBeGreaterThan(50)
+        expect(drawn.lanes).toBeGreaterThan(10)
+        expect(drawn.runs).toBeGreaterThan(10)
+        // Every path was taken: tail and older pages from the window and from the record.
+        expect(stats.tailPages.window).toBeGreaterThan(0)
+        expect(stats.tailPages.record).toBeGreaterThan(0)
+        expect(stats.olderPages.window).toBeGreaterThan(0)
+        expect(stats.olderPages.record).toBeGreaterThan(0)
+        expect(app.journal.stats().compactionsAdopted).toBeGreaterThan(0)
+        expect(history.follower.stats().seeds.cold).toBe(1)
+        expect(history.follower.stats().segmentsOpened).toBeGreaterThan(3)
+        // Seeds the history asked for came as windows too.
+        if ('windows' in port) {
+          expect(port.windows).toBe(port.requests.filter((request) => request.window).length)
+          expect(port.windows).toBeGreaterThan(1)
+        }
+      },
+      120_000
+    )
+
+    it('are not served from a window that does not say what the rows before it show', async () => {
+      const app = new App(directory)
+      for (let index = 0; index < 4; index += 1) {
+        app.change((next) => next.messages.push(message(`m${index}`, 'user', `${index}`)))
       }
-      const stats = history.stats()
-      if (process.env.HISTORY_TEST_REPORT === '1') {
-        console.log(
-          JSON.stringify({
-            revisions: revisionOf(app.record),
-            stats,
-            journal: app.journal.stats().compactionsAdopted,
-            follower: history.follower.stats()
-          })
+      const port = windowSeedPortOf(directory)
+      const history = open(
+        { windowMessages: 2 },
+        {
+          seed: async (request) => {
+            const seed = await port.seed(request)
+            if (!seed || !request.window) return seed
+            // Lists as they should be, but a count no record has.
+            return {
+              ...seed,
+              entriesBefore: {
+                shown: -1,
+                heldRunIds: [],
+                missingRunIds: [],
+                missingOverflow: false
+              }
+            } as never
+          }
+        }
+      )
+      await expect(history.threadHistory({ threadId: CHAT, limit: 2 })).rejects.toThrow(
+        'no generation settled'
+      )
+      expect(history.follower.stats().observerFailures).toBeGreaterThan(0)
+      const fine = open({ windowMessages: 2 }, port)
+      expect(
+        (await fine.threadHistory({ threadId: CHAT, limit: 3 })).entries.map(
+          (entry) => entry.entryId
         )
-      }
-      // Tool rows were served from tool messages, from lanes' results and from runs.
-      expect(drawn.stacks).toBeGreaterThan(50)
-      expect(drawn.lanes).toBeGreaterThan(10)
-      expect(drawn.runs).toBeGreaterThan(10)
-      // Every path was taken: tail and older pages from the window and from the record.
-      expect(stats.tailPages.window).toBeGreaterThan(0)
-      expect(stats.tailPages.record).toBeGreaterThan(0)
-      expect(stats.olderPages.window).toBeGreaterThan(0)
-      expect(stats.olderPages.record).toBeGreaterThan(0)
-      expect(app.journal.stats().compactionsAdopted).toBeGreaterThan(0)
-      expect(history.follower.stats().seeds.cold).toBe(1)
-      expect(history.follower.stats().segmentsOpened).toBeGreaterThan(3)
-    }, 120_000)
+      ).toEqual(['m1', 'm2', 'm3'])
+    })
   })
 
   describe('deltas', () => {
-    it('leave a client that applies them with the history of one that loads it again', async () => {
-      for (const [seed, windowMessages, limit] of [
-        [3, 16, 5],
-        [5, 4, 5],
-        [8, 32, 3]
-      ] as const) {
-        const local = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
-        const app = new App(local, { maxJournalBytes: 24 * 1024 }, thread())
-        const history = new HostThreadLogHistory({
-          chatId: CHAT,
-          directory: local,
-          seedPort: seedPortOf(local),
-          windowMessages,
-          windowRuns: 3
-        })
-        try {
-          const random = seeded(seed)
-          const client = new TerminalClient(history, limit)
-          await client.load()
-          for (let step = 0; step < 400; step += 1) {
-            randomChange(app, random, step)
-            if (app.compactor.pending > 0 && random(3) === 0) await app.compact()
-            if (random(2) === 0) {
-              await client.refresh()
-              expectClientOf(client, app, `seed ${seed}, step ${step}`)
+    it.each(SEED_PORTS)(
+      'leave a client that applies them with the history of one that loads it again, seeded with %s',
+      async (_, portOf) => {
+        for (const [seed, windowMessages, limit] of [
+          [3, 16, 5],
+          [5, 4, 5],
+          [8, 32, 3]
+        ] as const) {
+          const local = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
+          const app = new App(local, { maxJournalBytes: 24 * 1024 }, thread())
+          const history = new HostThreadLogHistory({
+            chatId: CHAT,
+            directory: local,
+            seedPort: portOf(local),
+            windowMessages,
+            windowRuns: 3
+          })
+          try {
+            const random = seeded(seed)
+            const client = new TerminalClient(history, limit)
+            await client.load()
+            for (let step = 0; step < 400; step += 1) {
+              randomChange(app, random, step)
+              if (app.compactor.pending > 0 && random(3) === 0) await app.compact()
+              if (random(2) === 0) {
+                await client.refresh()
+                expectClientOf(client, app, `seed ${seed}, step ${step}`)
+              }
+              // An older page comes from the newest revision while the rows the client
+              // held are as old as its cursor; its next poll brings them together.
+              if (random(6) === 0 && (await client.older())) {
+                await client.refresh()
+                expectClientOf(client, app, `seed ${seed}, step ${step}, older page`)
+              }
             }
-            // An older page comes from the newest revision while the rows the client
-            // held are as old as its cursor; its next poll brings them together.
-            if (random(6) === 0 && (await client.older())) {
-              await client.refresh()
-              expectClientOf(client, app, `seed ${seed}, step ${step}, older page`)
+            await client.refresh()
+            expectClientOf(client, app, `seed ${seed}, at the end`)
+            const fresh = new TerminalClient(history, limit)
+            await fresh.load()
+            expect(client.rows.slice(client.rows.length - fresh.rows.length)).toEqual(fresh.rows)
+            expect(client.deltasApplied, `seed ${seed}: deltas were applied`).toBeGreaterThan(50)
+            expect(client.olderPages).toBeGreaterThan(5)
+            // An older page asked for in a generation that has ended is refused, as the full copy refuses it.
+            for (const failure of client.olderFailures)
+              expect(failure).toBe('History generation mismatch')
+            if (process.env.HISTORY_TEST_REPORT === '1') {
+              console.log(
+                JSON.stringify({
+                  seed,
+                  windowMessages,
+                  limit,
+                  deltasApplied: client.deltasApplied,
+                  reloads: client.reloads,
+                  olderPages: client.olderPages,
+                  olderFailures: client.olderFailures.length,
+                  stats: history.stats(),
+                  memory: history.memory(),
+                  follower: history.follower.stats().seeds
+                })
+              )
             }
+          } finally {
+            history.close()
+            removeTemporaryDirectory(local)
           }
-          await client.refresh()
-          expectClientOf(client, app, `seed ${seed}, at the end`)
-          const fresh = new TerminalClient(history, limit)
-          await fresh.load()
-          expect(client.rows.slice(client.rows.length - fresh.rows.length)).toEqual(fresh.rows)
-          expect(client.deltasApplied, `seed ${seed}: deltas were applied`).toBeGreaterThan(50)
-          expect(client.olderPages).toBeGreaterThan(5)
-          // An older page asked for in a generation that has ended is refused, as the full copy refuses it.
-          for (const failure of client.olderFailures)
-            expect(failure).toBe('History generation mismatch')
-          if (process.env.HISTORY_TEST_REPORT === '1') {
-            console.log(
-              JSON.stringify({
-                seed,
-                windowMessages,
-                limit,
-                deltasApplied: client.deltasApplied,
-                reloads: client.reloads,
-                olderPages: client.olderPages,
-                olderFailures: client.olderFailures.length,
-                stats: history.stats(),
-                memory: history.memory(),
-                follower: history.follower.stats().seeds
-              })
-            )
-          }
-        } finally {
-          history.close()
-          removeTemporaryDirectory(local)
         }
-      }
-    }, 120_000)
+      },
+      120_000
+    )
   })
 })

@@ -64,6 +64,10 @@ import { writeHostStderr } from '../host-runtime/HostStdioGuard'
 import { HostThreadHistoryRouter } from '../host-runtime/HostThreadHistoryRouter'
 import { HostThreadLogCatalogueSeed } from '../host-runtime/HostThreadLogCatalogueSeed'
 import type { HostThreadLogSeedPort } from '../host-runtime/HostThreadLogFollower'
+import {
+  createHostThreadLogWorkerSeed,
+  type HostThreadLogWorkerSeed
+} from '../host-runtime/HostThreadLogWorkerSeed'
 import { HostThreadOwnerService, threadLogDirectory } from '../host-runtime/HostThreadOwnerService'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
@@ -234,10 +238,14 @@ export interface HostNodeProductionServerOptions {
   readonly createListener?: (options: HostLocalServerOptions) => HostNodeProductionListener
   /**
    * What a followed thread's log is seeded from, with the thread log authority
-   * switch on. Defaults to the thread catalogue's decoder; a Host without a
-   * catalogue serves every thread's history from its full copy.
+   * switch on. Defaults to the seed worker, which loads the thread from its
+   * log off the Host loop; where its compiled entry is missing (a Host run
+   * from source), to the thread catalogue's decoder; a Host without either
+   * serves every thread's history from its full copy.
    */
   readonly threadLogSeedPort?: HostThreadLogSeedPort
+  /** The seed worker's compiled entry; defaults to the one the Host build emits. */
+  readonly threadLogSeedWorkerEntry?: string
   /**
    * Machine-wide registry publisher (S1b). Absent means nothing is published
    * and the self-check never runs; the lease lifetime is unaffected.
@@ -443,6 +451,7 @@ export class HostNodeProductionServer {
   private threadCatalogue: ThreadCatalogueClient | null = null
   /** Set only with the thread log authority switch on: app-owned threads' history from their logs. */
   private threadHistoryRouter: HostThreadHistoryRouter | null = null
+  private threadLogWorkerSeed: HostThreadLogWorkerSeed | null = null
   private threadCatalogueMirror: ThreadCatalogueMirror | null = null
   private threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
   private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
@@ -921,14 +930,23 @@ export class HostNodeProductionServer {
       await threadOwners.start()
       if (this.stopRequested) return
       if (threadOwners.mode === 'on') {
+        const workerSeed = this.options.threadLogSeedPort
+          ? null
+          : createHostThreadLogWorkerSeed({
+              directory: threadLogDirectory(this.lease.path),
+              ...(this.options.threadLogSeedWorkerEntry
+                ? { entryPath: this.options.threadLogSeedWorkerEntry }
+                : {})
+            })
+        this.threadLogWorkerSeed = workerSeed
         const catalogueSeed =
-          !this.options.threadLogSeedPort && this.threadCatalogue
+          !this.options.threadLogSeedPort && !workerSeed && this.threadCatalogue
             ? new HostThreadLogCatalogueSeed({
                 catalogue: this.threadCatalogue,
                 directory: threadLogDirectory(this.lease.path)
               })
             : null
-        const seedPort = this.options.threadLogSeedPort ?? catalogueSeed
+        const seedPort = this.options.threadLogSeedPort ?? workerSeed ?? catalogueSeed
         if (seedPort) {
           this.threadHistoryRouter = new HostThreadHistoryRouter({
             profilePath: this.lease.path,
@@ -948,6 +966,7 @@ export class HostNodeProductionServer {
           ...(this.threadHistoryRouter
             ? { threadLogHistory: () => this.threadHistoryRouter?.snapshot() ?? null }
             : {}),
+          ...(workerSeed ? { threadLogSeeds: () => workerSeed.stats() } : {}),
           ...(catalogueSeed ? { threadLogSeeds: () => catalogueSeed.stats() } : {})
         })
       }
@@ -1038,6 +1057,9 @@ export class HostNodeProductionServer {
     }
     this.threadHistoryRouter?.close()
     this.threadHistoryRouter = null
+    const workerSeed = this.threadLogWorkerSeed
+    this.threadLogWorkerSeed = null
+    await workerSeed?.close()
     this.hostRecovery?.dispose()
     this.threadRecovery?.dispose()
     try {

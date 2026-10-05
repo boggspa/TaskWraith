@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { buildSync } from 'esbuild'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ThreadAuthorityFiles } from '../host-shared/thread-log/ThreadAuthorityFile'
@@ -24,6 +25,7 @@ import {
 import type { HostStandaloneCompositionInput } from '../host-runtime/HostStandaloneComposition'
 import { HostThreadHistoryRouter } from '../host-runtime/HostThreadHistoryRouter'
 import { HOST_THREAD_LOG_HISTORY_GENERATION_BASE } from '../host-runtime/HostThreadLogHistory'
+import { HostThreadLogWorkerSeed } from '../host-runtime/HostThreadLogWorkerSeed'
 import type { HostThreadOwnerService } from '../host-runtime/HostThreadOwnerService'
 import { deriveChatRecordMutation } from '../main/store/ChatRecordMutation'
 import { createIncrementalChatJournal } from '../main/store/IncrementalChatJournal'
@@ -343,6 +345,20 @@ function appLoadSeed(profile: string) {
   }
 }
 
+/** The seed worker's entry, bundled into the profile's folder as the Host build compiles it. */
+function seedWorkerEntry(profile: string): string {
+  const entryPath = path.join(profile, 'seed-worker.cjs')
+  buildSync({
+    entryPoints: [path.join(__dirname, '..', 'host-runtime', 'HostThreadLogSeedWorkerEntry.ts')],
+    outfile: entryPath,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    logLevel: 'silent'
+  })
+  return entryPath
+}
+
 async function own(profile: string, writerId = 'desk-1'): Promise<void> {
   await new ThreadAuthorityFiles(profile).write({
     threadId: CHAT,
@@ -480,6 +496,35 @@ describe('HostNodeProductionServer: thread history', () => {
     } finally {
       await h.server.stop()
     }
+  })
+
+  it('on, seeds a followed thread from its log in a worker, and ends the worker when it stops', async () => {
+    const { environment } = counted({ [THREAD_LOG_AUTHORITY_ENV]: '1' })
+    const h = harness(environment, (profile) => ({
+      threadLogSeedWorkerEntry: seedWorkerEntry(profile)
+    }))
+    writeLog(h.profile, 3)
+    await own(h.profile)
+    const closed = vi.spyOn(HostThreadLogWorkerSeed.prototype, 'close')
+    await h.server.start()
+    const input = h.composition()
+    const page = await input.threadHistoryProvider!({ threadId: CHAT, limit: 2 })
+    expect(page.generation).toBeGreaterThanOrEqual(HOST_THREAD_LOG_HISTORY_GENERATION_BASE)
+    expect(page.entries.map((entry) => entry.entryId)).toEqual(['log-3', 'log-4'])
+    const sections = input.perf!.instrumentation!.snapshot().sections as Record<
+      string,
+      Record<string, unknown>
+    >
+    expect(sections.threadLogSeeds).toMatchObject({
+      port: 'worker',
+      windows: 1,
+      failures: 0,
+      workerStarts: 1
+    })
+    expect(sections.threadLogHistory).toMatchObject({ served: { log: 1 } })
+    expect(closed).not.toHaveBeenCalled()
+    await h.server.stop()
+    expect(closed).toHaveBeenCalledTimes(1)
   })
 
   it('on, lets every follower go when it stops', async () => {

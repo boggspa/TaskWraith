@@ -50,7 +50,8 @@ import {
   type HostThreadLogRecord,
   type HostThreadLogSeedPort,
   type HostThreadLogSeedReason,
-  type HostThreadLogSeedRequest
+  type HostThreadLogSeedRequest,
+  type HostThreadLogWindowSeed
 } from './HostThreadLogFollower'
 
 /**
@@ -273,6 +274,34 @@ function seedPortOf(directory: string): HostThreadLogSeedPort & {
       requests.push(request)
       await settle()
       return appLoad(directory) as unknown as HostThreadLogRecord | null
+    }
+  }
+}
+
+/** A port that cuts the app's own load to the follower's window, as a load off the event loop does. */
+function windowPortOf(directory: string): HostThreadLogSeedPort & {
+  readonly requests: HostThreadLogSeedRequest[]
+  readonly answered: HostThreadLogWindowSeed[]
+} {
+  const requests: HostThreadLogSeedRequest[] = []
+  const answered: HostThreadLogWindowSeed[] = []
+  return {
+    requests,
+    answered,
+    async seed(request) {
+      requests.push(request)
+      await settle()
+      const record = appLoad(directory) as unknown as HostThreadLogRecord | null
+      if (!record || !request.window) return record
+      const seed: HostThreadLogWindowSeed = {
+        kind: 'window',
+        ...HostThreadLogFollower.windowOf(record, request.window),
+        readFrom: [],
+        entriesBefore: { shown: 0, heldRunIds: [], missingRunIds: [], missingOverflow: false }
+      }
+      answered.push(seed)
+      // As it crosses from a worker: a copy.
+      return structuredClone(seed)
     }
   }
 }
@@ -550,7 +579,18 @@ describe('following a thread log', () => {
         'tool_activities_splice',
         'tool_activity_put'
       ])
-      expect(seedPort.requests).toEqual([{ chatId: CHAT, reason: 'cold' }])
+      // Each request names the follower's window, which a port may cut the record to.
+      expect(seedPort.requests).toEqual([
+        {
+          chatId: CHAT,
+          reason: 'cold',
+          window: {
+            messages: HOST_THREAD_LOG_WINDOW_MESSAGES,
+            runs: HOST_THREAD_LOG_WINDOW_RUNS,
+            maxViewBytes: HOST_THREAD_LOG_MAX_VIEW_BYTES
+          }
+        }
+      ])
       expect(follower.stats()).toMatchObject({
         seeds: noSeedsBut({ cold: 1 }),
         batchesApplied: steps.length,
@@ -841,6 +881,335 @@ describe('following a thread log', () => {
       await follower.poll()
       expect(clone(before)).toEqual(frozen)
       expectViewOf(follower, app.record)
+    })
+  })
+
+  describe('window seeds', () => {
+    it('build the view a whole record builds, which then takes every batch alike', async () => {
+      // Seeded, so a failure names its history.
+      for (const seed of [3, 19, 77]) {
+        const local = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
+        try {
+          await windowAgainstRecord(local, seed, 300)
+        } finally {
+          removeTemporaryDirectory(local)
+        }
+      }
+    }, 120_000)
+
+    /**
+     * The worker folds the waiting compaction, which the journal adopts after an
+     * unlink on the thread pool: waited for by the clock, not by turns of the loop.
+     */
+    async function compactPatiently(app: App): Promise<void> {
+      const adopted = app.journal.stats().compactionsAdopted
+      app.compactor.fold()
+      const until = Date.now() + 10_000
+      while (app.journal.stats().compactionsAdopted === adopted) {
+        if (Date.now() > until) throw new Error('the compaction was not adopted')
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+    }
+
+    /**
+     * Two followers of one log with the same bounds, one seeded with whole
+     * records and one with windows, reseeded together now and then: after every
+     * batch they hold the same view, as the window carries every fact about the
+     * rows outside it that the follower keeps (twin ids, missing runs, sizes).
+     */
+    async function windowAgainstRecord(
+      local: string,
+      seed: number,
+      changes: number
+    ): Promise<void> {
+      const random = randomOf(seed)
+      const app = new App(
+        local,
+        { maxJournalBytes: 16 * 1024 },
+        thread({ ensemble: { participants: [{ id: 'seat-1' }] } as never })
+      )
+      const bounds = { windowMessages: 5, windowRuns: 3, maxViewBytes: 4000 }
+      const whole = new HostThreadLogFollower({
+        chatId: CHAT,
+        directory: local,
+        seedPort: seedPortOf(local),
+        ...bounds
+      })
+      const windowPort = windowPortOf(local)
+      const windowed = new HostThreadLogFollower({
+        chatId: CHAT,
+        directory: local,
+        seedPort: windowPort,
+        ...bounds
+      })
+      try {
+        let made = 0
+        for (let step = 0; step < changes; step += 1) {
+          const choice = random(17)
+          const messages = app.record.messages
+          const runs = app.record.runs
+          if (choice === 0) {
+            app.operations([
+              {
+                type: 'ensemble_participant_patch',
+                participantId: 'seat-1',
+                set: { order: step },
+                clear: []
+              }
+            ])
+          } else if (choice === 1) {
+            app.change((next) => next.runs.push(run(`run-${made++}`)))
+          } else if (choice === 2 && runs.length > 0) {
+            // A run id a run already has.
+            const twin = runs[random(runs.length)].runId
+            app.change((next) => next.runs.push(run(twin, { status: `twin ${step}` })))
+          } else if (choice === 3 && runs.length > 0) {
+            const at = random(runs.length)
+            app.change((next) => (next.runs[at].status = `s${step}`))
+          } else if (choice === 4 && runs.length > 2) {
+            app.change((next) => next.runs.splice(random(next.runs.length), 1))
+          } else if (choice === 5 && messages.length > 0) {
+            app.change((next) => next.messages.splice(random(messages.length), 1 + random(2)))
+          } else if (choice === 6) {
+            const named =
+              random(3) === 0
+                ? `gone-${random(3)}`
+                : runs.length > 0
+                  ? runs[random(runs.length)].runId
+                  : undefined
+            app.change((next) =>
+              next.messages.splice(
+                random(messages.length + 1),
+                0,
+                message(`msg-${made++}`, 'assistant', `x${step}`, named ? { runId: named } : {})
+              )
+            )
+          } else if (choice === 7 && messages.length > 0) {
+            // An id a message already has.
+            const twin = messages[random(messages.length)].id
+            app.change((next) =>
+              next.messages.splice(
+                random(messages.length + 1),
+                0,
+                message(twin, 'user', `t${step}`)
+              )
+            )
+          } else if (choice === 8) {
+            // Large enough that the byte bound, not the count, ends the window.
+            const content = `${step} `.padEnd(400 + random(1200), '.')
+            app.change((next) => next.messages.push(message(`msg-${made++}`, 'user', content)))
+          } else if (choice === 9 && messages.length > 0) {
+            const at = random(messages.length)
+            app.change((next) => (next.messages[at].content += ` ${step}`))
+          } else if (choice === 10 && messages.length > 0) {
+            const at = random(messages.length)
+            app.change((next) => (next.messages[at].role = random(2) === 0 ? 'tool' : 'user'))
+          } else if (choice === 11 && messages.length > 0) {
+            // By id, as a stream appends: it reaches the first message with the id, which may be a twin before the window.
+            const id = messages[random(messages.length)].id
+            app.operations([{ type: 'message_content_append', messageId: id, content: ` ${step}` }])
+          } else if (choice === 12 && runs.length > 0) {
+            // By id too: it reaches the first run with the id.
+            const runId = runs[random(runs.length)].runId
+            app.operations([{ type: 'run_put', runId, run: run(runId, { status: `put ${step}` }) }])
+          } else if (choice === 13) {
+            // Large enough that the byte bound ends the newest runs too.
+            const note = `${step} `.padEnd(600 + random(900), '.')
+            app.change((next) => next.runs.push(run(`run-${made++}`, { note } as never)))
+          } else {
+            app.change((next) => next.messages.push(message(`msg-${made++}`, 'user', `${step}`)))
+          }
+          // Folded before the next append, which would leave the fold superseded.
+          if (app.compactor.pending > 0) await compactPatiently(app)
+          if (random(3) === 0) continue
+          if (random(4) === 0) {
+            whole.requestSeed()
+            windowed.requestSeed()
+          }
+          await catchUp(whole)
+          await catchUp(windowed)
+          const note = `seed ${seed}, step ${step}`
+          expect(windowed.view(), note).toEqual(whole.view())
+          expect(windowed.memory(), note).toEqual(whole.memory())
+          const [a, b] = [whole.stats(), windowed.stats()]
+          expect(b.seeds, note).toEqual(a.seeds)
+          expect(b.olderMessageOperations, note).toBe(a.olderMessageOperations)
+          expect(b.olderRunOperations, note).toBe(a.olderRunOperations)
+          expect(b.batchesApplied, note).toBe(a.batchesApplied)
+        }
+        await catchUp(whole)
+        await catchUp(windowed)
+        expect(windowed.view()).toEqual(whole.view())
+        expectViewOf(windowed, appLoad(local)!)
+        // Every seed was a window, and some came after the first.
+        expect(windowPort.answered.length).toBe(windowPort.requests.length)
+        expect(windowPort.answered.length).toBeGreaterThan(10)
+        expect(windowPort.requests.every((request) => request.window)).toBe(true)
+        expect(windowPort.requests[0].window).toEqual({ messages: 5, runs: 3, maxViewBytes: 4000 })
+        expect(windowed.stats().observerFailures).toBe(0)
+      } finally {
+        whole.close()
+        windowed.close()
+      }
+    }
+
+    it('are refused when they are not a window of this follower, which asks again at its next poll', async () => {
+      const app = new App(
+        directory,
+        {},
+        thread({
+          messages: [message('m0', 'user', 'a'), message('m1', 'user', 'b')],
+          runs: [run('r0'), run('r1'), run('r2')]
+        })
+      )
+      const spoilers: Array<[string, (seed: HostThreadLogWindowSeed) => unknown]> = [
+        ['cut to other bounds', (seed) => ({ ...seed, bounds: { ...seed.bounds, messages: 2 } })],
+        [
+          'of another thread',
+          (seed) => ({ ...seed, shell: { ...seed.shell, appChatId: 'chat-2' } })
+        ],
+        ['at another revision', (seed) => ({ ...seed, revision: seed.revision + 1 })],
+        ['with a size missing', (seed) => ({ ...seed, messageBytes: seed.messageBytes.slice(1) })],
+        ['with fewer messages than it holds', (seed) => ({ ...seed, messageCount: 0 })],
+        ['with its runs out of order', (seed) => ({ ...seed, runs: [...seed.runs].reverse() })],
+        ['without one of its newest runs', (seed) => ({ ...seed, runs: seed.runs.slice(1) })],
+        ['with a run past the last', (seed) => ({ ...seed, runCount: 1, runsFrom: 0 })],
+        [
+          'with a read position that is not one',
+          (seed) => ({ ...seed, readFrom: [{ dev: 1, ino: 2n, offset: 0 }] })
+        ],
+        ['without its id lists', (seed) => ({ ...seed, missingRunIds: undefined })]
+      ]
+      for (const [what, spoil] of spoilers) {
+        const port = windowPortOf(directory)
+        let spoilt = true
+        const follower = follow(
+          { windowMessages: 1, windowRuns: 2 },
+          {
+            seed: async (request) => {
+              const seed = (await port.seed(request)) as HostThreadLogWindowSeed
+              return (spoilt ? spoil(seed) : seed) as never
+            }
+          }
+        )
+        await expect(follower.poll(), what).rejects.toThrow('not a window of this thread')
+        expect(follower.view(), what).toBeNull()
+        spoilt = false
+        expect(await follower.poll(), what).toMatchObject({ status: 'following', caughtUp: true })
+        expectViewOf(follower, app.record, { messages: 1, runs: 2 })
+        expect(follower.stats().seeds, what).toEqual(noSeedsBut({ cold: 1 }))
+      }
+    })
+
+    it('carry the ids held messages share with older ones, so a change by id reaches the older', async () => {
+      const app = new App(
+        directory,
+        {},
+        thread({
+          messages: [
+            message('twin', 'user', 'older'),
+            message('a', 'user', 'a'),
+            message('twin', 'user', 'held')
+          ]
+        })
+      )
+      const follower = follow({ windowMessages: 1 }, windowPortOf(directory))
+      await follower.poll()
+      // The shared apply code reaches the first message with the id: the one before the window.
+      app.operations([{ type: 'message_content_append', messageId: 'twin', content: ' more' }])
+      await follower.poll()
+      expect(app.record.messages[0].content).toBe('older more')
+      expectViewOf(follower, app.record, { messages: 1 })
+      expect(follower.stats().olderMessageOperations).toBe(1)
+    })
+
+    it('carry where the newest runs begin when the byte bound, not the count, ended them', async () => {
+      const big = (id: string): ChatRun => run(id, { note: `${id} `.padEnd(1_500, '.') } as never)
+      const app = new App(
+        directory,
+        {},
+        thread({ runs: [big('r0'), big('r1'), big('r2'), big('r3'), big('r4')] })
+      )
+      // The count would hold every run; three are over the bytes.
+      const bounds = { windowRuns: 8, maxViewBytes: 4_000 }
+      const whole = follow(bounds)
+      const windowed = follow(bounds, windowPortOf(directory))
+      await whole.poll()
+      await windowed.poll()
+      expect(windowed.view()!.runs.map((held) => held.index)).toEqual([3, 4])
+      // A run put in before them is not one of them, though the count has room for it.
+      app.change((next) => next.runs.splice(1, 0, run('new')))
+      await whole.poll()
+      await windowed.poll()
+      expect(windowed.view()).toEqual(whole.view())
+      expectViewOf(windowed, app.record)
+    })
+
+    it('are refused from behind the log, as a record is', async () => {
+      const app = new App(directory, { maxJournalBytes: 1_000 })
+      for (let index = 0; index < 20 && app.compactor.pending === 0; index += 1) {
+        app.change((next) =>
+          next.messages.push(message(`m${index}`, 'user', `${index}`.repeat(200)))
+        )
+      }
+      await compactPatiently(app)
+      // The full copy a strict reader falls back to after a power cut, cut to the window.
+      const fullCopy = clone(app.records.get(1)!) as unknown as HostThreadLogRecord
+      const follower = follow(
+        {},
+        {
+          seed: async (request) => ({
+            kind: 'window',
+            ...HostThreadLogFollower.windowOf(fullCopy, request.window!),
+            readFrom: [],
+            entriesBefore: { shown: 0, heldRunIds: [], missingRunIds: [], missingOverflow: false }
+          })
+        }
+      )
+      expect(await follower.poll()).toEqual({
+        status: 'unfollowable',
+        why: 'seed-behind-checkpoint'
+      })
+      expect(follower.view()).toBeNull()
+      expect(follower.stats()).toMatchObject({ seedsRefused: 1, seeds: noSeedsBut({}) })
+    })
+
+    it('are told to the observer, with what the port worked out about the rows before the window', async () => {
+      const app = new App(
+        directory,
+        {},
+        thread({ messages: [message('m0', 'user', 'a'), message('m1', 'user', 'b')] })
+      )
+      const port = windowPortOf(directory)
+      const events: string[] = []
+      const entriesBefore = {
+        shown: 1,
+        heldRunIds: ['r9'],
+        missingRunIds: [],
+        missingOverflow: false
+      }
+      const follower = follow(
+        {
+          windowMessages: 1,
+          observer: {
+            seeded: () => events.push('record'),
+            seededWindow: (seed) =>
+              events.push(`window ${seed.revision} ${JSON.stringify(seed.entriesBefore)}`),
+            applied: (applied) => events.push(`applied ${applied.batch.revision}`)
+          }
+        },
+        {
+          seed: async (request) => ({
+            ...((await port.seed(request)) as HostThreadLogWindowSeed),
+            entriesBefore
+          })
+        }
+      )
+      await follower.poll()
+      app.change((next) => next.messages.push(message('m2', 'user', 'c')))
+      await follower.poll()
+      expect(events).toEqual([`window 1 ${JSON.stringify(entriesBefore)}`, 'applied 2'])
+      expectViewOf(follower, app.record, { messages: 1 })
     })
   })
 
