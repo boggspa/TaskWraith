@@ -240,6 +240,16 @@ export class HostThreadOwnerRegistry {
     })
   }
 
+  /**
+   * The writer has let go of every grant: its process ended, or its last
+   * connection to this Host closed, which makes the app drop them too. Its
+   * threads go back to the Host, which still folds whatever the writer's file
+   * marks as unpublished before it writes them.
+   */
+  writerGone(writerId: string): string[] {
+    return this.table.writerGone(writerId)
+  }
+
   writerOf(threadId: string): ThreadWriter {
     return this.table.writerOf(threadId)
   }

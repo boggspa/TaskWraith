@@ -380,6 +380,17 @@ describe('PairedHostProjectionGateway', () => {
         params: { threadId: 'thread-1', since: { generation: 3, cursor: 4 } }
       },
       { kind: 'host.shutdown', params: {} },
+      {
+        kind: 'thread.owner',
+        params: {
+          action: 'claim',
+          threadId: 'thread-1',
+          writerId: 'writer-1',
+          claimId: 1,
+          baseRevision: 3,
+          headRevision: 3
+        }
+      },
       { kind: 'host.lease', params: { action: 'acquire' } },
       { kind: 'host.status', params: {} }
     ]) {

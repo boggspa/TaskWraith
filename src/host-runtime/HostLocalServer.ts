@@ -52,6 +52,7 @@ import {
   type HostLocalTransportLeaseParams,
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportSuccessResult,
+  type HostLocalTransportThreadOwnerParams,
   type HostWorkspaceGitReadParams
 } from '../shared/hostProtocolTransport'
 import {
@@ -156,6 +157,19 @@ const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * The Host's answers to `thread.owner`, for the desktop app's connections only.
+ * A server built without one answers the kind as a Host that does not know it.
+ */
+export interface HostLocalServerThreadOwners {
+  answer(
+    connectionId: number,
+    params: HostLocalTransportThreadOwnerParams
+  ): Promise<Extract<HostLocalTransportSuccessResult, { kind: 'thread.owner' }> | 'invalid_payload'>
+  /** The connection closed, the moment its lease is released. */
+  closed(connectionId: number): void
+}
+
 export interface HostLocalServerOptions {
   runCommand?: (
     command: HostCommand,
@@ -223,6 +237,8 @@ export interface HostLocalServerOptions {
    * Leases are per socket: a lease is released the instant its socket drops.
    */
   leases?: HostLeaseRegistry
+  /** Which app process writes each thread (`thread.owner`). */
+  threadOwners?: HostLocalServerThreadOwners
   /**
    * Test-only legacy-Host simulation (`TASKWRAITH_HOST_LEASE_DISABLED`):
    * `disabled` answers `host.lease` and `host.status` exactly as a pre-lease
@@ -848,6 +864,7 @@ export class HostLocalServer {
     // A crashed peer is a kernel close; its lease goes with the socket, so
     // the heartbeat only has to cover the wedged-but-alive client.
     this.leases.closed(state.connectionId)
+    this.options.threadOwners?.closed(state.connectionId)
   }
 
   private onData(state: ClientState, chunk: string): void {
@@ -1143,9 +1160,27 @@ export class HostLocalServer {
         return this.handleCommand(context, frame.id, frame.params)
       case 'twmission.export':
         return this.handleTwMissionExport(context, frame.id)
+      case 'thread.owner':
+        return this.handleThreadOwner(state, frame.id, frame.params)
       default:
         return null
     }
+  }
+
+  private async handleThreadOwner(
+    state: ClientState,
+    id: string,
+    params: HostLocalTransportThreadOwnerParams
+  ): Promise<HostLocalTransportHostFrame | null> {
+    const owners = this.options.threadOwners
+    if (!owners) return null
+    // Only the desktop app writes a thread's log.
+    if (state.binding?.authenticatedClient.clientClass !== 'desktop') {
+      return errorFrame(id, { code: 'unauthorized' })
+    }
+    const result = await owners.answer(state.connectionId, params)
+    if (result === 'invalid_payload') return errorFrame(id, { code: 'invalid_payload' })
+    return this.success(id, result)
   }
 
   private async handleSnapshot(

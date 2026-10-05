@@ -2,7 +2,7 @@ import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
 import { hostNodeReceiptSpanChatId } from './hostNodeReceiptSpanChatId'
 import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import { createHostThreadCatalogue } from './ThreadCatalogueHostClient'
 import { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
@@ -61,6 +61,7 @@ import {
 import { HOST_REGISTRY_REFRESH_MS } from '../host-runtime/HostRegistry'
 import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
 import { writeHostStderr } from '../host-runtime/HostStdioGuard'
+import { HostThreadOwnerService } from '../host-runtime/HostThreadOwnerService'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
@@ -884,6 +885,19 @@ export class HostNodeProductionServer {
         )
       }
       this.leases = leaseProtocolDisabled ? null : this.createLeaseRegistry()
+      // Which app process writes each thread (`thread.owner`). The thread log
+      // authority switch is read once, here; grants carry the welcome's epoch.
+      const threadOwners = new HostThreadOwnerService({
+        environment: this.options.environment ?? process.env,
+        transactionalPersist: txnRecordPersistEnabled,
+        profilePath: this.lease.path,
+        incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
+        fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
+        hostRunActive: (threadId) => !this.domain || this.domain.hasRuntimeWorkForThread(threadId),
+        log: writeHostStderr
+      })
+      await threadOwners.start()
+      if (this.stopRequested) return
       this.listener = (this.options.createListener ?? ((input) => new HostLocalServer(input)))({
         userDataPath: this.lease.path,
         hostId: this.identity.hostId,
@@ -905,7 +919,8 @@ export class HostNodeProductionServer {
         onAuthenticatedShutdown: () => this.stopWithoutRetry('stopping on request'),
         subscribeDeltas: (listener) =>
           this.composition!.subscribeDeltas((event) => listener(event.record.envelope)),
-        ...(this.leases ? { leases: this.leases } : { leaseProtocol: 'disabled' as const })
+        ...(this.leases ? { leases: this.leases } : { leaseProtocol: 'disabled' as const }),
+        threadOwners
       })
       await this.listener.start()
       if (this.stopRequested) return
