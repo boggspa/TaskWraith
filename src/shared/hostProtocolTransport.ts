@@ -180,7 +180,10 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   // this wire tolerates in both directions; a new capability name would break
   // every old client's welcome decode, and a new event would just be skipped.
   'host.lease',
-  'host.status'
+  'host.status',
+  // Thread log authority: which process may write a thread. Additive the same
+  // way; an app that meets `unknown_request_kind` keeps saving as it does today.
+  'thread.owner'
 ] as const
 
 export type HostLocalTransportRequestKind = (typeof HOST_LOCAL_TRANSPORT_REQUEST_KINDS)[number]
@@ -191,6 +194,62 @@ export type HostLocalTransportLeaseParams =
   | { action: 'renew'; leaseId: string }
   | { action: 'release'; leaseId: string }
   | { action: 'decline' }
+
+/** Names one grant of a thread: the Host incarnation that gave it, and its number there. */
+export interface HostLocalTransportThreadOwnerEpoch {
+  host: string
+  grant: number
+}
+
+/**
+ * Closed `thread.owner` params, the messages of the Host's thread owner table;
+ * anything else is `invalid_payload`. A claim asks for the thread on top of
+ * the Host's full copy at `baseRevision`, continuing the log at `headRevision`;
+ * `advanced` reports the writer's log head; `release` gives the thread back.
+ */
+export type HostLocalTransportThreadOwnerParams =
+  | {
+      action: 'claim'
+      threadId: string
+      writerId: string
+      claimId: number
+      baseRevision: number
+      headRevision: number
+    }
+  | {
+      action: 'release'
+      threadId: string
+      epoch: HostLocalTransportThreadOwnerEpoch
+      revision: number | null
+    }
+  | {
+      action: 'advanced'
+      threadId: string
+      epoch: HostLocalTransportThreadOwnerEpoch
+      revision: number
+    }
+
+export const HOST_LOCAL_TRANSPORT_THREAD_CLAIM_REFUSALS = [
+  'disabled',
+  'owned_by_other_writer',
+  'host_run_active',
+  'host_ahead',
+  'host_behind'
+] as const
+
+export type HostLocalTransportThreadClaimRefusal =
+  (typeof HOST_LOCAL_TRANSPORT_THREAD_CLAIM_REFUSALS)[number]
+
+export type HostLocalTransportThreadClaimReply =
+  | { threadId: string; claimId: number; granted: true; epoch: HostLocalTransportThreadOwnerEpoch }
+  | {
+      threadId: string
+      claimId: number
+      granted: false
+      reason: HostLocalTransportThreadClaimRefusal
+      /** The thread's durable head as the Host reads it; null when it has no copy. */
+      revision: number | null
+    }
 
 export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = [
   'deltas',
@@ -339,6 +398,13 @@ export type HostLocalTransportRequest =
       kind: 'host.status'
       params: Record<string, never>
     }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.owner'
+      params: HostLocalTransportThreadOwnerParams
+    }
 
 export type HostLocalTransportClientFrame = HostLocalTransportHello | HostLocalTransportRequest
 
@@ -385,6 +451,10 @@ export type HostLocalTransportSuccessResult =
    * deep-decoded past this layer.
    */
   | { kind: 'host.status'; status: HostStatusProjection }
+  | { kind: 'thread.owner'; action: 'claim'; reply: HostLocalTransportThreadClaimReply }
+  /** Whether the message named the thread's current grant; one that did not changes nothing. */
+  | { kind: 'thread.owner'; action: 'release'; released: boolean }
+  | { kind: 'thread.owner'; action: 'advanced'; recorded: boolean }
 
 export type HostLocalTransportResponse =
   | {
@@ -756,6 +826,98 @@ function decodeLeaseParams(
   }
 }
 
+function isRevision(value: unknown): value is number {
+  return isNonNegativeInt(value) && Number.isSafeInteger(value)
+}
+
+function decodeThreadOwnerEpoch(value: unknown): HostLocalTransportThreadOwnerEpoch | null {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    !isBoundedId(value.host) ||
+    !isPositiveInt(value.grant) ||
+    !Number.isSafeInteger(value.grant)
+  ) {
+    return null
+  }
+  return { host: value.host, grant: value.grant }
+}
+
+function decodeThreadOwnerParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostLocalTransportThreadOwnerParams> {
+  if (!isRecord(value) || !isBoundedId(value.threadId)) return fail('invalid_payload')
+  const threadId = value.threadId
+  switch (value.action) {
+    case 'claim':
+      if (
+        Object.keys(value).length !== 6 ||
+        !isBoundedId(value.writerId) ||
+        !isRevision(value.claimId) ||
+        !isRevision(value.baseRevision) ||
+        !isRevision(value.headRevision) ||
+        value.headRevision < value.baseRevision
+      ) {
+        return fail('invalid_payload')
+      }
+      return {
+        ok: true,
+        value: {
+          action: 'claim',
+          threadId,
+          writerId: value.writerId,
+          claimId: value.claimId,
+          baseRevision: value.baseRevision,
+          headRevision: value.headRevision
+        }
+      }
+    case 'release':
+    case 'advanced': {
+      const epoch = decodeThreadOwnerEpoch(value.epoch)
+      const revisionOk =
+        value.action === 'release'
+          ? value.revision === null || isRevision(value.revision)
+          : isRevision(value.revision)
+      if (Object.keys(value).length !== 4 || !epoch || !revisionOk) return fail('invalid_payload')
+      return value.action === 'release'
+        ? {
+            ok: true,
+            value: { action: 'release', threadId, epoch, revision: value.revision as number | null }
+          }
+        : {
+            ok: true,
+            value: { action: 'advanced', threadId, epoch, revision: value.revision as number }
+          }
+    }
+    default:
+      return fail('invalid_payload')
+  }
+}
+
+function decodeThreadClaimReply(value: unknown): HostLocalTransportThreadClaimReply | null {
+  if (!isRecord(value) || !isBoundedId(value.threadId) || !isRevision(value.claimId)) return null
+  if (value.granted === true) {
+    const epoch = decodeThreadOwnerEpoch(value.epoch)
+    if (Object.keys(value).length !== 4 || !epoch) return null
+    return { threadId: value.threadId, claimId: value.claimId, granted: true, epoch }
+  }
+  if (
+    value.granted !== false ||
+    Object.keys(value).length !== 5 ||
+    !(HOST_LOCAL_TRANSPORT_THREAD_CLAIM_REFUSALS as readonly unknown[]).includes(value.reason) ||
+    !(value.revision === null || isRevision(value.revision))
+  ) {
+    return null
+  }
+  return {
+    threadId: value.threadId,
+    claimId: value.claimId,
+    granted: false,
+    reason: value.reason as HostLocalTransportThreadClaimRefusal,
+    revision: value.revision as number | null
+  }
+}
+
 export function decodeHostWorkspaceGitReadParams(
   value: unknown
 ): HostLocalTransportDecodeResult<HostWorkspaceGitReadParams> {
@@ -1065,6 +1227,32 @@ function decodeSuccessResult(
         ok: true,
         value: { kind: 'host.status', status: value.status as unknown as HostStatusProjection }
       }
+    case 'thread.owner':
+      switch (value.action) {
+        case 'claim': {
+          const reply = decodeThreadClaimReply(value.reply)
+          if (Object.keys(value).length !== 3 || !reply) return fail('invalid_payload')
+          return { ok: true, value: { kind: 'thread.owner', action: 'claim', reply } }
+        }
+        case 'release':
+          if (Object.keys(value).length !== 3 || typeof value.released !== 'boolean') {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: { kind: 'thread.owner', action: 'release', released: value.released }
+          }
+        case 'advanced':
+          if (Object.keys(value).length !== 3 || typeof value.recorded !== 'boolean') {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: { kind: 'thread.owner', action: 'advanced', recorded: value.recorded }
+          }
+        default:
+          return fail('invalid_payload')
+      }
     default:
       return fail('invalid_payload')
   }
@@ -1342,6 +1530,20 @@ export function decodeHostLocalTransportClientFrame(
             id: id.value,
             kind: 'host.status',
             params: {}
+          }
+        }
+      }
+      case 'thread.owner': {
+        const params = decodeThreadOwnerParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.owner',
+            params: params.value
           }
         }
       }

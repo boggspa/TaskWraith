@@ -322,6 +322,7 @@ export class PairedHostProjectionGateway {
       case 'workspace.git.read':
       case 'history.since':
       case 'host.shutdown':
+      case 'thread.owner':
       case 'host.lease':
       case 'host.status':
         // The lease kinds included: a phone never holds or inspects the Host

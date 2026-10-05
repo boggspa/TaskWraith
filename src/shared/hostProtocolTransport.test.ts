@@ -27,6 +27,7 @@ import {
   HOST_LOCAL_TRANSPORT_EVENT_KINDS,
   HOST_LOCAL_TRANSPORT_MAX_ID,
   HOST_LOCAL_TRANSPORT_REQUEST_KINDS,
+  HOST_LOCAL_TRANSPORT_THREAD_CLAIM_REFUSALS,
   HOST_LOCAL_TRANSPORT_VERSION,
   HOST_WORKSPACE_GIT_RESULT_MAX_BYTES,
   assertHostLocalTransportErrorBodyFree,
@@ -428,6 +429,20 @@ describe('hostProtocolTransport Wave 3.2', () => {
           break
         case 'host.status':
           frame = { ...base, kind, params: {} }
+          break
+        case 'thread.owner':
+          frame = {
+            ...base,
+            kind,
+            params: {
+              action: 'claim',
+              threadId: 'thread-1',
+              writerId: 'desktop-1',
+              claimId: 1,
+              baseRevision: 4,
+              headRevision: 6
+            }
+          }
           break
         default: {
           const _never: never = kind
@@ -1271,6 +1286,142 @@ describe('hostProtocolTransport Wave 3.2', () => {
           ok: false,
           error: { code: 'invalid_payload' }
         })
+      }
+    })
+  })
+
+  describe('thread owner request kind (thread log authority)', () => {
+    const request = (params: unknown) => ({
+      type: 'request',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: 'req-owner',
+      kind: 'thread.owner',
+      params
+    })
+    const response = (result: unknown) => ({
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: 'r-owner',
+      ok: true,
+      result
+    })
+    const epoch = { host: 'host-a', grant: 3 }
+    const claim = {
+      action: 'claim',
+      threadId: 'thread-1',
+      writerId: 'desktop-1',
+      claimId: 7,
+      baseRevision: 4,
+      headRevision: 6
+    }
+
+    it('adds a request kind only: the event kind set is exactly what it was', () => {
+      expect(HOST_LOCAL_TRANSPORT_REQUEST_KINDS).toContain('thread.owner')
+      expect([...HOST_LOCAL_TRANSPORT_EVENT_KINDS]).toEqual([
+        'deltas',
+        'history',
+        'health',
+        'host.closing'
+      ])
+    })
+
+    it('round-trips claim, release and advanced, and rejects anything else', () => {
+      for (const params of [
+        claim,
+        { ...claim, claimId: 0, baseRevision: 0, headRevision: 0 },
+        { ...claim, headRevision: Number.MAX_SAFE_INTEGER },
+        { action: 'release', threadId: 'thread-1', epoch, revision: 9 },
+        { action: 'release', threadId: 'thread-1', epoch, revision: null },
+        { action: 'advanced', threadId: 'thread-1', epoch, revision: 0 }
+      ]) {
+        const frame = request(params)
+        expect(decodeHostLocalTransportClientFrame(frame), JSON.stringify(params)).toEqual({
+          ok: true,
+          value: frame
+        })
+      }
+      const { writerId: _writerId, ...withoutWriter } = claim
+      for (const params of [
+        {},
+        'claim',
+        { ...claim, action: 'declined' },
+        { ...claim, threadId: '' },
+        { ...claim, threadId: 'x'.repeat(HOST_LOCAL_TRANSPORT_MAX_ID + 1) },
+        withoutWriter,
+        { ...claim, writerId: '' },
+        { ...claim, claimId: -1 },
+        { ...claim, baseRevision: 1.5 },
+        { ...claim, headRevision: Number.MAX_SAFE_INTEGER + 1 },
+        { ...claim, baseRevision: 7 },
+        { ...claim, epoch },
+        { action: 'release', threadId: 'thread-1', epoch },
+        { action: 'release', threadId: 'thread-1', epoch, revision: -1 },
+        { action: 'release', threadId: 'thread-1', revision: 9 },
+        { action: 'release', threadId: 'thread-1', epoch: { ...epoch, grant: 0 }, revision: 9 },
+        { action: 'release', threadId: 'thread-1', epoch: { ...epoch, host: '' }, revision: 9 },
+        { action: 'release', threadId: 'thread-1', epoch: { ...epoch, extra: 1 }, revision: 9 },
+        { action: 'release', threadId: 'thread-1', epoch: [epoch.host, epoch.grant], revision: 9 },
+        { action: 'advanced', threadId: 'thread-1', epoch, revision: null },
+        { action: 'advanced', threadId: 'thread-1', epoch, revision: 9, writerId: 'desktop-1' }
+      ]) {
+        expect(
+          decodeHostLocalTransportClientFrame(request(params)),
+          JSON.stringify(params)
+        ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+      }
+    })
+
+    it('round-trips every owner result and rejects malformed or padded ones', () => {
+      const granted = { threadId: 'thread-1', claimId: 7, granted: true, epoch }
+      const refused = {
+        threadId: 'thread-1',
+        claimId: 7,
+        granted: false,
+        reason: 'host_ahead',
+        revision: 8
+      }
+      for (const result of [
+        { kind: 'thread.owner', action: 'claim', reply: granted },
+        ...HOST_LOCAL_TRANSPORT_THREAD_CLAIM_REFUSALS.map((reason) => ({
+          kind: 'thread.owner',
+          action: 'claim',
+          reply: { ...refused, reason }
+        })),
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, revision: null } },
+        { kind: 'thread.owner', action: 'release', released: true },
+        { kind: 'thread.owner', action: 'release', released: false },
+        { kind: 'thread.owner', action: 'advanced', recorded: true },
+        { kind: 'thread.owner', action: 'advanced', recorded: false }
+      ]) {
+        const frame = response(result)
+        expect(decodeHostLocalTransportHostFrame(frame), JSON.stringify(result)).toEqual({
+          ok: true,
+          value: frame
+        })
+      }
+      const { revision: _revision, ...withoutRevision } = refused
+      for (const result of [
+        { kind: 'thread.owner', action: 'claim' },
+        { kind: 'thread.owner', action: 'claim', reply: granted, extra: 1 },
+        { kind: 'thread.owner', action: 'claim', reply: { ...granted, reason: 'host_ahead' } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...granted, epoch: { host: 'a' } } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...granted, granted: 'yes' } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, reason: 'busy' } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, revision: -1 } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, epoch } },
+        { kind: 'thread.owner', action: 'claim', reply: withoutRevision },
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, threadId: '' } },
+        { kind: 'thread.owner', action: 'claim', reply: { ...refused, claimId: 0.5 } },
+        { kind: 'thread.owner', action: 'release' },
+        { kind: 'thread.owner', action: 'release', released: 1 },
+        { kind: 'thread.owner', action: 'release', released: true, revision: 9 },
+        { kind: 'thread.owner', action: 'advanced', recorded: 'true' },
+        { kind: 'thread.owner', action: 'advanced', released: true },
+        { kind: 'thread.owner', action: 'declined', recorded: true }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame(response(result)), JSON.stringify(result)).toEqual(
+          { ok: false, error: { code: 'invalid_payload' } }
+        )
       }
     })
   })
