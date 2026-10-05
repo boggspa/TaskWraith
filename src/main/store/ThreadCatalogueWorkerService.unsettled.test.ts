@@ -8,7 +8,7 @@
  */
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThreadCatalogue } from './ThreadCatalogue'
@@ -17,6 +17,27 @@ import {
   THREAD_CATALOGUE_RETRY_MAX_MS,
   ThreadCatalogueWorkerService
 } from './ThreadCatalogueWorkerService'
+
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-catalogue-unsettled-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = tmpdir()
+  const made = temporary + sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
 
 const CHAT = 'chat'
 
@@ -29,7 +50,7 @@ describe('a thread the history worker cannot settle yet', () => {
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
-    profile = fs.mkdtempSync(join(tmpdir(), 'catalogue-retry-'))
+    profile = fs.mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX))
     fs.mkdirSync(join(profile, 'chats'))
     fs.writeFileSync(join(profile, 'chats', `${CHAT}.json`), JSON.stringify({ appChatId: CHAT }))
     const writer = new ThreadCatalogue({
@@ -65,7 +86,7 @@ describe('a thread the history worker cannot settle yet', () => {
   afterEach(async () => {
     vi.useRealTimers()
     await service.dispose()
-    fs.rmSync(profile, { recursive: true, force: true })
+    removeTemporaryDirectory(profile)
   })
 
   it('waits twice as long after each import that could not settle it, up to the cap', async () => {
@@ -128,7 +149,7 @@ describe('a thread held by a head and a ticket left without their bytes', () => 
   let profile: string
 
   beforeAll(async () => {
-    directory = fs.mkdtempSync(join(tmpdir(), 'catalogue-damaged-decoder-'))
+    directory = fs.mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX))
     decoderPath = join(directory, 'decoder.cjs')
     await build({
       entryPoints: ['src/main/workers/threadCatalogueDecoder.ts'],
@@ -140,10 +161,10 @@ describe('a thread held by a head and a ticket left without their bytes', () => 
     })
   })
 
-  afterAll(() => fs.rmSync(directory, { recursive: true, force: true }))
+  afterAll(() => removeTemporaryDirectory(directory))
 
   beforeEach(() => {
-    profile = fs.mkdtempSync(join(tmpdir(), 'catalogue-damaged-profile-'))
+    profile = fs.mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX))
     fs.mkdirSync(join(profile, 'chats'))
     fs.writeFileSync(
       join(profile, 'chats', `${CHAT}.json`),
@@ -161,7 +182,7 @@ describe('a thread held by a head and a ticket left without their bytes', () => 
     )
   })
 
-  afterEach(() => fs.rmSync(profile, { recursive: true, force: true }))
+  afterEach(() => removeTemporaryDirectory(profile))
 
   /**
    * A ticket left without its bytes by `desktop-1`, which is gone, and its

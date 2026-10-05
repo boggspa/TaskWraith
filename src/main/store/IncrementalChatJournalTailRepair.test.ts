@@ -5,6 +5,27 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { measureSegmentTail, repairSegmentTornTail } from './IncrementalChatJournalTailRepair'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-tail-repair-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 /** A line is valid when it is JSON with `ok: true`; an empty line is skipped. */
 function isValidLine(line: Buffer): boolean {
   if (line.length === 0) return true
@@ -78,14 +99,14 @@ describe('repairSegmentTornTail', () => {
   let segment: string
 
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tail-repair-'))
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     segment = path.join(directory, 'chat.mutations.jsonl')
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    fs.rmSync(directory, { recursive: true, force: true })
+    removeTemporaryDirectory(directory)
   })
 
   it('reports a missing segment without creating it', () => {

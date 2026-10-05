@@ -19,6 +19,27 @@ import {
 import { createIncrementalChatPersistence } from './IncrementalChatPersistence'
 import type { ChatRecord } from './types'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-append-failure-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 function chat(revision = 1, content = 'initial'): ChatRecord {
   return {
     appChatId: 'chat-1',
@@ -67,7 +88,7 @@ describe('journal append when the write itself goes wrong', () => {
   let scheduled: Array<(error?: NodeJS.ErrnoException | null) => void>
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-append-failure-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     activePath = path.join(baseDir, 'chat-1.mutations.jsonl')
     scheduled = []
   })
@@ -75,7 +96,7 @@ describe('journal append when the write itself goes wrong', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   const writer = (options: IncrementalChatJournalOptions = {}): IncrementalChatJournal =>
@@ -259,7 +280,7 @@ describe('journal append whose line is written but whose sync fails', () => {
   let scheduled: Array<(error?: NodeJS.ErrnoException | null) => void>
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-append-unsynced-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     activePath = path.join(baseDir, 'chat-1.mutations.jsonl')
     scheduled = []
   })
@@ -267,7 +288,7 @@ describe('journal append whose line is written but whose sync fails', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   const writer = (): IncrementalChatJournal =>

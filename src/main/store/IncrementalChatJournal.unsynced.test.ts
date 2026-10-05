@@ -44,6 +44,27 @@ import {
   type SyncCount
 } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-journal-unsynced-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 const ACTIVE = `${CHAT}.mutations.jsonl`
 const SEALED = `${CHAT}.sealed.mutations.jsonl`
@@ -147,7 +168,7 @@ describe('a journal that leaves syncing to the thread barrier', () => {
   }
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-journal-unsynced-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     activePath = path.join(baseDir, ACTIVE)
     sealedPath = path.join(baseDir, SEALED)
     syncs = countSyncs()
@@ -159,7 +180,7 @@ describe('a journal that leaves syncing to the thread barrier', () => {
     syncs.dispose()
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   const writer = (options: IncrementalChatJournalOptions = {}): IncrementalChatJournal =>
@@ -584,7 +605,7 @@ describe.skipIf(process.platform === 'win32')(
     let debt: ThreadDurabilityDebt
 
     beforeEach(() => {
-      baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-journal-power-loss-'))
+      baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       activePath = path.join(baseDir, ACTIVE)
       sealedPath = path.join(baseDir, SEALED)
       disk = watchCrashDisk(baseDir)
@@ -593,7 +614,7 @@ describe.skipIf(process.platform === 'win32')(
 
     afterEach(() => {
       disk.dispose()
-      fs.rmSync(baseDir, { recursive: true, force: true })
+      removeTemporaryDirectory(baseDir)
     })
 
     const writer = (options: IncrementalChatJournalOptions = {}): IncrementalChatJournal =>

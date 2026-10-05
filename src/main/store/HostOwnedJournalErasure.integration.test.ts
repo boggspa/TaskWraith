@@ -21,7 +21,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,13 +37,34 @@ import {
 import type { DurabilityFlusherPorts } from './MainDurabilityFlusher'
 import type { ChatRecord } from './types'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-journal-erasure-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = tmpdir()
+  const made = temporary + sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  rmSync(directory, { recursive: true, force: true })
+}
+
 const profiles: string[] = []
 const shutdowns: Array<() => Promise<void>> = []
 
 afterEach(async () => {
   while (shutdowns.length > 0) await shutdowns.pop()!()
   vi.doUnmock('./MainDurabilityRuntime')
-  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+  while (profiles.length > 0) removeTemporaryDirectory(profiles.pop()!)
 })
 
 function chatRecord(appChatId: string, revision: number): ChatRecord {
@@ -132,7 +153,7 @@ async function importHostOwnedStore(
   seeds: ChatRecord[],
   adapter?: RecordingAdapter
 ): Promise<HostOwnedStore> {
-  const profilePath = mkdtempSync(join(tmpdir(), 'taskwraith-journal-erasure-'))
+  const profilePath = mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX))
   profiles.push(profilePath)
   const chatsDir = join(profilePath, 'chats')
   mkdirSync(chatsDir, { recursive: true, mode: 0o700 })

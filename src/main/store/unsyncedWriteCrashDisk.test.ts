@@ -8,9 +8,30 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { countSyncs, watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-crash-disk-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 describe('the sync counter', () => {
   it('counts every sync issued through node:fs, lets each one happen, and stops when it is done', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-sync-count-'))
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     const syncs = countSyncs()
     try {
       // Opened for writing: Windows will not flush a file opened to read.
@@ -35,7 +56,7 @@ describe('the sync counter', () => {
       expect(syncs.issued).toHaveLength(5)
     } finally {
       syncs.dispose()
-      fs.rmSync(root, { recursive: true, force: true })
+      removeTemporaryDirectory(root)
     }
   })
 })
@@ -45,14 +66,14 @@ describe.skipIf(process.platform === 'win32')('the power-loss double', () => {
   let disk: CrashDisk
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-crash-disk-'))
+    root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     fs.writeFileSync(path.join(root, 'old.txt'), 'there before')
     disk = watchCrashDisk(root)
   })
 
   afterEach(() => {
     disk.dispose()
-    fs.rmSync(root, { recursive: true, force: true })
+    removeTemporaryDirectory(root)
   })
 
   const file = (name: string): string => path.join(root, name)

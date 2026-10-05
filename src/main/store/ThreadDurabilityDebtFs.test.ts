@@ -15,6 +15,27 @@ import {
   type ThreadDurabilityDebtFsCalls
 } from './ThreadDurabilityDebtFs'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-durability-port-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 type Done = (error: NodeJS.ErrnoException | null) => void
 
 function failure(code: string): NodeJS.ErrnoException {
@@ -331,11 +352,11 @@ describe('thread durability port on real files', () => {
   let directory: string
 
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-durability-port-'))
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
   })
 
   afterEach(() => {
-    fs.rmSync(directory, { recursive: true, force: true })
+    removeTemporaryDirectory(directory)
   })
 
   it('syncs a file and its directory, and finds a missing path missing', async () => {

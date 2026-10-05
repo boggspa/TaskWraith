@@ -17,6 +17,7 @@
  */
 import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import { vi } from 'vitest'
 import type { ThreadDurabilityPort } from './ThreadDurabilityDebt'
@@ -63,7 +64,18 @@ export function countSyncs(): SyncCount {
 
 type Tree = Map<string, Tree | Buffer>
 
+/**
+ * `root` must be a folder a test made with `mkdtempSync` in the system's
+ * temporary folder: a power loss removes everything in it.
+ */
 export function watchCrashDisk(root: string): CrashDisk {
+  const temporary = os.tmpdir()
+  if (
+    root === temporary ||
+    !root.startsWith(temporary + path.sep) ||
+    path.dirname(root) !== temporary
+  )
+    throw new Error(`Refusing to watch ${root}: not a folder a test made in ${temporary}`)
   /** Bytes each file had when it was last made safe, by inode. */
   let bytes = new Map<number, Buffer>()
   /** Names each directory had when it was last made safe, by inode. */
@@ -211,6 +223,19 @@ export function watchCrashDisk(root: string): CrashDisk {
     return tree
   }
 
+  /** Remove what a directory holds one entry at a time, never a whole tree at once. */
+  const empty = (directory: string): void => {
+    for (const name of fs.readdirSync(directory)) {
+      const entry = path.join(directory, name)
+      if (fs.lstatSync(entry).isDirectory()) {
+        empty(entry)
+        fs.rmdirSync(entry)
+      } else {
+        fs.unlinkSync(entry)
+      }
+    }
+  }
+
   const write = (directory: string, tree: Tree): void => {
     for (const [name, content] of tree) {
       const entry = path.join(directory, name)
@@ -230,9 +255,7 @@ export function watchCrashDisk(root: string): CrashDisk {
     powerLoss: () => {
       const tree = safeTree(fs.statSync(root).ino)
       release()
-      for (const name of fs.readdirSync(root)) {
-        fs.rmSync(path.join(root, name), { recursive: true, force: true })
-      }
+      empty(root)
       write(root, tree)
       bytes = new Map()
       names = new Map()

@@ -26,6 +26,27 @@ import {
   type ThreadLogSegmentReaderOptions
 } from './ThreadLogSegmentReader'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-segment-reader-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 const SEGMENT = '/log/chat-1.mutations.jsonl'
 
@@ -996,7 +1017,7 @@ describe('thread log segment reader on real files', () => {
   const readers: ThreadLogSegmentReader[] = []
 
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-segment-reader-'))
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     active = path.join(directory, 'chat-1.mutations.jsonl')
     sealed = path.join(directory, 'chat-1.sealed.mutations.jsonl')
   })
@@ -1006,7 +1027,7 @@ describe('thread log segment reader on real files', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    fs.rmSync(directory, { recursive: true, force: true })
+    removeTemporaryDirectory(directory)
   })
 
   const open = (headRevision = 1): ThreadLogSegmentReader => {

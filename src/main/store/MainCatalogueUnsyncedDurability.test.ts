@@ -30,6 +30,27 @@ import {
   type SyncCount
 } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-catalogue-unsynced-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 const OTHER = 'chat-2'
 const WITNESS = 'legacy:1;journal:1'
@@ -169,7 +190,7 @@ describe('catalogue publication that leaves syncing to the thread barrier', () =
   }
 
   beforeEach(() => {
-    profile = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-catalogue-unsynced-'))
+    profile = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     directory = path.join(profile, 'thread-catalogue-v1')
     syncs = countSyncs()
     notes = []
@@ -178,7 +199,7 @@ describe('catalogue publication that leaves syncing to the thread barrier', () =
   afterEach(() => {
     syncs.dispose()
     vi.restoreAllMocks()
-    fs.rmSync(profile, { recursive: true, force: true })
+    removeTemporaryDirectory(profile)
   })
 
   const unsynced = (): MainCatalogueUnsyncedDurability =>
@@ -426,7 +447,7 @@ describe.skipIf(process.platform === 'win32')(
     })
 
     beforeEach(() => {
-      profile = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-catalogue-power-loss-'))
+      profile = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       disk = watchCrashDisk(profile)
       directoriesHeld = null
       debt = createThreadDurabilityDebt({ port: gatedPort() })
@@ -439,7 +460,7 @@ describe.skipIf(process.platform === 'win32')(
 
     afterEach(() => {
       disk.dispose()
-      fs.rmSync(profile, { recursive: true, force: true })
+      removeTemporaryDirectory(profile)
     })
 
     const slot = (chatId = CHAT): string => path.join(source.directory, 'desktop', `${chatId}.json`)

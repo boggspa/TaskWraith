@@ -11,13 +11,34 @@
  */
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ThreadCatalogue,
   type ThreadCatalogueProjection,
   type ThreadCatalogueTicket
 } from './ThreadCatalogue'
+
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-catalogue-damaged-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = tmpdir()
+  const made = temporary + sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
 
 const CHAT = 'chat'
 
@@ -122,7 +143,7 @@ describe('a catalogue head or ticket left without its bytes, on the strict path'
   }
 
   beforeEach(() => {
-    profile = fs.mkdtempSync(join(tmpdir(), 'thread-catalogue-damaged-'))
+    profile = fs.mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX))
     retired = new Set()
     proven = new Set()
     whileProving = undefined
@@ -130,7 +151,7 @@ describe('a catalogue head or ticket left without its bytes, on the strict path'
   })
 
   afterEach(() => {
-    fs.rmSync(profile, { recursive: true, force: true })
+    removeTemporaryDirectory(profile)
   })
 
   const head = (store: ThreadCatalogue): string => join(store.directory, 'desktop', `${CHAT}.json`)

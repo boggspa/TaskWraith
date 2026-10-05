@@ -34,6 +34,27 @@ import {
   type SyncCount
 } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-run-events-unsynced-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 const RUN = 'run-1'
 
@@ -85,7 +106,7 @@ describe('a run-event ledger that leaves syncing to the thread barrier', () => {
   }
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-run-events-unsynced-'))
+    root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     runEventsDir = path.join(root, 'run-events')
     runArtifactsDir = path.join(root, 'run-artifacts')
     ledger = path.join(runEventsDir, `${RUN}.jsonl`)
@@ -96,7 +117,7 @@ describe('a run-event ledger that leaves syncing to the thread barrier', () => {
   afterEach(() => {
     syncs.dispose()
     vi.restoreAllMocks()
-    fs.rmSync(root, { recursive: true, force: true })
+    removeTemporaryDirectory(root)
   })
 
   const writer = (options: Partial<RunEventLedgerWriterOptions> = {}): RunEventLedgerWriter =>
@@ -325,7 +346,7 @@ describe.skipIf(process.platform === 'win32')(
     let debt: ThreadDurabilityDebt
 
     beforeEach(() => {
-      root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-run-events-power-loss-'))
+      root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       runEventsDir = path.join(root, 'run-events')
       ledger = path.join(runEventsDir, `${RUN}.jsonl`)
       disk = watchCrashDisk(root)
@@ -334,7 +355,7 @@ describe.skipIf(process.platform === 'win32')(
 
     afterEach(() => {
       disk.dispose()
-      fs.rmSync(root, { recursive: true, force: true })
+      removeTemporaryDirectory(root)
     })
 
     const writer = (options: Partial<RunEventLedgerWriterOptions> = {}): RunEventLedgerWriter =>

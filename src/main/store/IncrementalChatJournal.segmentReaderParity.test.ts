@@ -23,6 +23,27 @@ import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalD
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { ChatRecord } from './types'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-reader-parity-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 function chat(revision = 1, content = 'initial'): ChatRecord {
   return {
     appChatId: 'chat-1',
@@ -61,7 +82,7 @@ describe('segment reader against the journal that writes the segment', () => {
   const retirements: Array<() => Promise<void>> = []
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-reader-parity-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     activePath = path.join(baseDir, 'chat-1.mutations.jsonl')
     sealedPath = path.join(baseDir, 'chat-1.sealed.mutations.jsonl')
   })
@@ -69,7 +90,7 @@ describe('segment reader against the journal that writes the segment', () => {
   afterEach(async () => {
     for (const reader of readers.splice(0)) reader.close()
     for (const retire of retirements.splice(0)) await retire()
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   // The app under Host ownership: it may append, and may not repair on read.

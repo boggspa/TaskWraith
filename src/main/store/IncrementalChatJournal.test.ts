@@ -13,6 +13,27 @@ import {
 } from './IncrementalChatJournal'
 import type { ChatRecord } from './types'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-incremental-chat-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 function chat(chatId = 'chat-1', revision = 1, content = 'initial'): ChatRecord {
   return {
     appChatId: chatId,
@@ -106,13 +127,13 @@ describe('IncrementalChatJournal', () => {
   let nowMs: number
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-incremental-chat-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     nowMs = Date.parse('2026-08-16T00:00:00.000Z')
     journal = createIncrementalChatJournal(baseDir, { now: () => nowMs })
   })
 
   afterEach(() => {
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   describe('deferred durability (D1 streaming appends)', () => {

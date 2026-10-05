@@ -19,6 +19,27 @@ import { IncrementalChatJournalDescriptorCache } from './IncrementalChatJournalD
 import { MainDurabilityFlusher } from './MainDurabilityFlusher'
 import type { ChatRecord } from './types'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-torn-tail-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 function chat(revision = 1, content = 'initial'): ChatRecord {
   return {
     appChatId: 'chat-1',
@@ -105,14 +126,14 @@ describe('torn journal tail under an owner that may not repair on read', () => {
   const caches: CacheFixture[] = []
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-torn-tail-'))
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     activePath = path.join(baseDir, 'chat-1.mutations.jsonl')
     sealedPath = path.join(baseDir, 'chat-1.sealed.mutations.jsonl')
   })
 
   afterEach(async () => {
     for (const fixture of caches.splice(0)) await fixture.retire()
-    fs.rmSync(baseDir, { recursive: true, force: true })
+    removeTemporaryDirectory(baseDir)
   })
 
   const cached = (): CacheFixture => {

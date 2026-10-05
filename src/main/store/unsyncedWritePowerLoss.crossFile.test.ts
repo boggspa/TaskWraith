@@ -39,6 +39,27 @@ import {
 import type { ChatRecord, RunEventInput, RunEventRecord, ToolActivity } from './types'
 import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-cross-file-power-loss-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 const RUN = 'run-1'
 const READER = { runtimeInstanceId: 'reader', segmented: false }
@@ -149,7 +170,7 @@ describe.skipIf(process.platform === 'win32')(
     let journal: IncrementalChatJournal
 
     beforeEach(() => {
-      root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-cross-file-power-loss-'))
+      root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       journalDir = path.join(root, 'chat-journal-v2')
       runEventsDir = path.join(root, 'run-events')
       runArtifactsDir = path.join(root, 'run-artifacts')
@@ -169,7 +190,7 @@ describe.skipIf(process.platform === 'win32')(
     afterEach(() => {
       disk.dispose()
       clearRunEventReplayCache()
-      fs.rmSync(root, { recursive: true, force: true })
+      removeTemporaryDirectory(root)
     })
 
     const segment = (): string => path.join(journalDir, `${CHAT}.mutations.jsonl`)

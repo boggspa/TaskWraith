@@ -28,6 +28,27 @@ import {
   type SyncCount
 } from './unsyncedWriteCrashDisk.testutil'
 
+/**
+ * The prefix of every folder this file makes in the system's temporary folder.
+ * A folder is removed only through the function below, which refuses anything
+ * that is not one of them.
+ */
+const TEMPORARY_PREFIX = 'log-tool-detail-unsynced-'
+
+/** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
+function removeTemporaryDirectory(directory: string): void {
+  const temporary = os.tmpdir()
+  const made = temporary + path.sep + TEMPORARY_PREFIX
+  if (
+    directory === temporary ||
+    !directory.startsWith(made) ||
+    directory.length <= made.length ||
+    path.dirname(directory) !== temporary
+  )
+    throw new Error(`Refusing to remove ${directory}: not a folder this file made`)
+  fs.rmSync(directory, { recursive: true, force: true })
+}
+
 const CHAT = 'chat-1'
 
 function activity(id: string, output = `output of ${id}`): ToolActivity {
@@ -53,7 +74,7 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
   }
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tool-detail-unsynced-'))
+    root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     runArtifactsDir = path.join(root, 'run-artifacts')
     syncs = countSyncs()
     notes = []
@@ -62,7 +83,7 @@ describe('a tool-detail writer that leaves syncing to the thread barrier', () =>
   afterEach(() => {
     syncs.dispose()
     vi.restoreAllMocks()
-    fs.rmSync(root, { recursive: true, force: true })
+    removeTemporaryDirectory(root)
   })
 
   const unsynced = (directory = runArtifactsDir): ToolActivityDetailBatchWriter =>
@@ -252,7 +273,7 @@ describe.skipIf(process.platform === 'win32')(
     let debt: ThreadDurabilityDebt
 
     beforeEach(() => {
-      root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tool-detail-power-loss-'))
+      root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
       runArtifactsDir = path.join(root, 'run-artifacts')
       disk = watchCrashDisk(root)
       debt = createThreadDurabilityDebt({ port: disk.port })
@@ -260,7 +281,7 @@ describe.skipIf(process.platform === 'win32')(
 
     afterEach(() => {
       disk.dispose()
-      fs.rmSync(root, { recursive: true, force: true })
+      removeTemporaryDirectory(root)
     })
 
     const commit = (
