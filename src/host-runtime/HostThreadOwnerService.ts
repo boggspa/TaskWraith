@@ -11,12 +11,12 @@
  *
  * Which app processes are alive, and attached to this Host:
  * - A connection speaks for the app process whose writer id it first claims
- *   with, or whose grant it first reports on. It is the same per-socket
+ *   with. Only that exact connection may report on its grants. It is the same per-socket
  *   identity the lease registry keys leases by, and the socket's close, which
  *   ends its lease, detaches it.
  * - The app drops every grant when its connection to the Host closes, so the
- *   Host does too: once the last connection a writer spoke on closes, its
- *   threads go back to the Host. A grant therefore never outlives its holder's
+ *   Host does too: closing a connection gives back exactly its grants, even
+ *   when the writer has another connection. A grant therefore never outlives its holder's
  *   connection, and a writer the table holds is always attached.
  * - The only processes that can hold a thread from before this Host started
  *   are those named by authority files: a grant's file is durable before the
@@ -52,8 +52,16 @@ import {
 import { isThreadLogAuthorityEnabled } from '../host-shared/thread-log/ThreadLogAuthoritySwitch'
 import type {
   HostThreadOwnerTableSnapshot,
-  HostWriteDecision
+  HostWriteDecision,
+  ThreadOwnerEpoch
 } from '../host-shared/thread-log/ThreadOwnership'
+import {
+  HostThreadPublicationGuard,
+  threadPublicationAuthorityWitness,
+  type HostThreadPublicationCommit,
+  type HostThreadPublicationPermit,
+  type HostThreadPublicationResult
+} from './HostThreadPublicationGuard'
 import { isSafeChatId } from '../shared/ChatPath'
 import type {
   HostLocalTransportSuccessResult,
@@ -165,12 +173,20 @@ export function refusedThreadOwnerResult(
   }
 }
 
+interface OwnerConnection {
+  writerId?: string
+  readonly grants: Map<string, ThreadOwnerEpoch>
+}
+
 export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   readonly mode: HostThreadOwnerServiceMode
   private readonly registry: HostThreadOwnerRegistry | null
   private readonly log: (line: string) => void
   private readonly observer: HostThreadOwnerServiceObserver | undefined
-  private readonly writerOfConnection = new Map<number, string>()
+  private readonly connections = new Map<number, OwnerConnection>()
+  private readonly grantConnections = new Map<string, OwnerConnection>()
+  private readonly publicationVersions = new Map<string, object>()
+  private readonly publications: HostThreadPublicationGuard
   private readonly connectionsOfWriter = new Map<string, Set<number>>()
   private folderUnreadable = 0
   private lastFolderError: string | null = null
@@ -214,6 +230,8 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
                   return head.kind === 'head' ? head.revision : null
                 },
             hostRunActive: (threadId) => options.hostRunActive(threadId),
+            publicationWitness: (threadId) =>
+              threadPublicationAuthorityWitness(options.profilePath, threadId),
             // A writer the table holds is attached, and every other process
             // is judged by its thread's authority file: see the module comment.
             desktopPresence: () => 'attached',
@@ -221,6 +239,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             ...(options.liveness ? { liveness: options.liveness } : {})
           })
         : null
+    this.publications = new HostThreadPublicationGuard(this.registry)
   }
 
   /**
@@ -261,27 +280,44 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     switch (params.action) {
       case 'claim': {
         const writerId = params.writerId
-        const speaksFor = this.writerOfConnection.get(connectionId)
-        if (speaksFor !== undefined && speaksFor !== writerId) return 'invalid_payload'
-        this.attach(connectionId, writerId)
-        const reply = await registry.claim(params)
-        // Its connection closed while the Host decided: the app has dropped the grant already.
-        if (reply.granted && !this.connectionsOfWriter.has(writerId)) registry.writerGone(writerId)
+        // HostLocalServer calls answer only from a live authenticated socket,
+        // synchronously before dispatch's first await. Numeric ids never recur
+        // within this service; captures themselves never register connections.
+        this.authenticated(connectionId)
+        const connection = this.connections.get(connectionId)!
+        if (connection.writerId !== undefined && connection.writerId !== writerId)
+          return 'invalid_payload'
+        this.attach(connectionId, connection, writerId)
+        const reply = await registry.claim(params, {
+          isCurrent: () =>
+            this.connections.get(connectionId) === connection &&
+            (!this.grantConnections.has(params.threadId) ||
+              this.grantConnections.get(params.threadId) === connection),
+          granted: (epoch) => {
+            const previous = connection.grants.get(params.threadId)
+            if (previous?.host !== epoch.host || previous?.grant !== epoch.grant)
+              this.publicationVersions.set(params.threadId, {})
+            connection.grants.set(params.threadId, epoch)
+            this.grantConnections.set(params.threadId, connection)
+          }
+        })
         return { kind: 'thread.owner', action: 'claim', reply }
       }
       case 'advanced': {
-        const recorded = await registry.advanced(params)
-        const writer = registry.writerOf(params.threadId)
-        if (recorded && writer.kind === 'desktop') {
-          const speaksFor = this.writerOfConnection.get(connectionId)
-          if (speaksFor === undefined) this.attach(connectionId, writer.writerId)
-        }
+        const current = this.currentGrant(connectionId, params.threadId, params.epoch)
+        const recorded = current ? await registry.advanced(params, current) : false
         if (recorded) this.tell((observer) => observer.advanced?.(params.threadId))
         return { kind: 'thread.owner', action: 'advanced', recorded }
       }
       case 'release': {
-        const released = await registry.release(params)
-        if (released) this.tell((observer) => observer.released?.(params.threadId))
+        const current = this.currentGrant(connectionId, params.threadId, params.epoch)
+        const released = current ? await registry.release(params, current) : false
+        if (released) {
+          this.connections.get(connectionId)?.grants.delete(params.threadId)
+          this.grantConnections.delete(params.threadId)
+          this.publicationVersions.delete(params.threadId)
+          this.tell((observer) => observer.released?.(params.threadId))
+        }
         return { kind: 'thread.owner', action: 'release', released }
       }
     }
@@ -298,16 +334,71 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     return this.registry.requestHostWrite(threadId, this.now())
   }
 
-  /** The socket closed. The last of a writer's gives its threads back to the Host. */
+  /**
+   * Future publication wiring must call this on authentication, before any
+   * dispatch, including for sockets that never claim. Trusted server lifecycle
+   * only: call once for a fresh, monotonically allocated live connection id.
+   * It must never be called to revive a closed id. No transport is wired yet.
+   */
+  authenticated(connectionId: number): void {
+    if (this.registry && !this.connections.has(connectionId))
+      this.connections.set(connectionId, { grants: new Map() })
+  }
+
+  /** Inert ingress seam: an unknown/closed numeric id never creates a connection. */
+  capturePublication(connectionId: number, threadId: string): HostThreadPublicationPermit {
+    const connection = this.connections.get(connectionId)
+    const epoch = connection?.grants.get(threadId)
+    let version = this.publicationVersions.get(threadId)
+    if (connection && !version) {
+      version = {}
+      this.publicationVersions.set(threadId, version)
+    }
+    const owner =
+      epoch && connection?.writerId ? { writerId: connection.writerId, epoch: { ...epoch } } : null
+    return this.publications.capture(threadId, {
+      owner,
+      isCurrent: () => {
+        if (
+          !connection ||
+          this.connections.get(connectionId) !== connection ||
+          this.publicationVersions.get(threadId) !== version
+        )
+          return false
+        const current = connection.grants.get(threadId)
+        return owner
+          ? current?.host === owner.epoch.host &&
+              current?.grant === owner.epoch.grant &&
+              this.grantConnections.get(threadId) === connection
+          : current === undefined && !this.grantConnections.has(threadId)
+      }
+    })
+  }
+
+  /** Inert final seam; the executor will supply its concrete synchronous CAS/adopt callback. */
+  publish<T>(
+    permit: HostThreadPublicationPermit,
+    commit: HostThreadPublicationCommit<T>
+  ): Promise<HostThreadPublicationResult<T>> {
+    return this.publications.publish(permit, commit)
+  }
+
+  /** The socket closed: revoke its exact grants, independently of other writer sockets. */
   closed(connectionId: number): void {
-    const writerId = this.writerOfConnection.get(connectionId)
+    const connection = this.connections.get(connectionId)
+    if (!connection) return
+    this.connections.delete(connectionId)
+    for (const [threadId, epoch] of connection.grants) {
+      if (this.grantConnections.get(threadId) !== connection) continue
+      this.grantConnections.delete(threadId)
+      this.publicationVersions.delete(threadId)
+      this.registry?.revoke(threadId, epoch)
+    }
+    const writerId = connection.writerId
     if (writerId === undefined) return
-    this.writerOfConnection.delete(connectionId)
     const connections = this.connectionsOfWriter.get(writerId)!
     connections.delete(connectionId)
-    if (connections.size > 0) return
-    this.connectionsOfWriter.delete(writerId)
-    this.registry?.writerGone(writerId)
+    if (connections.size === 0) this.connectionsOfWriter.delete(writerId)
   }
 
   snapshot(): HostThreadOwnerServiceSnapshot {
@@ -373,8 +464,27 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     }
   }
 
-  private attach(connectionId: number, writerId: string): void {
-    this.writerOfConnection.set(connectionId, writerId)
+  private currentGrant(
+    connectionId: number,
+    threadId: string,
+    epoch: ThreadOwnerEpoch
+  ): (() => boolean) | null {
+    const connection = this.connections.get(connectionId)
+    if (!connection) return null
+    const current = (): boolean => {
+      const grant = connection.grants.get(threadId)
+      return (
+        this.connections.get(connectionId) === connection &&
+        this.grantConnections.get(threadId) === connection &&
+        grant?.host === epoch.host &&
+        grant?.grant === epoch.grant
+      )
+    }
+    return current() ? current : null
+  }
+
+  private attach(connectionId: number, connection: OwnerConnection, writerId: string): void {
+    connection.writerId = writerId
     let connections = this.connectionsOfWriter.get(writerId)
     if (!connections) {
       connections = new Set()

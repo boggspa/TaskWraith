@@ -323,25 +323,40 @@ describe('thread.owner over the local server', () => {
       await second.close()
     })
 
-    it('gives a writer’s threads back when its last connection to the Host closes', async () => {
+    it('revokes the granting socket and requires a fresh grant on another socket', async () => {
       const { copies, connect, owners } = await host(ON)
       copies.set('thread-1', 5)
       const first = await connect()
       const again = await connect()
       await first.request(claim('thread-1', 'desk-1', [5, 5]))
-      // The same app process on a second connection keeps its grant.
-      await again.request(claim('thread-1', 'desk-1', [5, 5], 2))
+      const epoch = { host: INCARNATION, grant: 1 }
+      expect(resultOf(await again.request(claim('thread-1', 'desk-1', [5, 5], 2)))).toMatchObject({
+        reply: { granted: false, reason: 'owned_by_other_writer' }
+      })
       await first.close()
       await settle()
-      expect(owners.snapshot().table!.threads).toHaveLength(1)
+      expect(owners.snapshot().table!.threads).toEqual([])
+      expect(resultOf(await again.request(claim('thread-1', 'desk-1', [5, 5], 3)))).toMatchObject({
+        reply: { granted: true, epoch: { host: INCARNATION, grant: 2 } }
+      })
+      expect(
+        resultOf(
+          await again.request({ action: 'advanced', threadId: 'thread-1', epoch, revision: 6 })
+        )
+      ).toMatchObject({
+        recorded: false
+      })
+      expect(
+        resultOf(
+          await again.request({ action: 'release', threadId: 'thread-1', epoch, revision: 6 })
+        )
+      ).toMatchObject({
+        released: false
+      })
+      expect(owners.snapshot().table!.threads[0].epoch.grant).toBe(2)
       await again.close()
       await settle()
       expect(owners.snapshot().table!.threads).toEqual([])
-      const next = await connect()
-      expect(resultOf(await next.request(claim('thread-1', 'desk-2', [5, 5])))).toMatchObject({
-        reply: { granted: true, epoch: { host: INCARNATION, grant: 2 } }
-      })
-      await next.close()
     })
 
     it('answers only the desktop app, and only ids a thread can have', async () => {

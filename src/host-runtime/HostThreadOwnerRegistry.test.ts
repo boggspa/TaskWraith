@@ -175,6 +175,9 @@ class Machine {
         return this.log.get(threadId) ?? null
       },
       hostRunActive: (threadId) => this.runs.has(threadId),
+      // The in-memory filesystem has no inode; real metadata races are covered
+      // by HostThreadPublicationGuard/Service tests against guarded temp profiles.
+      publicationWitness: () => () => true,
       desktopPresence: () => this.presence(),
       otherDesktopUnattached: (writerId) =>
         [...this.desks].some(([id, desk]) => id !== writerId && !desk.attached),
@@ -699,5 +702,87 @@ describe('the Host thread owner registry: on a real disk', () => {
     } finally {
       removeTemporaryDirectory(profile)
     }
+  })
+})
+
+describe('final full-copy publication admission', () => {
+  const unclaimed = { owner: null, isCurrent: () => true }
+
+  it('preserves a dead owner’s leading log and authority mark until an orphan fold', async () => {
+    const machine = await deadWritersLog()
+    const host = machine.host()
+    let commits = 0
+    expect(await host.publishFullCopy(THREAD, unclaimed, () => ++commits)).toEqual({
+      kind: 'refused',
+      errorCode: 'thread_fold_first'
+    })
+    expect(commits).toBe(0)
+    expect(machine.full.get(THREAD)).toBe(4)
+    expect(machine.log.get(THREAD)).toBe(6)
+    expect((await machine.files.read(THREAD)).kind).toBe('held')
+    // Even caught-up authority must be durably retired by recovery, not this guard.
+    machine.folds()
+    expect(await host.publishFullCopy(THREAD, unclaimed, () => ++commits)).toMatchObject({
+      kind: 'refused'
+    })
+    expect((await machine.files.read(THREAD)).kind).toBe('held')
+  })
+
+  it('a live or unreadable authority mark never becomes permission to publish', async () => {
+    const memory = new MemoryFs()
+    const machine = new Machine(memory)
+    machine.full.set(THREAD, 4)
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'before', grant: 1 })
+    const host = machine.host()
+    let commits = 0
+    expect(await host.publishFullCopy(THREAD, unclaimed, () => ++commits)).toMatchObject({
+      kind: 'refused'
+    })
+    memory.scribble(threadAuthorityFilePath(PROFILE, THREAD), '{damaged')
+    expect(await host.publishFullCopy(THREAD, unclaimed, () => ++commits)).toMatchObject({
+      kind: 'refused'
+    })
+    expect(commits).toBe(0)
+  })
+
+  it('rechecks the exact epoch independently of connection validity', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    machine.full.set(THREAD, 4)
+    const host = machine.host()
+    const epoch = granted(await host.claim(claim('desk-a', 4)))
+    const binding = { owner: { writerId: 'desk-a', epoch }, isCurrent: () => true }
+    host.revoke(THREAD, epoch)
+    const next = granted(await host.claim(claim('desk-a', 4, 4, 2)))
+    expect(next.grant).toBeGreaterThan(epoch.grant)
+    let committed = false
+    expect(
+      await host.publishFullCopy(THREAD, binding, () => {
+        committed = true
+      })
+    ).toMatchObject({ kind: 'refused' })
+    expect(committed).toBe(false)
+  })
+
+  it('commits inside serialization before a queued claim can acquire the thread', async () => {
+    const memory = new MemoryFs()
+    const machine = new Machine(memory)
+    machine.start('desk-a', 4101)
+    machine.full.set(THREAD, 4)
+    const host = machine.host()
+    let finish!: () => void
+    memory.hold = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const publication = host.publishFullCopy(THREAD, unclaimed, () => {
+      machine.full.set(THREAD, 5)
+      return 'adopted'
+    })
+    const claiming = host.claim(claim('desk-a', 4))
+    memory.hold = null
+    finish()
+    expect(await publication).toEqual({ kind: 'published', value: 'adopted' })
+    expect(refusal(await claiming)).toEqual({ reason: 'host_ahead', revision: 5 })
   })
 })

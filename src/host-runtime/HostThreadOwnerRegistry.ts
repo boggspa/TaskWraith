@@ -35,6 +35,13 @@
  * app processes have attached) are read after the last wait, in the same turn
  * as the table's decision.
  */
+import {
+  commitThreadPublication,
+  THREAD_PUBLICATION_BUSY,
+  type HostThreadPublicationBinding,
+  type HostThreadPublicationCommit,
+  type HostThreadPublicationResult
+} from './HostThreadPublicationGuard'
 import { isSafeChatId } from '../shared/ChatPath'
 import {
   threadWriterLiveness,
@@ -55,7 +62,8 @@ import {
   type ThreadClaimReply,
   type ThreadClaimRequest,
   type ThreadReleaseMessage,
-  type ThreadWriter
+  type ThreadWriter,
+  type ThreadOwnerEpoch
 } from '../host-shared/thread-log/ThreadOwnership'
 
 export interface HostThreadOwnerRegistryOptions {
@@ -76,6 +84,8 @@ export interface HostThreadOwnerRegistryOptions {
   desktopPresence(): HostDesktopPresence
   /** A live app process other than this writer has not attached since the Host started. */
   otherDesktopUnattached(writerId: string): boolean
+  /** Synchronous metadata witness captured before publication's asynchronous reads. */
+  publicationWitness?(threadId: string): () => boolean
   /** Whether an authority file's writer still runs. By default, signal 0 to its process id. */
   liveness?(writer: ThreadAuthorityWriter): ThreadWriterLiveness
 }
@@ -158,7 +168,10 @@ export class HostThreadOwnerRegistry {
    * copy and, under an authority file, on the head of the log the file marks.
    * A live writer's file keeps the thread for that writer.
    */
-  async claim(request: ThreadClaimRequest): Promise<ThreadClaimReply> {
+  async claim(
+    request: ThreadClaimRequest,
+    connection?: { isCurrent(): boolean; granted(epoch: ThreadOwnerEpoch): void }
+  ): Promise<ThreadClaimReply> {
     requireThreadId(request.threadId)
     return this.serial(request.threadId, async () => {
       const { threadId, writerId } = request
@@ -168,6 +181,8 @@ export class HostThreadOwnerRegistry {
       const logRevision = record ? await this.options.logRevision(threadId) : null
       // Nothing waits from here to the answer: the facts read below still hold when it is given.
       this.forgetEndedOwner(threadId, record)
+      if (connection && !connection.isCurrent())
+        return refused(request, 'owned_by_other_writer', this.options.fullCopyRevision(threadId))
       if (this.table.writerOf(threadId).kind === 'host') {
         const fullCopyRevision = this.options.fullCopyRevision(threadId)
         const otherWriter =
@@ -180,14 +195,19 @@ export class HostThreadOwnerRegistry {
           return refused(request, 'owned_by_other_writer', head)
         }
       }
-      return this.table.claim(request, this.claimFacts(request, logRevision))
+      const reply = this.table.claim(request, this.claimFacts(request, logRevision))
+      if (reply.granted) connection?.granted(reply.epoch)
+      return reply
     })
   }
 
   /** Records how far the writer's log has got. False when the message names no current grant. */
-  async advanced(message: ThreadAdvancedMessage): Promise<boolean> {
+  async advanced(
+    message: ThreadAdvancedMessage,
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
     requireThreadId(message.threadId)
-    return this.serial(message.threadId, async () => this.table.advanced(message))
+    return this.serial(message.threadId, async () => isCurrent() && this.table.advanced(message))
   }
 
   /**
@@ -195,9 +215,76 @@ export class HostThreadOwnerRegistry {
    * grant. The writer removes its authority file before it sends this: a file
    * that is still there names a live writer, and keeps the thread for it.
    */
-  async release(message: ThreadReleaseMessage): Promise<boolean> {
+  async release(
+    message: ThreadReleaseMessage,
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> {
     requireThreadId(message.threadId)
-    return this.serial(message.threadId, async () => this.table.release(message))
+    return this.serial(message.threadId, async () => isCurrent() && this.table.release(message))
+  }
+
+  /** A socket closes synchronously, invalidating exactly the grant it held. */
+  revoke(threadId: string, epoch: ThreadOwnerEpoch): void {
+    this.table.release({ action: 'release', threadId, epoch, revision: null })
+  }
+
+  /**
+   * Final publication check, after transfer preparation. All asynchronous
+   * reads precede the last connection/grant check and synchronous commit.
+   * An orphan remains untouched until the separate fold/retirement path exists.
+   */
+  async publishFullCopy<T>(
+    threadId: string,
+    binding: HostThreadPublicationBinding,
+    commit: HostThreadPublicationCommit<T>
+  ): Promise<HostThreadPublicationResult<T>> {
+    requireThreadId(threadId)
+    return this.serial(threadId, async () => {
+      if (!this.options.enabled) return commitThreadPublication(commit)
+      let read: Awaited<ReturnType<ThreadAuthorityFiles['read']>>
+      let logRevision: number | null
+      let authorityUnchanged: () => boolean
+      try {
+        if (!this.options.publicationWitness) return THREAD_PUBLICATION_BUSY
+        authorityUnchanged = this.options.publicationWitness(threadId)
+        read = await this.options.files.read(threadId)
+        logRevision = read.kind === 'held' ? await this.options.logRevision(threadId) : null
+      } catch {
+        return THREAD_PUBLICATION_BUSY
+      }
+      const record = read.kind === 'held' ? read.record : null
+      if (!authorityUnchanged() || !binding.isCurrent() || read.kind === 'damaged')
+        return THREAD_PUBLICATION_BUSY
+      this.forgetEndedOwner(threadId, record)
+      const writer = this.table.writerOf(threadId)
+      const expected = binding.owner
+      if (writer.kind === 'desktop') {
+        if (
+          !expected ||
+          writer.writerId !== expected.writerId ||
+          writer.epoch.host !== expected.epoch.host ||
+          writer.epoch.grant !== expected.epoch.grant ||
+          (record && record.writer.writerId !== expected.writerId) ||
+          !this.table.mayReplaceFullCopy(threadId, expected.writerId, {
+            otherDesktopUnattached: this.options.otherDesktopUnattached(expected.writerId)
+          })
+        )
+          return THREAD_PUBLICATION_BUSY
+      } else {
+        // A permit captured under an old grant never falls back to a legacy write.
+        if (expected) return THREAD_PUBLICATION_BUSY
+        if (record) {
+          if (!this.writerEnded(record.writer)) return THREAD_PUBLICATION_BUSY
+          const full = this.options.fullCopyRevision(threadId)
+          if (logRevision !== null && (full === null || logRevision > full))
+            return { kind: 'refused', errorCode: 'thread_fold_first' }
+          // I7 retires even a caught-up mark durably. This guard never removes it.
+          return THREAD_PUBLICATION_BUSY
+        }
+        if (this.options.desktopPresence() === 'unattached') return THREAD_PUBLICATION_BUSY
+      }
+      return commitThreadPublication(commit)
+    })
   }
 
   /**

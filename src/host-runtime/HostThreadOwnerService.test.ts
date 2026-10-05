@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -256,7 +256,7 @@ describe('the Host’s thread owner service', () => {
     expect(off.snapshot()).toEqual({ mode: 'off', attached: [], table: null })
   })
 
-  it('on, gives a writer’s threads back once its last connection closes', async () => {
+  it('on, gives back only the closed connection’s grants even when its writer has another socket', async () => {
     const on = service(ON)
     copies.set('thread-1', 3)
     copies.set('thread-2', 8)
@@ -264,7 +264,7 @@ describe('the Host’s thread owner service', () => {
     grantOf(await on.answer(2, claim('thread-2', 'desk-1', [8, 8], 2)))
     expect(on.snapshot().attached).toEqual([{ writerId: 'desk-1', connections: 2 }])
     on.closed(1)
-    expect(on.snapshot().table!.threads).toHaveLength(2)
+    expect(on.snapshot().table!.threads.map((row) => row.threadId)).toEqual(['thread-2'])
     on.closed(2)
     expect(on.snapshot().attached).toEqual([])
     expect(on.snapshot().table!.threads).toEqual([])
@@ -273,26 +273,23 @@ describe('the Host’s thread owner service', () => {
     on.closed(9)
   })
 
-  it('on, attaches a connection that reports on a grant it did not claim', async () => {
+  it('on, a second socket cannot advance, release or inherit the first socket’s grant', async () => {
     const on = service(ON)
     copies.set('thread-1', 3)
     const epoch = grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
     expect(
       await on.answer(2, { action: 'advanced', threadId: 'thread-1', epoch, revision: 5 })
-    ).toEqual({ kind: 'thread.owner', action: 'advanced', recorded: true })
-    expect(on.snapshot().attached).toEqual([{ writerId: 'desk-1', connections: 2 }])
-    on.closed(1)
-    expect(on.snapshot().table!.threads).toHaveLength(1)
-    // A report on a grant that is not current attaches nobody.
-    expect(
-      await on.answer(3, {
-        action: 'advanced',
-        threadId: 'thread-1',
-        epoch: { ...epoch, grant: 99 },
-        revision: 6
-      })
     ).toEqual({ kind: 'thread.owner', action: 'advanced', recorded: false })
-    expect(on.snapshot().attached).toEqual([{ writerId: 'desk-1', connections: 1 }])
+    expect(on.snapshot().table!.threads[0].revision).toBe(3)
+    expect(
+      await on.answer(2, { action: 'release', threadId: 'thread-1', epoch, revision: 5 })
+    ).toEqual({ kind: 'thread.owner', action: 'release', released: false })
+    expect(await on.answer(2, claim('thread-1', 'desk-1', [3, 3], 2))).toMatchObject({
+      reply: { granted: false, reason: 'owned_by_other_writer' }
+    })
+    expect(on.snapshot().table!.threads).toHaveLength(1)
+    on.closed(1)
+    expect(on.snapshot().table!.threads).toEqual([])
   })
 
   it('on, drops a grant decided after its connection closed', async () => {
@@ -313,9 +310,43 @@ describe('the Host’s thread owner service', () => {
     await vi.waitFor(() => expect(on.snapshot().attached).toHaveLength(1))
     on.closed(1)
     release()
-    // The reply is lost with its socket; the Host keeps no grant for it.
-    grantOf(await answer)
+    // A closed socket cannot create a grant after its asynchronous read finishes.
+    expect(await answer).toMatchObject({ reply: { granted: false } })
     expect(on.snapshot().table!.threads).toEqual([])
+  })
+
+  it('a closed pending claim cannot borrow the same writer’s other live connection', async () => {
+    const files = new ThreadAuthorityFiles(profile)
+    let finish!: () => void
+    let entered!: () => void
+    const enteredRead = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const waiting = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const on = service(ON, {
+      files: {
+        read: async (threadId) => {
+          if (threadId === 'thread-1') {
+            entered()
+            await waiting
+          }
+          return files.read(threadId)
+        },
+        list: () => files.list(),
+        remove: (threadId) => files.remove(threadId)
+      }
+    })
+    copies.set('thread-1', 3)
+    copies.set('thread-2', 3)
+    grantOf(await on.answer(2, claim('thread-2', 'desk-1', [3, 3])))
+    const claiming = on.answer(1, claim('thread-1', 'desk-1', [3, 3]))
+    await enteredRead
+    on.closed(1)
+    finish()
+    expect(await claiming).toMatchObject({ reply: { granted: false } })
+    expect(on.snapshot().table!.threads.map((row) => row.threadId)).toEqual(['thread-2'])
   })
 
   it('on, refuses a connection that speaks for a second writer, and ids no thread has', async () => {
@@ -490,4 +521,172 @@ describe('the Host’s thread owner service', () => {
       lastRemoveError: 'EACCES: permission denied, unlink'
     })
   })
+})
+
+describe('inert publication through the owning connection', () => {
+  it('off, preserves the legacy callback without reading authority files', async () => {
+    const files = { read: vi.fn(), list: vi.fn(), remove: vi.fn() }
+    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+      const off = service(environment, { files })
+      expect(await off.publish(off.capturePublication(99, 'thread-1'), () => 'saved')).toEqual({
+        kind: 'published',
+        value: 'saved'
+      })
+    }
+    expect(files.read).not.toHaveBeenCalled()
+  })
+
+  it('publishes for the exact owner, while another socket and unknown/closed ids cannot', async () => {
+    const on = service(ON)
+    copies.set('thread-1', 3)
+    grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    on.authenticated(2)
+    const commit = vi.fn(() => 'saved')
+    expect(await on.publish(on.capturePublication(2, 'thread-1'), commit)).toMatchObject({
+      kind: 'refused'
+    })
+    expect(await on.publish(on.capturePublication(1, 'thread-1'), commit)).toEqual({
+      kind: 'published',
+      value: 'saved'
+    })
+    on.closed(1)
+    expect(await on.publish(on.capturePublication(1, 'thread-1'), commit)).toMatchObject({
+      kind: 'refused'
+    })
+    expect(await on.publish(on.capturePublication(99, 'thread-1'), commit)).toMatchObject({
+      kind: 'refused'
+    })
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('a pre-grant permit never inherits a grant, even after its release', async () => {
+    const on = service(ON)
+    copies.set('thread-1', 3)
+    on.authenticated(1)
+    const before = on.capturePublication(1, 'thread-1')
+    const epoch = grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    const owned = on.capturePublication(1, 'thread-1')
+    await on.answer(1, { action: 'release', threadId: 'thread-1', epoch, revision: 3 })
+    const commit = vi.fn()
+    expect(await on.publish(before, commit)).toMatchObject({ kind: 'refused' })
+    expect(await on.publish(owned, commit)).toMatchObject({ kind: 'refused' })
+    grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3], 2)))
+    expect(await on.publish(owned, commit)).toMatchObject({ kind: 'refused' })
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('rechecks after the final asynchronous log read before invoking commit', async () => {
+    let finish!: () => void
+    let entered!: () => void
+    const enteredRead = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const waiting = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const on = service(ON, {
+      logRevision: async () => {
+        entered()
+        await waiting
+        return 4
+      }
+    })
+    copies.set('thread-1', 3)
+    grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    await writeAuthority('thread-1', 'desk-1', process.pid, 3)
+    const permit = on.capturePublication(1, 'thread-1')
+    const commit = vi.fn()
+    const publication = on.publish(permit, commit)
+    await enteredRead
+    on.closed(1)
+    finish()
+    expect(await publication).toMatchObject({ kind: 'refused' })
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('permits an authenticated unclaimed socket without ever folding its unmarked mirror', async () => {
+    const logRevision = vi.fn(async () => 9)
+    const on = service(ON, { logRevision })
+    copies.set('thread-1', 3)
+    on.authenticated(1)
+    expect(await on.publish(on.capturePublication(1, 'thread-1'), () => 4)).toEqual({
+      kind: 'published',
+      value: 4
+    })
+    expect(logRevision).not.toHaveBeenCalled()
+  })
+})
+
+describe('publication authority witness', () => {
+  it('refuses a mark created between the witness and asynchronous authority read', async () => {
+    const files = new ThreadAuthorityFiles(profile)
+    let create = false
+    let finish!: () => void
+    let entered!: () => void
+    const enteredRead = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const waiting = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const on = service(ON, {
+      files: {
+        read: async (threadId) => {
+          if (create) await writeAuthority(threadId, 'desk-1', process.pid, 3)
+          return files.read(threadId)
+        },
+        list: () => files.list(),
+        remove: (threadId) => files.remove(threadId)
+      },
+      logRevision: async () => {
+        entered()
+        await waiting
+        return 4
+      }
+    })
+    copies.set('thread-1', 3)
+    grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+    create = true
+    const commit = vi.fn()
+    const publishing = on.publish(on.capturePublication(1, 'thread-1'), commit)
+    await enteredRead
+    finish()
+    expect(await publishing).toMatchObject({ kind: 'refused' })
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it.each(['replaced', 'damaged', 'deleted'] as const)(
+    'refuses when the authority mark is %s while its log is read',
+    async (change) => {
+      let finish!: () => void
+      let entered!: () => void
+      const enteredRead = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const waiting = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const on = service(ON, {
+        logRevision: async () => {
+          entered()
+          await waiting
+          return 4
+        }
+      })
+      copies.set('thread-1', 3)
+      grantOf(await on.answer(1, claim('thread-1', 'desk-1', [3, 3])))
+      await writeAuthority('thread-1', 'desk-1', process.pid, 3)
+      const commit = vi.fn()
+      const publication = on.publish(on.capturePublication(1, 'thread-1'), commit)
+      await enteredRead
+      // Even the same writer can be a different durable authority incarnation.
+      if (change === 'replaced') await writeAuthority('thread-1', 'desk-1', process.pid, 4)
+      else if (change === 'damaged')
+        writeFileSync(path.join(profile, 'thread-authority', 'thread-1.json'), '{damaged')
+      else unlinkSync(path.join(profile, 'thread-authority', 'thread-1.json'))
+      finish()
+      expect(await publication).toMatchObject({ kind: 'refused' })
+      expect(commit).not.toHaveBeenCalled()
+    }
+  )
 })
