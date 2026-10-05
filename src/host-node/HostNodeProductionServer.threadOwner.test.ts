@@ -527,6 +527,43 @@ describe('HostNodeProductionServer: thread history', () => {
     expect(closed).toHaveBeenCalledTimes(1)
   })
 
+  it('on, starts with an authority folder it cannot read, and serves the threads it cannot judge from the full copy', async () => {
+    const { environment } = counted({ [THREAD_LOG_AUTHORITY_ENV]: '1' })
+    const lines: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((text) => {
+      lines.push(String(text))
+      return true
+    })
+    const h = harness(environment, (profile) => ({ threadLogSeedPort: appLoadSeed(profile) }))
+    writeLog(h.profile, 3)
+    writeFileSync(path.join(h.profile, 'thread-authority'), 'not a folder')
+    h.domain.threadHistory.mockImplementation((request: { threadId: string }) => ({
+      threadId: request.threadId,
+      generation: 3,
+      cursor: 0,
+      entries: []
+    }))
+    await h.server.start()
+    try {
+      const input = h.composition()
+      expect(await input.threadHistoryProvider!({ threadId: CHAT, limit: 2 })).toMatchObject({
+        generation: 3
+      })
+      const sections = input.perf!.instrumentation!.snapshot().sections as Record<
+        string,
+        Record<string, unknown>
+      >
+      expect(sections.threadOwners).toMatchObject({
+        mode: 'on',
+        authority: { folderUnreadable: 1 }
+      })
+      expect(sections.threadLogHistory).toMatchObject({ served: { fullCopy: { damaged: 1 } } })
+      expect(lines).toContainEqual(expect.stringContaining('the authority folder cannot be listed'))
+    } finally {
+      await h.server.stop()
+    }
+  })
+
   it('on, lets every follower go when it stops', async () => {
     const { environment } = counted({ [THREAD_LOG_AUTHORITY_ENV]: '1' })
     const h = harness(environment, (profile) => ({ threadLogSeedPort: appLoadSeed(profile) }))

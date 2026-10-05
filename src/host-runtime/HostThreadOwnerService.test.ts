@@ -196,6 +196,64 @@ describe('the Host’s thread owner service', () => {
     ])
   })
 
+  it('on, starts though its authority folder cannot be listed, and keeps each thread whose file it cannot read', async () => {
+    const unreadable = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    const files = {
+      list: vi.fn(async () => {
+        throw unreadable
+      }),
+      read: vi.fn(
+        async (): Promise<ThreadAuthorityRead> => ({
+          kind: 'damaged',
+          reason: 'unreadable (EACCES)'
+        })
+      ),
+      remove: vi.fn()
+    }
+    const on = service(ON, { files })
+    copies.set('thread-1', 5)
+    expect(await on.start()).toEqual({
+      held: [],
+      fold: [],
+      damaged: [],
+      folderUnreadable: 'permission denied'
+    })
+    expect(lines).toEqual([
+      'taskwraith-host: thread owners: the authority folder cannot be listed (permission denied): ' +
+        'each thread is judged by its own file, and one that cannot be read is kept as busy\n'
+    ])
+    const refused = { reply: { granted: false, reason: 'owned_by_other_writer' } }
+    expect(await on.answer(1, claim('thread-1', 'desk-1', [5, 5]))).toMatchObject(refused)
+    // A read that fails outright is a file it cannot read, too.
+    files.read.mockRejectedValueOnce(unreadable)
+    expect(await on.answer(1, claim('thread-1', 'desk-1', [5, 5], 2))).toMatchObject(refused)
+    expect(on.snapshot().authority).toEqual({
+      folderUnreadable: 1,
+      lastFolderError: 'permission denied',
+      damagedReads: 2,
+      damagedThreads: ['thread-1']
+    })
+  })
+
+  it('on, starts on a disk where the authority folder is not a folder', async () => {
+    writeFileSync(path.join(profile, 'thread-authority'), 'not a folder')
+    const on = service(ON)
+    copies.set('thread-1', 5)
+    expect(await on.start()).toMatchObject({ folderUnreadable: expect.stringContaining('ENOTDIR') })
+    expect(await on.answer(1, claim('thread-1', 'desk-1', [5, 5]))).toMatchObject({
+      reply: { granted: false, reason: 'owned_by_other_writer' }
+    })
+    expect(on.snapshot().authority).toMatchObject({ folderUnreadable: 1, damagedReads: 1 })
+  })
+
+  it('off, reads no authority folder, and its snapshot is as it was', async () => {
+    writeFileSync(path.join(profile, 'thread-authority'), 'not a folder')
+    const off = service({})
+    expect(await off.start()).toBeNull()
+    expect(lines).toEqual([])
+    expect(off.snapshot()).toEqual({ mode: 'off', attached: [], table: null })
+  })
+
   it('on, gives a writer’s threads back once its last connection closes', async () => {
     const on = service(ON)
     copies.set('thread-1', 3)

@@ -28,11 +28,18 @@
  *   thread, by the thread's file, and the registry is told that app processes
  *   are attached: one process that has not come back holds only its own
  *   threads, never every thread.
+ *
+ * A damaged authority folder never stops the Host. A folder it cannot list at
+ * start is logged and counted, and the Host starts: each decision reads its
+ * thread's file again, and a file it cannot read, whether the file or the
+ * folder is at fault, keeps the thread as a live writer's would, so the Host
+ * neither grants the thread nor writes it. The counts are in its snapshot.
  */
 import * as path from 'node:path'
 
 import {
   ThreadAuthorityFiles,
+  type ThreadAuthorityRead,
   type ThreadAuthorityWriter,
   type ThreadWriterLiveness
 } from '../host-shared/thread-log/ThreadAuthorityFile'
@@ -85,11 +92,34 @@ export interface HostThreadOwnerServiceObserver {
   released?(threadId: string): void
 }
 
+/** How the profile's authority files have read since the Host started. */
+export interface HostThreadOwnerAuthorityHealth {
+  /** Starts at which the authority folder could not be listed. */
+  readonly folderUnreadable: number
+  readonly lastFolderError: string | null
+  /** Decisions that met a thread's file it could not read, and so kept the thread. */
+  readonly damagedReads: number
+  /** The threads among them, the first DAMAGED_THREADS_KEPT. */
+  readonly damagedThreads: readonly string[]
+}
+
 export interface HostThreadOwnerServiceSnapshot {
   readonly mode: HostThreadOwnerServiceMode
   /** Writers with a connection open, and how many. */
   readonly attached: readonly { readonly writerId: string; readonly connections: number }[]
   readonly table: HostThreadOwnerTableSnapshot | null
+  /** Only while it takes claims: off, it reads no authority file. */
+  readonly authority?: HostThreadOwnerAuthorityHealth
+}
+
+/** What the authority files said at start; `folderUnreadable` when they could not be listed. */
+export type HostThreadOwnerStart = HostThreadOwnerRebuild & { readonly folderUnreadable?: string }
+
+/** Threads with a file it could not read named in the snapshot; the count goes on past them. */
+const DAMAGED_THREADS_KEPT = 32
+
+function errorText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 200)
 }
 
 /** The journal's directory under a profile, where each thread's log lives. */
@@ -128,6 +158,10 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   private readonly observer: HostThreadOwnerServiceObserver | undefined
   private readonly writerOfConnection = new Map<number, string>()
   private readonly connectionsOfWriter = new Map<string, Set<number>>()
+  private folderUnreadable = 0
+  private lastFolderError: string | null = null
+  private damagedReads = 0
+  private readonly damagedThreads = new Set<string>()
 
   constructor(options: HostThreadOwnerServiceOptions) {
     const switchedOn = isThreadLogAuthorityEnabled(options.environment)
@@ -140,12 +174,17 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
       )
     }
     const directory = threadLogDirectory(options.profilePath)
+    const files = options.files ?? new ThreadAuthorityFiles(options.profilePath)
     this.registry =
       this.mode === 'on'
         ? new HostThreadOwnerRegistry({
             incarnation: options.incarnation,
             enabled: true,
-            files: options.files ?? new ThreadAuthorityFiles(options.profilePath),
+            files: {
+              read: (threadId) => this.read(files, threadId),
+              list: () => files.list(),
+              remove: (threadId) => files.remove(threadId)
+            },
             fullCopyRevision: (threadId) => options.fullCopyRevision(threadId),
             logRevision: options.logRevision
               ? (threadId) => options.logRevision!(threadId)
@@ -171,9 +210,21 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
    * durable what a writer left half done, and reports them. Each decision
    * reads its thread's file again.
    */
-  async start(): Promise<HostThreadOwnerRebuild | null> {
+  async start(): Promise<HostThreadOwnerStart | null> {
     if (!this.registry) return null
-    const rebuilt = await this.registry.rebuild()
+    let rebuilt: HostThreadOwnerRebuild
+    try {
+      rebuilt = await this.registry.rebuild()
+    } catch (error) {
+      const reason = errorText(error)
+      this.folderUnreadable += 1
+      this.lastFolderError = reason
+      this.log(
+        `taskwraith-host: thread owners: the authority folder cannot be listed (${reason}): ` +
+          'each thread is judged by its own file, and one that cannot be read is kept as busy\n'
+      )
+      return { held: [], fold: [], damaged: [], folderUnreadable: reason }
+    }
     this.log(
       `taskwraith-host: thread owners: ${rebuilt.held.length} held by a live app process, ` +
         `${rebuilt.fold.length} left by an ended one, ${rebuilt.damaged.length} unreadable\n`
@@ -236,8 +287,36 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
       attached: [...this.connectionsOfWriter]
         .map(([writerId, connections]) => ({ writerId, connections: connections.size }))
         .sort((a, b) => (a.writerId < b.writerId ? -1 : a.writerId > b.writerId ? 1 : 0)),
-      table: this.registry?.snapshot() ?? null
+      table: this.registry?.snapshot() ?? null,
+      ...(this.registry
+        ? {
+            authority: {
+              folderUnreadable: this.folderUnreadable,
+              lastFolderError: this.lastFolderError,
+              damagedReads: this.damagedReads,
+              damagedThreads: [...this.damagedThreads]
+            }
+          }
+        : {})
     }
+  }
+
+  /** A thread's file; one that cannot be read, however that fails, is damaged, and counted. */
+  private async read(
+    files: Pick<ThreadAuthorityFiles, 'read'>,
+    threadId: string
+  ): Promise<ThreadAuthorityRead> {
+    let read: ThreadAuthorityRead
+    try {
+      read = await files.read(threadId)
+    } catch (error) {
+      read = { kind: 'damaged', reason: `unreadable (${errorText(error)})` }
+    }
+    if (read.kind === 'damaged') {
+      this.damagedReads += 1
+      if (this.damagedThreads.size < DAMAGED_THREADS_KEPT) this.damagedThreads.add(threadId)
+    }
+    return read
   }
 
   private tell(call: (observer: HostThreadOwnerServiceObserver) => void): void {

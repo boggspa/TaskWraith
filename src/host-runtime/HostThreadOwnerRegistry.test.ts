@@ -488,6 +488,23 @@ describe('the Host thread owner registry: files it cannot rely on', () => {
     })
   })
 
+  it('keeps a thread busy when it cannot take an ended writer’s file away', async () => {
+    const memory = new MemoryFs()
+    const machine = new Machine(memory)
+    machine.start('desk-a', 4101)
+    machine.full.set(THREAD, 4)
+    const host = machine.host()
+    const epoch = granted(await host.claim(claim('desk-a', 4)))
+    await machine.marks('desk-a', epoch)
+    machine.end('desk-a')
+    memory.unlink = async () => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    }
+
+    expect(await host.requestHostWrite(THREAD, 0)).toEqual(BUSY)
+    expect(await machine.files.read(THREAD)).toMatchObject({ kind: 'held' })
+  })
+
   it('makes its taking of a thread durable: a file removed without its sync cannot come back', async () => {
     const released = async (memory: MemoryFs, unattached: boolean) => {
       const machine = new Machine(memory)

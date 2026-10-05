@@ -235,7 +235,12 @@ export class HostThreadOwnerRegistry {
       // removed by a writer that stopped before its directory sync could
       // otherwise come back after a power loss, and mark a log the Host has
       // written past as owned work.
-      await this.options.files.remove(threadId)
+      try {
+        await this.options.files.remove(threadId)
+      } catch {
+        // A file the Host cannot take away may still name a writer: never written over.
+        return BUSY
+      }
       return decision
     })
   }
