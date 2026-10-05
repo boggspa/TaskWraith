@@ -3,9 +3,15 @@
  * pool a compaction folds in, the port that makes an adopted checkpoint's
  * rename durable, and what a save's catalogue head waits for.
  */
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { IncrementalChatJournalOptions } from './IncrementalChatJournal'
+import type {
+  IncrementalChatJournal,
+  IncrementalChatJournalOptions
+} from './IncrementalChatJournal'
 import {
   chatRecord,
   disposeHostOwnedStores,
@@ -17,18 +23,53 @@ const built = vi.hoisted(() => ({
   workers: [] as object[],
   connectors: [] as object[],
   journals: [] as IncrementalChatJournalOptions[],
+  journalObjects: [] as IncrementalChatJournal[],
   /** Replaces the journal's own deferred wait while set. */
   deferredWait: null as (() => Promise<void>) | null,
   deferredWaits: 0,
-  /** How often the store's idle timer swept the journal. */
-  idleSweeps: 0
+  /** How often the store's idle timer swept the journal, and the segmented store. */
+  idleSweeps: 0,
+  segmentedSweeps: 0
 }))
 
 vi.mock('./CheckpointPreparationWorker', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./CheckpointPreparationWorker')>()
+  const { prepareCheckpoint } = await import('./CheckpointPreparationCore')
+  type Request = import('./CheckpointPreparationProtocol').CheckpointPreparationRequest
+  type Reply = import('./CheckpointPreparationProtocol').CheckpointPreparationReply
+  /** A fold on this thread, as the child would make it: the built entry is not here under test. */
+  class FoldHere {
+    private reply: ((reply: Reply) => void) | null = null
+    private exit: (() => void) | null = null
+    private exited = false
+    post(request: Request): void {
+      setImmediate(() => {
+        if (this.exited) return
+        let reply: Reply
+        try {
+          reply = { ok: true, prepared: prepareCheckpoint(request) }
+        } catch (error) {
+          reply = { ok: false, error: String(error) }
+        }
+        this.reply?.(reply)
+      })
+    }
+    onMessage(listener: (reply: Reply) => void): void {
+      this.reply = listener
+    }
+    onExit(listener: () => void): void {
+      this.exit = listener
+    }
+    onError(): void {}
+    kill(): void {
+      if (this.exited) return
+      this.exited = true
+      this.exit?.()
+    }
+  }
   class RecordedWorker extends actual.CheckpointPreparationWorker {
-    constructor(...args: ConstructorParameters<typeof actual.CheckpointPreparationWorker>) {
-      super(...args)
+    constructor(options: ConstructorParameters<typeof actual.CheckpointPreparationWorker>[0] = {}) {
+      super({ spawn: () => new FoldHere(), ...options })
       built.workers.push(this)
     }
   }
@@ -56,6 +97,7 @@ vi.mock('./IncrementalChatJournal', async (importOriginal) => {
     ) => {
       built.journals.push(options)
       const journal = actual.createIncrementalChatJournal(directory, options)
+      built.journalObjects.push(journal)
       const own = journal.awaitDeferredDurability!
       journal.awaitDeferredDurability = (chatId) => {
         built.deferredWaits += 1
@@ -76,16 +118,35 @@ vi.mock('./IncrementalChatJournal', async (importOriginal) => {
   }
 })
 
+vi.mock('./SegmentedChatStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SegmentedChatStore')>()
+  return {
+    ...actual,
+    createSegmentedChatStore: (...args: Parameters<typeof actual.createSegmentedChatStore>) => {
+      const store = actual.createSegmentedChatStore(...args)
+      const sweep = store.checkpointIdle
+      store.checkpointIdle = (nowMs) => {
+        built.segmentedSweeps += 1
+        return sweep(nowMs)
+      }
+      return store
+    }
+  }
+})
+
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.useRealTimers()
   await disposeHostOwnedStores()
   vi.unstubAllEnvs()
   built.workers.length = 0
   built.connectors.length = 0
   built.journals.length = 0
+  built.journalObjects.length = 0
   built.deferredWait = null
   built.deferredWaits = 0
   built.idleSweeps = 0
+  built.segmentedSweeps = 0
 })
 
 const BARRIER = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
@@ -210,5 +271,104 @@ describe("the store's idle sweep, at quit", () => {
 
   it('goes on with neither, as before', async () => {
     expect(await sweeping({})).toBe(4)
+  })
+})
+
+describe("the journal's idle sweep, with the Host owning the store", () => {
+  const MiB = 1024 * 1024
+
+  /**
+   * A store the Host owns, holding a thread whose lines meet the fold rule (1
+   * MiB, and half its checkpoint), which then stays quiet for 20 s of the
+   * store's idle timer. Its run is still going, so that no save of it is
+   * checkpointed at once as a run's end would be.
+   */
+  async function quietThread(env: Record<string, string>) {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'], shouldAdvanceTime: true })
+    const { AppStore, profilePath } = await storeWith(env)
+    const journal = built.journalObjects[0]
+    AppStore.saveChat(chatRecord('chat-quiet', 0))
+    const created = AppStore.getChat('chat-quiet')!
+    AppStore.saveChat({
+      ...created,
+      messages: [
+        ...created.messages,
+        {
+          id: 'reply-1',
+          role: 'assistant',
+          content: 'x'.repeat(MiB + 64 * 1024),
+          timestamp: '2026-10-05T00:00:00.000Z'
+        }
+      ],
+      runs: [
+        {
+          runId: 'run-quiet',
+          startedAt: '2026-10-05T00:00:00.000Z',
+          status: 'running',
+          provider: 'codex'
+        }
+      ]
+    })
+    const lines = join(profilePath, 'chat-journal-v2', 'chat-quiet.mutations.jsonl')
+    const written = statSync(lines).size
+    expect(written).toBeGreaterThan(MiB)
+
+    vi.advanceTimersByTime(20_000)
+    return { journal, lines, written }
+  }
+
+  it('folds a quiet thread that meets the fold rule under barrier durability', async () => {
+    const { journal, lines } = await quietThread({ [BARRIER]: '1' })
+
+    await vi.waitFor(() => expect(journal.stats().compactionsAdopted).toBe(1), {
+      timeout: 3_000
+    })
+    expect(built.idleSweeps).toBeGreaterThan(0)
+    // The segmented store keeps to where the legacy store may write.
+    expect(built.segmentedSweeps).toBe(0)
+    expect(journal.stats().idleCompactionsRequested).toBe(1)
+    expect(statSync(lines, { throwIfNoEntry: false })?.size ?? 0).toBeLessThan(MiB)
+  }, 15_000)
+
+  it('does nothing with barrier durability off, as before', async () => {
+    const { journal, lines, written } = await quietThread({})
+
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(built.idleSweeps).toBe(0)
+    expect(built.segmentedSweeps).toBe(0)
+    expect(journal.stats().compactionsStarted).toBe(0)
+    expect(statSync(lines).size).toBe(written)
+  })
+
+  it('leaves the journal alone under barrier durability where it cannot write, as while the gate drains', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.stubEnv(BARRIER, '1')
+    await importHostOwnedStore([], undefined, { gateOpen: true })
+    const { legacyStoreWriterGate } = await import('./LegacyStoreWriterGate')
+    expect(legacyStoreWriterGate.beginDrain()).toBe(true)
+
+    expect(() => vi.advanceTimersByTime(10_000)).not.toThrow()
+    expect(built.idleSweeps).toBe(0)
+  })
+})
+
+describe("the barrier's own idle barrier, with the Host owning the store", () => {
+  it("pays a quiet thread's debt on the timer the layer arms for itself", async () => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    const { AppStore } = await storeWith({ [BARRIER]: '1' })
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    const threads = () => AppStore.getThreadBarrierDurabilityPerf().threads
+
+    // An empty new thread takes no ticket: what its first save owes waits for
+    // the idle barrier.
+    AppStore.saveChat(chatRecord('chat-idle', 0, { messages: [] }))
+    expect(threads()).toMatchObject({ owing: 1, idleBarriers: 0 })
+    const idle = timers.mock.calls.filter(([, ms]) => (ms ?? 0) > 14_000 && (ms ?? 0) <= 15_000)
+    expect(idle).toHaveLength(1)
+
+    vi.advanceTimersByTime(15_000)
+    idle[0][0]()
+
+    await vi.waitFor(() => expect(threads()).toMatchObject({ owing: 0, idleBarriers: 1 }))
   })
 })

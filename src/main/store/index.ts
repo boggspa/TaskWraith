@@ -1323,7 +1323,14 @@ const segmentedChatStore = createSegmentedChatStore(segmentedChatStoreDir, {
 })
 const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
-  if (!legacyStoreCanWrite()) return
+  if (!legacyStoreCanWrite()) {
+    // Barrier durability folds quiet threads in its pool wherever the journal
+    // can write, the Host owning the store included. The sweep logs its own
+    // failures; it throws only where the journal cannot write.
+    if (threadBarrierDurability && incrementalJournalSidebandWritable())
+      incrementalChatPersistence.checkpointIdle()
+    return
+  }
   try {
     if (checkpointPreparationWorker) {
       void incrementalChatPersistence.checkpointIdleDeferred().catch((error: unknown) => {
