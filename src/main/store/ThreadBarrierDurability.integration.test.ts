@@ -1289,19 +1289,12 @@ describe("the catalogue's heads and tickets", () => {
     expect(layers.built).toEqual([])
   })
 
-  it('switched on, writes them without a sync: only new directories sync', async () => {
+  it('switched on, writes them and their new directories without a sync', async () => {
     const steps = await driveWithCatalogue(true)
 
     expect(steps[0].name).toBe('a new thread with its first message')
-    // The catalogue's new folders, and the first checkpoint written without a sync.
-    const catalogueFolders = [
-      'directory:.',
-      'directory:thread-catalogue-v1',
-      'directory:thread-catalogue-v1/pending',
-      'directory:thread-catalogue-v1/pending/desktop',
-      'directory:thread-catalogue-v1'
-    ]
-    expect(firstCheckpoint(steps[0], catalogueFolders)).toEqual(FIRST_CHECKPOINT_OWED)
+    // Rebuildable catalogue names need no sync; the first checkpoint remains owed.
+    expect(firstCheckpoint(steps[0], [])).toEqual(FIRST_CHECKPOINT_OWED)
     expect(steps.slice(1).map((step) => [step.name, step.issued])).toEqual([
       ['a run starts', []],
       ['streamed text', []],
