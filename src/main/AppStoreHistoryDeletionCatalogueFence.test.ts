@@ -185,3 +185,55 @@ describe('history deletion catalogue fence', () => {
     expect(events[0]).toBe('begin(sources=present,intent=true,recorded=1)')
   })
 })
+
+describe('history deletion catalogue fence partial-begin commit', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(chatsDir, { recursive: true })
+    AppStore.resetTransientDeletionGuardsForTests()
+    saveChat('chat-a')
+  })
+
+  afterEach(() => {
+    AppStore.setHistoryDeletionFailureInjectionForTests([])
+    vi.restoreAllMocks()
+  })
+
+  it('records the raised fence on the intent before begin resolves', async () => {
+    // The onFenceRaised callback fires synchronously after the fence is
+    // raised and before the begin step's join calls run. A join that
+    // throws after the callback still leaves the intent with the fence
+    // recorded, so a retry can reestablish it instead of minting a second
+    // generation. Without the per-fence commit, the retry would call
+    // fresh erase and the first fence would be un-liftable by its own
+    // generation.
+    const begin = vi.fn(
+      async (
+        _preparation: unknown,
+        _recorded: readonly CatalogueErasureFence[],
+        onFenceRaised?: (fence: CatalogueErasureFence) => void
+      ) => {
+        onFenceRaised?.({ chatId: 'chat-a', generation: 'ga' })
+        const persistedMid = JSON.parse(fs.readFileSync(historyIntentPath, 'utf8'))
+        expect(persistedMid.catalogueErasureFences).toEqual([
+          expect.objectContaining({ chatId: 'chat-a', generation: 'ga' })
+        ])
+        throw new Error('mirror refused')
+      }
+    )
+    AppStore.installCatalogueErasure(
+      begin,
+      async () => {},
+      () => {}
+    )
+    AppStore.installCatalogueErasureFinish(async () => {})
+    const operationId = AppStore.prepareHistoryDeletion({
+      kind: 'chat',
+      rootChatId: 'chat-a',
+      quiescenceTargets: []
+    }).operationId
+    const error = await commit(operationId).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(HistoryDeletionIncompleteError)
+  })
+})

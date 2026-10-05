@@ -36,7 +36,8 @@ export interface CatalogueErasureDeps {
 export function createCatalogueErasureCallbacks(deps: CatalogueErasureDeps): {
   begin(
     preparation: HistoryDeletionPreparation,
-    recorded: readonly CatalogueErasureFence[]
+    recorded: readonly CatalogueErasureFence[],
+    onFenceRaised?: (fence: CatalogueErasureFence) => void
   ): Promise<CatalogueErasureFence[]>
   finish(
     preparation: HistoryDeletionPreparation,
@@ -46,7 +47,7 @@ export function createCatalogueErasureCallbacks(deps: CatalogueErasureDeps): {
   const scopeOf = (chatId: string | undefined) => (chatId ? { chatId } : {})
 
   return {
-    async begin(preparation, recorded) {
+    async begin(preparation, recorded, onFenceRaised) {
       const global = preparation.kind === 'global'
       const scopes: Array<string | undefined> = global ? [undefined] : preparation.chatIds
       await deps.drainPublications(global ? undefined : preparation.chatIds)
@@ -63,7 +64,16 @@ export function createCatalogueErasureCallbacks(deps: CatalogueErasureDeps): {
               ...scopeOf(chatId)
             })
           : await deps.maintain<string>({ method: 'erase', ...scopeOf(chatId) })
-        fences.push(chatId ? { chatId, generation } : { generation })
+        const fence: CatalogueErasureFence = chatId ? { chatId, generation } : { generation }
+        fences.push(fence)
+        // Commit the fence to the intent IMMEDIATELY: a partial-begin
+        // crash (mirror-forget throws, or one of the join calls throws)
+        // must not strand the fence on disk without the intent knowing
+        // about it. The retry reads `intent.catalogueErasureFences` to
+        // decide between fresh erase and reestablish-erasure; without the
+        // commit, a re-run mints a second generation and the first
+        // fence is un-liftable by its own generation.
+        onFenceRaised?.(fence)
         if (chatId) deps.mirror.forget(chatId)
         else deps.mirror.forgetAll()
         // Both throw while source writes are still live, which fails the step

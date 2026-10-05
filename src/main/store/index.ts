@@ -10318,13 +10318,31 @@ export class AppStore {
   private static beginCatalogueErasure(intent: HistoryDeletionIntent): void | Promise<void> {
     const begin = this.catalogueErasureBegin
     if (!begin) return
-    return begin(this.historyDeletionPreparation(intent), intent.catalogueErasureFences ?? []).then(
-      (fences) => {
-        if (fences && fences.length > 0) {
-          intent.catalogueErasureFences = fences.map((fence) => ({ ...fence }))
-        }
+    return begin(
+      this.historyDeletionPreparation(intent),
+      intent.catalogueErasureFences ?? [],
+      // Commit each fence to the intent as it rises. A partial-begin crash
+      // (a join throws after some fences are up) must not strand the fence
+      // on disk without the intent knowing — the retry reads this list to
+      // decide between fresh erase and reestablish-erasure. Returning
+      // fences at the end of begin is too late.
+      (fence) => {
+        const next = (intent.catalogueErasureFences ?? []).filter(
+          (existing) => !(existing.chatId === fence.chatId)
+        )
+        next.push({ ...fence })
+        intent.catalogueErasureFences = next
       }
-    )
+    ).then((fences) => {
+      // Also commit at the end for callers that don't use the per-fence
+      // callback: the return value is the authoritative final list.
+      if (fences && fences.length > 0) {
+        const next = (intent.catalogueErasureFences ?? []).filter(
+          (existing) => !fences.some((f) => f.chatId === existing.chatId)
+        )
+        intent.catalogueErasureFences = [...next, ...fences.map((f) => ({ ...f }))]
+      }
+    })
   }
 
   /**
