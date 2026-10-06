@@ -87,7 +87,13 @@ export type ThreadCatalogueTakeoverOutcome =
   | { readonly kind: 'none' }
   | {
       readonly kind: 'busy'
-      readonly reason: 'identity_changed' | 'live_work' | 'orphan_custody' | 'unreadable'
+      readonly reason:
+        | 'identity_changed'
+        | 'live_work'
+        | 'orphan_custody'
+        | 'unreadable'
+        /** The hold could not be released on disk; it still keeps the thread. */
+        | 'release_refused'
     }
 
 /** Runs on the source-authoritative parent, never inside its decoder. */
@@ -429,6 +435,10 @@ export class ThreadCatalogueRecoveryController {
     if (held === 'unreadable') return { kind: 'busy', reason: 'unreadable' }
     if (!held) return { kind: 'none' }
     this.end(chatId, held.token)
+    // `end` clears the in-memory admission even when the catalogue declined
+    // the file: a hold still on disk still refuses claims, so say so.
+    if (this.options.publisher.catalogue.recoveryHold(chatId) !== null)
+      return { kind: 'busy', reason: 'release_refused' }
     return { kind: 'taken' }
   }
 

@@ -354,6 +354,42 @@ describe('desktop ownership activation over the real Host socket', () => {
     expect(await ask(2)).toMatchObject({ reply: { granted: true } })
   })
 
+  it('retries a refused claim after the hold ends, on the head the Host already confirmed', async () => {
+    const { profile, copies, runs, server } = await host()
+    copies.set(CHAT, 3)
+    runs.add(CHAT)
+    const app = desktop(profile, server)
+    await app.wiring.loadEvidence()
+    await app.saveConfirmedByHost(3)
+    expect(app.wiring.port.isActive(CHAT)).toBe(false)
+
+    // The Host stops working on the thread (its hold was taken over): the
+    // retry needs no new save, because the rollback kept the head's join.
+    runs.delete(CHAT)
+    const retried = await app.wiring.trigger!.retry(CHAT)
+    expect(retried).toMatchObject({ kind: 'activated' })
+    expect(app.wiring.port.isActive(CHAT)).toBe(true)
+    expect((await new ThreadAuthorityFiles(profile).read(CHAT)).kind).toBe('held')
+  })
+
+  it('stops treating a lost grant as ownership: later saves wait for Host storage', async () => {
+    const { profile, copies, server } = await host()
+    copies.set(CHAT, 3)
+    const app = desktop(profile, server)
+    await app.wiring.loadEvidence()
+    await app.saveConfirmedByHost(3)
+    expect(app.wiring.port.isActive(CHAT)).toBe(true)
+
+    app.wiring.production!.connection.close()
+    await settle()
+    expect(app.wiring.port.isActive(CHAT)).toBe(false)
+    // A save the journal holds is not acknowledged on the journal's word alone.
+    journal(profile, 4)
+    await expect(app.wiring.port.confirmOwnedSave!(CHAT, 4)).resolves.toBe(false)
+    // The mark still names this live writer, so nobody else takes the thread.
+    expect((await new ThreadAuthorityFiles(profile).read(CHAT)).kind).toBe('held')
+  })
+
   it('hands the saves back when the Host refuses the claim, and writes no mark', async () => {
     const { profile, copies, runs, server } = await host()
     copies.set(CHAT, 3)

@@ -125,6 +125,11 @@ export class ThreadOwnershipClient {
     this.dropConnection()
   }
 
+  /** After an explicit per-thread takeover: the next claim for it need not wait out a refusal. */
+  forgetRefusal(threadId: string): void {
+    this.claims.forgetRefusal(threadId)
+  }
+
   stateOf(threadId: string): ThreadOwnershipNegotiationState {
     const grant = this.grants.get(threadId)
     if (grant) return { kind: 'network_grant', grant }

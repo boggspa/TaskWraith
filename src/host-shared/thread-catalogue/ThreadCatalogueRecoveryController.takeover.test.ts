@@ -207,4 +207,18 @@ describe('ThreadCatalogueRecoveryController hasPendingHold', () => {
     catalogue.unreadableChats.add(CHAT)
     expect(controller.hasPendingHold(CHAT)).toBe(true)
   })
+
+  it('reports release_refused when the catalogue keeps the hold file', () => {
+    const { controller, catalogue } = build()
+    controller.registerDesktop({ writerId: DESKTOP, pid: 4101 })
+    controller.begin(CHAT, DESKTOP)
+    catalogue.releaseRecoveryHold = () => false
+
+    expect(controller.takeoverThread(CHAT, DESKTOP)).toEqual({
+      kind: 'busy',
+      reason: 'release_refused'
+    })
+    // Still held on disk, so claims stay refused rather than silently let through.
+    expect(controller.hasPendingHold(CHAT)).toBe(true)
+  })
 })

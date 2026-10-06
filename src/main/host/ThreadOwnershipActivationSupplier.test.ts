@@ -403,4 +403,32 @@ describe('createThreadOwnershipActivationTrigger', () => {
     await expect(fire.retry('nobody')).resolves.toBeNull()
     expect(activate).toHaveBeenCalledTimes(2)
   })
+
+  it('hands a shared attempt’s intents back once, however many callers joined it', async () => {
+    const queue = new PerChatSaveIntentQueue()
+    const handedBack = intent(4)
+    let finish!: (result: ThreadOwnershipActivationResult) => void
+    // The coordinator shares one in-flight attempt between concurrent callers.
+    const shared = new Promise<ThreadOwnershipActivationResult>((resolve) => (finish = resolve))
+    const fire = createThreadOwnershipActivationTrigger({
+      queue,
+      activation: { activate: () => shared, isActive: () => false }
+    })
+    queue.enqueue(intent(3))
+    queue.settle(CHAT, intent(3).commandId)
+    fire.confirmed(CHAT, exact(3))
+    const retried = fire.retry(CHAT)
+    finish({
+      kind: 'failed',
+      reason: 'reservation_invalid',
+      pending: [handedBack],
+      faults: [],
+      ownershipRetained: false
+    })
+    await retried
+    await fire.idle()
+    const [held] = queue.peek(CHAT)
+    expect(held.commandId).toBe(handedBack.commandId)
+    expect(held.supersedes ?? []).toEqual([])
+  })
 })

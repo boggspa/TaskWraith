@@ -78,6 +78,12 @@ interface ChatSlot {
   admitted: ChatSaveIntentHead | null
   frozen: ChatSaveIntentHead | null
   publication: { intentCommandId: string; hostCommandId: string; revision: number } | null
+  /**
+   * The frozen head's confirmed publication. A save admitted during the freeze
+   * moves `admitted` and may confirm its own publication, but the head being
+   * promoted is still the frozen one and must stay recheckable by its command.
+   */
+  frozenPublication: { intentCommandId: string; hostCommandId: string; revision: number } | null
 }
 
 export class PerChatSaveIntentQueue {
@@ -187,12 +193,16 @@ export class PerChatSaveIntentQueue {
       throw new Error('Head revision is not the admitted head')
     }
     slot.frozen = slot.admitted
+    slot.frozenPublication =
+      slot.publication?.intentCommandId === slot.admitted.commandId ? slot.publication : null
   }
 
   /** The caller signals ownership: flushes resume. */
   unfreeze(chatId: string): void {
     const slot = this.slots.get(chatId)
-    if (slot) slot.frozen = null
+    if (!slot) return
+    slot.frozen = null
+    slot.frozenPublication = null
   }
 
   isFrozen(chatId: string): boolean {
@@ -230,11 +240,14 @@ export class PerChatSaveIntentQueue {
     return true
   }
 
-  /** Where a handle points: the admitted head or the pending intent only. */
+  /** Where a handle points: the admitted head, the frozen head or the pending intent only. */
   locate(commandId: string): { chatId: string; revision: number } | null {
     for (const [chatId, slot] of this.slots) {
       if (slot.admitted?.commandId === commandId) {
         return { chatId, revision: slot.admitted.revision }
+      }
+      if (slot.frozen?.commandId === commandId) {
+        return { chatId, revision: slot.frozen.revision }
       }
       if (slot.pending?.commandId === commandId) {
         return { chatId, revision: chatPersistenceRevision(slot.pending.record) }
@@ -251,20 +264,21 @@ export class PerChatSaveIntentQueue {
     revision: number
   ): boolean {
     const slot = this.slots.get(chatId)
-    if (
-      !slot?.admitted ||
-      !hostCommandId ||
-      slot.admitted.commandId !== intentCommandId ||
-      slot.admitted.revision !== revision
-    )
-      return false
-    slot.publication = { intentCommandId, hostCommandId, revision }
-    return true
+    if (!slot || !hostCommandId) return false
+    const publication = { intentCommandId, hostCommandId, revision }
+    const frozen = slot.frozen?.commandId === intentCommandId && slot.frozen.revision === revision
+    if (frozen) slot.frozenPublication = publication
+    if (slot.admitted?.commandId === intentCommandId && slot.admitted.revision === revision) {
+      slot.publication = publication
+      return true
+    }
+    return frozen
   }
 
   publicationFor(intentCommandId: string): { hostCommandId: string; revision: number } | null {
     for (const slot of this.slots.values()) {
       if (slot.publication?.intentCommandId === intentCommandId) return slot.publication
+      if (slot.frozenPublication?.intentCommandId === intentCommandId) return slot.frozenPublication
     }
     return null
   }
@@ -287,13 +301,19 @@ export class PerChatSaveIntentQueue {
     return true
   }
 
-  /** Drop pending intents and the freeze; used when activation fails. */
+  /**
+   * Drop pending intents and the freeze; used when activation fails. The
+   * admitted head's confirmed publication stays: it is still true that Host
+   * storage holds that save, and a retry (an explicit takeover) must be able to
+   * show it without the user saving again. Only `forget` drops it.
+   */
   reset(chatId: string): void {
     const slot = this.slots.get(chatId)
     if (!slot) return
     slot.pending = null
     slot.frozen = null
-    slot.publication = null
+    slot.frozenPublication = null
+    if (slot.publication?.intentCommandId !== slot.admitted?.commandId) slot.publication = null
   }
 
   /** The chat is gone: forget everything, including its admitted head. */
@@ -318,7 +338,13 @@ export class PerChatSaveIntentQueue {
   private slot(chatId: string): ChatSlot {
     let slot = this.slots.get(chatId)
     if (!slot) {
-      slot = { pending: null, admitted: null, frozen: null, publication: null }
+      slot = {
+        pending: null,
+        admitted: null,
+        frozen: null,
+        publication: null,
+        frozenPublication: null
+      }
       this.slots.set(chatId, slot)
     }
     return slot

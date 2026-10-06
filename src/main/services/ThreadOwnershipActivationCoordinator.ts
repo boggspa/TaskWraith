@@ -121,8 +121,50 @@ export class ThreadOwnershipActivationCoordinator {
 
   constructor(private readonly options: ThreadOwnershipActivationOptions) {}
 
+  /**
+   * Active only while the reservation still holds: a grant the Host revoked
+   * (socket lost, Host restarted) or a lineage that ended is not ownership. A
+   * lapsed chat is taken out of `active` at once, so its saves go back to
+   * waiting for Host storage; the mark stays (owned rows may sit above the
+   * Host's copy) until a fresh activation confirms a newer head and claims.
+   */
   isActive(chatId: string): boolean {
-    return this.active.has(chatId)
+    const reservation = this.active.get(chatId)
+    if (!reservation) return false
+    try {
+      reservation.revalidate()
+      return true
+    } catch {
+      this.lapse(chatId, reservation)
+      return false
+    }
+  }
+
+  /**
+   * An owned save the owned journal confirmed outside replay (in `saveChat`).
+   * It sits above the Host's copy, so the mark must survive a later rollback
+   * or deactivation until a Host publication covers it again.
+   */
+  noteOwnedCommit(chatId: string): void {
+    if (this.active.has(chatId)) this.ownedCommitted.add(chatId)
+  }
+
+  private lapse(chatId: string, reservation: ThreadOwnershipReservation): void {
+    if (this.active.get(chatId) !== reservation) return
+    this.active.delete(chatId)
+    this.holders.delete(chatId)
+    // The mark stays for now; erasure (`deactivate`) still owes its removal,
+    // judged then against the owned rows it covers.
+    this.markRemovalOwed.add(chatId)
+    if (this.holders.size === 0) {
+      try {
+        this.options.authoritySwitch.disable()
+      } catch {
+        // The switch is advisory here; the lapse itself is what stops owned appends.
+      }
+    }
+    const release = this.options.registry.release
+    if (release) void Promise.resolve(release(reservation)).catch(() => undefined)
   }
 
   /**
@@ -229,8 +271,8 @@ export class ThreadOwnershipActivationCoordinator {
 
   private async run(chatId: string): Promise<ThreadOwnershipActivationResult> {
     const { queue } = this.options
-    const activeReservation = this.active.get(chatId)
-    if (activeReservation) return this.replay(chatId, activeReservation, null)
+    // A lapsed reservation is dropped here, and the chat activates afresh.
+    if (this.isActive(chatId)) return this.replay(chatId, this.active.get(chatId)!, null)
 
     const state: Rollback = { reservation: null, markAttempted: false, switchEnabled: false }
     const fail = (reason: ThreadOwnershipActivationFailure, drained: ChatSaveIntent[] = []) =>
@@ -251,6 +293,9 @@ export class ThreadOwnershipActivationCoordinator {
     if (!(await this.publicationConfirmed(chatId, head.commandId, head.revision))) {
       return fail('publication_not_confirmed')
     }
+    // Host storage now holds the head, and every owned save before it: no
+    // earlier owned row is above the Host's copy any more.
+    this.ownedCommitted.delete(chatId)
 
     // 3. Claim, then check the reservation still means what it said.
     try {
@@ -351,10 +396,11 @@ export class ThreadOwnershipActivationCoordinator {
     uncommitted: ChatSaveIntent[],
     committed: number
   ): Promise<ThreadOwnershipActivationResult> {
-    if (committed > 0 || state === null) {
+    if (committed > 0 || state === null || this.ownedCommitted.has(chatId)) {
       // Owned rows exist the Host has not seen, or the chat was active before
-      // this call: keep the mark and the switch, and put the rest back so a
-      // later activate() resumes. Dropping the mark would hide those rows.
+      // this call (or saved owned since activating): keep the mark and the
+      // switch, and put the rest back so a later activate() resumes. Dropping
+      // the mark would hide those rows.
       for (const intent of uncommitted.slice().reverse()) this.options.queue.requeue(intent)
       return Promise.resolve({
         kind: 'failed',

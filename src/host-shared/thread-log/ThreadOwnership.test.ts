@@ -952,6 +952,26 @@ describe('who may write a thread: the claims an app process holds', () => {
     expect(claims.claim(THREAD, revisions, 3_600_000)).toMatchObject({ claimId: 2 })
   })
 
+  it('lets an explicit takeover forget one thread’s refusal and no other', () => {
+    const claims = attachedClaims()
+    for (const threadId of ['thread-a', 'thread-b']) {
+      const request = claims.claim(threadId, revisions, 0)!
+      claims.claimReply({
+        threadId,
+        claimId: request.claimId,
+        granted: false,
+        reason: 'host_run_active',
+        revision: null
+      })
+    }
+    claims.forgetRefusal('thread-a')
+    expect(claims.claim('thread-a', revisions, 1)).toMatchObject({ threadId: 'thread-a' })
+    expect(claims.claim('thread-b', revisions, 1)).toBeNull()
+    // A claim in flight is not cut short by it.
+    claims.forgetRefusal('thread-a')
+    expect(claims.claim('thread-a', revisions, 2)).toBeNull()
+  })
+
   it('remembers a refusal only until the retry interval has passed', () => {
     const claims = attachedClaims()
     for (let index = 0; index < 500; index++) {

@@ -261,6 +261,8 @@ export interface ThreadOwnershipActivationTriggerOptions {
   readonly queue: Pick<PerChatSaveIntentQueue, 'admittedHead' | 'requeue'>
   readonly activation: Pick<ThreadOwnershipActivationCoordinator, 'activate' | 'isActive'>
   readonly onOutcome?: (chatId: string, result: ThreadOwnershipActivationResult) => void
+  /** Before an explicit retry: lets the claim go at once rather than after its back-off. */
+  readonly onRetry?: (chatId: string) => void
   readonly onError?: (error: unknown) => void
 }
 
@@ -289,10 +291,15 @@ export function createThreadOwnershipActivationTrigger(
 ): ThreadOwnershipActivationTrigger {
   const attempted = new Map<string, string>()
   const running = new Set<Promise<void>>()
+  // Concurrent starts share the coordinator's one attempt and so its outcome:
+  // hand that outcome's intents back once, not once per caller.
+  const handled = new WeakSet<ThreadOwnershipActivationResult>()
   const onError =
     options.onError ?? ((error) => console.error('[ownership-activation] failed', error))
   const start = (chatId: string): Promise<ThreadOwnershipActivationResult | null> => {
     const result = options.activation.activate(chatId).then((outcome) => {
+      if (handled.has(outcome)) return outcome
+      handled.add(outcome)
       // A clean rollback reset the queue and handed every intent back.
       // They are saves no Host has confirmed yet: they stay pending.
       if (outcome.kind === 'failed' && !outcome.ownershipRetained) {
@@ -328,6 +335,7 @@ export function createThreadOwnershipActivationTrigger(
       const head = options.queue.admittedHead(chatId)
       if (!head) return null
       attempted.set(chatId, head.commandId)
+      options.onRetry?.(chatId)
       return start(chatId)
     },
     forget(chatId) {

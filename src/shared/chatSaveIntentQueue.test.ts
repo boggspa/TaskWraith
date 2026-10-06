@@ -37,7 +37,45 @@ describe('PerChatSaveIntentQueue', () => {
       revision: 6
     })
     queue.reset('a')
+    // Host storage still holds the admitted head: a retry must be able to show it.
+    expect(queue.publicationFor('cmd-5')).toEqual({
+      intentCommandId: 'cmd-5',
+      hostCommandId: 'host-command',
+      revision: 6
+    })
+    queue.forget('a')
     expect(queue.publicationFor('cmd-5')).toBeNull()
+  })
+
+  it('keeps the frozen head locatable and its publication joined while newer saves arrive', () => {
+    const queue = new PerChatSaveIntentQueue()
+    queue.enqueue(intent('a', 3))
+    expect(queue.confirmPublication('a', 'cmd-3', 'host-3', 3)).toBe(true)
+    queue.freezeHead('a', 3)
+    queue.enqueue(intent('a', 4))
+    expect(queue.locate('cmd-3')).toEqual({ chatId: 'a', revision: 3 })
+    expect(queue.publicationFor('cmd-3')).toMatchObject({ hostCommandId: 'host-3', revision: 3 })
+    // The newer save confirming its own publication does not displace the frozen join.
+    expect(queue.confirmPublication('a', 'cmd-4', 'host-4', 4)).toBe(true)
+    expect(queue.publicationFor('cmd-3')).toMatchObject({ hostCommandId: 'host-3', revision: 3 })
+    expect(queue.publicationFor('cmd-4')).toMatchObject({ hostCommandId: 'host-4', revision: 4 })
+    // A rollback drops the freeze; the newer admitted head keeps its join.
+    queue.reset('a')
+    expect(queue.locate('cmd-3')).toBeNull()
+    expect(queue.publicationFor('cmd-3')).toBeNull()
+    expect(queue.publicationFor('cmd-4')).toMatchObject({ hostCommandId: 'host-4' })
+  })
+
+  it('joins a frozen head confirmed after the freeze, even once a newer save is admitted', () => {
+    const queue = new PerChatSaveIntentQueue()
+    queue.enqueue(intent('a', 3))
+    queue.freezeHead('a', 3)
+    queue.enqueue(intent('a', 4))
+    expect(queue.confirmPublication('a', 'cmd-3', 'host-3', 3)).toBe(true)
+    expect(queue.publicationFor('cmd-3')).toMatchObject({ hostCommandId: 'host-3' })
+    expect(queue.confirmPublication('a', 'cmd-3', 'host-3', 2)).toBe(false)
+    queue.unfreeze('a')
+    expect(queue.publicationFor('cmd-3')).toBeNull()
   })
 
   it('coalesces earlier intents into the latest and keeps every command handle', () => {

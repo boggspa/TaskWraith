@@ -775,4 +775,13 @@ export class DesktopThreadClaims {
     this.refused.delete(threadId)
     this.refused.set(threadId, retryAt)
   }
+
+  /**
+   * An explicit request to claim this thread again now: whatever refused the
+   * last claim was ended deliberately (a per-thread takeover). Only the named
+   * thread's back-off goes; a claim still in flight is left alone.
+   */
+  forgetRefusal(threadId: string): void {
+    this.refused.delete(threadId)
+  }
 }

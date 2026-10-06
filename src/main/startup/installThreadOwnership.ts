@@ -216,6 +216,7 @@ export function installThreadOwnership(
           if (result.kind === 'failed' && !result.ownershipRetained)
             production?.facts.forget(chatId)
         },
+        onRetry: (chatId) => production?.client.forgetRefusal(chatId),
         onError
       })
     : null
@@ -227,7 +228,18 @@ export function installThreadOwnership(
     ...(trigger
       ? { onPublicationConfirmed: (chatId, evidence) => trigger.confirmed(chatId, evidence) }
       : {}),
-    ...(production ? { confirmOwnedSave: production.confirmOwnedSave } : {}),
+    ...(production && activation
+      ? {
+          // The journal's word counts only while the grant still holds: a save
+          // confirmed after the grant lapsed waits for Host storage instead.
+          confirmOwnedSave: async (chatId: string, revision: number) => {
+            const held = await production.confirmOwnedSave(chatId, revision)
+            if (!held || !activation.isActive(chatId)) return false
+            activation.noteOwnedCommit(chatId)
+            return true
+          }
+        }
+      : {}),
     ...(options.mintId ? { mintId: options.mintId } : {}),
     ...(options.onError ? { onError: options.onError } : {})
   })
