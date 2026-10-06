@@ -233,6 +233,16 @@ export interface AcpTurnOptions {
    */
   sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   /**
+   * Selections that must stop the turn, before any prompt is sent, when the
+   * session cannot honor them. The default is to warn and prompt on the
+   * provider's persisted value, which for a model means silently running a
+   * different model on a different bill. Mirrors the Host applicator's
+   * `strictConfigIds`: a session advertising no config surface at all keeps
+   * the prompt-anyway behavior, and the turn closes as
+   * `config_unapplied:<configId>`.
+   */
+  strictConfigIds?: readonly string[]
+  /**
    * Lifetime of `cwd` as a provider-visible workspace identity. A native
    * session may be resumed only when the path remains valid for that session's
    * whole lifetime; disposable run scratch must never be used for resume.
@@ -350,8 +360,9 @@ export interface AcpTurnOptions {
    * Called once when the child exits. `turnComplete` is true when the prompt
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
    * status so callers can distinguish end_turn from Cancelled/PermissionRejected,
-   * or `rpc_error:<step>` when an ACP lifecycle request failed before a terminal
-   * response.
+   * `rpc_error:<step>` when an ACP lifecycle request failed before a terminal
+   * response, or `config_unapplied:<configId>` when a strict session config
+   * could not be applied and no prompt was sent.
    */
   onClose?: (
     code: number | null,
@@ -779,6 +790,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let nextConfigRpcId = ACP_CONFIG_RPC_START
   let sessionConfigQueue: Array<{ configId: string; values: string[] }> = []
   let configSessionKind: 'new' | 'resumed' = 'new'
+  const strictConfigIds = new Set(options.strictConfigIds ?? [])
+  let configSurfaceAdvertised = false
   const pendingConfigRpcs = new Map<number, { configId: string; value: string }>()
   let activePromptRpcId: number | null = null
   let deniedPromptRpcId: number | null = null
@@ -1322,6 +1335,33 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     return true
   }
 
+  // A strict selection the session cannot honor ends the turn before the
+  // prompt. Same failure shape as an ACP lifecycle error: a non-success
+  // terminal status survives to onClose, so the adapter reports a failed run
+  // rather than an empty success.
+  const failUnappliedSessionConfig = (
+    configId: string,
+    values: readonly string[],
+    reason: string
+  ): void => {
+    sessionConfigQueue = []
+    terminalStatus = `config_unapplied:${configId}`
+    const requested =
+      values.length === 1
+        ? `"${values[0]}"`
+        : `any allowed value (${values.map((value) => `"${value}"`).join(', ')})`
+    const subject =
+      configId === 'model' ? `selected model ${requested}` : `selected "${configId}" ${requested}`
+    try {
+      options.onEvent({
+        type: 'provider_warning',
+        text: `ACP ${configSessionKind} session cannot apply ${subject}: ${reason}. The prompt was not sent.`
+      })
+    } finally {
+      endProcess()
+    }
+  }
+
   const applyNextSessionConfig = (result: unknown): void => {
     if (sessionConfigQueue.length === 0) {
       sendPromptOnce()
@@ -1331,6 +1371,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     const desired = sessionConfigQueue.shift()!
     const option = advertised.find((candidate) => candidate.id === desired.configId)
     if (!option) {
+      if (strictConfigIds.has(desired.configId) && configSurfaceAdvertised) {
+        failUnappliedSessionConfig(
+          desired.configId,
+          desired.values,
+          'the config option was not advertised'
+        )
+        return
+      }
       options.onEvent({
         type: 'provider_warning',
         text: `ACP ${configSessionKind} session did not advertise config option "${desired.configId}"; keeping its persisted value.`
@@ -1348,6 +1396,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         ? desired.values[0]
         : desired.values.find((value) => option.values.includes(value))
     if (!selectedValue) {
+      if (strictConfigIds.has(desired.configId)) {
+        failUnappliedSessionConfig(
+          desired.configId,
+          desired.values,
+          'it is not in the advertised values'
+        )
+        return
+      }
       const requested =
         desired.values.length === 1
           ? `"${desired.values[0]}"`
@@ -1380,6 +1436,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     const requestedConfig = resumed ? options.resumeConfigOptions : options.sessionConfigOptions
     if (requestedConfig?.length) {
       configSessionKind = resumed ? 'resumed' : 'new'
+      configSurfaceAdvertised = advertisedConfigOptions(result).length > 0
       sessionConfigQueue = requestedConfig
         .map((option) => {
           const values = [option.value, ...(option.fallbackValues ?? [])]
@@ -1698,6 +1755,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         const config = pendingConfigRpcs.get(message.id)!
         pendingConfigRpcs.delete(message.id)
         const rpcError = message.error as { message?: string }
+        if (strictConfigIds.has(config.configId)) {
+          failUnappliedSessionConfig(
+            config.configId,
+            [config.value],
+            `set_config_option failed (${rpcError?.message || 'request error'})`
+          )
+          continue
+        }
         options.onEvent({
           type: 'provider_warning',
           text: `ACP session config "${config.configId}" was not applied: ${

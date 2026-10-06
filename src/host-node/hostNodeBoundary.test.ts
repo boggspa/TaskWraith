@@ -54,9 +54,13 @@ const PURE_MUSE_CLOSURE = new Set([
 
 /** Deliberate production closure required by the Node Mistral adapter. */
 const PURE_MISTRAL_CLOSURE = new Set([
+  // The API-key lane pins its model into Vibe's env (VIBE_MODELS), priced
+  // from the seat's own rate table.
+  'MistralApiModelEnv.ts',
   'MistralCliArgs.ts',
   'MistralCredentialLane.ts',
-  'MistralQuotaEstimate.ts'
+  'MistralQuotaEstimate.ts',
+  'MistralUsage.ts'
 ])
 
 /** Deliberate production closure required by the Node Devin adapter: launch

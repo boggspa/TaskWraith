@@ -65,6 +65,14 @@ export type { AcpChildProcess } from '../acp/AcpTurnClient'
 /** The client name Mistral sees in request metadata. Must be non-empty. */
 const MISTRAL_CLIENT_NAME = 'taskwraith'
 
+/**
+ * The user's exact model must run, or the turn fails before the prompt. A
+ * model Vibe will not select used to fall through to its persisted model on
+ * the same credential: a different model on a different bill, with nothing
+ * visible but a warning. The Host lane applies the same rule.
+ */
+const MISTRAL_STRICT_CONFIG_IDS = ['model'] as const
+
 const MISTRAL_VIBE_BROKER_TOOL_NAMESPACE_ALIASES = [
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
   'taskwraith',
@@ -359,6 +367,14 @@ export interface MistralAcpRunOptions {
   /** Spawns `vibe-acp` (injected for testability). */
   spawnProcess: () => AcpChildProcess
   /**
+   * Spawns `vibe-acp` for the read-only opening turn, when its environment
+   * differs from the working turn's. An API-key model is pinned through
+   * VIBE_MODELS at a fixed thinking level, so the opening's `thinking: off`
+   * has to come from its env rather than a config write. Defaults to
+   * `spawnProcess`.
+   */
+  spawnIntroductionProcess?: () => AcpChildProcess
+  /**
    * MCP servers advertised to session/new. vibe-acp accepts HTTP and stdio
    * servers directly — its session/new signature takes
    * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]`.
@@ -518,13 +534,14 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
         cwd: options.cwd,
         cwdLifetime: 'run',
         initializeParams,
-        spawnProcess: options.spawnProcess,
+        spawnProcess: options.spawnIntroductionProcess ?? options.spawnProcess,
         mcpServers: [],
         sessionConfigOptions: [
           { configId: 'mode', value: 'ask', fallbackValues: ['default'] },
           ...(options.sessionConfigOptions || []).filter((option) => option.configId === 'model'),
           { configId: 'thinking', value: 'off' }
         ],
+        strictConfigIds: MISTRAL_STRICT_CONFIG_IDS,
         onProcess: options.onProcess,
         onPermissionRequest: () => 'deny',
         onEvent,
@@ -582,6 +599,7 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     // hard-disabled), so there is never a persisted provider-side selection to
     // re-assert.
     sessionConfigOptions: options.sessionConfigOptions,
+    strictConfigIds: MISTRAL_STRICT_CONFIG_IDS,
     formatSteerPrompt: formatMistralSteerPrompt,
     onEvent: (event) => {
       if (event.type === 'provider_warning' && event.text) {

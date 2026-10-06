@@ -778,6 +778,128 @@ const toolCall = (child: FakeAcpChild, toolCallId: string, title: string, kind: 
   })
 }
 
+describe('Mistral seat model pinning', () => {
+  // Answers initialize and session/new with a Vibe-shaped config surface whose
+  // model list is `offered`, then stops; it never answers a prompt.
+  const answerSession = async (
+    child: FakeAcpChild,
+    sessionId: string,
+    offered: readonly string[],
+    current: string
+  ): Promise<void> => {
+    const seen = new Set<unknown>()
+    for (let round = 0; round < 10 && !child.killed; round += 1) {
+      for (const frame of child.sent()) {
+        if (frame.id === undefined || seen.has(frame.id)) continue
+        seen.add(frame.id)
+        if (frame.method === 'initialize') {
+          child.emit({ jsonrpc: '2.0', id: frame.id, result: { protocolVersion: 1 } })
+        } else if (frame.method === 'session/new') {
+          child.emit({
+            jsonrpc: '2.0',
+            id: frame.id,
+            result: {
+              sessionId,
+              configOptions: [
+                { id: 'mode', currentValue: 'ask', options: [{ value: 'ask' }, { value: 'plan' }] },
+                {
+                  id: 'model',
+                  currentValue: current,
+                  options: offered.map((value) => ({ value }))
+                },
+                {
+                  id: 'thinking',
+                  currentValue: 'off',
+                  options: [{ value: 'off' }, { value: 'high' }]
+                }
+              ]
+            }
+          })
+        }
+      }
+      await tick()
+    }
+  }
+  const prompted = (child: FakeAcpChild): boolean =>
+    child.sent().some((frame) => frame.method === 'session/prompt')
+
+  it('opens the private turn from its own spawner, already on the pinned model', async () => {
+    const spawned: string[] = []
+    const children: FakeAcpChild[] = []
+    const spawner = (label: string) => (): FakeAcpChild => {
+      spawned.push(label)
+      const child = new FakeAcpChild()
+      children.push(child)
+      return child
+    }
+    const handle = runMistralAcpTurn({
+      prompt: 'Inspect pricing.py.',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.7-test',
+      sessionConfigOptions: [{ configId: 'model', value: 'mistral-large-4' }],
+      spawnProcess: spawner('work'),
+      spawnIntroductionProcess: spawner('opening'),
+      onEvent: () => {}
+    })
+    try {
+      expect(spawned).toEqual(['opening'])
+      await answerSession(
+        children[0],
+        'opening-session',
+        ['mistral-medium-3.5', 'mistral-large-4'],
+        'mistral-large-4'
+      )
+      // Model and `thinking: off` already hold, so the opening writes no config.
+      expect(
+        children[0].sent().filter((frame) => frame.method === 'session/set_config_option')
+      ).toEqual([])
+      expect(prompted(children[0])).toBe(true)
+    } finally {
+      handle.cancel()
+      await handle.closed
+    }
+  })
+
+  it("fails the turn instead of running Vibe's persisted model", async () => {
+    const children: FakeAcpChild[] = []
+    const events: NormalizedGrokRunEvent[] = []
+    const onClose = vi.fn()
+    const handle = runMistralAcpTurn({
+      prompt: 'Inspect pricing.py.',
+      cwd: '/tmp/workspace',
+      appVersion: '1.9.7-test',
+      sessionConfigOptions: [
+        { configId: 'mode', value: 'ask' },
+        { configId: 'model', value: 'mistral-large-4' }
+      ],
+      spawnProcess: () => {
+        const child = new FakeAcpChild()
+        children.push(child)
+        return child
+      },
+      onEvent: (event) => events.push(event),
+      onClose
+    })
+    await answerSession(
+      children[0],
+      'opening-session',
+      ['mistral-medium-3.5'],
+      'mistral-medium-3.5'
+    )
+    await vi.waitFor(() => expect(children).toHaveLength(2), { interval: 5, timeout: 1_000 })
+    await answerSession(children[1], 'work-session', ['mistral-medium-3.5'], 'mistral-medium-3.5')
+    await handle.closed
+    expect(children.map(prompted)).toEqual([false, false])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'provider_warning',
+        text: expect.stringContaining('cannot apply selected model "mistral-large-4"')
+      })
+    )
+    expect(onClose).toHaveBeenCalledExactlyOnceWith(0, false, 'config_unapplied:model')
+  })
+})
+
 const toolResult = (
   child: FakeAcpChild,
   toolCallId: string,

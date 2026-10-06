@@ -696,6 +696,8 @@ describe('HostNodeMistralProvider', () => {
       await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
       expect(spawnEnvs).toHaveLength(1)
       expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBeUndefined()
+      expect(spawnEnvs[0]?.VIBE_MODELS).toBeUndefined()
+      expect(spawnEnvs[0]?.VIBE_ACTIVE_MODEL).toBeUndefined()
       expect(instance.cancel('run-1')).toBe(true)
       child.emit('close', 0)
       await expect(running).resolves.toMatchObject({ status: 'cancelled' })
@@ -717,6 +719,35 @@ describe('HostNodeMistralProvider', () => {
 
     await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
     expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBe('studio-key')
+    // Vibe can only select an alias in its own model list, so the API model is
+    // pinned into the session through the environment rather than a switch.
+    expect(spawnEnvs[0]?.VIBE_ACTIVE_MODEL).toBe('mistral-large-2512')
+    expect(JSON.parse(String(spawnEnvs[0]?.VIBE_MODELS))).toEqual([
+      expect.objectContaining({ alias: 'mistral-large-2512', thinking: 'off' })
+    ])
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('opens a pinned Mistral Large 4 session at the thread thinking level', async () => {
+    const { instance, child, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-4', reasoningId: 'max' }),
+      environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'studio-key' }
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: {}
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawnEnvs[0]?.VIBE_ACTIVE_MODEL).toBe('mistral-large-4')
+    expect(JSON.parse(String(spawnEnvs[0]?.VIBE_MODELS))).toEqual([
+      expect.objectContaining({ alias: 'mistral-large-4', thinking: 'max', supports_images: true })
+    ])
     expect(instance.cancel('run-1')).toBe(true)
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })

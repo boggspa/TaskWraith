@@ -816,6 +816,132 @@ describe('runAcpTurn — neutral core', () => {
     expect(child.sent().at(-1)).toMatchObject({ id: 3, method: 'session/prompt' })
   })
 
+  describe('strict session config', () => {
+    const strictRun = (child: FakeAcpChild) => {
+      const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+      const { events } = baseOptions(child, {
+        sessionConfigOptions: [{ configId: 'model', value: 'mistral-large-4' }],
+        strictConfigIds: ['model'],
+        endProcess: (c) => c.stdin?.end?.(),
+        onClose: (_code, turnComplete, terminalStatus) => {
+          closes.push({ turnComplete, terminalStatus })
+        }
+      })
+      child.emit({ jsonrpc: '2.0', id: 1, result: { agentCapabilities: {} } })
+      return { events, closes }
+    }
+    const prompted = (child: FakeAcpChild): boolean =>
+      child.sent().some((frame) => frame.method === 'session/prompt')
+
+    it('fails the turn instead of prompting on a model the session does not offer', async () => {
+      const child = new FakeAcpChild()
+      const { events, closes } = strictRun(child)
+      child.emit({
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          sessionId: 'session-new',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'mistral-medium-3.5' }, { value: 'glm-5-2' }]
+            }
+          ]
+        }
+      })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(prompted(child)).toBe(false)
+      expect(child.sent().some((frame) => frame.method === 'session/set_config_option')).toBe(false)
+      expect(events).toContainEqual({
+        type: 'provider_warning',
+        text: 'ACP new session cannot apply selected model "mistral-large-4": it is not in the advertised values. The prompt was not sent.'
+      })
+      expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'config_unapplied:model' }])
+    })
+
+    it('fails the turn when setting the model is rejected', async () => {
+      const child = new FakeAcpChild()
+      const { events, closes } = strictRun(child)
+      child.emit({
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          sessionId: 'session-new',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'mistral-medium-3.5' }, { value: 'mistral-large-4' }]
+            }
+          ]
+        }
+      })
+      expect(child.sent().at(-1)).toMatchObject({
+        id: 1000,
+        method: 'session/set_config_option',
+        params: { configId: 'model', value: 'mistral-large-4' }
+      })
+      child.emit({ jsonrpc: '2.0', id: 1000, error: { code: -32602, message: 'Unknown model' } })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(prompted(child)).toBe(false)
+      expect(events).toContainEqual({
+        type: 'provider_warning',
+        text: 'ACP new session cannot apply selected model "mistral-large-4": set_config_option failed (Unknown model). The prompt was not sent.'
+      })
+      expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'config_unapplied:model' }])
+    })
+
+    it('fails the turn when an advertised config surface omits the model', async () => {
+      const child = new FakeAcpChild()
+      const { closes } = strictRun(child)
+      child.emit({
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          sessionId: 'session-new',
+          configOptions: [{ id: 'mode', currentValue: 'ask', options: [{ value: 'ask' }] }]
+        }
+      })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(prompted(child)).toBe(false)
+      expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'config_unapplied:model' }])
+    })
+
+    it('keeps prompting when the session advertises no config surface at all', () => {
+      const child = new FakeAcpChild()
+      const { events } = strictRun(child)
+      child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+      expect(prompted(child)).toBe(true)
+      expect(events).toContainEqual({
+        type: 'provider_warning',
+        text: 'ACP new session did not advertise config option "model"; keeping its persisted value.'
+      })
+    })
+
+    it('prompts without a write when the session already runs the selected model', () => {
+      const child = new FakeAcpChild()
+      const { events } = strictRun(child)
+      child.emit({
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          sessionId: 'session-new',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-large-4',
+              options: [{ value: 'mistral-medium-3.5' }, { value: 'mistral-large-4' }]
+            }
+          ]
+        }
+      })
+      expect(child.sent().some((frame) => frame.method === 'session/set_config_option')).toBe(false)
+      expect(prompted(child)).toBe(true)
+      expect(events.filter((event) => event.type === 'provider_warning')).toEqual([])
+    })
+  })
+
   it('continues a resumed turn when an optional session config update rejects', () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {

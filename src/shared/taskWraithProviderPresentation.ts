@@ -172,6 +172,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-large-4': 'Mistral Large 4',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
+  'zai-glm-5-3': 'GLM-5.3 (via Mistral)',
   'glm-5-2': 'GLM-5.2 (Mistral Hosted)',
   'codestral-2508': 'Codestral (Aug 2025)',
   'mistral-small-2603': 'Mistral Small 4',

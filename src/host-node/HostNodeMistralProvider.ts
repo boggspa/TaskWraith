@@ -61,7 +61,8 @@ import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
   normalizeMistralModel,
-  normalizeMistralThinkingLevel
+  normalizeMistralThinkingLevel,
+  type MistralThinkingLevel
 } from '../main/mistral/MistralCliArgs'
 import {
   createHostAcpSessionConfigApplicator,
@@ -108,15 +109,13 @@ function mistralReadOnlySeat(posture: HostProviderRunThread['posture']): boolean
 }
 
 function mistralSessionConfigSelections(
-  thread: HostProviderRunThread
+  thread: HostProviderRunThread,
+  // From resolveMistralCredentialLaunch: an API-key model's level is the one
+  // its VIBE_MODELS-pinned session opens at, so asking for it writes nothing.
+  thinking: MistralThinkingLevel | null
 ): HostAcpSessionConfigSelection[] {
   const readOnly = mistralReadOnlySeat(thread.posture)
   const mode = mistralSessionModeForSeat(readOnly)
-  // TaskWraith reasoning tiers Vibe has no equivalent for (xhigh/ultra) clamp
-  // onto the CLI's own thinking ladder, exactly as the desktop lane does — an
-  // untranslated value is rejected by set_config_option and would silently
-  // leave the session on whatever thinking level it last persisted.
-  const thinking = normalizeMistralThinkingLevel(thread.reasoningId)
   return [
     {
       configId: 'mode',
@@ -348,7 +347,12 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       storedApiKeyPresent: false,
       // On a paired host the configured process environment is the explicit
       // BYOK source; there is no desktop encrypted-key store to consult.
-      ambientApiKeyAllowed: true
+      ambientApiKeyAllowed: true,
+      // TaskWraith reasoning tiers Vibe has no equivalent for (xhigh/ultra) clamp
+      // onto the CLI's own thinking ladder, exactly as the desktop lane does — an
+      // untranslated value is rejected by set_config_option and would silently
+      // leave the session on whatever thinking level it last persisted.
+      thinkingLevel: normalizeMistralThinkingLevel(thread.reasoningId)
     })
     if (credentialLaunch.missingApiKey) {
       throw new Error(
@@ -636,7 +640,7 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
           sessionConfig.begin({
             sessionId,
             result: frame.result,
-            selections: mistralSessionConfigSelections(thread)
+            selections: mistralSessionConfigSelections(thread, credentialLaunch.thinkingLevel)
           })
           return
         }

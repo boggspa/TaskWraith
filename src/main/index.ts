@@ -25788,7 +25788,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     model,
     resolvedEnv: mistralBaseEnv,
     storedApiKeyPresent: mistralHasStoredKey,
-    ambientApiKeyAllowed: mistralAmbientApiKeyEnabled()
+    ambientApiKeyAllowed: mistralAmbientApiKeyEnabled(),
+    thinkingLevel: normalizeMistralThinkingLevel(payload.reasoningEffort)
   })
   if (mistralCredentialLaunch.missingApiKey) {
     settleVisibleProviderSetupFailure({
@@ -26102,7 +26103,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // The whole configuration surface of this seat, in protocol form. Order is
   // load-bearing to a reader, not to Vibe: mode first because it is the
   // security decision, then model, then thinking.
-  const mistralThinkingLevel = normalizeMistralThinkingLevel(payload.reasoningEffort)
+  // An API-key model's level is the one its pinned session opens at.
+  const mistralThinkingLevel = mistralCredentialLaunch.thinkingLevel
   const mistralSessionMode = mistralSessionModeForSeat(mistralReadOnlySeat)
   const mistralSessionConfigOptions: AcpSessionConfigSelection[] = [
     // `plan` for a read-only seat, `ask` for a current write seat, with gated
@@ -26170,7 +26172,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     )
   }
 
-  const mistralSpawnAcpProcess = (): AcpChildProcess => {
+  const mistralSpawnAcpProcess = (env = mistralChildEnv): AcpChildProcess => {
     const child = spawn(binaryPath, mistralAcpArgs, {
       cwd: payload.workspace!,
       shell: false,
@@ -26179,7 +26181,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       // second createCliEnv call inside the closure would be a fresh unscrubbed
       // object, and the seat's whole credential story is that the env the child
       // gets is the env the notice above described.
-      env: mistralChildEnv
+      env
     })
     // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
     return child as unknown as AcpChildProcess
@@ -26521,7 +26523,9 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       mcpServers: mistralMcpServers,
       selectMcpServers: mistralSelectMcpServers,
       sessionConfigOptions: mistralSessionConfigOptions,
-      spawnProcess: mistralSpawnAcpProcess,
+      spawnProcess: () => mistralSpawnAcpProcess(),
+      spawnIntroductionProcess: () =>
+        mistralSpawnAcpProcess(mistralCredentialLaunch.introductionChildEnv),
       onProcess: (child) => {
         const proc = child as unknown as ChildProcess
         runManager.attachProcess(route.appRunId!, proc)

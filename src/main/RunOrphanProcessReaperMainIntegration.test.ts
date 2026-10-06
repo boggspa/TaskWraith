@@ -45,7 +45,7 @@ describe('run orphan process reaper main integration', () => {
       '// NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.'
     )
     const mistral = sourceBetween(
-      'const mistralSpawnAcpProcess = (): AcpChildProcess => {',
+      'const mistralSpawnAcpProcess = (env = mistralChildEnv): AcpChildProcess => {',
       '// NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.'
     )
     const kimiStart = indexSource.indexOf(
