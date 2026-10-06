@@ -3723,9 +3723,12 @@ describe('T9a main persistence stats collector', () => {
     expect(wedgedMain.ok).toBe(false)
     expect(wedgedMain.reason).toMatch(/liveness probe/i)
     expect(wedgedMain.reason).toMatch(/not the perf handle/i)
-    // The trivial probe is the ONLY thing attempted: a wedged main must not also
-    // spend the handle's bound before reporting.
-    expect(attempted).toEqual(['1'])
+    // Only the trivial probe is attempted, the retry count times: a wedged
+    // main must not also spend the handle's bound before reporting. The
+    // default is 3 attempts (with a 500ms backoff between) so transient
+    // capture-teardown contention does not lose the sample; a genuinely
+    // wedged main still never reaches the handle.
+    expect(attempted).toEqual(['1', '1', '1'])
 
     // Inverse: main answers trivia, the handle does not. Same failure class to a
     // reader of `persistenceStatsFailure`, opposite fix.

@@ -113,6 +113,15 @@ function normalizePerfStatsPayload(payload) {
  */
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5_000
 const DEFAULT_EVALUATE_TIMEOUT_MS = 30_000
+/**
+ * A healthy main thread can still be briefly unresponsive when this probe
+ * runs after the heavy capture steps (profile stop, renderer heap snapshot):
+ * a single 5s bound conflates "wedge" with "still servicing capture
+ * teardown". Retry the liveness probe a bounded number of times before
+ * declaring main unresponsive, so transient capture contention does not
+ * lose the persistence sample.
+ */
+const DEFAULT_LIVENESS_ATTEMPTS = 3
 
 /**
  * One bounded Runtime.evaluate. The timeout is asked of the transport, which is
@@ -160,7 +169,19 @@ async function sampleMainPersistenceStats(session, options = {}) {
   // Those have different fixes, so the instrument has to say which. A trivial
   // expression costs one round trip; if THAT does not answer, the handle is
   // irrelevant and the finding is about main.
-  const liveness = await postEvaluate(session, '1', livenessTimeoutMs)
+  const livenessAttempts = isFiniteNumber(options.livenessAttempts)
+    ? Math.max(1, Math.floor(options.livenessAttempts))
+    : DEFAULT_LIVENESS_ATTEMPTS
+  let liveness = { ok: false, reason: 'not attempted' }
+  for (let attempt = 0; attempt < livenessAttempts && !liveness.ok; attempt += 1) {
+    liveness = await postEvaluate(session, '1', livenessTimeoutMs)
+    if (!liveness.ok && attempt + 1 < livenessAttempts) {
+      // Give main a beat to drain whatever the previous capture step left in
+      // its event loop. Bounded so a genuinely dead main cannot consume the
+      // capture budget: at most (attempts - 1) * backoff extra milliseconds.
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
   if (!liveness.ok) {
     // Deliberately keeps the `Runtime.evaluate failed` prefix: an immediate
     // throw (socket closed) and a silent non-answer are both transport
