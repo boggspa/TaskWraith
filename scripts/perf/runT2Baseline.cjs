@@ -1934,7 +1934,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     throw new Error('--replay-stall-timeout-ms must be a positive finite number')
   }
 
-  const repoRoot = options.repoRoot || path.resolve(__dirname, '..', '..')
+  const repoRoot =
+    options.repoRoot || process.env.PERF_REPO_ROOT || path.resolve(__dirname, '..', '..')
   const provenance =
     options.provenance ||
     collectRepoProvenance({
