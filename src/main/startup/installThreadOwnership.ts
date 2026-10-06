@@ -16,8 +16,7 @@
  * revision the mark records. None has a default that would invent one, so an
  * incomplete wiring fails closed (the activation rolls back and hands the
  * queued saves back) rather than writing a mark or a receipt nobody earned.
- * The handoff doc at .local-only/HANDOFF-i7-thread-custody.md covers the
- * remaining integration work.
+ * Production transport and journal suppliers are composed separately.
  */
 import { app } from 'electron'
 import { join } from 'path'
@@ -132,9 +131,9 @@ export interface ThreadOwnershipWiring {
    * Settles the queue once a receipt is durable.
    */
   readonly persistedEvidenceSink: (
-    input: { readonly chatId: string },
+    input: { readonly chatId: string; readonly ownershipIntentId?: string },
     evidence: ThreadOwnershipReceiptEvidence
-  ) => void
+  ) => Promise<void>
   /**
    * Pass to `installStartupThreadCatalogue({erasureJoins})`. Gives
    * erasure-begin a place to land an in-flight `activate()` and to forget

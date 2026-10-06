@@ -68,6 +68,65 @@ function fixture(enabled = true) {
 }
 
 describe('ThreadOwnershipClient negotiation', () => {
+  it('invalidates a grant on lineage replacement and on same-Host reconnect', async () => {
+    const f = fixture()
+    f.client.onWelcome({ bootEpoch: HOST })
+    const claim = f.client.requestClaim('thread')
+    f.grant()
+    const result = await claim
+    if (result.kind !== 'network_grant') throw new Error('Expected grant')
+    expect(f.client.isCurrent(result.grant)).toBe(true)
+    f.setFacts({ baseRevision: 7, headRevision: 7, lineageToken: {} })
+    expect(f.client.isCurrent(result.grant)).toBe(false)
+    f.setFacts(result.grant.facts)
+    f.client.onWelcome({ bootEpoch: HOST })
+    expect(f.client.isCurrent(result.grant)).toBe(false)
+  })
+
+  it('revokes local append permission before awaiting the exact grant release', async () => {
+    const f = fixture()
+    f.client.onWelcome({ bootEpoch: HOST })
+    const claim = f.client.requestClaim('thread')
+    f.grant()
+    const result = await claim
+    if (result.kind !== 'network_grant') throw new Error('Expected grant')
+    const release = f.client.release(result.grant, 7)
+    expect(f.client.isCurrent(result.grant)).toBe(false)
+    expect(f.requestThreadOwner.mock.calls[1][0]).toEqual({
+      action: 'release',
+      threadId: 'thread',
+      epoch: result.grant.epoch,
+      revision: 7
+    })
+    expect(await f.client.requestClaim('thread')).toEqual({
+      kind: 'not_requested',
+      reason: 'retry_pending'
+    })
+    f.pending[1].resolve({ kind: 'thread.owner', action: 'release', released: true })
+    expect(await release).toEqual({ kind: 'released' })
+    expect(f.client.stateOf('thread')).toEqual({ kind: 'unclaimed' })
+  })
+
+  it('retries an ambiguous release on the original connection without reviving append permission', async () => {
+    const f = fixture()
+    f.client.onWelcome({ bootEpoch: HOST })
+    const claim = f.client.requestClaim('thread')
+    f.grant()
+    const result = await claim
+    if (result.kind !== 'network_grant') throw new Error('Expected grant')
+    const failed = f.client.release(result.grant, null)
+    f.pending[1].reject(new Error('response lost'))
+    expect(await failed).toEqual({ kind: 'failed' })
+    const retry = f.client.release(result.grant, null)
+    expect(f.client.isCurrent(result.grant)).toBe(false)
+    expect(f.requestThreadOwner.mock.calls[2][0]).toEqual(f.requestThreadOwner.mock.calls[1][0])
+    f.client.onDisconnected()
+    f.client.onWelcome({ bootEpoch: HOST })
+    f.pending[2].resolve({ kind: 'thread.owner', action: 'release', released: true })
+    expect(await retry).toEqual({ kind: 'stale' })
+    expect(await f.client.release(result.grant, null)).toEqual({ kind: 'stale' })
+  })
+
   it('does no I/O on construction and claims nothing while off or disconnected', async () => {
     const off = fixture(false)
     expect(off.requestThreadOwner).not.toHaveBeenCalled()

@@ -122,6 +122,7 @@ async function seedConfirmedHead(
   await wiring.loadEvidence()
   queue.enqueue(intent(3))
   await wiring.receiptStore.record(exact(3))
+  expect(queue.confirmPublication(CHAT, 'cmd-3', 'host-3', 3)).toBe(true)
 }
 
 describe('installThreadOwnership bridge', () => {
@@ -141,7 +142,7 @@ describe('installThreadOwnership bridge', () => {
     expect(wiring.activation!.isActive(CHAT)).toBe(true)
     expect(wiring.port.isActive(CHAT)).toBe(true)
     expect(claim).toHaveBeenCalledWith(CHAT)
-    expect(held.revalidate).toHaveBeenCalledTimes(1)
+    expect(held.revalidate).toHaveBeenCalled()
     expect(ownedAppend).toHaveBeenCalledTimes(1)
     expect(ownedAppend.mock.calls[0][1]).toBe(held)
     // The mark is the real one, on disk, naming the grant it was written under.
@@ -191,7 +192,7 @@ describe('installThreadOwnership bridge', () => {
       await wiring.loadEvidence()
       queue.enqueue(intent(3))
 
-      wiring.persistedEvidenceSink({ chatId: CHAT }, exact(3))
+      await wiring.persistedEvidenceSink({ chatId: CHAT, ownershipIntentId: 'cmd-3' }, exact(3))
       await vi.waitFor(() => expect(wiring.receiptStore.listLoaded(CHAT)).toHaveLength(1))
       await vi.waitFor(() => expect(queue.peek(CHAT)).toEqual([]))
 

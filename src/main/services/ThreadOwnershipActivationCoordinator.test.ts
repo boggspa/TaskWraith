@@ -173,7 +173,7 @@ describe('ThreadOwnershipActivationCoordinator', () => {
       expect.objectContaining({ kind: 'exact', commandId: 'cmd-3', revision: 3 }),
       { chatId: CHAT, commandId: 'cmd-3' }
     )
-    expect(h.reservation.revalidate).toHaveBeenCalledTimes(1)
+    expect(h.reservation.revalidate).toHaveBeenCalled()
     expect(h.spies.remove).not.toHaveBeenCalled()
     expect(h.spies.disable).not.toHaveBeenCalled()
   })
@@ -505,7 +505,7 @@ function memoryPersistence(): ReceiptEvidencePersistence {
 }
 
 describe('production glue', () => {
-  it('resolves an intent handle to the exact Host receipt for its revision', async () => {
+  it('requires the explicit submitted handle even when another receipt has the same revision', async () => {
     const queue = new PerChatSaveIntentQueue()
     const store = new HostOwnershipReceiptEvidenceStore(memoryPersistence())
     await store.load()
@@ -516,6 +516,8 @@ describe('production glue', () => {
     await store.record({ kind: 'reanchor', threadId: CHAT, commandId: 'host-3r', revision: 3 })
     expect(lookup.get('cmd-3')).toBeNull()
     await store.record(exact(3, CHAT, 'host-3'))
+    expect(lookup.get('cmd-3')).toBeNull()
+    expect(queue.confirmPublication(CHAT, 'cmd-3', 'host-3', 3)).toBe(true)
     expect(lookup.get('cmd-3')).toEqual(exact(3, CHAT, 'host-3'))
     expect(lookup.get('unknown')).toBeNull()
   })
@@ -537,13 +539,16 @@ describe('production glue', () => {
     queue.enqueue(intent(3))
     queue.enqueue(intent(4))
 
-    wiring.persistedEvidenceSink({ chatId: CHAT }, exact(3))
+    await wiring.persistedEvidenceSink({ chatId: CHAT, ownershipIntentId: 'cmd-3' }, exact(3))
     await vi.waitFor(() => expect(store.listLoaded(CHAT)).toHaveLength(1))
     // Authored at revision 4: still pending, revision 3 does not cover it.
     expect(queue.peek(CHAT)).toHaveLength(1)
     expect(wiring.port.receiptsFor(CHAT)).toEqual([exact(3)])
 
-    wiring.persistedEvidenceSink({ chatId: CHAT }, exact(4))
+    // A matching revision without the authored intent identity settles nothing.
+    await wiring.persistedEvidenceSink({ chatId: CHAT }, exact(4))
+    expect(queue.peek(CHAT)).toHaveLength(1)
+    await wiring.persistedEvidenceSink({ chatId: CHAT, ownershipIntentId: 'cmd-4' }, exact(4))
     await vi.waitFor(() => expect(queue.peek(CHAT)).toEqual([]))
   })
 

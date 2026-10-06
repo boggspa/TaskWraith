@@ -112,6 +112,8 @@ export class ThreadOwnershipActivationCoordinator {
   /** Chats that hold the shared authority switch: in flight or active. */
   private readonly holders = new Set<string>()
   private readonly inFlight = new Map<string, Promise<ThreadOwnershipActivationResult>>()
+  /** Erasure invalidates an attempt before joining it, including a timed-out join. */
+  private readonly erased = new Set<string>()
   /** Chats this process committed an owned append for; their mark must outlive a deactivate. */
   private readonly ownedCommitted = new Set<string>()
   /** Chats whose mark a failed `deactivate` could not remove, so a retry finishes the job. */
@@ -145,6 +147,7 @@ export class ThreadOwnershipActivationCoordinator {
    * run if any part of it failed, so the caller's erasure step is retried.
    */
   async deactivate(chatId: string): Promise<void> {
+    this.erased.add(chatId)
     const running = this.inFlight.get(chatId)
     if (running) await this.settleWithin(running)
     const reservation = this.active.get(chatId)
@@ -214,6 +217,8 @@ export class ThreadOwnershipActivationCoordinator {
   /** Non-blocking: reads the reservation's own flag and the injected fence, and fails closed. */
   private erasingNow(chatId: string, reservation: ThreadOwnershipReservation | null): boolean {
     try {
+      if (this.erased.has(chatId)) return true
+      reservation?.revalidate()
       return reservation?.erasing() === true || this.options.erasing?.(chatId) === true
     } catch {
       return true
@@ -228,6 +233,8 @@ export class ThreadOwnershipActivationCoordinator {
     const state: Rollback = { reservation: null, markAttempted: false, switchEnabled: false }
     const fail = (reason: ThreadOwnershipActivationFailure, drained: ChatSaveIntent[] = []) =>
       this.rollback(chatId, reason, state, drained)
+
+    if (this.erasingNow(chatId, null)) return fail('reservation_invalid')
 
     // 1. Freeze the admitted head. With none there is nothing to confirm.
     const head = queue.admittedHead(chatId)
@@ -429,23 +436,26 @@ interface Rollback {
 }
 
 /**
- * Resolves an intent's handle to the exact Host receipt for its revision. The
- * Host's command ids are its own, so the join is the record revision the intent
- * authored; the handle only says which intent to look for.
+ * Resolves the explicit authored-save / submitted-command association. A receipt
+ * at the same revision from a different publication is never enough.
  */
 export function createHeadReceiptLookup(options: {
-  readonly queue: Pick<PerChatSaveIntentQueue, 'locate'>
-  readonly receiptStore: Pick<HostOwnershipReceiptEvidenceStore, 'listLoaded'>
+  readonly queue: Pick<PerChatSaveIntentQueue, 'locate' | 'publicationFor'>
+  readonly receiptStore: Pick<HostOwnershipReceiptEvidenceStore, 'getLoaded'>
 }): { get(commandId: string): ThreadOwnershipReceiptEvidence | null } {
   return {
     get(commandId) {
       const where = options.queue.locate(commandId)
       if (!where) return null
-      const held = options.receiptStore.listLoaded(where.chatId)
-      for (let index = held.length - 1; index >= 0; index -= 1) {
-        const evidence = held[index]
-        if (evidence.kind === 'exact' && evidence.revision === where.revision) return evidence
-      }
+      const publication = options.queue.publicationFor(commandId)
+      if (!publication || publication.revision !== where.revision) return null
+      const evidence = options.receiptStore.getLoaded(publication.hostCommandId)
+      if (
+        evidence?.kind === 'exact' &&
+        evidence.threadId === where.chatId &&
+        evidence.revision === where.revision
+      )
+        return evidence
       return null
     }
   }
@@ -466,9 +476,9 @@ export function createChatSaveOwnershipWiring(options: {
   readonly port: ChatSaveOwnershipPort
   /** Pass as HostThreadRecordPersistClient's `onPersistedEvidence`. */
   readonly persistedEvidenceSink: (
-    input: { readonly chatId: string },
+    input: { readonly chatId: string; readonly ownershipIntentId?: string },
     evidence: ThreadOwnershipReceiptEvidence
-  ) => void
+  ) => Promise<void>
 } {
   const { queue, receiptStore, coordinator } = options
   const mintId = options.mintId ?? randomUUID
@@ -486,15 +496,26 @@ export function createChatSaveOwnershipWiring(options: {
       },
       isActive: (chatId) => coordinator.isActive(chatId)
     },
-    persistedEvidenceSink(input, evidence) {
+    async persistedEvidenceSink(input, evidence) {
       // Settle only once the evidence is durable: a pending save is released by
       // Host storage that can be shown again after a restart.
-      void receiptStore
-        .record(evidence, { chatId: input.chatId })
-        .then(() => {
-          if (evidence.kind === 'exact') queue.settleThrough(input.chatId, evidence.revision)
-        })
-        .catch(onError)
+      try {
+        await receiptStore.record(evidence, { chatId: input.chatId })
+        if (
+          evidence.kind === 'exact' &&
+          input.ownershipIntentId &&
+          queue.confirmPublication(
+            input.chatId,
+            input.ownershipIntentId,
+            evidence.commandId,
+            evidence.revision
+          )
+        ) {
+          queue.settle(input.chatId, input.ownershipIntentId)
+        }
+      } catch (error) {
+        onError(error)
+      }
     }
   }
 }

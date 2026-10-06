@@ -1521,9 +1521,9 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         outputUsdPerMillion: 2.4,
         cachedInputUsdPerMillion: 0.06,
         sourceUrl: 'https://platform.minimax.io/docs/guides/pricing-paygo',
-        lastVerified: RATE_TABLE_VERSION,
+        lastVerified: '2026-10-06',
         notes:
-          'MiniMax model ids are CASE-SENSITIVE. Highspeed variant billed at 2x standard token rates per platform.minimax.io/docs/guides/pricing-paygo (Oct 2026).'
+          'MiniMax model ids are CASE-SENSITIVE. Input/output are 2x standard M2.7; cache reads remain $0.06/MTok. Official pay-as-you-go row verified 2026-10-06.'
       },
       {
         modelId: 'minimax/MiniMax-M3',

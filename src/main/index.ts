@@ -55064,9 +55064,7 @@ if (isGeminiMcpBridgeProcess) {
         for (const listener of catalogueInventoryListeners) listener()
       }
     })
-    void startupThreadCatalogue.ready.catch((error) =>
-      console.error('[thread-catalogue] initialization failed', error)
-    )
+    await startupThreadCatalogue.ready
     const hostChannelAdmin = new HostChannelAdminCommandClient({ broker: desktopHostBroker })
     let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
       null

@@ -6,18 +6,22 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
-## 1.10.0-rc1 - 2026-10-06 — I7 thread-custody closeout (RELEASE-CANDIDATE)
+## Unreleased
 
 ### Thread Custody and Orphan Recovery
 
-The I7 thread-custody integration lands behind the existing TASKWRAITH_THREAD_LOG_AUTHORITY and TASKWRAITH_THREAD_BARRIER_DURABILITY feature flags. Production switches stay off: the measured run at this commit shows the 250 ms run-final barrier gate passing and the 50 ms user-facing barrier gate failing with populated samples. See `.local-only/CLOSE-OUT-READINESS.md` for the measured gate status.
+Phase 1 thread-custody integration is incomplete and remains behind the existing
+`TASKWRAITH_THREAD_LOG_AUTHORITY` and `TASKWRAITH_THREAD_BARRIER_DURABILITY` flags.
+Production defaults remain off. Diagnostic captures have populated moment samples,
+but do not qualify either the 50 ms user-barrier or 250 ms run-final acceptance gate:
+the production ownership path was inactive and collection was incomplete.
 
-- **Opaque ownership reservation.** A new `ThreadOwnershipReservation` handle is minted by `HostThreadOwnerRegistry.reserveOwnership` and threads through the directory-sync, fold adoption, and `retireOrphanAuthority` paths. A brand slot (`RESERVATION_BRAND`) is reserved for a future migration that distinguishes a registry-minted reservation from a foreign one. `reserveOwnership` revalidates the mark witness, writer liveness, profile authority, and erasure generation across the directory-sync await.
+- **Ownership reservation work.** Reservation validation and orphan retirement now have explicit interfaces and regression coverage. Opaque custody across preparation, adoption, retirement and sync still requires integration review.
 - **Failed directory-sync retry.** When a directory sync throws after the unlink succeeds, the registry records the debt in a per-thread set; the next `retireOrphanAuthority` call retries the sync even when the file is already gone, returning `busy/damaged` only when the absence is unaccounted-for.
-- **Orphan fold RPC.** A new `fold-owned-log` query preserves the log's head revision, `updatedAt`, and `createdAt` rather than incrementing them. The decoder gates fold and `reestablish-erasure` on `assertHeld` in both the inner-host and the host-node surfaces.
+- **Orphan fold RPC.** `fold-owned-log` preserves the log's head revision, `updatedAt`, and `createdAt`. Production orphan-recovery sequencing remains under integration.
 - **Desktop ownership activation seam.** A new `PerChatSaveIntentQueue` records an authored save before journal or cache mutation, freezes the admitted head, and is drained by `ThreadOwnershipActivationCoordinator.activate(chatId)`. `pinAdmittedRevision` commits the post-save revision back to the admitted head so `publicationConfirmed` matches the receipt. The receipt evidence is durable in `app.getPath('userData')/thread-ownership-receipts.json`.
-- **I8 erasure begin/finish split.** `createCatalogueErasureCallbacks` produces a `begin` (raises the fence, joins writers) and a `finish` (lifts the fence) that the deletion runs only in its success epilogue. A new `onFenceRaised` callback commits each fence to the intent as it rises so a partial-begin crash does not strand fences on disk. `reestablishErasure` resumes under the recorded generation rather than minting a new one; `cancelForReplacedDesktop` is replaced by an explicit `takeoverThread(chatId)` so a desktop registering does not preempt unrelated holds.
-- **8 acceptance scenarios** — disconnects, competing writers, mark replacement, adoption failure, failed-sync retry, deletion races, restart recovery, downgrade compatibility — are covered by 95 new tests across 4 new files.
+- **Erasure lifecycle.** Begin and success-only finish callbacks are separate. Crash durability of partial begins and complete production joins remain acceptance work. Desktop registration preserves unrelated recovery holds; authenticated per-thread takeover is still being integrated.
+- Regression tests cover reservation, transport, downgrade and coordinator behavior. These tests do not establish acceptance of the completed production path.
 
 ### Bug Fixes and Cleanups
 
@@ -28,15 +32,12 @@ The I7 thread-custody integration lands behind the existing TASKWRAITH_THREAD_LO
 
 ### Composition Wiring (Behind Feature Flags)
 
-`installStartupThreadCatalogue` now also calls `installThreadOwnership` to build the durable receipt store, the save-intent port, and the erasure joins. When the resolved log-authority switch is on and the activation seams are supplied, `installThreadOwnership` builds a real `ThreadOwnershipActivationCoordinator` (queue, receipt store, head-receipt lookup, authority files, mark writer) — the seams require a live Host claim, a real owned-journal append, and the grant's mark identity, none of which is stubbed. The production suppliers (`ThreadOwnershipClient` over the persistent Host connection, a client `release()`, the real append) are the follow-up; `installThreadCatalogue.ts` does not yet pass the seams, so production activation stays inert. The gate measurement ran against the external Host with both rollout flags on, in live-lanes mode, and is captured at `.local-only/closeout-evidence/perf-t2-report-gates-on-eeaee04d.json` — the 250 ms run-final gate passes, the 50 ms user-facing gate fails with populated samples, and production switches stay off.
-
-# Changelog
-
-Notable changes to TaskWraith, the desktop workbench for running and reviewing
-AI coding agents from multiple providers. Entries are user-facing highlights;
-TaskWraith's orchestration, local history, and workspace authority stay on your
-machine, while selected cloud providers still receive the prompt and run
-context needed to answer.
+Receipt hydration now precedes save-intent consumers and dependent desktop
+startup; committed Host evidence is forwarded into the durable receipt store.
+The coordinator can be constructed from injected Host/journal seams. Production
+suppliers and the takeover flow still require integration and enabled-path
+acceptance. No release candidate, tag, publication or production enablement is
+approved by these source changes.
 
 ## 1.9.8 - 2026-09-15
 

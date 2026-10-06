@@ -15,6 +15,7 @@ import {
   type CatalogueErasureJoins
 } from './ThreadCatalogueErasureCallbacks'
 import { installThreadOwnership } from './installThreadOwnership'
+import { startThreadOwnershipConsumers } from './ThreadOwnershipStartup'
 import { withThreadCatalogueReadContext } from '../store/ThreadCatalogueReadContextPort'
 import type { HostProfileAuthorityPort } from '../../host-runtime/HostProfileDomainStore'
 import type {
@@ -68,8 +69,6 @@ export function installStartupThreadCatalogue(options: {
   const ownership = installThreadOwnership({
     saveIntentQueue: AppStore.getSaveIntentQueue()
   })
-  AppStore.installThreadOwnershipSavePort(ownership.port)
-  void ownership.loadEvidence()
   const local = options.externalHost
     ? null
     : createDesktopThreadCatalogue(
@@ -167,11 +166,19 @@ export function installStartupThreadCatalogue(options: {
     },
     () => options.resumeRecovery?.()
   )
-  mirror.start()
-  const ready = maintain({
-    method: 'owner',
-    owner: { writer: 'desktop', writerId: currentEnsembleRuntimeInstanceId(), pid: process.pid }
-  }).then(() => undefined)
+  const ready = startThreadOwnershipConsumers({
+    hydrate: () => ownership.loadEvidence(),
+    install: () => {
+      AppStore.installHostThreadRecordPersistEvidenceSink(ownership.persistedEvidenceSink)
+      AppStore.installThreadOwnershipSavePort(ownership.port)
+    },
+    registerOwner: () =>
+      maintain({
+        method: 'owner',
+        owner: { writer: 'desktop', writerId: currentEnsembleRuntimeInstanceId(), pid: process.pid }
+      }).then(() => undefined),
+    start: () => mirror.start()
+  })
   return {
     launchAt,
     ready,

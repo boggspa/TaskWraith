@@ -130,6 +130,7 @@ import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import {
   createDesktopHostThreadRecordPersistClient,
   HostThreadRecordPersistError,
+  type HostThreadRecordPersistClientOptions,
   type HostThreadRecordPersistInput,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
@@ -636,6 +637,13 @@ function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
  * test can inject a fake port before the first save.
  */
 let hostThreadRecordPersistPort: HostThreadRecordPersistPort | null = null
+/**
+ * I7 stage 3: the persisted-evidence sink the ownership wiring supplies. Set
+ * before the first save so the lazily constructed persist client can carry it;
+ * recording durably settles the save intents the receipt covers.
+ */
+let hostThreadRecordPersistEvidenceSink: HostThreadRecordPersistClientOptions['onPersistedEvidence'] | null =
+  null
 let hostChatCompatibilityPersistence: HostChatCompatibilityPersistence | null = null
 let hostChatCompatibilityPersistPort: HostThreadRecordPersistPort | null = null
 const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
@@ -647,6 +655,8 @@ const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
         ? { referenceStaging: journalHostReferenceConnector }
         : {}),
       onPersisted: (input) => acknowledgeHostPersisted(input),
+      onPersistedEvidence: (input, evidence) =>
+        hostThreadRecordPersistEvidenceSink?.(input, evidence),
       recoverConflict: (input, error) => AppStore.recoverHostPersistConflict(input, error)
     })
   }
@@ -6564,6 +6574,19 @@ export class AppStore {
     this.threadOwnershipSavePort = port
   }
 
+  /**
+   * I7 stage 3: install the persisted-evidence sink before the first save.
+   * The persist client is constructed lazily on first use, so the sink must
+   * be hydrated before save-intent admission. The client forwards to the
+   * current sink so an earlier compatibility save cannot freeze an absent
+   * callback into the lazy client.
+   */
+  static installHostThreadRecordPersistEvidenceSink(
+    sink: HostThreadRecordPersistClientOptions['onPersistedEvidence'] | null
+  ): void {
+    hostThreadRecordPersistEvidenceSink = sink
+  }
+
   /** The queue saveChat feeds; the activation coordinator freezes and drains it. */
   static getSaveIntentQueue(): PerChatSaveIntentQueue {
     return saveCoalescer.intentQueue
@@ -8505,7 +8528,7 @@ export class AppStore {
             { operation: 'save-chat', pathFamily: 'chats' },
             (writerAdmission) => this.saveChatAdmitted(persistedChat, options, writerAdmission)
           )
-        : this.saveChatThroughHost(persistedChat, options)
+        : this.saveChatThroughHost(persistedChat, options, ownershipSave?.commandId)
     } catch (error) {
       // A save that never reached storage has nothing for Host to confirm.
       if (ownershipSave) saveCoalescer.intentQueue.settle(chat.appChatId, ownershipSave.commandId)
@@ -8518,7 +8541,7 @@ export class AppStore {
         saved,
         awaitCatalogueHeadSources(saved.appChatId)
       )
-    if (ownershipSave && !ownershipSave.active) {
+    if (ownershipSave) {
       // Pin the admitted head to the revision the save actually persisted.
       // The intent was admitted BEFORE the save with the previous revision;
       // activation's publicationConfirmed looks up the receipt by commandId
@@ -8527,7 +8550,8 @@ export class AppStore {
       saveCoalescer.intentQueue.pinAdmittedRevision(
         saved.appChatId,
         ownershipSave.commandId,
-        saved.persistenceRevision ?? 0
+        saved.persistenceRevision ?? 0,
+        saved
       )
     }
     if (ownershipSave?.active) {
@@ -8629,7 +8653,7 @@ export class AppStore {
    * configuration writes may advance the record concurrently; the durability
    * barrier rebases this accumulated Desktop intent within a strict retry bound.
    */
-  private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
+  private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}, ownershipIntentId?: string): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],
@@ -8809,7 +8833,8 @@ export class AppStore {
       {
         chatId: normalizedChat.appChatId,
         record: normalizedChat,
-        expectedRevision
+        expectedRevision,
+        ...(ownershipIntentId ? { ownershipIntentId } : {})
       },
       {
         durabilityFallback,

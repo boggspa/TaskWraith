@@ -64,6 +64,10 @@ export type ThreadOwnershipNegotiationState =
   | { readonly kind: 'claiming' }
   | Extract<ThreadOwnershipClaimOutcome, { kind: 'network_grant' }>
 
+export type ThreadOwnershipReleaseOutcome =
+  | { readonly kind: 'released' }
+  | { readonly kind: 'stale' | 'failed' | 'refused' }
+
 export interface ThreadOwnershipClientOptions {
   readonly enabled: boolean
   /** New for this app process; never inferred from the shared Desktop actor. */
@@ -90,6 +94,10 @@ function copyFacts(facts: ThreadOwnershipClaimFacts): ThreadOwnershipClaimFacts 
 export class ThreadOwnershipClient {
   private readonly claims: DesktopThreadClaims
   private readonly grants = new Map<string, ThreadOwnershipNetworkGrant>()
+  private readonly releasing = new Map<
+    string,
+    { grant: ThreadOwnershipNetworkGrant; connection: number }
+  >()
   private readonly now: () => number
   private connection = 0
   private unavailable: UnavailableReason | null
@@ -123,9 +131,60 @@ export class ThreadOwnershipClient {
     return { kind: this.claims.stateOf(threadId) === 'claiming' ? 'claiming' : 'unclaimed' }
   }
 
+  /** Exact object and lineage on this socket; a reconnect cannot revive an old grant. */
+  isCurrent(grant: ThreadOwnershipNetworkGrant): boolean {
+    if (this.unavailable || this.grants.get(grant.threadId) !== grant) return false
+    const facts = this.options.readClaimFacts(grant.threadId)
+    return (
+      facts !== null &&
+      facts.lineageToken === grant.facts.lineageToken &&
+      facts.baseRevision >= grant.facts.baseRevision &&
+      facts.headRevision >= grant.facts.headRevision
+    )
+  }
+
+  /** Invalidate append permission before awaiting the same authenticated socket's release. */
+  async release(
+    grant: ThreadOwnershipNetworkGrant,
+    publishedRevision: number | null
+  ): Promise<ThreadOwnershipReleaseOutcome> {
+    if (
+      publishedRevision !== null &&
+      (!Number.isSafeInteger(publishedRevision) || publishedRevision < grant.facts.baseRevision)
+    ) {
+      throw new Error('Invalid published release revision')
+    }
+    let pending = this.releasing.get(grant.threadId)
+    if (!pending) {
+      if (this.unavailable || this.grants.get(grant.threadId) !== grant) return { kind: 'stale' }
+      pending = { grant, connection: this.connection }
+      this.releasing.set(grant.threadId, pending)
+      this.grants.delete(grant.threadId)
+      this.claims.release(grant.threadId, publishedRevision ?? grant.facts.baseRevision)
+    }
+    if (pending.grant !== grant || pending.connection !== this.connection || this.unavailable)
+      return { kind: 'stale' }
+    try {
+      const result = await this.options.transport.requestThreadOwner({
+        action: 'release',
+        threadId: grant.threadId,
+        epoch: grant.epoch,
+        revision: publishedRevision
+      })
+      if (pending.connection !== this.connection || this.releasing.get(grant.threadId) !== pending)
+        return { kind: 'stale' }
+      if (result.action !== 'release' || !result.released) return { kind: 'refused' }
+      this.releasing.delete(grant.threadId)
+      return { kind: 'released' }
+    } catch {
+      return { kind: pending.connection === this.connection ? 'failed' : 'stale' }
+    }
+  }
+
   /** One caller-driven attempt; no timer, reconnect, file write or save suppression. */
   async requestClaim(threadId: string): Promise<ThreadOwnershipClaimOutcome> {
     if (this.unavailable) return { kind: 'not_requested', reason: this.unavailable }
+    if (this.releasing.has(threadId)) return { kind: 'not_requested', reason: 'retry_pending' }
     const held = this.grants.get(threadId)
     if (held) return { kind: 'network_grant', grant: held }
     const currentFacts = this.options.readClaimFacts(threadId)
@@ -177,6 +236,7 @@ export class ThreadOwnershipClient {
     this.connection += 1
     this.claims.hostChanged(null)
     this.grants.clear()
+    this.releasing.clear()
     this.unavailable = this.options.enabled ? 'disconnected' : 'disabled'
   }
 }

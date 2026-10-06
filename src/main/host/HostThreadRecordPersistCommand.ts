@@ -419,6 +419,8 @@ export interface HostThreadRecordPersistInput {
   readonly record: ChatRecord
   readonly expectedRevision: number
   readonly diagnosticContext?: HostPersistenceDiagnosticContext
+  /** Authored save identity, distinct from the submitted Host command handle. */
+  readonly ownershipIntentId?: string
 }
 
 /**
@@ -502,7 +504,8 @@ export function copyHostPersistenceInput(
   const copyBusinessFields = (): HostThreadRecordPersistInput => ({
     chatId: input.chatId,
     record: input.record,
-    expectedRevision: options.expectedRevision ?? input.expectedRevision
+    expectedRevision: options.expectedRevision ?? input.expectedRevision,
+    ...(input.ownershipIntentId ? { ownershipIntentId: input.ownershipIntentId } : {})
   })
   if (options.diagnostics) {
     let context: HostPersistenceDiagnosticContext | undefined
@@ -628,7 +631,7 @@ export interface HostThreadRecordPersistClientOptions extends HostPersistenceDia
   readonly onPersistedEvidence?: (
     input: HostThreadRecordPersistInput,
     evidence: ThreadOwnershipReceiptEvidence
-  ) => void
+  ) => void | Promise<void>
   /** Rebase one revision conflict against the latest Host-owned record. */
   readonly recoverConflict?: (
     input: HostThreadRecordPersistInput,
@@ -880,7 +883,7 @@ export class HostThreadRecordPersistClient
           // never turn that success into a failed receipt or a duplicate retry.
         }
         try {
-          if (persistedEvidence) this.onPersistedEvidence?.(input, persistedEvidence)
+          if (persistedEvidence) await this.onPersistedEvidence?.(input, persistedEvidence)
         } catch {
           // Optional evidence consumers cannot undo a successful persisted command.
         }

@@ -126,9 +126,21 @@ describe('BAKED_IN_RATES', () => {
         const row = piRows.find((entry) => entry.modelId === wireId)
         expect(row, `no rate row for ${wireId}`).toBeDefined()
         expect(row?.sourceUrl).toMatch(/^https?:\/\//)
-        expect(row?.lastVerified).toBe(RATE_TABLE_VERSION)
+        expect(row?.lastVerified).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+        expect(Date.parse(row!.lastVerified)).toBeGreaterThanOrEqual(Date.parse(RATE_TABLE_VERSION))
       }
     )
+
+    it('uses the independently verified highspeed input/output and cache-read rates', () => {
+      const highspeed = piRows.find((row) => row.modelId === 'minimax/MiniMax-M2.7-highspeed')
+      expect(highspeed).toMatchObject({
+        inputUsdPerMillion: 0.6,
+        outputUsdPerMillion: 2.4,
+        cachedInputUsdPerMillion: 0.06,
+        lastVerified: '2026-10-06',
+        sourceUrl: 'https://platform.minimax.io/docs/guides/pricing-paygo'
+      })
+    })
 
     it('flags the pi default model as the table fallback', () => {
       // Pinned by the FLAG, not by position: `resolveModelRate` prefers the
@@ -589,7 +601,8 @@ describe('BAKED_IN_RATES', () => {
           expect(model.outputUsdPerMillion).toBeGreaterThan(0)
         }
         expect(model.sourceUrl).toMatch(/^(https?:\/\/|local:\/\/)/)
-        expect(model.lastVerified).toBe(RATE_TABLE_VERSION)
+        expect(model.lastVerified).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+        expect(Date.parse(model.lastVerified)).toBeGreaterThanOrEqual(Date.parse(RATE_TABLE_VERSION))
       }
     }
   })

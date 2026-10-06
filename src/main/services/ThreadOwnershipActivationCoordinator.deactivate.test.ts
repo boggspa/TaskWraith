@@ -144,7 +144,7 @@ describe('ThreadOwnershipActivationCoordinator.deactivate', () => {
     expect(h.calls).toEqual([])
   })
 
-  it('joins an activation in flight, then removes the mark it wrote', async () => {
+  it('invalidates an activation before joining the pending claim', async () => {
     let open: () => void = () => undefined
     const claimGate = new Promise<void>((resolve) => (open = resolve))
     const h = harness({}, { settled: true, claimGate })
@@ -160,9 +160,9 @@ describe('ThreadOwnershipActivationCoordinator.deactivate', () => {
     open()
     await Promise.all([activation, deactivation])
 
-    expect(await activation).toMatchObject({ kind: 'activated' })
+    expect(await activation).toMatchObject({ kind: 'failed', reason: 'reservation_invalid' })
     expect(h.coordinator.isActive(CHAT)).toBe(false)
-    expect(h.calls).toEqual(['claim', 'mark', 'enable', 'release', 'remove-mark', 'disable'])
+    expect(h.calls).toEqual(['claim', 'release'])
   })
 
   it('keeps the mark when the port reports owned rows', async () => {
@@ -227,6 +227,27 @@ describe('ThreadOwnershipActivationCoordinator.deactivate', () => {
     await flush()
 
     await expect(h.coordinator.deactivate(CHAT)).rejects.toThrow(/did not settle/)
+  })
+
+  it('a claim completing after an erasure join times out cannot write a mark or activate', async () => {
+    let open!: () => void
+    const claimGate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const h = harness({ erasureFenceTimeoutMs: 10 }, { settled: true, claimGate })
+    const activation = h.coordinator.activate(CHAT)
+    await flush()
+    await expect(h.coordinator.deactivate(CHAT)).rejects.toThrow(/did not settle/)
+    open()
+    expect(await activation).toMatchObject({ kind: 'failed', reason: 'reservation_invalid' })
+    expect(h.spies.markWriter).not.toHaveBeenCalled()
+    expect(h.spies.ownedAppend).not.toHaveBeenCalled()
+    expect(h.coordinator.isActive(CHAT)).toBe(false)
+    expect(h.spies.release).toHaveBeenCalledWith(h.reservation)
+    expect(await h.coordinator.activate(CHAT)).toMatchObject({
+      kind: 'failed',
+      reason: 'reservation_invalid'
+    })
   })
 
   describe('erasing() polls', () => {

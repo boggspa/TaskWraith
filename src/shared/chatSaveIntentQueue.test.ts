@@ -22,6 +22,24 @@ function intent(chatId: string, revision: number, commandId = `cmd-${revision}`)
 }
 
 describe('PerChatSaveIntentQueue', () => {
+  it('pins the replay record to the actual normalized save without losing exact handles', () => {
+    const queue = new PerChatSaveIntentQueue()
+    queue.enqueue(intent('a', 4))
+    queue.enqueue(intent('a', 5))
+    const saved = record('a', 6)
+    expect(queue.pinAdmittedRevision('a', 'cmd-5', 6, saved)).toBe(true)
+    expect(queue.peek('a')[0].record).toBe(saved)
+    expect(queue.peek('a')[0].supersedes?.map((handle) => handle.commandId)).toEqual(['cmd-4'])
+    expect(queue.confirmPublication('a', 'cmd-5', 'host-command', 6)).toBe(true)
+    expect(queue.publicationFor('cmd-5')).toEqual({
+      intentCommandId: 'cmd-5',
+      hostCommandId: 'host-command',
+      revision: 6
+    })
+    queue.reset('a')
+    expect(queue.publicationFor('cmd-5')).toBeNull()
+  })
+
   it('coalesces earlier intents into the latest and keeps every command handle', () => {
     const queue = new PerChatSaveIntentQueue()
     queue.enqueue(intent('a', 1))

@@ -19,6 +19,7 @@
  * @param {string} [options.cpuProfilePath]
  * @param {{ writeFileSync?: Function }} [options.fs]
  * @param {number} [options.samplingInterval]
+ * @param {boolean} [options.disconnectOnStop] Caller-owned shared sessions stay open when false.
  */
 async function collectMainCpuProfile(session, options = {}) {
   if (!session || typeof session.post !== 'function') {
@@ -44,7 +45,8 @@ async function collectMainCpuProfile(session, options = {}) {
         options.fs.writeFileSync(pathOut, JSON.stringify(profile), 'utf8')
       }
       await Promise.resolve(session.post('Profiler.disable')).catch(() => {})
-      if (typeof session.disconnect === 'function') session.disconnect()
+      if (options.disconnectOnStop !== false && typeof session.disconnect === 'function')
+        session.disconnect()
       return { profile, path: pathOut }
     }
   }

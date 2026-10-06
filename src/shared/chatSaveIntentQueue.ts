@@ -71,6 +71,7 @@ interface ChatSlot {
   /** Newest intent ever admitted, whether still pending or since settled. */
   admitted: ChatSaveIntentHead | null
   frozen: ChatSaveIntentHead | null
+  publication: { intentCommandId: string; hostCommandId: string; revision: number } | null
 }
 
 export class PerChatSaveIntentQueue {
@@ -142,12 +143,22 @@ export class PerChatSaveIntentQueue {
    * confirm, because the receipt lives at `previous + 1` and the head still
    * reads `previous`. A newer intent that took over the slot is left alone.
    */
-  pinAdmittedRevision(chatId: string, commandId: string, revision: number): boolean {
+  pinAdmittedRevision(
+    chatId: string,
+    commandId: string,
+    revision: number,
+    record?: ChatRecord
+  ): boolean {
     const slot = this.slots.get(chatId)
     if (!slot?.admitted) return false
     if (slot.admitted.commandId !== commandId) return false
     if (!Number.isSafeInteger(revision) || revision < 0) return false
+    if (record && (record.appChatId !== chatId || chatPersistenceRevision(record) !== revision))
+      return false
     slot.admitted = { revision, commandId }
+    if (record && slot.pending?.commandId === commandId) {
+      slot.pending = Object.freeze({ ...slot.pending, record })
+    }
     return true
   }
 
@@ -226,6 +237,32 @@ export class PerChatSaveIntentQueue {
     return null
   }
 
+  /** Join a submitted Host command to the exact admitted save, never just its revision. */
+  confirmPublication(
+    chatId: string,
+    intentCommandId: string,
+    hostCommandId: string,
+    revision: number
+  ): boolean {
+    const slot = this.slots.get(chatId)
+    if (
+      !slot?.admitted ||
+      !hostCommandId ||
+      slot.admitted.commandId !== intentCommandId ||
+      slot.admitted.revision !== revision
+    )
+      return false
+    slot.publication = { intentCommandId, hostCommandId, revision }
+    return true
+  }
+
+  publicationFor(intentCommandId: string): { hostCommandId: string; revision: number } | null {
+    for (const slot of this.slots.values()) {
+      if (slot.publication?.intentCommandId === intentCommandId) return slot.publication
+    }
+    return null
+  }
+
   /**
    * Host storage confirmed this command. A pending intent it covers is done; a
    * newer pending intent only sheds the confirmed handle.
@@ -250,6 +287,7 @@ export class PerChatSaveIntentQueue {
     if (!slot) return
     slot.pending = null
     slot.frozen = null
+    slot.publication = null
   }
 
   /** The chat is gone: forget everything, including its admitted head. */
@@ -274,7 +312,7 @@ export class PerChatSaveIntentQueue {
   private slot(chatId: string): ChatSlot {
     let slot = this.slots.get(chatId)
     if (!slot) {
-      slot = { pending: null, admitted: null, frozen: null }
+      slot = { pending: null, admitted: null, frozen: null, publication: null }
       this.slots.set(chatId, slot)
     }
     return slot

@@ -2808,6 +2808,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         fs
       })
       const mainCpu = await collectMainCpuProfile(mainInspector, {
+        // Persistence and other collectors still use this session after CPU stop.
+        // The runner's finally owns the shared inspector's close.
+        disconnectOnStop: false,
         cpuProfilePath: mainCpuPath,
         fs
       })
