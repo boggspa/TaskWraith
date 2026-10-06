@@ -63,6 +63,7 @@ import type {
   ThreadDurabilitySyncOutcome,
   ThreadDurabilityUrgency
 } from './ThreadDurabilityDebt'
+import type { ThreadDurabilitySyncPath } from './ThreadDurabilitySyncWorker'
 
 /** How many syncs run at once unless the caller says otherwise. */
 export const THREAD_DURABILITY_SYNCS_IN_FLIGHT = 2
@@ -94,6 +95,12 @@ export interface ThreadDurabilityDebtFsOptions {
   platform?: NodeJS.Platform
   /** Fault-injection seam; production calls `node:fs`. */
   fs?: ThreadDurabilityDebtFsCalls
+  /**
+   * Makes one sync's open, sync and close somewhere else (a worker thread) and
+   * answers once with each call's error, judged here exactly as the three
+   * calls' own. Without it the three calls are made through `fs`.
+   */
+  syncPath?: ThreadDurabilitySyncPath
   /** Milliseconds, read only to time syncs. Defaults to `performance.now`. */
   now?: () => number
   /**
@@ -246,6 +253,7 @@ export function createThreadDurabilityDebtFs(
   options: ThreadDurabilityDebtFsOptions = {}
 ): ThreadDurabilityDebtFs {
   const fs: ThreadDurabilityDebtFsCalls = options.fs ?? nodeFs
+  const syncPath = options.syncPath
   const now = options.now ?? (() => performance.now())
   const windows = (options.platform ?? process.platform) === 'win32'
   const maxInFlight = options.maxInFlight ?? THREAD_DURABILITY_SYNCS_IN_FLIGHT
@@ -324,6 +332,18 @@ export function createThreadDurabilityDebtFs(
   const start = (task: Task): void => {
     // Windows will not flush a file through a handle that cannot write to it.
     const flags = windows && !task.directory ? fs.constants.O_RDWR : fs.constants.O_RDONLY
+    if (syncPath) {
+      syncPath(task.path, flags, ({ openError, syncError, closeError }) => {
+        if (openError) {
+          finish(task, openError.code === 'ENOENT' ? null : openError, 'missing')
+          return
+        }
+        const notOffered =
+          task.directory && !!syncError && DIRECTORY_SYNC_NOT_OFFERED.has(syncError.code ?? '')
+        finish(task, notOffered ? closeError : (syncError ?? closeError), 'synced')
+      })
+      return
+    }
     fs.open(task.path, flags, (openError, fd) => {
       if (openError) {
         finish(task, openError.code === 'ENOENT' ? null : openError, 'missing')

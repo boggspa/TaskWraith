@@ -69,6 +69,10 @@ import {
   type ToolActivityDetailStagingSnapshot
 } from './ToolActivityDetailStaging'
 import type { FlushReason } from './saveCoalescer'
+import {
+  createThreadDurabilitySyncWorker,
+  type ThreadDurabilitySyncWorkerSnapshot
+} from './ThreadDurabilitySyncWorker'
 import type { ChatRecord, RunEventInput } from './types'
 
 export interface ThreadBarrierDurabilitySnapshot {
@@ -82,6 +86,8 @@ export interface ThreadBarrierDurabilitySnapshot {
   staging: ToolActivityDetailStagingSnapshot | null
   /** Null for an injected pool that supplies no statistics. */
   checkpointPreparation: CheckpointPreparationWorkerSnapshot | null
+  /** The worker the built port syncs through; null when the port was supplied from outside. */
+  syncWorker: ThreadDurabilitySyncWorkerSnapshot | null
 }
 
 export interface ThreadBarrierDurability {
@@ -274,7 +280,10 @@ export function createThreadBarrierDurability(
   options: ThreadBarrierDurabilityOptions = {}
 ): ThreadBarrierDurability {
   const now = options.now ?? Date.now
-  const built = options.port ? null : createThreadDurabilityDebtFs()
+  // The built port makes each sync's three calls on a worker, so a barrier
+  // waits for a busy main thread's loop once a sync rather than three times.
+  const syncWorker = options.port ? null : createThreadDurabilitySyncWorker()
+  const built = syncWorker ? createThreadDurabilityDebtFs({ syncPath: syncWorker.syncPath }) : null
   const port = options.port ?? built!
   const debt = createThreadDurabilityDebt({ port, now })
   const tickets = new ChatDurabilityTickets({ now })
@@ -397,7 +406,8 @@ export function createThreadBarrierDurability(
       tickets: tickets.snapshot(),
       threads: threads.snapshot(),
       staging: staging?.snapshot() ?? null,
-      checkpointPreparation: checkpointPreparation.stats?.() ?? null
+      checkpointPreparation: checkpointPreparation.stats?.() ?? null,
+      syncWorker: syncWorker?.snapshot() ?? null
     })
   }
 }
