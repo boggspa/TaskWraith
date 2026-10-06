@@ -66,6 +66,30 @@ export class ReservationInvalid extends Error {
 }
 
 /**
+ * A private brand symbol that `reserveOwnership` stamps onto a reservation
+ * so `retireOrphanAuthority` and other callers can refuse a foreign
+ * reservation object that was never minted here. Not yet thrown by the
+ * registry — callers that build a reservation via `ThreadOwnershipReservation`
+ * directly (e.g. tests, or `endOrphanViaReservation`'s foreign path) still
+ * pass the existing checks. The brand slot is reserved for a future
+ * migration that distinguishes a minted reservation from a foreign one
+ * by the registry itself, not by its caller.
+ */
+export const RESERVATION_BRAND: unique symbol = Symbol.for(
+  'taskwraith.thread-ownership-reservation.brand'
+)
+
+/** A reservation stamped by the registry, with a brand for foreign detection. */
+export interface MintedReservation extends ThreadOwnershipReservation {
+  readonly [RESERVATION_BRAND]: true
+}
+
+/** Runtime check: is this reservation one the registry minted? */
+export function isMintedReservation(value: ThreadOwnershipReservation): value is MintedReservation {
+  return (value as Partial<MintedReservation>)[RESERVATION_BRAND] === true
+}
+
+/**
  * Why a claim was refused.
  * - `disabled`: this Host does not grant claims at all.
  * - `owned_by_other_writer`: another desktop writer holds the thread, or may

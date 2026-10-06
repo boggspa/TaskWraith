@@ -1405,14 +1405,18 @@ export class HostNodeProductionServer {
     if (request.method === 'prepare') recovery.assertHeld(request.chatId, request.recoveryToken)
     if (request.method === 'fold-owned-log' || request.method === 'reestablish-erasure')
       recovery.assertHeld(request.chatId, request.recoveryToken)
-    if (request.method === 'erase')
+    // A reestablish-erasure is a fence (re-)raise; it must drain in-flight
+    // publications, forget the mirror and join the recovery/publisher just
+    // like a fresh erase, otherwise the resume re-raises a fence while
+    // source writes are still live.
+    if (request.method === 'erase' || request.method === 'reestablish-erasure')
       await this.threadCataloguePublisher?.drain(request.chatId ? [request.chatId] : undefined)
     const data = await client.query(request)
     if (request.method === 'finish-erasure' && data === true) {
       recovery.forgetErased(request.chatId)
       this.threadCataloguePublisher?.forgetErased(request.chatId)
     }
-    if (request.method === 'erase') {
+    if (request.method === 'erase' || request.method === 'reestablish-erasure') {
       if (request.chatId) this.threadCatalogueMirror?.forget(request.chatId)
       else this.threadCatalogueMirror?.forgetAll()
     }

@@ -271,7 +271,11 @@ export interface FoldedLogOutcome {
   epoch: ThreadCatalogueEpoch
   heads: ThreadCatalogueSourceHeads
   sourceWitness: string
-  /** Echo of the profile authority binding the fold was requested under. */
+  /**
+   * Echo of the profile authority binding the fold was requested under.
+   * Carried for audit; never compared. The owning profile is asserted by
+   * the source parent's `assertAuthority`, not by this field.
+   */
   profileAuthority: string
   /** Revision of the full copy the log was folded onto. */
   previousRevision: number

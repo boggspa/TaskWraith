@@ -453,3 +453,32 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     expect((await machine.files.read(THREAD)).kind).toBe('none')
   })
 })
+
+describe('HostThreadOwnerRegistry reservation brand', () => {
+  it('mints a reservation stamped with the brand', async () => {
+    const machine = new Machine()
+    machine.start('desk-a', 4101)
+    await machine.marks('desk-a', { host: 'host-a', grant: 1 })
+    machine.end('desk-a')
+    const host = machine.host()
+    const reservation = await host.reserveOwnership(THREAD)
+    expect(reservation).not.toBeNull()
+    // The brand slot distinguishes a registry-minted reservation from a
+    // foreign one (built directly via ThreadOwnershipReservation, e.g. a
+    // test stub or a future `endOrphanViaReservation` foreign path).
+    expect(
+      (reservation as Record<symbol, unknown>)[
+        Symbol.for('taskwraith.thread-ownership-reservation.brand')
+      ]
+    ).toBe(true)
+  })
+
+  it('foreign reservations do not carry the brand', () => {
+    const foreign = foreignReservation({ host: 'host-a', grant: 1 })
+    expect(
+      (foreign as Record<symbol, unknown>)[
+        Symbol.for('taskwraith.thread-ownership-reservation.brand')
+      ]
+    ).toBeUndefined()
+  })
+})

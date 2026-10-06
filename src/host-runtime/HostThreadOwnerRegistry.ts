@@ -57,6 +57,7 @@ import {
 import {
   HostThreadOwnerTable,
   ReservationInvalid,
+  RESERVATION_BRAND,
   type HostDesktopPresence,
   type HostThreadOwnerTableSnapshot,
   type HostWriteDecision,
@@ -250,7 +251,9 @@ export class HostThreadOwnerRegistry {
   /**
    * Final publication check, after transfer preparation. All asynchronous
    * reads precede the last connection/grant check and synchronous commit.
-   * An orphan remains untouched until the separate fold/retirement path exists.
+   * An orphan with a log above the full copy goes through
+   * `reserveOwnership` (stage 1) and the fold RPC (stage 2); this method
+   * only covers the Host's own full-copy write.
    */
   async publishFullCopy<T>(
     threadId: string,
@@ -480,6 +483,7 @@ export class HostThreadOwnerRegistry {
       return {
         threadId,
         epoch,
+        [RESERVATION_BRAND]: true,
         revalidate: () => {
           if (!witness()) throw new ReservationInvalid('mark_moved')
           if (this.liveness(writer) === 'alive') throw new ReservationInvalid('writer_alive')
