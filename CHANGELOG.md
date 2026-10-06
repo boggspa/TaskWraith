@@ -10,18 +10,20 @@ context needed to answer.
 
 ### Thread Custody and Orphan Recovery
 
-Phase 1 thread-custody integration is incomplete and remains behind the existing
+Phase 1 thread-custody integration remains behind the existing
 `TASKWRAITH_THREAD_LOG_AUTHORITY` and `TASKWRAITH_THREAD_BARRIER_DURABILITY` flags.
-Production defaults remain off, and nothing below is accepted for enablement: the
-completed enabled path was measured and **fails** both the 50 ms user-barrier and the
-250 ms run-final p95 gates (see the last item).
+Production defaults stay off pending review; nothing below is enabled. On the latest
+measured build the enabled path meets the 50 ms user-barrier and 250 ms run-final p95
+gates (see the last item).
 
 - **Orphan reservation custody.** A dead writer's thread is recovered under one registry-held custody handle that spans reservation, fold preparation, durable adoption, conditional mark retirement and directory sync. Claims, Host writes and publications are refused while custody is held. A failed directory sync is repaid by a directory sync alone, never another unlink.
 - **Orphan fold.** The Host folds a dead writer's log above its full copy through `fold-owned-log`, outside command admission, preserving content, head revision and timestamps. A refused or failed adoption discards its fold. Missing canonical sources stay unresolved rather than being recreated. An unrelated live desktop no longer blocks recovery of a dead writer's thread.
 - **Desktop ownership activation.** With both flags on, the app claims a thread over a dedicated authenticated desktop connection once the exact admitted head is confirmed in Host storage by the command that carried it. It then writes and syncs the authority mark, enables owned appends and replays pending saves. A grant lost to a disconnect or Host restart lapses ownership at once, and saves go back to waiting for Host storage. Before ownership, user saves stay pending until Host storage confirms them.
 - **Explicit per-thread takeover.** The registered desktop can take over one thread's pending recovery hold over the authenticated maintenance channel. Holds on other threads, live work and orphan-fold custody are left alone.
 - **History erasure.** Each catalogue fence is recorded durably in the deletion intent as it rises, and Host-side writers (publication permits, log followers, orphan folds) are invalidated and joined before sources are removed. The fence is lifted only after a clean, verified deletion; a failed or interrupted deletion keeps it.
-- **Measured, not accepted.** A qualified six-capture off/on pair on the `many_agents_live` workload, with the ownership path active, still exceeds the gates: user-facing barrier p95 falls in [50, 100) to [100, 250) ms, and run-final p95 in [250, 500) ms, where measured. A small unnamed main-thread sync also fails the named-sync exit. The captures were deliberately non-authoritative (`--skip-build` on a prebuilt isolated worktree; live-round workloads never claim an authoritative baseline).
+- **Durability syncs off the main thread.** Thread barrier file and directory syncs run on a dedicated worker. If the worker is lost, the syncs it owed fail and later syncs run inline. Paying an owned journal waits only for barriers raised after its last change.
+- **Fewer main-thread file calls.** The session checkpoint archive is rewritten only when its records change, an absent erasure fence is read with one call, and catalogue publication remembers the directories it has already made.
+- **Measured against the gates.** At `c24fc0373`, a qualified six-capture off/on pair on the `many_agents_live` workload passes every durability exit. Ownership was active in each enabled capture, with authority marks for all three chats and 385 receipt entries. On all three enabled runs, user-facing barrier p95 falls in [20, 50) ms and run-final p95 in [100, 250) ms. There were no thread-store or unnamed main-thread syncs, no synchronous waits, and no missing or overdue ticket gates. Main-thread busy time per model turn was 0.31 of the flags-off figure. Results are histogram intervals, not exact percentiles. The captures were deliberately non-authoritative: `--skip-build` ran on a prebuilt isolated worktree, and live-round workloads never claim an authoritative baseline. An earlier pair at `97f0da18f` failed both gates.
 
 ### Bug Fixes and Cleanups
 
@@ -30,6 +32,7 @@ completed enabled path was measured and **fails** both the 50 ms user-barrier an
 - Three pre-existing test failures that were unrelated to I7 are fixed: a test pin for the renamed `persistThreadRecordWithCommit` writer, `IncrementalChatJournal.debtCompaction` tests updated to `toMatchObject` for the new stats shape, and a missing rate row for `MiniMax-M2.7-highspeed`.
 - `scripts/perf/runT2Baseline.cjs` accepts `PERF_REPO_ROOT` so the perf harness can run from an isolated worktree without touching the main checkout.
 - The perf harness's main-process CPU profile no longer closes the shared inspector when it stops, which had made the later persistence-stats collection time out.
+- The perf harness's main-thread sync attribution recognises `node:internal/fs/promises` frames and names settings saves (`updateSettings`). Before this, it reported both as unnamed syncs.
 
 ### Composition Wiring (Behind Feature Flags)
 
