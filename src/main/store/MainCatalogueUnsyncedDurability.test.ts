@@ -322,6 +322,36 @@ describe('catalogue publication that owes nothing to any barrier', () => {
       expect(fs.existsSync(missing)).toBe(false)
       expect(syncs.issued).toEqual([])
     })
+
+    it('remembers a prepared directory and makes it again when a write finds it gone', () => {
+      const writer = unsynced()
+      const ticket = ticketOf('operation')
+      const tickets = path.dirname(ticket)
+      expect(writer.prepareDirectory(ticket)).toBe(true)
+      fs.rmSync(tickets, { recursive: true })
+
+      // Remembered, so it is not looked for again.
+      expect(writer.prepareDirectory(ticket)).toBe(true)
+      expect(fs.existsSync(tickets)).toBe(false)
+
+      writer.write(ticket, '{"phase":"pending"}')
+      expect(fs.readFileSync(ticket, 'utf8')).toBe('{"phase":"pending"}')
+      expect(fs.readdirSync(tickets)).toEqual(['operation.json'])
+      expect(syncs.issued).toEqual([])
+    })
+
+    it('makes no directory for a write it never prepared, nor under a profile that is gone', () => {
+      const writer = unsynced()
+      expect(() => writer.write(ticketOf('operation', OTHER), '{}')).toThrow(
+        expect.objectContaining({ code: 'ENOENT' })
+      )
+      expect(fs.existsSync(path.dirname(ticketOf('operation', OTHER)))).toBe(false)
+
+      expect(writer.prepareDirectory(head())).toBe(true)
+      fs.rmSync(profile, { recursive: true })
+      expect(() => writer.write(head(), '{}')).toThrow('Thread catalogue profile is absent')
+      expect(fs.existsSync(profile)).toBe(false)
+    })
   })
 
   describe('under a real catalogue', () => {

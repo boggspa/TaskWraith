@@ -44,10 +44,20 @@ export interface MainCatalogueUnsyncedDurabilitySnapshot {
 /** A directory sync that fails with one of these is not offered by the file system. */
 const DIRECTORY_SYNC_NOT_OFFERED = new Set(['EINVAL', 'ENOTSUP', 'ENOSYS'])
 
+/** How many publication directories are remembered as made before the memory starts over. */
+const PREPARED_DIRECTORY_LIMIT = 4096
+
 export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredDurability {
   private readonly profilePath: string
   private readonly heads: string
   private readonly tickets: string
+  /**
+   * Publication directories this writer has made or found. Each write would
+   * otherwise ask for the profile and its directory again on the main thread.
+   * One may be removed after it is remembered; a write that then finds it
+   * gone makes it again, as a first write would.
+   */
+  private readonly prepared = new Set<string>()
   private writes = 0
   private strictWrites = 0
 
@@ -75,11 +85,18 @@ export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredD
   prepareDirectory(filePath: string): boolean {
     const target = path.resolve(filePath)
     if (!this.isPublication(target)) return false
+    const directory = path.dirname(target)
+    if (!this.prepared.has(directory)) this.makeDirectory(directory)
+    return true
+  }
+
+  private makeDirectory(directory: string): void {
     // The profile owner creates the root. Only rebuildable publication names
     // may disappear on a power loss; no directory here becomes barrier debt.
     if (!fs.existsSync(this.profilePath)) throw new Error('Thread catalogue profile is absent')
-    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 })
-    return true
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+    if (this.prepared.size >= PREPARED_DIRECTORY_LIMIT) this.prepared.clear()
+    this.prepared.add(directory)
   }
 
   write(filePath: string, text: string, beforeRename?: () => void, afterRename?: () => void): void {
@@ -87,7 +104,7 @@ export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredD
     const strict = !this.isPublication(target)
     const temporary = `${target}.tmp-${randomUUID()}`
     try {
-      const fd = fs.openSync(temporary, 'wx', 0o600)
+      const fd = this.openTemporary(temporary, strict)
       try {
         fs.writeFileSync(fd, text)
         if (strict) fs.fsyncSync(fd)
@@ -104,6 +121,27 @@ export class MainCatalogueUnsyncedDurability implements ThreadCatalogueDeferredD
       afterRename?.()
     } finally {
       fs.rmSync(temporary, { force: true })
+    }
+  }
+
+  /**
+   * A remembered publication directory that has since been removed is made
+   * again, once. APFS may answer EINVAL rather than ENOENT for it.
+   */
+  private openTemporary(temporary: string, strict: boolean): number {
+    try {
+      return fs.openSync(temporary, 'wx', 0o600)
+    } catch (error) {
+      const directory = path.dirname(temporary)
+      if (
+        strict ||
+        !['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '') ||
+        !this.prepared.delete(directory) ||
+        fs.existsSync(directory)
+      )
+        throw error
+      this.makeDirectory(directory)
+      return fs.openSync(temporary, 'wx', 0o600)
     }
   }
 
