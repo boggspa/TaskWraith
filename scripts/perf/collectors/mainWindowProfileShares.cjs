@@ -12,8 +12,10 @@
  * - idle, busy: self time in `(idle)`, and the rest.
  * - sync: runtime sync-shaped samples with synchronous API ancestry, or
  *   unresolved native ancestry kept conservatively; owners follow `OWNERS`.
- * - asyncSyncSubmission: samples under callback-based `node:fs` sync APIs.
- *   Submission is main-thread work, but is not a synchronous disk-flush wait.
+ * - asyncSyncSubmission: samples under the asynchronous sync APIs: callback
+ *   `node:fs` and the promise API (`FileHandle.sync`/`datasync`, whose
+ *   wrappers live in `node:internal/fs/promises`). Submission is main-thread
+ *   work, but is not a synchronous disk-flush wait.
  * - plainFileCalls: self time in the runtime's other synchronous file calls,
  *   reads apart: every runtime frame at or under the outermost `node:fs` call
  *   named `...Sync` on the stack (`openSync`, `writeFileSync`, `renameSync`,
@@ -82,6 +84,8 @@ const SCHEMA_VERSION = 1
 
 /** The runtime's sync calls; an app function of the same name is not one. */
 const SYNC_FRAMES = new Set(['fsync', 'fdatasync', 'fsyncSync', 'fdatasyncSync'])
+/** Where Node's own sync wrappers live; only their frames identify the API. */
+const SYNC_API_URLS = new Set(['node:fs', 'node:internal/fs/promises'])
 const READ_UNDER = 'readJson'
 const READ_THROUGH = Object.freeze(['getChat', 'readChatRecordCached'])
 const COPY_UNDER = 'publishHostThreadRecordTransferOffLoop'
@@ -476,7 +480,7 @@ function createClassifier(timeline, { classRanges, waitLines }) {
     // A bare native frame stays unresolved; an app's identically named method is no evidence.
     const syncApi = [...stack]
       .reverse()
-      .find((frame) => frame.url === 'node:fs' && SYNC_FRAMES.has(frame.name))
+      .find((frame) => SYNC_API_URLS.has(frame.url) && SYNC_FRAMES.has(frame.name))
     const asyncSync = syncFrame && (syncApi?.name === 'fsync' || syncApi?.name === 'fdatasync')
     const callers = () =>
       stack

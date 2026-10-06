@@ -69,6 +69,7 @@ const js = (name: string, line = 100, column = 0): Frame => ({
 })
 const native = (name: string): Frame => ({ name, url: '' })
 const nodeFs = (name: string): Frame => ({ name, url: 'node:fs' })
+const nodeFsPromises = (name: string): Frame => ({ name, url: 'node:internal/fs/promises' })
 const sync = [nodeFs('fsyncSync'), native('fsync')]
 
 /**
@@ -391,6 +392,33 @@ describe('main-thread shares of a measured window', () => {
   )
 
   it('keeps synchronous ancestry and anonymous app diagnostics distinct from an app function named fsync', () => {
+    // FileHandle.sync() submits to the threadpool exactly as callback fsync does.
+    const promiseRows = spendingTheRest([
+      {
+        stack: [
+          js('write'),
+          nodeFsPromises('sync'),
+          nodeFsPromises('fsCall'),
+          nodeFsPromises('fsync'),
+          native('fsync')
+        ],
+        us: 3_000
+      },
+      { stack: [js('write'), nodeFsPromises('sync'), nodeFsPromises('fsync')], us: 2_000 },
+      {
+        stack: [js('write'), { name: 'fsync', url: 'node:internal/other' }, native('fsync')],
+        us: 1_000
+      },
+      { stack: [native('(idle)')], us: 6_000 }
+    ])
+    const [promises] = measure({ profile: buildProfile(promiseRows) }).windows
+    // The window's own 20 ms of syncs, plus the 1 ms under a lookalike frame.
+    expect(promises.shares).toMatchObject({ sync: 0.21, asyncSyncSubmission: 0.05 })
+    expect(promises.asyncSyncSubmissionCallers).toEqual([
+      { callers: 'fsCall <- sync <- write', share: 0.03 },
+      { callers: 'sync <- write', share: 0.02 }
+    ])
+
     const rows = spendingTheRest([
       { stack: [js('', 24), ...sync], us: 5_000 },
       { stack: [nodeFs('fsync'), nodeFs('fsyncSync'), native('fsync')], us: 3_000 },
