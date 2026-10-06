@@ -53,7 +53,8 @@ const BUNDLE_LINES = [
   /* 23 */ 'function joinDurability(operation) {',
   /* 24 */ '  while (!operation.done) Atomics.wait(operation.words, 0, 1, 5)',
   /* 25 */ '}',
-  /* 26 */ 'const later = (words) => Atomics.waitAsync(words, 0, 1)'
+  /* 26 */ 'const later = (words) => Atomics.waitAsync(words, 0, 1)',
+  /* 27 */ 'class AppStore { static updateSettings(partial) {} }'
 ]
 const CHUNK_LINES = ['function computeChatSubRevisions(chat) {', '}']
 const buildScripts = (bundleLines = BUNDLE_LINES) => [
@@ -344,6 +345,7 @@ describe('main-thread shares of a measured window', () => {
       sessionCheckpoint: 0,
       catalogueChecks: 0,
       chatAuthority: 0,
+      settings: 0,
       other: 0
     })
     expect(window.syncOtherCallers).toEqual([])
@@ -468,10 +470,14 @@ describe('main-thread shares of a measured window', () => {
         stack: [js('updateSettings'), js('writeJson'), js('writeJsonAdmitted'), ...sync],
         us: 1_000
       },
-      { stack: [js('handleProviderOutput', 1)], us: 3_000 }
+      {
+        stack: [js('saveWorkspaces'), js('writeJson'), js('writeJsonAdmitted'), ...sync],
+        us: 1_000
+      },
+      { stack: [js('handleProviderOutput', 1)], us: 2_000 }
     ])
     const [window] = measure({ profile: buildProfile(rows) }).windows
-    expect(window.shares.sync).toBe(0.29)
+    expect(window.shares.sync).toBe(0.3)
     expect(window.syncOwners).toEqual({
       cataloguePublication: 0.08,
       journalCheckpoint: 0.01,
@@ -484,10 +490,11 @@ describe('main-thread shares of a measured window', () => {
       sessionCheckpoint: 0,
       catalogueChecks: 0,
       chatAuthority: 0,
+      settings: 0.01,
       other: 0.01
     })
     expect(window.syncOtherCallers).toEqual([
-      { callers: 'writeJsonAdmitted <- writeJson <- updateSettings', share: 0.01 }
+      { callers: 'writeJsonAdmitted <- writeJson <- saveWorkspaces', share: 0.01 }
     ])
   })
 
@@ -639,6 +646,7 @@ describe('main-thread shares of a measured window', () => {
       sessionCheckpoint: 0.02,
       catalogueChecks: 0.01,
       chatAuthority: 0.01,
+      settings: 0,
       other: 0.01
     })
     expect(window.plainFileCallOtherCallers).toEqual([
@@ -823,6 +831,7 @@ describe('the flusher share and the build', () => {
       sessionCheckpoint: null,
       catalogueChecks: null,
       chatAuthority: null,
+      settings: null,
       other: null
     })
     expect(result.windows[0].syncOtherCallers).toBeNull()
@@ -849,6 +858,7 @@ describe('the flusher share and the build', () => {
       sessionCheckpoint: null,
       catalogueChecks: null,
       chatAuthority: null,
+      settings: null,
       other: null
     }
     expect(window.syncOwners).toMatchObject({ usageLedger: 0.02, workspaceLock: 0, ...unvouched })
@@ -1295,6 +1305,7 @@ describe('the profile clock', () => {
       sessionCheckpoint: [0, 0],
       catalogueChecks: [0, 0],
       chatAuthority: [0, 0],
+      settings: [0, 0],
       other: [0, 0]
     })
     // No plain file call is near the window, so none moves.

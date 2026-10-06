@@ -138,7 +138,12 @@ const OWNERS = Object.freeze([
     'catalogueChecks',
     ['assertSourceMutationAllowed', 'assertRecoveryHoldAllows', 'captureThreadCatalogueWitness']
   ],
-  ['chatAuthority', ['getCurrentChatAuthorityMetadata', 'rememberChatRecord']]
+  ['chatAuthority', ['getCurrentChatAuthorityMetadata', 'rememberChatRecord']],
+  // The settings file, rewritten whole and synced wherever a setting changes:
+  // a run's first use of an Ollama model records its preflight and context
+  // window there, and the window's bounds are kept there. Last, so a store's
+  // own sync under it stays the store's.
+  ['settings', ['updateSettings']]
 ])
 /** The runtime's synchronous file calls that are not plain: syncs and reads. */
 const NOT_PLAIN_FILE_CALLS = new Set([

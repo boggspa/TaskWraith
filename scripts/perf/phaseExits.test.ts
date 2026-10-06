@@ -1094,7 +1094,8 @@ const BUNDLE_TEXT = [
   'function recordUsage(entry) { commitUnderFence(entry); acquireInstanceFence(entry) }',
   'function releaseInstanceFence(fence) { persistOrThrow(fence); rememberChatRecord(fence) }',
   'function assertSourceMutationAllowed(id) { assertRecoveryHoldAllows(id) }',
-  'function captureThreadCatalogueWitness(id) { getCurrentChatAuthorityMetadata(id) }'
+  'function captureThreadCatalogueWitness(id) { getCurrentChatAuthorityMetadata(id) }',
+  'class AppStore { static updateSettings(partial) {} }'
 ].join('\n')
 function captureReport(windowOverrides: Dict = {}) {
   return {
