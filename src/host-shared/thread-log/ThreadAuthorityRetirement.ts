@@ -15,7 +15,11 @@
  * orphan pathway; only the registry's orphan method carries it, and the
  * constant lives here so the type system keeps the binding private.
  *
- * Refinements (per the approved I7 GO):
+ * The retirement policy itself — admission, guarded unlink+sync, sync-debt
+ * retry and release — lives in
+ * `host-runtime/HostThreadOwnershipReservations`, which mints the opaque
+ * reservation handle this module's outcome type describes. Refinements
+ * (per the approved I7 GO):
  *  - Keep admission/hold through authority retirement directory sync; ordinary
  *    adopt behavior is preserved.
  *  - Retirement runs under an opaque reservation minted by the registry; the
@@ -25,13 +29,7 @@
  *  - Directory sync failure is uncertain retirement, not durable success.
  *  - Final exact mark/reservation/liveness/erasure checks before adoption
  *    and unlink.
- *  - No worker or production wiring in this slice; the orphan method on the
- *    registry is the seam future preparation will plug into.
  */
-import { isSafeChatId } from '../../shared/ChatPath'
-import type { ThreadOwnershipReservation } from './ThreadOwnership'
-import { ReservationInvalid } from './ThreadOwnership'
-
 /**
  * Marker that a retirement is on the orphan pathway. Ordinary routes do not
  * carry this token and must not be allowed to gain the live-desktop
@@ -39,28 +37,6 @@ import { ReservationInvalid } from './ThreadOwnership'
  * the registry's orphan method, never to a general adoption surface.
  */
 export const ORPHAN_RETIREMENT_TOKEN = Symbol.for('taskwraith.thread-authority.orphan-retirement')
-
-/**
- * The captured state an orphan retirement must verify before and after the
- * unlink+sync cycle. The witness is captured before the operation and read
- * again after: a successful retirement leaves the file changed or removed,
- * and the witness reports false; a race that recreates an indistinguishable
- * file keeps the witness true.
- */
-export interface ThreadAuthorityRetirementObservation {
-  /** Reservation the mark was read under. */
-  readonly reservation: ThreadOwnershipReservation
-  /** Whether the mark file is unchanged from the admission capture. */
-  readonly exactMarkWitness: () => boolean
-}
-
-/**
- * One filesystem step that unlinks the mark file (and any `.tmp` sibling a
- * crashed write may have left), then syncs the directory so a power loss
- * cannot resurrect the unlinked name. Throws on any failure; the retirement
- * module treats a throw as uncertain retirement.
- */
-export type ThreadAuthorityRetirementRemoveAndSync = () => Promise<void>
 
 /** What the retirement did. */
 export type ThreadAuthorityRetirementOutcome =
@@ -73,72 +49,3 @@ export type ThreadAuthorityRetirementOutcome =
       readonly kind: 'busy'
       readonly reason: 'live_writer' | 'damaged' | 'erasing' | 'wrong_token'
     }
-
-/** Context an orphan retirement requires. */
-export interface ThreadAuthorityRetirementContext {
-  /** Reservation the orphan adoption is committed under. */
-  readonly reservation: ThreadOwnershipReservation
-  /** State captured at admission, verified again after the sync. */
-  readonly observation: ThreadAuthorityRetirementObservation
-  /** Combined unlink + sync; throws on any failure. */
-  readonly removeAndSync: ThreadAuthorityRetirementRemoveAndSync
-}
-
-/**
- * Retire an orphaned authority mark. Pre-conditions are checked first so the
- * directory sync only runs when retirement is otherwise permitted; the sync
- * itself is what makes the retirement durable, and a failed sync is
- * uncertain retirement rather than success. The caller must keep the
- * admission hold open across the call: the in-memory reservation has to
- * outlive the directory sync.
- *
- * Returns `retired` only after the directory sync succeeds and the witness
- * confirms the file is gone or changed. Returns `uncertain` with a specific
- * reason otherwise; the caller decides whether to retry or hold.
- */
-export async function retireOrphanThreadAuthority(
-  threadId: string,
-  context: ThreadAuthorityRetirementContext
-): Promise<ThreadAuthorityRetirementOutcome> {
-  if (!isSafeChatId(threadId)) return { kind: 'busy', reason: 'damaged' }
-  const { observation } = context
-  // The reservation re-runs every admission probe (exact mark, writer
-  // liveness, profile authority, erasure generation): a thread that changed
-  // under the reservation is damaged, never retired.
-  try {
-    context.reservation.revalidate()
-  } catch {
-    return { kind: 'busy', reason: 'damaged' }
-  }
-  if (observation.reservation !== context.reservation) {
-    return { kind: 'busy', reason: 'damaged' }
-  }
-  // Only the reservation can say whether the catalogue is erasing the
-  // thread; a hardcoded false here would retire a mark mid-erasure.
-  if (context.reservation.erasing()) return { kind: 'busy', reason: 'erasing' }
-  if (!observation.exactMarkWitness()) return { kind: 'busy', reason: 'damaged' }
-  try {
-    await context.removeAndSync()
-  } catch {
-    return { kind: 'uncertain', reason: 'sync_failed' }
-  }
-  // Re-validate the reservation across the await: the writer's liveness,
-  // profile authority or erasure generation can change while the directory
-  // sync runs. A reservation that survived at admission may no longer mean
-  // what it said, and the destructive act is the unlink — refusing here is
-  // the only post-sync witness the reservation gives us.
-  try {
-    context.reservation.revalidate()
-  } catch (error) {
-    // `mark_moved` is expected here: we just unlinked the file. The
-    // destructive act is the unlink itself, so the mark is gone by design.
-    // The mark witness already covers the absent case below.
-    if (error instanceof ReservationInvalid && error.reason === 'mark_moved') {
-      // fall through to the witness check
-    } else {
-      return { kind: 'busy', reason: 'damaged' }
-    }
-  }
-  if (observation.exactMarkWitness()) return { kind: 'uncertain', reason: 'witness_changed' }
-  return { kind: 'retired' }
-}

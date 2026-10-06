@@ -70,6 +70,12 @@ export interface ThreadAuthorityFileHandle {
   close(): Promise<void>
 }
 
+/** Custody is checked immediately before each destructive operation. */
+export interface ThreadAuthorityRemovalGuard {
+  assert(): void
+  unlinked(): void | Promise<void>
+}
+
 /**
  * The filesystem steps an authority file takes. Each is one awaited call, so a
  * test can stop between any two of them.
@@ -374,13 +380,17 @@ export class ThreadAuthorityFiles {
   }
 
   /** Resolves with whether there was a file, once its absence would survive a power loss. */
-  async remove(threadId: string): Promise<boolean> {
+  async remove(threadId: string, guard?: ThreadAuthorityRemovalGuard): Promise<boolean> {
     const file = threadAuthorityFilePath(this.profilePath, threadId)
+    guard?.assert()
     const removed = await this.unlinkIfPresent(file)
+    await guard?.unlinked()
     // What a crashed write may have left for the thread.
+    guard?.assert()
     await this.unlinkIfPresent(temporaryName(file))
     // Also when there was nothing to remove: an earlier remove may have taken
     // the name away and stopped before its sync.
+    guard?.assert()
     await this.syncDirectoryIfPresent()
     return removed
   }

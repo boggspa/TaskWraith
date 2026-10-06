@@ -178,6 +178,9 @@ class Machine {
       publicationWitness: makeWitness(this.fileSystem),
       desktopPresence: () => this.presence(),
       otherDesktopUnattached: () => false,
+      erasing: () => false,
+      erasureGeneration: () => null,
+      assertProfileAuthority: () => undefined,
       liveness: ({ pid }) => {
         if (this.unresolved.has(pid)) return 'unresolved'
         return [...this.desks.values()].some((desk) => desk.pid === pid) ? 'alive' : 'dead'
@@ -251,6 +254,15 @@ describe('HostThreadOwnerRegistry disconnects', () => {
     expect(reservation!.epoch).toEqual({ host: 'host-a', grant: 1 })
     expect(await hostB.retireOrphanAuthority(THREAD, reservation!)).toEqual({ kind: 'retired' })
     expect((await machine.files.read(THREAD)).kind).toBe('none')
+
+    // Durable retirement does not itself release custody: the fold sequence
+    // still holds the thread across any trailing directory work until it
+    // explicitly lets go. Claims wait for that release.
+    expect(await hostB.claim(claimRequest('desk-b'))).toMatchObject({
+      granted: false,
+      reason: 'owned_by_other_writer'
+    })
+    expect(hostB.releaseOwnership(reservation!)).toBe(true)
 
     // The thread is claimable again, under the new Host's own grant numbering.
     machine.start('desk-b', 4102)
@@ -498,13 +510,18 @@ describe('HostThreadOwnerRegistry competing claims', () => {
     const reservation = await host.reserveOwnership(THREAD)
     expect(reservation).not.toBeNull()
 
-    // Retirement is queued first; the claim queued behind it sees no mark.
+    // A queued competing claim cannot cross custody, even after a durable retire.
     const [retired, reply] = await Promise.all([
       host.retireOrphanAuthority(THREAD, reservation!),
       host.claim(claimRequest('desk-b'))
     ])
     expect(retired).toEqual({ kind: 'retired' })
-    expect(reply).toMatchObject({ granted: true, epoch: { host: 'host-b', grant: 1 } })
+    expect(reply).toMatchObject({ granted: false, reason: 'owned_by_other_writer' })
+    expect(host.releaseOwnership(reservation!)).toBe(true)
+    expect(await host.claim(claimRequest('desk-b'))).toMatchObject({
+      granted: true,
+      epoch: { host: 'host-b', grant: 1 }
+    })
     expect(host.writerOf(THREAD)).toMatchObject({ kind: 'desktop', writerId: 'desk-b' })
   })
 })

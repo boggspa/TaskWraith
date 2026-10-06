@@ -267,12 +267,8 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
     })
     const outcome = await host.retireOrphanAuthority(THREAD, reservation)
     expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
-    // revalidate() runs twice by design: the registry revalidates first to
-    // short-circuit 'mark_moved' (so it can fall through and retry the
-    // directory sync when the mark is absent and a sync debt is recorded),
-    // and the retirement module revalidates again before the final
-    // erase check. Both calls observe the same ReservationInvalid.
-    expect(revalidations).toBe(2)
+    // A foreign handle has no custody. Its callbacks must never be consulted.
+    expect(revalidations).toBe(0)
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 
@@ -286,7 +282,7 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
       THREAD,
       foreignReservation({ host: 'host-a', grant: 1 })
     )
-    expect(outcome).toEqual({ kind: 'busy', reason: 'live_writer' })
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })
 
@@ -302,7 +298,7 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
       THREAD,
       foreignReservation({ host: 'host-a', grant: 1 })
     )
-    expect(outcome).toEqual({ kind: 'busy', reason: 'erasing' })
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
   })
 
   it('mints no reservation when profile authority is lost', async () => {
@@ -370,6 +366,7 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
   it('returns uncertain sync_failed when the directory sync fails and leaves the mark unlinked', async () => {
     const memory = new MemoryFs()
     const machine = new Machine(memory)
+    machine.full.set(THREAD, 0)
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
@@ -387,6 +384,7 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
   it('retries the directory sync on the next call when a previous sync failed', async () => {
     const memory = new MemoryFs()
     const machine = new Machine(memory)
+    machine.full.set(THREAD, 0)
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
@@ -434,6 +432,7 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
   it('serializes with a queued request on the same thread', async () => {
     const memory = new MemoryFs()
     const machine = new Machine(memory)
+    machine.full.set(THREAD, 0)
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
     machine.end('desk-a')
@@ -454,8 +453,8 @@ describe('HostThreadOwnerRegistry.orphan authority retirement', () => {
   })
 })
 
-describe('HostThreadOwnerRegistry reservation brand', () => {
-  it('mints a reservation stamped with the brand', async () => {
+describe('HostThreadOwnerRegistry reservation identity', () => {
+  it('mints a frozen registry-local reservation whose fields cannot forge another handle', async () => {
     const machine = new Machine()
     machine.start('desk-a', 4101)
     await machine.marks('desk-a', { host: 'host-a', grant: 1 })
@@ -463,14 +462,9 @@ describe('HostThreadOwnerRegistry reservation brand', () => {
     const host = machine.host()
     const reservation = await host.reserveOwnership(THREAD)
     expect(reservation).not.toBeNull()
-    // The brand slot distinguishes a registry-minted reservation from a
-    // foreign one (built directly via ThreadOwnershipReservation, e.g. a
-    // test stub or a future `endOrphanViaReservation` foreign path).
-    expect(
-      (reservation as unknown as Record<symbol, unknown>)[
-        Symbol.for('taskwraith.thread-ownership-reservation.brand')
-      ]
-    ).toBe(true)
+    expect(Object.isFrozen(reservation)).toBe(true)
+    expect(await host.retireOrphanAuthority(THREAD, { ...reservation! })).toEqual({ kind: 'busy', reason: 'damaged' })
+    expect(host.releaseOwnership({ ...reservation! })).toBe(false)
   })
 
   it('foreign reservations do not carry the brand', () => {

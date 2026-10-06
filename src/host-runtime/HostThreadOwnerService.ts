@@ -97,6 +97,9 @@ export interface HostThreadOwnerServiceOptions {
   logRevision?(threadId: string): Promise<number | null>
   /** Defaults to signal 0 to the writer's process id. */
   liveness?(writer: ThreadAuthorityWriter): ThreadWriterLiveness
+  assertProfileAuthority?(): void
+  erasing?(threadId: string): boolean
+  erasureGeneration?(threadId: string): string | null
   /** The clock a request to a writer to let go is timed by; defaults to `Date.now`. */
   readonly now?: () => number
   readonly log?: (line: string) => void
@@ -217,7 +220,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             files: {
               read: (threadId) => this.read(files, threadId),
               list: () => files.list(),
-              remove: (threadId) => this.remove(files, threadId)
+              remove: (threadId, guard) => this.remove(files, threadId, guard)
             },
             fullCopyRevision: (threadId) => options.fullCopyRevision(threadId),
             logRevision: options.logRevision
@@ -236,6 +239,9 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             // is judged by its thread's authority file: see the module comment.
             desktopPresence: () => 'attached',
             otherDesktopUnattached: () => false,
+            ...(options.assertProfileAuthority ? { assertProfileAuthority: options.assertProfileAuthority } : {}),
+            ...(options.erasing ? { erasing: options.erasing } : {}),
+            ...(options.erasureGeneration ? { erasureGeneration: options.erasureGeneration } : {}),
             ...(options.liveness ? { liveness: options.liveness } : {})
           })
         : null
@@ -444,10 +450,11 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   /** Takes a thread's file away; one it cannot is counted, and the write it was for refused. */
   private async remove(
     files: Pick<ThreadAuthorityFiles, 'remove'>,
-    threadId: string
+    threadId: string,
+    guard?: Parameters<ThreadAuthorityFiles['remove']>[1]
   ): Promise<boolean> {
     try {
-      return await files.remove(threadId)
+      return await files.remove(threadId, guard)
     } catch (error) {
       this.removeFailures += 1
       this.lastRemoveError = errorText(error)

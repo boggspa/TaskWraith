@@ -880,6 +880,19 @@ export class HostNodeProductionServer {
         profilePath: this.lease.path,
         incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
         fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
+        assertProfileAuthority: () => {
+          if (!this.lease) throw new Error('History profile authority is unavailable')
+          this.lease.assertHeld()
+        },
+        erasing: (threadId) => {
+          const catalogue = this.threadCataloguePublisher?.catalogue
+          return !catalogue || catalogue.readErasureState().erasing || catalogue.readErasureState(threadId).erasing
+        },
+        erasureGeneration: (threadId) => {
+          const catalogue = this.threadCataloguePublisher?.catalogue
+          if (!catalogue) throw new Error('History catalogue authority is unavailable')
+          return JSON.stringify(catalogue.epoch(threadId))
+        },
         hostRunActive: (threadId) =>
           !this.domain ||
           this.domain.hasRuntimeWorkForThread(threadId) ||
