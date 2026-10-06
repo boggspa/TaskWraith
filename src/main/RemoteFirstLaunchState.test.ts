@@ -428,8 +428,9 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Claude leads the lineup from the Opus 5.5 (2026-09-22) and Sonnet 5.5
-      // (2026-09-28) releases.
+      // Mistral leads the lineup with Large 4 (2026-10-06); Claude follows from
+      // the Opus 5.5 (2026-09-22) and Sonnet 5.5 (2026-09-28) releases.
+      'mistral',
       'claude',
       'codex',
       'kimi',
@@ -438,10 +439,12 @@ describe('buildRemoteFirstLaunchState', () => {
       'grok',
       'cursor',
       'muse',
-      'mistral',
       'ollama',
       'pi'
     ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'mistral')?.models[0]?.name
+    ).toBe('Mistral Large 4')
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'kimi')?.models.map((m) => m.name)
     ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])

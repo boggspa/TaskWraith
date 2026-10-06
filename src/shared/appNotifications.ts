@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-04'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-06'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,12 +162,93 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
-        // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) head this lineup,
-        // so Claude leads the card. Fable 5.1 stays listed beneath them.
+        // Mistral Large 4 ("Le Chonk", public preview 2026-10-06) is the
+        // headline of this lineup, so Mistral leads the card with it first.
+        provider: 'mistral',
+        label: 'Mistral',
+        models: [
+          {
+            // API-key lane: it is not on the Vibe plan, so say whose bill it is.
+            name: 'Mistral Large 4',
+            blurb:
+              'Le Chonk, the 1T flagship — 524K context, image input, thinking, $0.68/$2.09 per Mtok at launch, on your own API key.'
+          },
+          {
+            name: 'Mistral 3.5 Medium',
+            blurb:
+              'Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth.'
+          },
+          {
+            name: 'Mistral Large 3',
+            blurb: 'A flagship-sized 262K context model tuned for deeper planning and coding tasks.'
+          },
+          {
+            name: 'Mistral Medium (Latest)',
+            blurb: 'Current Mistral Medium flagship with stronger context and balanced latency.'
+          },
+          {
+            name: 'Mistral Medium 3.1',
+            blurb: 'Mistral Medium 3.1 extends the medium family with a refreshed default profile.'
+          },
+          {
+            name: 'Mistral Medium 3',
+            blurb: 'Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package.'
+          },
+          {
+            name: 'Mistral Small 4',
+            blurb:
+              'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
+          },
+          {
+            name: 'Leanstral 1.5 (Labs)',
+            blurb: 'Leanstral 1.5 (Labs) is a research-focused experimental reasoning update.'
+          },
+          {
+            name: 'GLM-5.2 (via Mistral)',
+            blurb: 'GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts.'
+          },
+          {
+            name: 'GLM-5.2 (Mistral Hosted)',
+            blurb:
+              'GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan.'
+          },
+          {
+            // API-key lane, mirroring the 5.2 pair: same host, opposite lane.
+            name: 'GLM-5.3 (via Mistral)',
+            blurb: 'The 5.3 generation hosted by Mistral — 1M context, on your own API key.'
+          },
+          {
+            // The Vibe-subscription GLM-5.3, mirroring the 5.2 subscription extra.
+            name: 'GLM-5.3 (Mistral Hosted)',
+            blurb: 'GLM-5.3 on the Vibe subscription — 1M context, no API key, metered on your plan.'
+          },
+          {
+            name: 'Codestral (Aug 2025)',
+            blurb:
+              'Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning.'
+          },
+          {
+            name: 'Ministral 3 (14B)',
+            blurb:
+              'Ministral 3 (14B) balances throughput and coding depth on the same family stack.'
+          },
+          {
+            name: 'Ministral 3 (8B)',
+            blurb: 'Ministral 3 (8B) keeps the same family strengths in a smaller profile.'
+          },
+          {
+            name: 'Ministral 3 (3B)',
+            blurb: 'Ministral 3 (3B) is the compact variant for lighter tasks and lower cost.'
+          }
+        ]
+      },
+      {
+        // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) follow Mistral
+        // Large 4 at the top. Fable 5.1 stays listed beneath them.
         provider: 'claude',
         label: 'Claude',
         models: [
@@ -319,79 +400,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Muse Contributor Spark 1.3',
             blurb:
               'The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement.'
-          }
-        ]
-      },
-      {
-        provider: 'mistral',
-        label: 'Mistral',
-        models: [
-          {
-            name: 'Mistral 3.5 Medium',
-            blurb:
-              'Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth.'
-          },
-          {
-            name: 'Mistral Large 3',
-            blurb: 'A flagship-sized 262K context model tuned for deeper planning and coding tasks.'
-          },
-          {
-            name: 'Mistral Medium (Latest)',
-            blurb: 'Current Mistral Medium flagship with stronger context and balanced latency.'
-          },
-          {
-            name: 'Mistral Medium 3.1',
-            blurb: 'Mistral Medium 3.1 extends the medium family with a refreshed default profile.'
-          },
-          {
-            name: 'Mistral Medium 3',
-            blurb: 'Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package.'
-          },
-          {
-            name: 'Mistral Small 4',
-            blurb:
-              'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
-          },
-          {
-            name: 'Leanstral 1.5 (Labs)',
-            blurb: 'Leanstral 1.5 (Labs) is a research-focused experimental reasoning update.'
-          },
-          {
-            name: 'GLM-5.2 (via Mistral)',
-            blurb: 'GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts.'
-          },
-          {
-            name: 'GLM-5.2 (Mistral Hosted)',
-            blurb:
-              'GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan.'
-          },
-          {
-            // API-key lane, mirroring the 5.2 pair: same host, opposite lane.
-            name: 'GLM-5.3 (via Mistral)',
-            blurb: 'The 5.3 generation hosted by Mistral — 1M context, on your own API key.'
-          },
-          {
-            // The Vibe-subscription GLM-5.3, mirroring the 5.2 subscription extra.
-            name: 'GLM-5.3 (Mistral Hosted)',
-            blurb: 'GLM-5.3 on the Vibe subscription — 1M context, no API key, metered on your plan.'
-          },
-          {
-            name: 'Codestral (Aug 2025)',
-            blurb:
-              'Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning.'
-          },
-          {
-            name: 'Ministral 3 (14B)',
-            blurb:
-              'Ministral 3 (14B) balances throughput and coding depth on the same family stack.'
-          },
-          {
-            name: 'Ministral 3 (8B)',
-            blurb: 'Ministral 3 (8B) keeps the same family strengths in a smaller profile.'
-          },
-          {
-            name: 'Ministral 3 (3B)',
-            blurb: 'Ministral 3 (3B) is the compact variant for lighter tasks and lower cost.'
           }
         ]
       },

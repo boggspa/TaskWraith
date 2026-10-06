@@ -151,8 +151,10 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
-      // Claude leads: Opus 5.5 (2026-09-22) is the headline launch of this lineup,
-      // with Codex right behind it for GPT-6 Sol and Luna (same day).
+      // Mistral leads for Large 4 (2026-10-06), the headline of this lineup.
+      // Claude follows for Opus 5.5 (2026-09-22), with Codex right behind it
+      // for GPT-6 Sol and Luna (same day).
+      'mistral',
       'claude',
       'codex',
       'kimi',
@@ -161,11 +163,11 @@ describe('notification registry', () => {
       'grok',
       'cursor',
       'muse',
-      'mistral',
       'ollama',
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Mistral',
       'Claude',
       'Codex',
       'Kimi',
@@ -174,7 +176,6 @@ describe('notification registry', () => {
       'Grok',
       'Cursor',
       'Muse',
-      'Mistral',
       'Ollama',
       'Pi'
     ])
@@ -262,6 +263,7 @@ describe('notification registry', () => {
 
     const mistral = groups.find((g) => g.provider === 'mistral')
     expect(mistral?.models.map((m) => m.name)).toEqual([
+      'Mistral Large 4',
       'Mistral 3.5 Medium',
       'Mistral Large 3',
       'Mistral Medium (Latest)',
@@ -278,7 +280,11 @@ describe('notification registry', () => {
       'Ministral 3 (8B)',
       'Ministral 3 (3B)'
     ])
-    expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
+    // Large 4 is API-only, so its blurb must name the lane as well as the nickname.
+    expect(mistral?.models[0]?.blurb).toMatch(/Le Chonk.*524K.*your own API key/i)
+    expect(mistral?.models.find((m) => m.name === 'Mistral 3.5 Medium')?.blurb).toMatch(
+      /Effort.*configurable|configurable.*Effort/i
+    )
     expect(mistral?.models.find((m) => m.name === 'GLM-5.2 (Mistral Hosted)')?.blurb).toMatch(
       /Vibe subscription.*no API key/i
     )
