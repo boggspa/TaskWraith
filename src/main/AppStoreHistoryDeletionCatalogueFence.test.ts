@@ -241,4 +241,53 @@ describe('history deletion catalogue fence partial-begin commit', () => {
       expect.objectContaining({ chatId: 'chat-a', generation: 'ga' })
     ])
   })
+
+  it('a fence the intent cannot record yet still lets begin join, fails the step, and is recorded later', async () => {
+    // The profile folder is read-only only while the fence rises, so the
+    // per-fence intent write fails there and nowhere else.
+    let joinedAfterFence = false
+    const begin = vi.fn(
+      async (
+        _preparation: unknown,
+        _recorded: readonly CatalogueErasureFence[],
+        onFenceRaised?: (fence: CatalogueErasureFence) => void
+      ) => {
+        fs.chmodSync(userDataPath, 0o500)
+        try {
+          onFenceRaised?.({ chatId: 'chat-a', generation: 'gw' })
+        } finally {
+          fs.chmodSync(userDataPath, 0o700)
+        }
+        joinedAfterFence = true
+        return [{ chatId: 'chat-a', generation: 'gw' }]
+      }
+    )
+    AppStore.installCatalogueErasure(
+      begin,
+      async () => {},
+      () => {}
+    )
+    const finish = vi.fn(async () => {})
+    AppStore.installCatalogueErasureFinish(finish)
+    const operationId = AppStore.prepareHistoryDeletion({
+      kind: 'chat',
+      rootChatId: 'chat-a',
+      quiescenceTargets: []
+    }).operationId
+    const error = await commit(operationId).catch((caught: unknown) => caught)
+
+    expect(joinedAfterFence).toBe(true)
+    expect(error).toBeInstanceOf(HistoryDeletionIncompleteError)
+    expect((error as HistoryDeletionIncompleteError).failures).toEqual(
+      expect.arrayContaining([expect.objectContaining({ step: 'thread-catalogue' })])
+    )
+    // Never lifted for a deletion that failed, and the fence reached the intent.
+    expect(finish).not.toHaveBeenCalled()
+    const retained = JSON.parse(fs.readFileSync(historyIntentPath, 'utf8')) as {
+      catalogueErasureFences?: CatalogueErasureFence[]
+    }
+    expect(retained.catalogueErasureFences).toEqual([
+      expect.objectContaining({ chatId: 'chat-a', generation: 'gw' })
+    ])
+  })
 })

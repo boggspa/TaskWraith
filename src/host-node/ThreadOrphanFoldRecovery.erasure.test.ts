@@ -147,6 +147,18 @@ describe('ThreadOrphanFoldRecovery erasure fence', () => {
     expect(h.calls).toEqual(['open', 'fold', 'adopt'])
   })
 
+  it('two callers for one chat share one fold: one reservation, one outcome', async () => {
+    const h = harness({ log: [1], holdFold: true })
+    const first = h.fold.foldOrphan(h.chatId)
+    await until(() => h.foldGate.length > 0, 'fold reached the wire')
+    const second = h.fold.foldOrphan(h.chatId)
+    for (const resolve of h.foldGate.splice(0)) resolve()
+    const outcomes = await Promise.all([first, second])
+    expect(outcomes).toEqual([{ kind: 'folded' }, { kind: 'folded' }])
+    expect(h.owners.reserveOrphanOwnership).toHaveBeenCalledTimes(1)
+    expect(h.owners.releaseOrphanOwnership).toHaveBeenCalledTimes(1)
+  })
+
   it('a fenced chat is not re-enqueued until the fence lifts', async () => {
     const h = harness({ log: [1] })
     expect(await h.fold.foldOrphan(h.chatId)).toEqual({ kind: 'folded' })

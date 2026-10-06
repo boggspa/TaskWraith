@@ -10361,6 +10361,10 @@ export class AppStore {
   private static beginCatalogueErasure(intent: HistoryDeletionIntent): void | Promise<void> {
     const begin = this.catalogueErasureBegin
     if (!begin) return
+    // A fence the intent could not record durably fails the step, but only
+    // after begin's joins ran: the fence stays in the in-memory intent, and the
+    // next intent write (the failure epilogue's at the latest) records it.
+    let fenceWriteError: unknown = null
     return begin(
       this.historyDeletionPreparation(intent),
       intent.catalogueErasureFences ?? [],
@@ -10376,7 +10380,11 @@ export class AppStore {
         next.push({ ...fence })
         intent.catalogueErasureFences = next
         intent.updatedAt = new Date().toISOString()
-        writeHistoryDeletionIntent(intent)
+        try {
+          writeHistoryDeletionIntent(intent)
+        } catch (error) {
+          fenceWriteError ??= error
+        }
       }
     ).then((fences) => {
       // Also commit at the end for callers that don't use the per-fence
@@ -10387,6 +10395,7 @@ export class AppStore {
         )
         intent.catalogueErasureFences = [...next, ...fences.map((f) => ({ ...f }))]
       }
+      if (fenceWriteError) throw fenceWriteError
     })
   }
 
