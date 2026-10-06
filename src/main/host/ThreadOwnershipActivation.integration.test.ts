@@ -240,6 +240,7 @@ function desktop(profile: string, server: HostLocalServer, writerId = `desk-${ra
     requestTimeoutMs: 2_000
   })
   const barriers: string[] = []
+  const paid: string[] = []
   const errors: unknown[] = []
   const wiring = installThreadOwnership({
     saveIntentQueue: queue,
@@ -248,6 +249,7 @@ function desktop(profile: string, server: HostLocalServer, writerId = `desk-${ra
     onError: (error) => errors.push(error),
     production: {
       journalBarrier: async (chatId) => void barriers.push(chatId),
+      journalPaid: async (chatId) => void paid.push(chatId),
       userDataPath: profile,
       transport,
       writer: { writerId, pid: process.pid }
@@ -266,7 +268,7 @@ function desktop(profile: string, server: HostLocalServer, writerId = `desk-${ra
     await wiring.trigger!.idle()
     return saved
   }
-  return { queue, transport, wiring, barriers, errors, writerId, saveConfirmedByHost }
+  return { queue, transport, wiring, barriers, paid, errors, writerId, saveConfirmedByHost }
 }
 
 async function settle(): Promise<void> {
@@ -313,10 +315,13 @@ describe('desktop ownership activation over the real Host socket', () => {
     expect((await owners.requestHostWrite(CHAT)).kind).not.toBe('write')
 
     // An owned save is confirmed by the owned journal, not by a Host receipt.
+    // It waits for barriers the app raises anyway: it raises none of its own.
+    const barriersBefore = app.barriers.length
     journal(profile, 4)
     await expect(app.wiring.port.confirmOwnedSave!(CHAT, 4)).resolves.toBe(true)
     await expect(app.wiring.port.confirmOwnedSave!(CHAT, 5)).resolves.toBe(false)
-    expect(app.barriers).toContain(CHAT)
+    expect(app.paid).toEqual([CHAT, CHAT])
+    expect(app.barriers).toHaveLength(barriersBefore)
   })
 
   it('keeps the mark over a lost socket; the erasure join removes it, then releases', async () => {

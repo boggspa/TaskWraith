@@ -6601,6 +6601,18 @@ export class AppStore {
     return threadBarrierDurability.barrier(chatId)
   }
 
+  /**
+   * Thread ownership's owned-save confirmation: resolves once the barriers the
+   * app raises anyway have paid the chat's journal through its latest write.
+   * Raises no sync of its own.
+   */
+  static awaitOwnedThreadJournalPaid(chatId: string): Promise<void> {
+    if (!threadBarrierDurability) {
+      return Promise.reject(new Error('Owned journal confirmation needs barrier durability'))
+    }
+    return threadBarrierDurability.paidThrough(chatId)
+  }
+
   static installThreadCataloguePublisher(
     writerId: string,
     onChanged: (chatId: string) => void,

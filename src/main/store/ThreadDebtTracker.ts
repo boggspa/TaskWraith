@@ -38,8 +38,16 @@
  * them within the time it is given. What did not settle in that time, or
  * failed, is counted and logged by count alone: no path, id or content.
  *
+ * Paid-through: `paidThrough(chatId)` raises nothing. It resolves when the
+ * first barrier for the thread that was raised after the thread's latest
+ * note (any kind of barrier: each pays the thread's own debt, where the
+ * journal's lines are) settles; a barrier that fails leaves it waiting for the
+ * next one. A thread that owes nothing here resolves at once, and erasing the
+ * thread rejects it. It lets a caller confirm a write by the barriers the app
+ * raises anyway, without adding a sync of its own to the port.
+ *
  * Memory: one small entry per thread that has written since its last paid
- * barrier, and one timer.
+ * barrier, one entry per waiting `paidThrough` call, and one timer.
  */
 import type {
   NoteThreadDurabilityDebt,
@@ -104,6 +112,11 @@ export class ThreadDebtTracker {
   private readonly warn: (message: string) => void
   /** In the order each thread last wrote, oldest first. */
   private readonly owing = new Map<string, Owing>()
+  /** `paidThrough` callers by thread, each with the generation it must see paid. */
+  private readonly payWaiters = new Map<
+    string,
+    Array<{ generation: number; resolve: () => void; reject: (error: Error) => void }>
+  >()
   private generation = 0
   private timer: unknown = null
   /** When the armed timer fires. */
@@ -159,6 +172,8 @@ export class ThreadDebtTracker {
   barrier(chatId: string, options?: ThreadDurabilityBarrierOptions): Promise<void> {
     const wholeThread = options?.run === undefined && options?.threadOnly !== true
     const raisedAt = wholeThread ? this.owing.get(chatId)?.generation : undefined
+    // Every note so far precedes this barrier: what it pays covers them.
+    const covers = this.generation
     const barrier = options ? this.debt.barrier(chatId, options) : this.debt.barrier(chatId)
     if (raisedAt !== undefined) {
       barrier.then(
@@ -168,19 +183,39 @@ export class ThreadDebtTracker {
         () => {}
       )
     }
+    barrier.then(
+      () => this.settlePayWaiters(chatId, covers),
+      () => {}
+    )
     return barrier
+  }
+
+  /**
+   * Resolves once a barrier raised after the thread's latest note has paid,
+   * without raising one. Rejects when the thread is erased first.
+   */
+  paidThrough(chatId: string): Promise<void> {
+    const owing = this.owing.get(chatId)
+    if (!owing) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      const waiters = this.payWaiters.get(chatId) ?? []
+      waiters.push({ generation: owing.generation, resolve, reject })
+      this.payWaiters.set(chatId, waiters)
+    })
   }
 
   /** The thread is being erased: drop what it owes without paying it. */
   forget(chatId: string): void {
     this.debt.forget(chatId)
     this.owing.delete(chatId)
+    this.rejectPayWaiters(chatId)
   }
 
   /** Every thread is being erased. */
   forgetAll(): void {
     for (const chatId of this.owing.keys()) this.debt.forget(chatId)
     this.owing.clear()
+    for (const chatId of [...this.payWaiters.keys()]) this.rejectPayWaiters(chatId)
   }
 
   /**
@@ -234,6 +269,23 @@ export class ThreadDebtTracker {
       quitUnpaid: this.quitUnpaid,
       trickles: this.trickles
     }
+  }
+
+  private settlePayWaiters(chatId: string, covers: number): void {
+    const waiters = this.payWaiters.get(chatId)
+    if (!waiters) return
+    const left = waiters.filter((waiter) => waiter.generation > covers)
+    for (const waiter of waiters) if (waiter.generation <= covers) waiter.resolve()
+    if (left.length > 0) this.payWaiters.set(chatId, left)
+    else this.payWaiters.delete(chatId)
+  }
+
+  private rejectPayWaiters(chatId: string): void {
+    const waiters = this.payWaiters.get(chatId)
+    if (!waiters) return
+    this.payWaiters.delete(chatId)
+    for (const waiter of waiters)
+      waiter.reject(new Error('The thread was erased before it was paid'))
   }
 
   /** The thread that next falls quiet, if any is waiting for its idle barrier. */

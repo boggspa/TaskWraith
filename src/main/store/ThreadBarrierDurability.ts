@@ -125,6 +125,13 @@ export interface ThreadBarrierDurability {
   /** A barrier for the thread, as every barrier the app raises for one is. */
   barrier(chatId: string): Promise<void>
   /**
+   * Raises nothing: resolves once a barrier raised after the thread's latest
+   * write has paid (a user moment's, a run's, the idle or quit barrier), and
+   * rejects if the thread is erased first. For confirming a write by the
+   * barriers the app raises anyway, without adding a sync to the port.
+   */
+  paidThrough(chatId: string): Promise<void>
+  /**
    * The barrier a queued start waits for before it tells the Host its run row
    * is durable: the thread's own debt, where the row's journal line is. A
    * start is no moment, so no save's ticket pays it; and it is the app's
@@ -332,6 +339,7 @@ export function createThreadBarrierDurability(
     },
     catalogue: (profilePath) => new MainCatalogueUnsyncedDurability({ profilePath }),
     barrier: (chatId) => threads.barrier(chatId),
+    paidThrough: (chatId) => threads.paidThrough(chatId),
     startBarrier: (chatId) => threads.barrier(chatId, { threadOnly: true }),
     awaitDurable: (chatId) => tickets.awaitChat(chatId, USER_DURABILITY_MOMENTS),
     forget(chatId) {

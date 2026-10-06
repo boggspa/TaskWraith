@@ -73,7 +73,10 @@ export function installStartupThreadCatalogue(options: {
   // real coordinator over its own Host connection and the owned journal.
   const ownership = installThreadOwnership({
     saveIntentQueue: AppStore.getSaveIntentQueue(),
-    production: { journalBarrier: (chatId) => AppStore.payOwnedThreadJournal(chatId) }
+    production: {
+      journalBarrier: (chatId) => AppStore.payOwnedThreadJournal(chatId),
+      journalPaid: (chatId) => AppStore.awaitOwnedThreadJournalPaid(chatId)
+    }
   })
   const local = options.externalHost
     ? null

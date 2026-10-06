@@ -34,8 +34,18 @@ export type ThreadOwnerTransport = DesktopThreadOwnerTransport &
   Pick<HostProjectionClient, 'requestThreadOwner'>
 
 export interface ThreadOwnershipProductionOptions {
-  /** Pays everything a chat's journal owes (the store's owned-journal barrier). */
+  /**
+   * Pays everything a chat's journal owes (the store's owned-journal barrier).
+   * Raised once per activation, for the saves it replays.
+   */
   journalBarrier(chatId: string): Promise<void>
+  /**
+   * Resolves once the barriers the app raises anyway have paid the chat's
+   * journal through its latest write, raising none itself. An owned save is
+   * confirmed by this, so ownership adds no sync per save to the port. Without
+   * it, each owned save raises `journalBarrier`.
+   */
+  journalPaid?(chatId: string): Promise<void>
   /** Defaults to Electron's userData. */
   readonly userDataPath?: string
   /** Defaults to a fresh desktop-class connection of its own. */
@@ -104,7 +114,14 @@ export function composeThreadOwnershipProduction(
     client,
     facts,
     connection,
-    confirmOwnedSave: (chatId, revision) => ownedJournalHolds(journal, chatId, revision),
+    confirmOwnedSave: (chatId, revision) =>
+      ownedJournalHolds(
+        options.journalPaid
+          ? { barrier: (id) => options.journalPaid!(id), head: (id) => journal.head(id) }
+          : journal,
+        chatId,
+        revision
+      ),
     dispose: () => connection.close()
   }
 }
