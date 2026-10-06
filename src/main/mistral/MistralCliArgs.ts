@@ -196,6 +196,11 @@ export const MISTRAL_SEAT_MODELS = [
   // Hosted GLM-5.3 on the Vibe subscription (added 2026-09-21), mirroring the
   // `glm-5-2` subscription extra. Distinct from the API-key `zai-glm-5-3`.
   'glm-5-3',
+  // Mistral Large 4 ("Le Chonk", 2026-10-06 public preview). API-key lane: the
+  // API lists it as `mistral-large-4` (alias `mistral-large-4-0`), and Vibe's
+  // plan extras do not include it yet. Without this entry the id clamps to
+  // Medium 3.5 and the turn silently runs a different model.
+  'mistral-large-4',
   'mistral-large-2512',
   'zai-glm-5-3',
   'zai-glm-5-2',

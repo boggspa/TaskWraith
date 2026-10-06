@@ -240,6 +240,7 @@ them onto the shared ladder vocabulary.
 | **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. |
 | **GLM-5.2 (Mistral Hosted)** `glm-5-2`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok.   |
 | **GLM-5.3 (Mistral Hosted)** `glm-5-3`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok. Added 2026-09-21. Price and window **carried forward from GLM-5.2**. |
+| **Mistral Large 4** `mistral-large-4`                | off…max       | —    | 524K context · flagship ("Le Chonk": 1.05T total / 49B active MoE, image input) · $0.68/$2.09 per Mtok **launch discount** (list $1.36/$4.18) · **API key only**. Public preview, added 2026-10-06. The window is the 524,288 `api.mistral.ai/v1/models` reports, not the model card's 1M. Mistral's API exposes only `none`/`high` reasoning, and Vibe maps off/low to `none` and medium/high/max to `high`. |
 | **GLM-5.3 (via Mistral)** `zai-glm-5-3`             | —             | —    | 1M context · $1.40/$4.40 per Mtok · **API key only** — hosted by Mistral but billed to your own key, unlike the `glm-5-3` subscription row above. Added 2026-09-18, renamed `via Mistral` 2026-09-21 when the subscription row landed. Price and window are both **carried forward from GLM-5.2** and not independently verified: Mistral has published no 5.3 page yet, and Z.ai prices its own GLM-5.3 identically. The `zai-` prefix avoids colliding with Devin's own `glm-5-3`. |
 | **Mistral Large 3** `mistral-large-2512`             | —             | —    | 262K context · flagship · $0.50/$1.50 per Mtok.                |
 | **GLM-5.2 (via Mistral)** `zai-glm-5-2`              | —             | —    | 1M context · $1.40/$4.40 per Mtok.                             |
@@ -253,7 +254,7 @@ them onto the shared ladder vocabulary.
 | **Ministral 3 (8B)** `ministral-8b-2512`             | —             | —    | 262K context · $0.15/$0.15 per Mtok.                           |
 | **Ministral 3 (3B)** `ministral-3b-2512`             | —             | —    | 262K context · $0.10/$0.10 per Mtok.                           |
 
-The first two rows bill against the Vibe subscription. Every row below
+The first three rows bill against the Vibe subscription. Every row below
 them is API-only: it runs on a user-supplied Mistral API key
 (`MISTRAL_API_KEY`), metered per token and separate from any Vibe plan.
 The picker marks those rows with the API-key glyph so the lane is visible

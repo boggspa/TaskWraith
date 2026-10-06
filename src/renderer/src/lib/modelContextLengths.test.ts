@@ -13,6 +13,16 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('1.0M')
   })
 
+  it('lists Mistral Large 4 in the Mistral group at its 524K API window', () => {
+    const groups = buildModelContextLengthGroups()
+    const row = groups
+      .find((g) => g.provider === 'mistral')
+      ?.models.find((m) => m.modelId === 'mistral-large-4')
+    expect(row?.label).toBe('Mistral Large 4')
+    expect(row?.contextWindow).toBe(524_288)
+    expect(row?.formatted).toBe('524k')
+  })
+
   it('claude group includes Sonnet 5 at 1.0M and Sonnet 4.6 Legacy at 200k', () => {
     const groups = buildModelContextLengthGroups()
     const claudeGroup = groups.find((g) => g.provider === 'claude')

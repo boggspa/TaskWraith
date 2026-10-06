@@ -25,6 +25,10 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('devin', 'glm-5-3-flash')).toBe(262_144)
   })
 
+  it('gives Mistral Large 4 the window the API reports, not the model-card 1M', () => {
+    expect(resolveContextWindow('mistral', 'mistral-large-4')).toBe(524_288)
+  })
+
   it('resolves representative model ids across providers', () => {
     expect(resolveContextWindow('gemini', 'pro')).toBe(1_048_576)
     // GPT-5.6 trio — official raw API window (GA 2026-07-09).

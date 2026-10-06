@@ -374,9 +374,22 @@ struct ModelContextLengthsTests {
         // `glm-5-3` (Vibe subscription) joined 2026-09-21 beside the earlier
         // API-key `zai-glm-5-3` (2026-09-18). Both are bare seat ids, which is
         // what this guard is about. The `zai-` prefix keeps the API row off
-        // Devin's identically-named glm-5-3.
-        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2", "glm-5-3", "zai-glm-5-3"])
+        // Devin's identically-named glm-5-3. API-key Mistral Large 4 joined
+        // 2026-10-06, in the same slot as the desktop picker.
+        #expect(models.map(\.modelId) == [
+            "mistral-medium-3.5", "glm-5-2", "glm-5-3", "mistral-large-4", "zai-glm-5-3",
+        ])
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
+    }
+
+    @Test("mistral large 4 shows the API's 524_288 window: 524k")
+    func mistralLarge4() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "mistral" }?
+            .models.first { $0.modelId == "mistral-large-4" }
+        #expect(row?.label == "Mistral Large 4")
+        #expect(row?.contextWindow == 524_288)
+        #expect(row?.formatted == "524k")
     }
 
     // MARK: - Pi group

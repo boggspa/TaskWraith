@@ -40,6 +40,9 @@ export interface MistralModelRate {
 const MISTRAL_MODEL_RATES: Readonly<Record<string, MistralModelRate>> = {
   [MISTRAL_MODEL_DEVSTRAL_SMALL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.3 },
   [MISTRAL_MODEL_MEDIUM]: { inputUsdPerMillion: 1.5, outputUsdPerMillion: 7.5 },
+  // Mistral Large 4 at its launch-discount rate (billing name
+  // `mistral-large-4-0-launch-discount`); list price is $1.36/$4.18.
+  'mistral-large-4': { inputUsdPerMillion: 0.68, outputUsdPerMillion: 2.09 },
   'mistral-large-2512': { inputUsdPerMillion: 0.5, outputUsdPerMillion: 1.5 },
   'zai-glm-5-2': { inputUsdPerMillion: 1.4, outputUsdPerMillion: 4.4 },
   // Hosted GLM-5.2 on the Vibe subscription (alias `glm-5-2`). Same per-Mtok rate

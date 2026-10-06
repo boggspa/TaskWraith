@@ -437,6 +437,7 @@ const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'glm-5-2', label: 'GLM-5.2 (Mistral Hosted)' },
   { id: 'glm-5-3', label: 'GLM-5.3 (Mistral Hosted)' },
+  { id: 'mistral-large-4', label: 'Mistral Large 4' },
   { id: 'zai-glm-5-3', label: 'GLM-5.3 (via Mistral)' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
   { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },

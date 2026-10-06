@@ -39,6 +39,9 @@ export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set<string>([
   'glm-5-2',
   // Hosted GLM-5.3 (Vibe subscription, added 2026-09-21) — same ladder as 5.2.
   'glm-5-3',
+  // Mistral Large 4 (API key, added 2026-10-06). docs.mistral.ai lists it with
+  // adjustable `reasoning_effort`; Vibe maps this ladder onto its none/high.
+  'mistral-large-4',
   'devstral-small-latest',
   'mistral-vibe-cli-latest',
   'mistral-small-2603',

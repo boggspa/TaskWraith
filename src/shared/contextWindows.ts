@@ -87,6 +87,9 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'mistral-vibe-cli-latest': 262_144,
   'devstral-small': 262_144,
   'devstral-small-latest': 262_144,
+  // Mistral Large 4 (2026-10-06): the 524,288 api.mistral.ai/v1/models reports,
+  // not the 1M the model card quotes for the open weights.
+  'mistral-large-4': 524_288,
   'mistral-large-2512': 262_144,
   'zai-glm-5-2': 1_000_000,
   'glm-5-2': 1_000_000,

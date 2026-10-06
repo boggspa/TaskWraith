@@ -2064,6 +2064,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3, cached_input_price=0.01 in 2.24.1-2.24.5; 2.25.0 dropped the model), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
       },
       {
+        modelId: 'mistral-large-4',
+        inputUsdPerMillion: 0.68,
+        outputUsdPerMillion: 2.09,
+        cachedInputUsdPerMillion: 0.07,
+        sourceUrl: 'https://openrouter.ai/mistralai/mistral-large-4-0',
+        lastVerified: '2026-10-06',
+        notes:
+          'Mistral Large 4 ("Le Chonk"), public preview from 2026-10-06. LAUNCH-DISCOUNT rate: api.mistral.ai/v1/models bills it as `mistral-large-4-0-launch-discount`, and the listing shows list prices of $1.36 input, $0.14 cached and $4.18 output. Move to the list rate when the discount ends.'
+      },
+      {
         modelId: 'mistral-large-2512',
         inputUsdPerMillion: 0.5,
         outputUsdPerMillion: 1.5,

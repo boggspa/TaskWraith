@@ -434,6 +434,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', mistralNativeReasoning()),
         // Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring `glm-5-2`.
         model('glm-5-3', 'GLM-5.3 (Mistral Hosted)', mistralNativeReasoning()),
+        // Mistral Large 4 (2026-10-06), API-key lane with adjustable reasoning.
+        model('mistral-large-4', 'Mistral Large 4', mistralNativeReasoning()),
         // API-key lane, so STANDARD_REASONING like zai-glm-5-2 rather than the
         // Vibe thinking ladder its 5.2 namesake gets.
         model('zai-glm-5-3', 'GLM-5.3 (via Mistral)', STANDARD_REASONING),

@@ -1287,6 +1287,21 @@ const MISTRAL_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
+    // Added 2026-10-06: Mistral Large 4 ("Le Chonk"), public preview on the API
+    // only, so it is absent from MISTRAL_SUBSCRIPTION_MODELS and carries the key
+    // glyph. 1.05T-total / 49B-active MoE with image input. Window is the
+    // 524,288 that api.mistral.ai/v1/models reports. The price is the launch
+    // discount (billing name `mistral-large-4-0-launch-discount`); list is
+    // $1.36/$4.18. docs.mistral.ai lists adjustable `reasoning_effort`, and
+    // Vibe sends medium/high/max as `high`, so `high` is the honest default.
+    id: 'mistral-large-4',
+    label: 'Mistral Large 4',
+    description: '524K context - "Le Chonk" flagship, $0.68/$2.09 per Mtok at launch',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: 'high',
+    ultraTaskSupported: true
+  },
+  {
     // Added 2026-09-18 as the API-KEY ONLY GLM-5.3; renamed 2026-09-21 to
     // `via Mistral` when the Vibe-subscription `glm-5-3` row above landed, so
     // the two lanes mirror the 5.2 pair. Still absent from

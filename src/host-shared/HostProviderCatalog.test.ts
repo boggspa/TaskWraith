@@ -25,6 +25,7 @@ describe('derived reasoning offers', () => {
     for (const modelId of [
       'mistral-medium-3.5',
       'glm-5-2',
+      'mistral-large-4',
       'mistral-small-2603',
       'mistral-medium-latest'
     ]) {

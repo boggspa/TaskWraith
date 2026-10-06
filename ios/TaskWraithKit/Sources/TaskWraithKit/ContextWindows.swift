@@ -127,6 +127,9 @@ public enum ContextWindows {
         "mistral-vibe-cli-latest": 262_144,
         "devstral-small": 262_144,
         "devstral-small-latest": 262_144,
+        // Mistral Large 4 (2026-10-06): the API's 524,288, not the card's 1M.
+        // Mirrors shared/contextWindows.ts.
+        "mistral-large-4": 524_288,
         "mistral-large-2512": 262_144,
         "zai-glm-5-2": 1_000_000,
         "glm-5-2": 1_000_000,

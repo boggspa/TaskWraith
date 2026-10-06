@@ -1498,6 +1498,13 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
+    expect(getEnsembleReasoningOptions('mistral', 'mistral-large-4')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
     expect(getEnsembleReasoningOptions('mistral', 'mistral-medium-latest')).toEqual([
       { value: 'off', label: 'Off' },
       { value: 'low', label: 'Low' },

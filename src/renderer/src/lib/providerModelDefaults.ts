@@ -481,6 +481,12 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     description: '1M context - coding model'
   },
   {
+    // API-key lane (2026-10-06). Mirrors main's MISTRAL_STATIC_MODELS.
+    id: 'mistral-large-4',
+    label: 'Mistral Large 4',
+    description: '524K context - flagship, reasoning'
+  },
+  {
     // API-key lane, unlike the `glm-5-3` subscription row above. Mirrors
     // main's MISTRAL_STATIC_MODELS; renamed `via Mistral` 2026-09-21 to match
     // the 5.2 pair. The `zai-` prefix keeps it off Devin's `glm-5-3`.

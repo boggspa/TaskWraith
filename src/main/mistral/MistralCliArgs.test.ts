@@ -124,6 +124,8 @@ describe('normalizeMistralModel', () => {
   })
 
   it('accepts bare Mistral API models', () => {
+    // Large 4 must survive the clamp, or the turn silently runs Medium 3.5.
+    expect(normalizeMistralModel('mistral-large-4')).toBe('mistral-large-4')
     expect(normalizeMistralModel('mistral-large-2512')).toBe('mistral-large-2512')
     expect(normalizeMistralModel('zai-glm-5-2')).toBe('zai-glm-5-2')
     expect(normalizeMistralModel('codestral-2508')).toBe('codestral-2508')
