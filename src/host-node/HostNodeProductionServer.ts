@@ -908,6 +908,7 @@ export class HostNodeProductionServer {
         hostRunActive: (threadId) =>
           !this.domain ||
           this.domain.hasRuntimeWorkForThread(threadId) ||
+          this.threadRecovery?.hasPendingHold(threadId) === true ||
           this.threadWriteGate?.writing(threadId) === true,
         log: writeHostStderr,
         // What the writers say reaches the followers of their threads' logs.
@@ -1443,6 +1444,8 @@ export class HostNodeProductionServer {
       return { data: recovery.begin(request.chatId, request.desktopWriterId) }
     if (request.method === 'end-recovery')
       return { data: recovery.end(request.chatId, request.recoveryToken) }
+    if (request.method === 'takeover-recovery')
+      return { data: recovery.takeoverThread(request.chatId, request.desktopWriterId) }
     if (request.method === 'adopt-prepared') {
       const data = await recovery.adopt(request.chatId, request.recoveryToken, request.preparedId)
       this.threadCatalogueMirror?.observe(data)

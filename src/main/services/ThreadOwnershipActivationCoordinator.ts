@@ -140,11 +140,13 @@ export class ThreadOwnershipActivationCoordinator {
   /**
    * Take a chat out of ownership because its history is being erased. Waits
    * for an activation already in flight (bounded by `erasureFenceTimeoutMs`),
-   * releases the reservation, drops the queue's pending intents and gives the
-   * shared switch back. The mark is removed only when no owned rows exist; rows
-   * the Host has not seen must stay discoverable. Idempotent: a chat that is
-   * not active, and owes no mark removal, is a no-op. Throws once cleanup has
-   * run if any part of it failed, so the caller's erasure step is retried.
+   * drops the queue's pending intents, removes the mark, releases the
+   * reservation and gives the shared switch back. The mark goes before the
+   * release message: a mark still on disk names a live writer and keeps the
+   * thread for it. It is removed only when no owned rows exist; rows the Host
+   * has not seen must stay discoverable. Idempotent: a chat that is not
+   * active, and owes no mark removal, is a no-op. Throws once cleanup has run
+   * if any part of it failed, so the caller's erasure step is retried.
    */
   async deactivate(chatId: string): Promise<void> {
     this.erased.add(chatId)
@@ -159,13 +161,6 @@ export class ThreadOwnershipActivationCoordinator {
     this.active.delete(chatId)
     this.holders.delete(chatId)
     queue.reset(chatId)
-    if (reservation && registry.release) {
-      try {
-        await registry.release(reservation)
-      } catch {
-        faults.push('reservation_release_failed')
-      }
-    }
     let ownedRows = this.ownedCommitted.has(chatId)
     if (!ownedRows && this.options.hasOwnedRows) {
       try {
@@ -183,6 +178,13 @@ export class ThreadOwnershipActivationCoordinator {
       } catch {
         this.markRemovalOwed.add(chatId)
         faults.push('mark_remove_failed')
+      }
+    }
+    if (reservation && registry.release) {
+      try {
+        await registry.release(reservation)
+      } catch {
+        faults.push('reservation_release_failed')
       }
     }
     if (wasHolder && this.holders.size === 0) {
@@ -472,6 +474,13 @@ export function createChatSaveOwnershipWiring(options: {
   readonly coordinator: Pick<ThreadOwnershipActivationCoordinator, 'isActive'>
   readonly mintId?: () => string
   readonly onError?: (error: unknown) => void
+  /** Told after a durably recorded exact receipt joined an authored save. */
+  readonly onPublicationConfirmed?: (
+    chatId: string,
+    evidence: ThreadOwnershipReceiptEvidence
+  ) => void
+  /** Whether the owned journal durably holds a save; absent, owned saves never settle by it. */
+  readonly confirmOwnedSave?: (chatId: string, revision: number) => Promise<boolean>
 }): {
   readonly port: ChatSaveOwnershipPort
   /** Pass as HostThreadRecordPersistClient's `onPersistedEvidence`. */
@@ -494,11 +503,13 @@ export function createChatSaveOwnershipWiring(options: {
       hydrateReceipts(chatId, receipts) {
         void receiptStore.hydrate(chatId, receipts).catch(onError)
       },
-      isActive: (chatId) => coordinator.isActive(chatId)
+      isActive: (chatId) => coordinator.isActive(chatId),
+      ...(options.confirmOwnedSave ? { confirmOwnedSave: options.confirmOwnedSave } : {})
     },
     async persistedEvidenceSink(input, evidence) {
       // Settle only once the evidence is durable: a pending save is released by
       // Host storage that can be shown again after a restart.
+      let confirmed = false
       try {
         await receiptStore.record(evidence, { chatId: input.chatId })
         if (
@@ -512,9 +523,17 @@ export function createChatSaveOwnershipWiring(options: {
           )
         ) {
           queue.settle(input.chatId, input.ownershipIntentId)
+          confirmed = true
         }
       } catch (error) {
         onError(error)
+      }
+      if (confirmed) {
+        try {
+          options.onPublicationConfirmed?.(input.chatId, evidence)
+        } catch (error) {
+          onError(error)
+        }
       }
     }
   }

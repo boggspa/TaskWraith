@@ -81,6 +81,15 @@ export type ThreadCatalogueFoldAdoptOutcome =
         | 'fold_unavailable'
     }
 
+/** What an authenticated explicit per-thread recovery takeover did. */
+export type ThreadCatalogueTakeoverOutcome =
+  | { readonly kind: 'taken' }
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'busy'
+      readonly reason: 'identity_changed' | 'live_work' | 'orphan_custody' | 'unreadable'
+    }
+
 /** Runs on the source-authoritative parent, never inside its decoder. */
 export class ThreadCatalogueRecoveryController {
   private desktop: { writerId: string; pid?: number } | null = null
@@ -90,27 +99,13 @@ export class ThreadCatalogueRecoveryController {
     this.desktop = owner
   }
 
-  /**
-   * Explicit per-thread takeover. Cancels the pending hold for `chatId`
-   * regardless of who holds it (Host-initiated or a different desktop's).
-   *
-   * A desktop that just registered is NOT preemptive: unrelated threads
-   * keep their existing holds. To claim a thread the desktop must call this
-   * once per thread, or call `begin(chatId, owner.writerId)` to start a
-   * new hold (which still requires `end` of the prior hold to make
-   * progress, because the gate keeps one hold per chat).
-   */
-  takeoverThread(chatId: string): void {
-    this.options.assertAuthority()
-    const pending = this.pending.get(chatId)
-    if (!pending) return
-    this.end(chatId, pending.hold.token)
-  }
   private readonly admission = new ThreadCatalogueWriteGate()
   private readonly pending = new Map<
     string,
     {
       hold: ThreadCatalogueRecoveryHold
+      /** The hold began through `beginOrphanViaReservation`: orphan fold custody, never cancelable by takeover. */
+      orphanCustody: boolean
       release(): void
       promise: Promise<void>
       timer?: ReturnType<typeof setTimeout>
@@ -278,7 +273,7 @@ export class ThreadCatalogueRecoveryController {
     try {
       return {
         kind: 'held',
-        hold: this.beginFor(chatId, { hostWriterId: this.options.incarnation })
+        hold: this.beginFor(chatId, { hostWriterId: this.options.incarnation }, true)
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('live work')) {
@@ -290,7 +285,8 @@ export class ThreadCatalogueRecoveryController {
 
   private beginFor(
     chatId: string,
-    identity: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>
+    identity: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>,
+    orphanCustody = false
   ): ThreadCatalogueRecoveryHold {
     // A caller asking to BEGIN is not using an earlier hold of its own: a writer
     // runs one recovery per chat at a time and only reaches here once the
@@ -337,6 +333,7 @@ export class ThreadCatalogueRecoveryController {
     }
     this.pending.set(chatId, {
       hold,
+      orphanCustody,
       promise,
       release: () => {
         releaseAdmission()
@@ -402,6 +399,50 @@ export class ThreadCatalogueRecoveryController {
     if (pending?.timer) clearTimeout(pending.timer)
     pending?.release()
     return true
+  }
+
+  /**
+   * Authenticated explicit per-thread takeover, for the maintenance query of
+   * the same name. Ends exactly the hold pending on `chatId` — in memory, or
+   * a durable-only hold a previous incarnation left on disk — and never
+   * touches another chat's hold. A desktop that just registered is NOT
+   * preemptive: unrelated threads keep their existing holds until each is
+   * taken over explicitly, or its holder ends it.
+   *
+   * The caller is the registered desktop, checked exactly like `begin`:
+   * anyone else is `busy/identity_changed` and the hold stays. Live work,
+   * an orphan fold's custody hold, and an unreadable durable hold each
+   * refuse with their own reason, failing closed.
+   */
+  takeoverThread(chatId: string, desktopWriterId: string): ThreadCatalogueTakeoverOutcome {
+    this.options.assertAuthority()
+    if (
+      (this.desktop?.writerId ??
+        this.options.publisher.catalogue.currentRegisteredWriter('desktop')?.writerId) !==
+      desktopWriterId
+    )
+      return { kind: 'busy', reason: 'identity_changed' }
+    if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
+    const pending = this.pending.get(chatId)
+    if (pending?.orphanCustody) return { kind: 'busy', reason: 'orphan_custody' }
+    const held = pending ? pending.hold : this.options.publisher.catalogue.recoveryHold(chatId)
+    if (held === 'unreadable') return { kind: 'busy', reason: 'unreadable' }
+    if (!held) return { kind: 'none' }
+    this.end(chatId, held.token)
+    return { kind: 'taken' }
+  }
+
+  /**
+   * Whether `chatId` is under a recovery hold this controller would refuse a
+   * thread-owner claim for: an in-memory pending hold or a durable hold file.
+   * An unreadable hold file counts as held — fail closed — so a claim is
+   * refused until the thread is explicitly taken over or the Host sweeps the
+   * unreadable file on its next start.
+   */
+  hasPendingHold(chatId: string): boolean {
+    this.options.assertAuthority()
+    if (this.pending.has(chatId)) return true
+    return this.options.publisher.catalogue.recoveryHold(chatId) !== null
   }
 
   /**

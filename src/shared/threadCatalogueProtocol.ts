@@ -28,6 +28,7 @@ export type ThreadCatalogueReadQuery = Exclude<
       | 'discard-folded'
       | 'begin-recovery'
       | 'end-recovery'
+      | 'takeover-recovery'
       | 'adopt-prepared'
   }
 >
@@ -50,6 +51,7 @@ export type ThreadCatalogueMaintenanceQuery = Extract<
       | 'discard-folded'
       | 'begin-recovery'
       | 'end-recovery'
+      | 'takeover-recovery'
       | 'adopt-prepared'
   }
 >
@@ -141,6 +143,8 @@ export function decodeThreadCatalogueMaintenanceQuery(
     return { method: 'begin-recovery', chatId: q.chatId, desktopWriterId: q.desktopWriterId }
   if (q.method === 'end-recovery' && safeId(q.chatId) && safeId(q.recoveryToken))
     return { method: 'end-recovery', chatId: q.chatId, recoveryToken: q.recoveryToken }
+  if (q.method === 'takeover-recovery' && safeId(q.chatId) && safeId(q.desktopWriterId))
+    return { method: 'takeover-recovery', chatId: q.chatId, desktopWriterId: q.desktopWriterId }
   if (
     q.method === 'adopt-prepared' &&
     safeId(q.chatId) &&

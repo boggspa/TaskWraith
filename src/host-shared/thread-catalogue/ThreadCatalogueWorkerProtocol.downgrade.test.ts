@@ -49,6 +49,7 @@ describe('maintenance queries that predate the fold and reestablish methods', ()
     ['changed', { method: 'changed', chatId: CHAT }],
     ['begin-recovery', { method: 'begin-recovery', chatId: CHAT, desktopWriterId: 'desk-a' }],
     ['end-recovery', { method: 'end-recovery', chatId: CHAT, recoveryToken: 'token-1' }],
+    ['takeover-recovery', { method: 'takeover-recovery', chatId: CHAT, desktopWriterId: 'desk-a' }],
     [
       'adopt-prepared',
       { method: 'adopt-prepared', chatId: CHAT, recoveryToken: 'token-1', preparedId: 'prep-1' }
@@ -108,6 +109,26 @@ describe('maintenance queries that predate the fold and reestablish methods', ()
         futureField: 'x'
       })
     ).toEqual({ method: 'begin-recovery', chatId: CHAT, desktopWriterId: 'desk-a' })
+  })
+})
+
+describe('takeover-recovery requires the caller the controller will authenticate', () => {
+  const takeover = { method: 'takeover-recovery', chatId: CHAT, desktopWriterId: 'desk-a' }
+
+  it('accepts the complete query', () => {
+    expect(decodeThreadCatalogueMaintenanceQuery(takeover)).toEqual(takeover)
+  })
+
+  it.each(['chatId', 'desktopWriterId'])('rejects a query missing %s', (field) => {
+    const query: Record<string, unknown> = { ...takeover }
+    delete query[field]
+    expect(decodeThreadCatalogueMaintenanceQuery(query)).toBeNull()
+  })
+
+  it.each(['chatId', 'desktopWriterId'])('rejects an unsafe %s', (field) => {
+    for (const unsafe of ['', ' desk-a', 'desk-a ', '.', '..', 'a/b', 'a\\b', 'a\0b']) {
+      expect(decodeThreadCatalogueMaintenanceQuery({ ...takeover, [field]: unsafe })).toBeNull()
+    }
   })
 })
 

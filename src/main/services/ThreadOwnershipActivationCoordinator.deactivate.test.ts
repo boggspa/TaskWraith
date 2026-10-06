@@ -118,7 +118,8 @@ describe('ThreadOwnershipActivationCoordinator.deactivate', () => {
     await h.coordinator.deactivate(CHAT)
 
     expect(h.coordinator.isActive(CHAT)).toBe(false)
-    expect(h.calls).toEqual(['release', 'remove-mark', 'disable'])
+    // The mark goes before the release: one still on disk names a live writer.
+    expect(h.calls).toEqual(['remove-mark', 'release', 'disable'])
     expect(h.spies.release).toHaveBeenCalledWith(h.reservation)
     expect(h.queue.peek(CHAT)).toEqual([])
   })

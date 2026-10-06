@@ -16,6 +16,10 @@ import {
 } from './ThreadCatalogueErasureCallbacks'
 import { installThreadOwnership } from './installThreadOwnership'
 import { startThreadOwnershipConsumers } from './ThreadOwnershipStartup'
+import {
+  createThreadRecoveryTakeover,
+  type ThreadRecoveryTakeoverResult
+} from './ThreadOwnershipTakeover'
 import { withThreadCatalogueReadContext } from '../store/ThreadCatalogueReadContextPort'
 import type { HostProfileAuthorityPort } from '../../host-runtime/HostProfileDomainStore'
 import type {
@@ -59,15 +63,17 @@ export function installStartupThreadCatalogue(options: {
   ) => Promise<ThreadCatalogueWireReply>
   dispose(): Promise<void>
   maintain<T = unknown>(query: ThreadCatalogueMaintenanceQuery): Promise<T>
+  /** Explicit per-thread takeover of a pending recovery hold; unrelated holds stay. */
+  takeoverThreadRecovery(chatId: string): Promise<ThreadRecoveryTakeoverResult>
   setMutationGuard(chatId: string, guard: () => boolean): () => void
 } {
   const launchAt = Date.now()
   // Wire the I7 thread-ownership activation: receipt store, save-intent
-  // port, and erasure joins. The full activation coordinator is a
-  // placeholder; a real `HostThreadOwnerRegistry` is the follow-up that
-  // bridges `recovery.begin` to `activate(chatId)`.
+  // port, erasure joins and, when this process honours log authority, the
+  // real coordinator over its own Host connection and the owned journal.
   const ownership = installThreadOwnership({
-    saveIntentQueue: AppStore.getSaveIntentQueue()
+    saveIntentQueue: AppStore.getSaveIntentQueue(),
+    production: { journalBarrier: (chatId) => AppStore.payOwnedThreadJournal(chatId) }
   })
   const local = options.externalHost
     ? null
@@ -95,6 +101,8 @@ export function installStartupThreadCatalogue(options: {
         return recovery!.begin(query.chatId, query.desktopWriterId) as T
       if (query.method === 'end-recovery')
         return recovery!.end(query.chatId, query.recoveryToken) as T
+      if (query.method === 'takeover-recovery')
+        return recovery!.takeoverThread(query.chatId, query.desktopWriterId) as T
       if (query.method === 'adopt-prepared')
         return recovery!.adopt(query.chatId, query.recoveryToken, query.preparedId) as Promise<T>
       if (query.method === 'prepare' || query.method === 'fold-owned-log')
@@ -183,6 +191,11 @@ export function installStartupThreadCatalogue(options: {
     launchAt,
     ready,
     maintain,
+    takeoverThreadRecovery: createThreadRecoveryTakeover({
+      maintain,
+      writerId: currentEnsembleRuntimeInstanceId,
+      trigger: () => ownership.trigger
+    }),
     setMutationGuard(chatId, guard) {
       guards.set(chatId, guard)
       return () => {
@@ -202,6 +215,7 @@ export function installStartupThreadCatalogue(options: {
     async dispose() {
       ui.dispose()
       recovery?.dispose()
+      ownership.dispose()
       await AppStore.disposeThreadCataloguePublisher()
       await mirror.dispose()
       await local?.dispose()

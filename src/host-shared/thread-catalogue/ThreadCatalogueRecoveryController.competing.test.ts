@@ -150,8 +150,9 @@ describe('ThreadCatalogueRecoveryController two writers, one thread', () => {
     expect(() => controller.assertHeld(CHAT, stale.token)).toThrow(
       'History recovery admission changed'
     )
-    // After explicit takeover the thread is free to begin.
-    controller.takeoverThread(CHAT)
+    // After explicit takeover the thread is free to begin. The hold was
+    // already ended above, so the takeover itself finds nothing to take.
+    expect(controller.takeoverThread(CHAT, 'desk-b')).toEqual({ kind: 'none' })
     expect(catalogue.recoveryHold(CHAT)).toBeNull()
     expect(controller.end(CHAT, stale.token)).toBe(false)
     expect(() => controller.assertHeld(CHAT, stale.token)).toThrow(
@@ -250,7 +251,7 @@ describe('ThreadCatalogueRecoveryController.beginFor reclaim discrimination', ()
     // `takeoverThread(chatId)` to claim the thread explicitly.
     expect(catalogue.recoveryHold(CHAT)).toEqual(hostHold)
     expect(controller.end(CHAT, hostHold.token)).toBe(true)
-    controller.takeoverThread(CHAT)
+    expect(controller.takeoverThread(CHAT, 'desk-a')).toEqual({ kind: 'none' })
     expect(catalogue.recoveryHold(CHAT)).toBeNull()
     expect(controller.end(CHAT, hostHold.token)).toBe(false)
     expect(controller.begin(CHAT, 'desk-a')).toMatchObject({ desktopWriterId: 'desk-a' })
@@ -271,7 +272,7 @@ describe('ThreadCatalogueRecoveryController.beginFor reclaim discrimination', ()
     expect(catalogue.recoveryHold(CHAT)).toEqual(hostHoldA)
     expect(catalogue.recoveryHold(otherChat)).toEqual(hostHoldB)
     // Explicit per-thread takeover cancels only the named one.
-    controller.takeoverThread(CHAT)
+    expect(controller.takeoverThread(CHAT, 'desk-a')).toEqual({ kind: 'taken' })
     expect(catalogue.recoveryHold(CHAT)).toBeNull()
     expect(catalogue.recoveryHold(otherChat)).toEqual(hostHoldB)
   })

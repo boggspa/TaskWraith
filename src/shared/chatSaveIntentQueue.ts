@@ -61,6 +61,12 @@ export interface ChatSaveOwnershipPort {
    * Host receipt.
    */
   isActive(chatId: string): boolean
+  /**
+   * Whether the owned journal durably holds the save at `revision`. Absent
+   * while ownership is not composed; an owned save then settles only by a Host
+   * receipt, as before ownership.
+   */
+  confirmOwnedSave?(chatId: string, revision: number): Promise<boolean>
 }
 
 /** Bound on retained superseded handles per chat; the oldest go first. */

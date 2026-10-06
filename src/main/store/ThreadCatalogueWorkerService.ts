@@ -1012,6 +1012,7 @@ export class ThreadCatalogueWorkerService {
         return this.database.findOrdinal(this.readLease(query.leaseId), query.kind, query.recordId)
       case 'begin-recovery':
       case 'end-recovery':
+      case 'takeover-recovery':
       case 'adopt-prepared':
         throw new Error('Recovery adoption belongs to the source parent')
       case 'prepare':

@@ -317,6 +317,7 @@ export type ThreadCatalogueQuery =
   | { method: 'ordinal'; leaseId: string; kind: ThreadIndexedObjectKind; recordId: string }
   | { method: 'begin-recovery'; chatId: string; desktopWriterId: string }
   | { method: 'end-recovery'; chatId: string; recoveryToken: string }
+  | { method: 'takeover-recovery'; chatId: string; desktopWriterId: string }
   | { method: 'adopt-prepared'; chatId: string; recoveryToken: string; preparedId: string }
   | {
       method: 'prepare'

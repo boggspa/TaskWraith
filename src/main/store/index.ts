@@ -6593,6 +6593,14 @@ export class AppStore {
     return saveCoalescer.intentQueue
   }
 
+  /** Thread ownership's owned-journal barrier: everything the chat's journal owes, made durable. */
+  static payOwnedThreadJournal(chatId: string): Promise<void> {
+    if (!threadBarrierDurability) {
+      return Promise.reject(new Error('Owned journal barrier needs barrier durability'))
+    }
+    return threadBarrierDurability.barrier(chatId)
+  }
+
   static installThreadCataloguePublisher(
     writerId: string,
     onChanged: (chatId: string) => void,
@@ -8556,13 +8564,16 @@ export class AppStore {
       )
     }
     if (ownershipSave?.active) {
-      // Owned: the owned journal's own barrier confirms the save, not a Host
-      // receipt. A failed barrier leaves the intent pending for replay.
+      // Owned: the owned journal's own barrier confirms the save, read back as
+      // the Host reads the log. A journal that did not take it, or a failed
+      // barrier, leaves the intent pending for the Host copy's receipt.
       const { commandId } = ownershipSave
-      void awaitCatalogueHeadSources(saved.appChatId).then(
-        () => saveCoalescer.intentQueue.settle(saved.appChatId, commandId),
-        () => undefined
-      )
+      void this.threadOwnershipSavePort
+        ?.confirmOwnedSave?.(saved.appChatId, saved.persistenceRevision ?? 0)
+        .then(
+          (held) => held && saveCoalescer.intentQueue.settle(saved.appChatId, commandId),
+          () => undefined
+        )
     }
     const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
     if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)

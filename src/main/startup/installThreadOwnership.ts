@@ -16,7 +16,10 @@
  * revision the mark records. None has a default that would invent one, so an
  * incomplete wiring fails closed (the activation rolls back and hands the
  * queued saves back) rather than writing a mark or a receipt nobody earned.
- * Production transport and journal suppliers are composed separately.
+ * Production transport and journal suppliers are composed by
+ * `ThreadOwnershipProduction` when `production` is passed and no explicit
+ * seams are. With a real coordinator, a durably recorded exact receipt for a
+ * chat's admitted head asks for activation once per head.
  */
 import { app } from 'electron'
 import { join } from 'path'
@@ -41,6 +44,16 @@ import type { PerChatSaveIntentQueue } from '../../shared/chatSaveIntentQueue'
 import type { CatalogueErasureJoins } from './ThreadCatalogueErasureCallbacks'
 import type { ThreadOwnershipReceiptEvidence } from '../host/ThreadOwnershipReceiptEvidence'
 import type { ChatSaveOwnershipPort } from '../../shared/chatSaveIntentQueue'
+import {
+  createThreadOwnershipActivationTrigger,
+  ownedReceipts,
+  type ThreadOwnershipActivationTrigger
+} from '../host/ThreadOwnershipActivationSupplier'
+import {
+  composeThreadOwnershipProduction,
+  type ThreadOwnershipProduction,
+  type ThreadOwnershipProductionOptions
+} from './ThreadOwnershipProduction'
 
 /**
  * Who the authority mark names, and the Host revision it was granted at. The
@@ -116,6 +129,12 @@ export interface InstallThreadOwnershipOptions {
   /** Builds the real coordinator when present and log authority is honoured. */
   readonly activation?: ThreadOwnershipActivationSeams
   /**
+   * Composes the production seams (dedicated Host connection, negotiation
+   * client, owned journal) when log authority is honoured and no explicit
+   * `activation` seams were passed.
+   */
+  readonly production?: ThreadOwnershipProductionOptions
+  /**
    * Whether this process honours thread log authority. Defaults to the
    * resolved switch, which also requires barrier durability: the app ignores
    * authority without it and must never claim a thread.
@@ -147,8 +166,14 @@ export interface ThreadOwnershipWiring {
   readonly coordinator: Pick<ThreadOwnershipActivationCoordinator, 'isActive' | 'deactivate'>
   /** The real coordinator; null while activation is not wired. */
   readonly activation: ThreadOwnershipActivationCoordinator | null
+  /** Asks for activation on confirmed heads; null while activation is not wired. */
+  readonly trigger: ThreadOwnershipActivationTrigger | null
+  /** The composed production suppliers; null unless `production` was used. */
+  readonly production: ThreadOwnershipProduction | null
   /** Load the evidence from disk; call once at startup before the first record. */
   loadEvidence(): Promise<void>
+  /** Close the ownership connection; grants on it end with it. */
+  dispose(): void
 }
 
 export function installThreadOwnership(
@@ -171,16 +196,38 @@ export function installThreadOwnership(
   }
   const logAuthority =
     options.logAuthority ?? resolveThreadDurabilitySwitches(process.env, () => {}).logAuthority
-  const activation =
-    logAuthority && options.activation
-      ? buildActivationCoordinator(options, options.activation, receiptStore)
+  const headLookup = createHeadReceiptLookup({ queue: options.saveIntentQueue, receiptStore })
+  const production =
+    logAuthority && !options.activation && options.production
+      ? composeThreadOwnershipProduction(options.production, options.saveIntentQueue, headLookup)
       : null
+  const seams = options.activation ?? production?.seams
+  const activation =
+    logAuthority && seams ? buildActivationCoordinator(options, seams, headLookup) : null
   const coordinator = activation ?? placeholderCoordinator
+  const onError =
+    options.onError ?? ((error: unknown) => console.error('[ownership] activation failed', error))
+  const trigger = activation
+    ? createThreadOwnershipActivationTrigger({
+        queue: options.saveIntentQueue,
+        activation,
+        onOutcome: (chatId, result) => {
+          // A clean rollback released any grant; the lineage it began ends too.
+          if (result.kind === 'failed' && !result.ownershipRetained)
+            production?.facts.forget(chatId)
+        },
+        onError
+      })
+    : null
 
   const wiring = createChatSaveOwnershipWiring({
     queue: options.saveIntentQueue,
     receiptStore,
     coordinator,
+    ...(trigger
+      ? { onPublicationConfirmed: (chatId, evidence) => trigger.confirmed(chatId, evidence) }
+      : {}),
+    ...(production ? { confirmOwnedSave: production.confirmOwnedSave } : {}),
     ...(options.mintId ? { mintId: options.mintId } : {}),
     ...(options.onError ? { onError: options.onError } : {})
   })
@@ -191,7 +238,9 @@ export function installThreadOwnership(
     erasureJoins: {
       coordinator: {
         async deactivate(chatId) {
+          trigger?.forget(chatId)
           await coordinator.deactivate(chatId)
+          production?.facts.forget(chatId)
         }
       },
       followers: {
@@ -216,7 +265,10 @@ export function installThreadOwnership(
     receiptStore,
     coordinator,
     activation,
-    loadEvidence: () => receiptStore.load()
+    trigger,
+    production,
+    loadEvidence: () => receiptStore.load(),
+    dispose: () => production?.dispose()
   }
 }
 
@@ -233,7 +285,7 @@ const INERT_AUTHORITY_SWITCH = {
 function buildActivationCoordinator(
   options: InstallThreadOwnershipOptions,
   seams: ThreadOwnershipActivationSeams,
-  receiptStore: HostOwnershipReceiptEvidenceStore
+  headLookup: ThreadOwnershipActivationOptions['commandHandleStore']
 ): ThreadOwnershipActivationCoordinator {
   const authorityFiles =
     seams.authorityFiles ?? new ThreadAuthorityFiles(seams.profilePath ?? app.getPath('userData'))
@@ -250,9 +302,11 @@ function buildActivationCoordinator(
     bindingFor: seams.bindingFor ?? (() => ({ owner: null, isCurrent: () => false })),
     authorityFile: { remove: (chatId) => authorityFiles.remove(chatId) },
     markWriter,
-    receiptStore,
+    // Owned-journal confirmations are not Host receipts: kept apart, they can
+    // never stand in for proof that a head reached Host storage.
+    receiptStore: ownedReceipts,
     authoritySwitch: seams.authoritySwitch ?? INERT_AUTHORITY_SWITCH,
-    commandHandleStore: createHeadReceiptLookup({ queue: options.saveIntentQueue, receiptStore }),
+    commandHandleStore: headLookup,
     ownedAppend: seams.ownedAppend,
     ...(seams.erasing ? { erasing: seams.erasing } : {}),
     ...(seams.hasOwnedRows ? { hasOwnedRows: seams.hasOwnedRows } : {}),
