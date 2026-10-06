@@ -75,8 +75,11 @@ type CatalogueFile =
   | { state: 'parsed'; value: unknown }
   /** Read whole, and not JSON at all. `identity` names this file and these bytes. */
   | { state: 'damaged'; identity: string }
-  /** Missing, or not read: it could not be opened or read, or it is not a small regular file. */
-  | { state: 'unread' }
+  /**
+   * Missing, or not read: it could not be opened or read, or it is not a small
+   * regular file. `missing` says opening it found no file at all.
+   */
+  | { state: 'unread'; missing?: true }
 
 export type ThreadCatalogueRead =
   | {
@@ -242,7 +245,13 @@ export class ThreadCatalogue {
   private readFile(filePath: string): CatalogueFile {
     let fd: number | undefined
     try {
-      fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+      try {
+        fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? { state: 'unread', missing: true }
+          : { state: 'unread' }
+      }
       const stat = fs.fstatSync(fd)
       if (!stat.isFile() || stat.size > THREAD_CATALOGUE_MAX_HEAD_BYTES) return { state: 'unread' }
       const bytes = Buffer.alloc(stat.size + 1)
@@ -437,11 +446,15 @@ export class ThreadCatalogue {
 
   private epochRecord(chatId?: string): EpochRecord {
     const filePath = this.epochPath(chatId)
-    const value = this.readJson<EpochRecord>(filePath)
+    const file = this.readFile(filePath)
+    const value = file.state === 'parsed' ? (file.value as EpochRecord | null) : null
     if (value && typeof value.generation === 'string' && typeof value.erasing === 'boolean')
       return value
     // Corrupt and absent differ: a corrupt erasure fence cannot reopen writes.
-    return this.filePresence(filePath) !== 'missing'
+    // An open that found no file already says it is absent; asking again
+    // would cost every check of a fence a second call for the same answer.
+    const missing = file.state === 'unread' && file.missing === true
+    return !missing && this.filePresence(filePath) !== 'missing'
       ? { generation: 'unreadable', erasing: true }
       : { generation: 'initial', erasing: false }
   }
