@@ -10364,17 +10364,19 @@ export class AppStore {
     return begin(
       this.historyDeletionPreparation(intent),
       intent.catalogueErasureFences ?? [],
-      // Commit each fence to the intent as it rises. A partial-begin crash
-      // (a join throws after some fences are up) must not strand the fence
-      // on disk without the intent knowing — the retry reads this list to
-      // decide between fresh erase and reestablish-erasure. Returning
-      // fences at the end of begin is too late.
+      // Commit each fence to the intent, durably, as it rises. A crash after
+      // the fence is up (a join throws, or the process dies) must not strand
+      // the fence on disk without the intent knowing — the retry reads this
+      // list to decide between fresh erase and reestablish-erasure. Returning
+      // fences at the end of begin, or writing at the step's end, is too late.
       (fence) => {
         const next = (intent.catalogueErasureFences ?? []).filter(
           (existing) => !(existing.chatId === fence.chatId)
         )
         next.push({ ...fence })
         intent.catalogueErasureFences = next
+        intent.updatedAt = new Date().toISOString()
+        writeHistoryDeletionIntent(intent)
       }
     ).then((fences) => {
       // Also commit at the end for callers that don't use the per-fence

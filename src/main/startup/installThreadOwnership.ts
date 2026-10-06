@@ -156,8 +156,8 @@ export interface ThreadOwnershipWiring {
   /**
    * Pass to `installStartupThreadCatalogue({erasureJoins})`. Gives
    * erasure-begin a place to land an in-flight `activate()` and to forget
-   * a chat's receipt evidence. The `coordinator` slot is present but its
-   * `deactivate` is a no-op until the full registry is wired.
+   * a chat's receipt evidence. Without a real coordinator its `deactivate`
+   * still fences the chat's evidence; with one it also joins activation.
    */
   readonly erasureJoins: CatalogueErasureJoins
   /** The receipt store, in case another module needs direct access. */
@@ -244,26 +244,44 @@ export function installThreadOwnership(
     ...(options.onError ? { onError: options.onError } : {})
   })
 
+  // Chats whose history erasure has begun. A chat id is never reused, so the
+  // set lives as long as the process: evidence or a receipt hydrated for an
+  // erased chat after its join ran would put back what erasure removed.
+  const erasedChats = new Set<string>()
+  const port: ChatSaveOwnershipPort = {
+    ...wiring.port,
+    hydrateReceipts(chatId, receipts) {
+      if (!erasedChats.has(chatId)) wiring.port.hydrateReceipts(chatId, receipts)
+    }
+  }
+
   return {
-    port: wiring.port,
-    persistedEvidenceSink: wiring.persistedEvidenceSink,
+    port,
+    async persistedEvidenceSink(input, evidence) {
+      // A receipt that lands after the erasure join is dropped: recorded, it
+      // would outlive the forgotten store and could ask for activation again.
+      if (erasedChats.has(input.chatId)) return
+      await wiring.persistedEvidenceSink(input, evidence)
+    },
     erasureJoins: {
       coordinator: {
         async deactivate(chatId) {
+          // Synchronously, before anything awaits: from here no receipt for the
+          // chat is recorded and no activation is asked for.
+          erasedChats.add(chatId)
           trigger?.forget(chatId)
           await coordinator.deactivate(chatId)
           production?.facts.forget(chatId)
         }
       },
       followers: {
+        // The desktop composes no log followers: a thread's log is followed
+        // only by the Host's history router, which joins its own erasure when
+        // the fence is raised through the maintenance channel.
         forget(chatId) {
-          // No-op until stage 3 wires a follower list; the seam exists so
-          // erasure-begin does not throw on absent joins.
           void chatId
         },
-        close() {
-          // No-op until a global follower is composed.
-        }
+        close() {}
       },
       receiptStore: {
         async forgetChat(chatId) {

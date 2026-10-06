@@ -391,6 +391,16 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     })
   }
 
+  /**
+   * An erasure is about to purge the thread (or everything): every permit
+   * captured for it goes non-current, exactly as if the owning socket had
+   * closed — the recorded publication version no longer matches anything.
+   */
+  invalidatePublicationForErasure(threadId?: string): void {
+    if (threadId === undefined) this.publicationVersions.clear()
+    else this.publicationVersions.delete(threadId)
+  }
+
   /** Inert final seam; the executor will supply its concrete synchronous CAS/adopt callback. */
   publish<T>(
     permit: HostThreadPublicationPermit,

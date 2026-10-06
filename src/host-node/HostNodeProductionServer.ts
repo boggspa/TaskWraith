@@ -457,6 +457,8 @@ export class HostNodeProductionServer {
   private threadLogWorkerSeed: HostThreadLogWorkerSeed | null = null
   /** Set only with the thread log authority switch on: asked before the Host's own writes. */
   private threadWriteGate: HostThreadWriteGate | null = null
+  /** Which app process writes each thread; set with the thread log authority switch on. */
+  private threadOwners: HostThreadOwnerService | null = null
   private threadCatalogueMirror: ThreadCatalogueMirror | null = null
   private threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
   private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
@@ -918,6 +920,7 @@ export class HostNodeProductionServer {
         }
       })
       this.orphanCustody = (reservation) => threadOwners.ownsOrphanReservation(reservation)
+      this.threadOwners = threadOwners
       this.threadWriteGate =
         threadOwners.mode === 'on'
           ? new HostThreadWriteGate({
@@ -1168,6 +1171,7 @@ export class HostNodeProductionServer {
     this.threadCatalogue = null
     this.threadCataloguePublisher = null
     this.threadRecovery = null
+    this.threadOwners = null
     this.removeRegistryEntry()
     if (this.lease && this.lease.release() !== true) {
       throw new Error('Production Host could not prove profile authority release.')
@@ -1463,12 +1467,25 @@ export class HostNodeProductionServer {
     // publications, forget the mirror and join the recovery/publisher just
     // like a fresh erase, otherwise the resume re-raises a fence while
     // source writes are still live.
-    if (request.method === 'erase' || request.method === 'reestablish-erasure')
-      await this.threadCataloguePublisher?.drain(request.chatId ? [request.chatId] : undefined)
+    if (request.method === 'erase' || request.method === 'reestablish-erasure') {
+      // The fence invalidates the Host-side writers first, synchronously,
+      // then joins them: captured publication permits go non-current,
+      // followers are let go and fenced, and the orphan fold quiesces. Only
+      // after those joins does the publisher drain and the purge run.
+      const chatId = request.chatId
+      this.threadOwners?.invalidatePublicationForErasure(chatId)
+      const joins: Array<Promise<void>> = []
+      if (this.threadHistoryRouter) joins.push(this.threadHistoryRouter.erasing(chatId))
+      if (this.orphanFold) joins.push(this.orphanFold.quiesceForErasure(chatId))
+      await Promise.all(joins)
+      await this.threadCataloguePublisher?.drain(chatId ? [chatId] : undefined)
+    }
     const data = await client.query(request)
     if (request.method === 'finish-erasure' && data === true) {
       recovery.forgetErased(request.chatId)
       this.threadCataloguePublisher?.forgetErased(request.chatId)
+      this.threadHistoryRouter?.forgetErased(request.chatId)
+      this.orphanFold?.liftErasure(request.chatId)
     }
     if (request.method === 'erase' || request.method === 'reestablish-erasure') {
       if (request.chatId) this.threadCatalogueMirror?.forget(request.chatId)

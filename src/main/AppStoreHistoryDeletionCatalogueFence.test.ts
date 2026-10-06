@@ -208,6 +208,9 @@ describe('history deletion catalogue fence partial-begin commit', () => {
     // generation. Without the per-fence commit, the retry would call
     // fresh erase and the first fence would be un-liftable by its own
     // generation.
+    // Read inside begin, asserted outside: an expectation thrown inside begin
+    // would only read as one more failed step.
+    let persistedMid: { catalogueErasureFences?: CatalogueErasureFence[] } | null = null
     const begin = vi.fn(
       async (
         _preparation: unknown,
@@ -215,10 +218,7 @@ describe('history deletion catalogue fence partial-begin commit', () => {
         onFenceRaised?: (fence: CatalogueErasureFence) => void
       ) => {
         onFenceRaised?.({ chatId: 'chat-a', generation: 'ga' })
-        const persistedMid = JSON.parse(fs.readFileSync(historyIntentPath, 'utf8'))
-        expect(persistedMid.catalogueErasureFences).toEqual([
-          expect.objectContaining({ chatId: 'chat-a', generation: 'ga' })
-        ])
+        persistedMid ??= JSON.parse(fs.readFileSync(historyIntentPath, 'utf8'))
         throw new Error('mirror refused')
       }
     )
@@ -235,5 +235,10 @@ describe('history deletion catalogue fence partial-begin commit', () => {
     }).operationId
     const error = await commit(operationId).catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(HistoryDeletionIncompleteError)
+    // Durable the moment the fence rose, not only at the step's end.
+    expect(persistedMid).not.toBeNull()
+    expect(persistedMid!.catalogueErasureFences).toEqual([
+      expect.objectContaining({ chatId: 'chat-a', generation: 'ga' })
+    ])
   })
 })

@@ -266,4 +266,32 @@ describe('installThreadOwnership bridge', () => {
     await eraseVia(wiring)
     expect(process.env.TASKWRAITH_THREAD_LOG_AUTHORITY).toBe(before)
   })
+
+  it.each([true, false])(
+    'drops receipts and hydration for a chat whose erasure began (log authority %s)',
+    async (logAuthority) => {
+      const { seams, claim } = seamsFor()
+      const { wiring, queue, evidenceFile } = install(logAuthority, seams)
+      await wiring.loadEvidence()
+      queue.enqueue(intent(3))
+
+      await eraseVia(wiring)
+      await wiring.persistedEvidenceSink({ chatId: CHAT, ownershipIntentId: 'cmd-3' }, exact(3))
+      wiring.port.hydrateReceipts(CHAT, [exact(2)])
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(wiring.receiptStore.listLoaded(CHAT)).toEqual([])
+      expect(claim).not.toHaveBeenCalled()
+      const restarted = new HostOwnershipReceiptEvidenceStore(
+        createFileReceiptEvidencePersistence(evidenceFile)
+      )
+      expect(await restarted.listForChat(CHAT)).toEqual([])
+      // Other chats are untouched by the fence.
+      await wiring.persistedEvidenceSink(
+        { chatId: 'chat-2' },
+        { kind: 'exact', threadId: 'chat-2', commandId: 'host-other', revision: 5, sha256: SHA }
+      )
+      expect(wiring.receiptStore.listLoaded('chat-2')).toHaveLength(1)
+    }
+  )
 })

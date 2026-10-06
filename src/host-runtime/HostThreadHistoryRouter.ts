@@ -104,6 +104,8 @@ export type HostThreadHistoryFullCopyReason =
   | 'writer-ended'
   /** An id the journal names no files for. */
   | 'not-a-log'
+  /** An erasure fence holds the thread: the full copy answers until it lifts. */
+  | 'erased'
   | 'closed'
 
 /** Why a request for a thread the log serves was answered from the full copy instead. */
@@ -127,6 +129,7 @@ export type HostThreadHistoryDropReason =
   | 'released'
   | 'evicted'
   | 'absent'
+  | 'erased'
   | 'closed'
 
 /** What the follower's last poll said; `new` before the first. */
@@ -252,6 +255,10 @@ export class HostThreadHistoryRouter {
 
   /** The least recently asked for first. */
   private readonly followed = new Map<string, Followed>()
+  /** Threads an erasure fence holds: followed again only when it lifts. */
+  private readonly erasureFenced = new Set<string>()
+  /** A fence without a thread id covers every thread. */
+  private globalErasureFence = false
   private timer: unknown = null
   private checkingFiles = false
   private closed = false
@@ -262,6 +269,7 @@ export class HostThreadHistoryRouter {
     'damaged',
     'writer-ended',
     'not-a-log',
+    'erased',
     'closed'
   ])
   private readonly fallbacks = zeros<HostThreadHistoryFallbackReason>([
@@ -280,6 +288,7 @@ export class HostThreadHistoryRouter {
     'released',
     'evicted',
     'absent',
+    'erased',
     'closed'
   ])
   private nudgesFollowed = 0
@@ -370,6 +379,42 @@ export class HostThreadHistoryRouter {
     this.letGo(threadId, 'released')
   }
 
+  /**
+   * An erasure is about to purge the thread (or everything): synchronously
+   * let its follower go, fence it so neither a request nor a nudge seeds or
+   * follows it again until the fence lifts, and await any poll already in
+   * flight so the purge does not run underneath one.
+   */
+  async erasing(threadId?: string): Promise<void> {
+    const targets =
+      threadId === undefined
+        ? [...this.followed.values()]
+        : [this.followed.get(threadId)].filter(
+            (followed): followed is Followed => followed !== undefined
+          )
+    if (threadId === undefined) this.globalErasureFence = true
+    else this.erasureFenced.add(threadId)
+    for (const followed of targets) this.letGo(followed.threadId, 'erased')
+    await Promise.allSettled(
+      targets
+        .map((followed) => followed.polling)
+        .filter((polling): polling is Promise<PollOutcome> => polling !== null)
+    )
+  }
+
+  /**
+   * The erasure finished: the thread (or everything, when no thread id is
+   * given) may be followed and seeded again.
+   */
+  forgetErased(threadId?: string): void {
+    if (threadId === undefined) {
+      this.globalErasureFence = false
+      this.erasureFenced.clear()
+    } else {
+      this.erasureFenced.delete(threadId)
+    }
+  }
+
   snapshot(): HostThreadHistoryRouterSnapshot {
     const now = this.now()
     const seeds = { ...this.retiredSeeds }
@@ -427,6 +472,7 @@ export class HostThreadHistoryRouter {
 
   private async route(threadId: string): Promise<Route> {
     if (this.closed) return 'closed'
+    if (this.fenced(threadId)) return 'erased'
     if (!isFollowableThreadId(threadId)) return 'not-a-log'
     let read: Awaited<ReturnType<ThreadAuthorityFiles['read']>>
     try {
@@ -438,6 +484,10 @@ export class HostThreadHistoryRouter {
     if (read.kind === 'none') return 'no-file'
     if (read.kind === 'damaged') return 'damaged'
     return this.liveness(read.record.writer) === 'dead' ? 'writer-ended' : 'log'
+  }
+
+  private fenced(threadId: string): boolean {
+    return this.globalErasureFence || this.erasureFenced.has(threadId)
   }
 
   private fromFullCopy<T>(
@@ -458,13 +508,19 @@ export class HostThreadHistoryRouter {
     fromLog: (history: HostThreadLogHistory) => Promise<T>,
     fromFullCopy: () => T | Promise<T>
   ): Promise<T> {
-    const followed = this.follow(threadId)
     const fallBack = (reason: HostThreadHistoryFallbackReason): T | Promise<T> => {
       if (kind === 'older') {
         throw new Error(`Thread history is not available from the log: ${reason}`)
       }
       this.fallbacks[reason] += 1
       return fromFullCopy()
+    }
+    const followed = this.follow(threadId)
+    // The route read the file before the fence landed; never seed or follow
+    // a fenced thread from here either.
+    if (this.fenced(threadId)) {
+      this.letGo(threadId, 'erased')
+      return fallBack('let-go')
     }
     if (this.waiting(followed)) return fallBack('backoff')
     const answer = (async (): Promise<

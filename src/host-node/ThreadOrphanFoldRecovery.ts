@@ -76,6 +76,12 @@ export interface ThreadOrphanFoldRecoveryOptions {
 export class ThreadOrphanFoldRecovery {
   private readonly queued = new Set<string>()
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Folds that are running right now, by thread; a second caller joins the same promise. */
+  private readonly inflight = new Map<string, Promise<ThreadOrphanFoldOutcome>>()
+  /** Chats an erasure fence has fenced: no enqueue, pump or retry touches them until lifted. */
+  private readonly erasureFenced = new Set<string>()
+  /** A fence without a chat id covers every thread. */
+  private globalErasureFence = false
   /** Custody a failed directory sync kept; only this exact handle may pay the debt. */
   private readonly syncOwed = new Map<string, ThreadOwnershipReservation>()
   /** Custody whose hold could not be ended; kept until that hold is gone. */
@@ -94,12 +100,73 @@ export class ThreadOrphanFoldRecovery {
   }
 
   enqueue(chatId: string): void {
-    if (this.stopped || this.retries.has(chatId)) return
+    if (this.stopped || this.retries.has(chatId) || this.fenced(chatId)) return
     this.queued.add(chatId)
     void this.pump()
   }
 
   async foldOrphan(chatId: string): Promise<ThreadOrphanFoldOutcome> {
+    if (this.fenced(chatId)) return { kind: 'deferred' }
+    const running = this.inflight.get(chatId)
+    if (running) return running
+    const outcome = this.foldOrphanOnce(chatId)
+    this.inflight.set(chatId, outcome)
+    try {
+      return await outcome
+    } finally {
+      if (this.inflight.get(chatId) === outcome) this.inflight.delete(chatId)
+    }
+  }
+
+  /**
+   * An erasure is about to purge the chat (or everything): synchronously drop
+   * its queued and retrying work, fence it so nothing restarts the fold while
+   * the purge runs, and await any fold already in flight. Custody a running
+   * fold holds is not released here — the fold finishes through its own exit
+   * paths (finally/settle/stranded/syncOwed), which is what the join waits for.
+   */
+  async quiesceForErasure(chatId?: string): Promise<void> {
+    if (chatId === undefined) {
+      this.globalErasureFence = true
+      this.queued.clear()
+    } else {
+      this.erasureFenced.add(chatId)
+      this.queued.delete(chatId)
+    }
+    for (const [queued, timer] of [...this.retries]) {
+      if (chatId === undefined || queued === chatId) {
+        clearTimeout(timer)
+        this.retries.delete(queued)
+      }
+    }
+    const running =
+      chatId === undefined
+        ? [...this.inflight.values()]
+        : [this.inflight.get(chatId)].filter(
+            (promise): promise is Promise<ThreadOrphanFoldOutcome> => promise !== undefined
+          )
+    await Promise.allSettled(running)
+  }
+
+  /**
+   * The erasure finished: the chat (or everything, when no chat id is given)
+   * may be enqueued and folded again. A chat id that was erased is gone, but
+   * a global erasure lifts every fence at once.
+   */
+  liftErasure(chatId?: string): void {
+    if (chatId === undefined) {
+      this.globalErasureFence = false
+      this.erasureFenced.clear()
+    } else {
+      this.erasureFenced.delete(chatId)
+    }
+  }
+
+  private fenced(chatId: string): boolean {
+    return this.globalErasureFence || this.erasureFenced.has(chatId)
+  }
+
+  private async foldOrphanOnce(chatId: string): Promise<ThreadOrphanFoldOutcome> {
     // A hold whose `end` failed keeps its custody: the thread stays reserved
     // until that hold is gone, never released underneath it.
     const stranded = this.stranded.get(chatId)
@@ -252,6 +319,7 @@ export class ThreadOrphanFoldRecovery {
       while (this.queued.size && !this.stopped) {
         const chatId = this.queued.values().next().value!
         this.queued.delete(chatId)
+        if (this.fenced(chatId)) continue
         try {
           const outcome = await this.foldOrphan(chatId)
           if (outcome.kind !== 'folded') this.retry(chatId)
@@ -265,7 +333,7 @@ export class ThreadOrphanFoldRecovery {
   }
 
   private retry(chatId: string): void {
-    if (this.stopped || this.retries.has(chatId)) return
+    if (this.stopped || this.retries.has(chatId) || this.fenced(chatId)) return
     const timer = setTimeout(() => {
       this.retries.delete(chatId)
       this.enqueue(chatId)
