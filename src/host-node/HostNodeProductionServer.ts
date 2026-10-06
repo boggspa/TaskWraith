@@ -1,5 +1,6 @@
 import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
+import { ThreadOrphanFoldRecovery } from './ThreadOrphanFoldRecovery'
 import { hostNodeReceiptSpanChatId } from './hostNodeReceiptSpanChatId'
 import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -460,6 +461,7 @@ export class HostNodeProductionServer {
   private hostRunWindow: ThreadCatalogueHostRunWindow | null = null
   private hostRunOrigin: HostCatalogueRunOrigin | undefined
   private hostRecovery: ThreadCatalogueHostRecovery | null = null
+  private orphanFold: ThreadOrphanFoldRecovery | null = null
   private threadRecovery: ThreadCatalogueRecoveryController | null = null
   identity: HostSessionHostIdentity | null = null
 
@@ -874,11 +876,13 @@ export class HostNodeProductionServer {
       // authority switch is read once, here; grants carry the welcome's epoch.
       // It starts before anything the Host writes itself, from catalogue
       // recovery on: with the switch on, each of those writes asks it first.
+      const ownerIncarnation =
+        this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex')
       const threadOwners = new HostThreadOwnerService({
         environment: this.options.environment ?? process.env,
         transactionalPersist: txnRecordPersistEnabled,
         profilePath: this.lease.path,
-        incarnation: this.composition.perf.identity.bootEpoch ?? randomBytes(32).toString('hex'),
+        incarnation: ownerIncarnation,
         fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
         assertProfileAuthority: () => {
           if (!this.lease) throw new Error('History profile authority is unavailable')
@@ -886,7 +890,11 @@ export class HostNodeProductionServer {
         },
         erasing: (threadId) => {
           const catalogue = this.threadCataloguePublisher?.catalogue
-          return !catalogue || catalogue.readErasureState().erasing || catalogue.readErasureState(threadId).erasing
+          return (
+            !catalogue ||
+            catalogue.readErasureState().erasing ||
+            catalogue.readErasureState(threadId).erasing
+          )
         },
         erasureGeneration: (threadId) => {
           const catalogue = this.threadCataloguePublisher?.catalogue
@@ -910,8 +918,25 @@ export class HostNodeProductionServer {
               decide: (threadId) => threadOwners.requestHostWrite(threadId)
             })
           : null
-      await threadOwners.start()
+      const ownerStart = await threadOwners.start()
       if (this.stopRequested) return
+      // I7 stage 2: threads a dead writer's mark left behind are the orphan
+      // fold's work list. The orchestrator reserves per-thread custody,
+      // folds the log above the full copy outside command admission, adopts
+      // durably, retires the mark and releases custody on every exit path.
+      if (threadOwners.mode === 'on' && this.threadCatalogue && this.threadRecovery) {
+        this.orphanFold = new ThreadOrphanFoldRecovery({
+          client: this.threadCatalogue,
+          recovery: this.threadRecovery,
+          owners: threadOwners,
+          logDirectory: threadLogDirectory(this.lease.path),
+          fullCopyRevision: (threadId) => store.threadRecordState(threadId)?.revision ?? null,
+          profileAuthority: `host-incarnation:${ownerIncarnation}`,
+          onError: (error) =>
+            writeHostStderr(`taskwraith-host: orphan fold recovery error: ${String(error)}\n`)
+        })
+        this.orphanFold.seed(ownerStart?.fold ?? [])
+      }
       // Catalogue recovery adopts from its constructor: only after the above.
       if (
         this.threadCatalogue &&
@@ -1092,6 +1117,8 @@ export class HostNodeProductionServer {
     this.threadLogWorkerSeed = null
     await workerSeed?.close()
     this.hostRecovery?.dispose()
+    this.orphanFold?.dispose()
+    this.orphanFold = null
     this.threadRecovery?.dispose()
     try {
       await this.domain?.shutdown()

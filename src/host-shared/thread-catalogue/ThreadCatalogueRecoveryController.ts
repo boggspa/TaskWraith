@@ -236,6 +236,47 @@ export class ThreadCatalogueRecoveryController {
     return this.beginFor(chatId, { hostWriterId: this.options.incarnation })
   }
 
+  /**
+   * Orphan fold begin under an explicit ownership reservation. The
+   * reservation's per-thread probes — exact mark, dead writer, profile
+   * authority, erasure generation — replace `beginHost`'s system-wide live
+   * desktop scan, so an unrelated live desktop cannot block recovery of a
+   * dead writer's thread. The thread's own restrictions are preserved:
+   * live work, another pending hold, a closed catalogue and command
+   * admission still refuse the hold.
+   */
+  beginOrphanViaReservation(
+    chatId: string,
+    reservation: ThreadOwnershipReservation
+  ):
+    | { kind: 'held'; hold: ThreadCatalogueRecoveryHold }
+    | { kind: 'busy'; reason: 'damaged' | 'live_work' | 'admission_busy' } {
+    this.options.assertAuthority()
+    if (reservation.threadId !== chatId) return { kind: 'busy', reason: 'damaged' }
+    try {
+      reservation.revalidate()
+    } catch {
+      return { kind: 'busy', reason: 'damaged' }
+    }
+    if (
+      this.options.publisher.catalogue.currentRegisteredWriter('host')?.writerId !==
+      this.options.incarnation
+    )
+      return { kind: 'busy', reason: 'damaged' }
+    if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
+    try {
+      return {
+        kind: 'held',
+        hold: this.beginFor(chatId, { hostWriterId: this.options.incarnation })
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('live work')) {
+        return { kind: 'busy', reason: 'live_work' }
+      }
+      return { kind: 'busy', reason: 'admission_busy' }
+    }
+  }
+
   private beginFor(
     chatId: string,
     identity: Pick<ThreadCatalogueRecoveryHold, 'desktopWriterId' | 'hostWriterId'>

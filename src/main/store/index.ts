@@ -642,8 +642,9 @@ let hostThreadRecordPersistPort: HostThreadRecordPersistPort | null = null
  * before the first save so the lazily constructed persist client can carry it;
  * recording durably settles the save intents the receipt covers.
  */
-let hostThreadRecordPersistEvidenceSink: HostThreadRecordPersistClientOptions['onPersistedEvidence'] | null =
-  null
+let hostThreadRecordPersistEvidenceSink:
+  | HostThreadRecordPersistClientOptions['onPersistedEvidence']
+  | null = null
 let hostChatCompatibilityPersistence: HostChatCompatibilityPersistence | null = null
 let hostChatCompatibilityPersistPort: HostThreadRecordPersistPort | null = null
 const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
@@ -8653,7 +8654,11 @@ export class AppStore {
    * configuration writes may advance the record concurrently; the durability
    * barrier rebases this accumulated Desktop intent within a strict retry bound.
    */
-  private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}, ownershipIntentId?: string): ChatRecord {
+  private static saveChatThroughHost(
+    chat: ChatRecord,
+    options: ChatSaveOptions = {},
+    ownershipIntentId?: string
+  ): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],

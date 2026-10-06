@@ -17,9 +17,9 @@ import { constants } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import * as path from 'node:path'
 
-import { isSafeChatId } from '../shared/ChatPath'
 import { THREAD_LOG_BATCH_FORMAT } from '../host-shared/thread-log/ThreadLogBatch'
 import { THREAD_LOG_SEGMENT_MAX_LINE_BYTES } from '../host-shared/thread-log/ThreadLogSegmentReader'
+import { threadLogFiles } from '../host-shared/thread-log/ThreadLogFiles'
 
 /** The format the app's journal writes at the head of each checkpoint. */
 const CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint'
@@ -33,18 +33,7 @@ export type ThreadLogHead =
   | { readonly kind: 'none' }
   | { readonly kind: 'unreadable'; readonly reason: string }
 
-/** The thread's log files, in the order they are read. */
-export function threadLogFiles(
-  directory: string,
-  chatId: string
-): { active: string; sealed: string; checkpoint: string } {
-  if (!isSafeChatId(chatId)) throw new Error('Invalid thread id')
-  return {
-    active: path.join(directory, `${chatId}.mutations.jsonl`),
-    sealed: path.join(directory, `${chatId}.sealed.mutations.jsonl`),
-    checkpoint: path.join(directory, `${chatId}.checkpoint.json`)
-  }
-}
+export { threadLogFiles }
 
 /** The head of the log of `chatId` in `directory`, the journal's directory (`<profile>/chat-journal-v2`). */
 export async function readThreadLogHead(directory: string, chatId: string): Promise<ThreadLogHead> {

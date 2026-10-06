@@ -53,8 +53,10 @@ import { isThreadLogAuthorityEnabled } from '../host-shared/thread-log/ThreadLog
 import type {
   HostThreadOwnerTableSnapshot,
   HostWriteDecision,
+  ThreadOwnershipReservation,
   ThreadOwnerEpoch
 } from '../host-shared/thread-log/ThreadOwnership'
+import type { ThreadAuthorityRetirementOutcome } from '../host-shared/thread-log/ThreadAuthorityRetirement'
 import {
   HostThreadPublicationGuard,
   threadPublicationAuthorityWitness,
@@ -239,7 +241,9 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             // is judged by its thread's authority file: see the module comment.
             desktopPresence: () => 'attached',
             otherDesktopUnattached: () => false,
-            ...(options.assertProfileAuthority ? { assertProfileAuthority: options.assertProfileAuthority } : {}),
+            ...(options.assertProfileAuthority
+              ? { assertProfileAuthority: options.assertProfileAuthority }
+              : {}),
             ...(options.erasing ? { erasing: options.erasing } : {}),
             ...(options.erasureGeneration ? { erasureGeneration: options.erasureGeneration } : {}),
             ...(options.liveness ? { liveness: options.liveness } : {})
@@ -387,6 +391,26 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     commit: HostThreadPublicationCommit<T>
   ): Promise<HostThreadPublicationResult<T>> {
     return this.publications.publish(permit, commit)
+  }
+
+  /** Orphan fold: mint the per-thread custody a dead writer's fold runs under. */
+  reserveOrphanOwnership(threadId: string): Promise<ThreadOwnershipReservation | null> {
+    return this.registry ? this.registry.reserveOwnership(threadId) : Promise.resolve(null)
+  }
+
+  /** Orphan fold: durably retire the dead writer's mark under its custody. */
+  retireOrphanAuthority(
+    threadId: string,
+    reservation: ThreadOwnershipReservation
+  ): Promise<ThreadAuthorityRetirementOutcome> {
+    return this.registry
+      ? this.registry.retireOrphanAuthority(threadId, reservation)
+      : Promise.resolve({ kind: 'busy', reason: 'damaged' })
+  }
+
+  /** Orphan fold: release custody on every exit path that did not retire it. */
+  releaseOrphanOwnership(reservation: ThreadOwnershipReservation): boolean {
+    return this.registry ? this.registry.releaseOwnership(reservation) : false
   }
 
   /** The socket closed: revoke its exact grants, independently of other writer sockets. */

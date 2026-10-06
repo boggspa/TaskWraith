@@ -399,3 +399,43 @@ describe('ThreadCatalogueRecoveryController orphan end against a live competing 
     expect(catalogue.recoveryHold(CHAT)).toEqual(current)
   })
 })
+
+describe('ThreadCatalogueRecoveryController.beginOrphanViaReservation', () => {
+  it('is not blocked by an unrelated live desktop, unlike beginHost', () => {
+    const { controller, catalogue } = build()
+    controller.registerDesktop({ writerId: 'desk-live', pid: 4242 })
+    probeAnswers('alive')
+    expect(() => controller.beginHost(CHAT)).toThrow('Desktop owns recovery while it is running')
+    const begun = controller.beginOrphanViaReservation(CHAT, reservation())
+    expect(begun).toMatchObject({ kind: 'held', hold: { chatId: CHAT, hostWriterId: INCARNATION } })
+    if (begun.kind === 'held') expect(catalogue.recoveryHold(CHAT)).toEqual(begun.hold)
+  })
+
+  it('keeps the thread’s own restrictions: live work, an invalid reservation, another hold', () => {
+    const busy = build(() => true)
+    expect(busy.controller.beginOrphanViaReservation(CHAT, reservation())).toEqual({
+      kind: 'busy',
+      reason: 'live_work'
+    })
+    const { controller } = build()
+    expect(
+      controller.beginOrphanViaReservation(
+        CHAT,
+        reservation(() => {
+          throw new ReservationInvalid('mark_moved')
+        })
+      )
+    ).toEqual({ kind: 'busy', reason: 'damaged' })
+    controller.registerDesktop({ writerId: 'desk-a', pid: 4101 })
+    controller.begin(CHAT, 'desk-a')
+    expect(controller.beginOrphanViaReservation(CHAT, reservation())).toMatchObject({
+      kind: 'busy'
+    })
+    // An unrelated thread's hold is untouched by the orphan begin on this one.
+    expect(
+      controller.beginOrphanViaReservation(OTHER_CHAT, reservation(undefined, OTHER_CHAT))
+    ).toMatchObject({
+      kind: 'held'
+    })
+  })
+})
