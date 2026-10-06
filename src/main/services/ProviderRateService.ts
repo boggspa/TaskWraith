@@ -1516,6 +1516,15 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'MiniMax model ids are CASE-SENSITIVE.'
       },
       {
+        modelId: 'minimax/MiniMax-M2.7-highspeed',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 1.2,
+        cachedInputUsdPerMillion: 0.06,
+        sourceUrl: 'https://platform.minimax.io/docs/price',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'MiniMax model ids are CASE-SENSITIVE.'
+      },
+      {
         modelId: 'minimax/MiniMax-M3',
         inputUsdPerMillion: 0.3,
         outputUsdPerMillion: 1.2,
@@ -2099,7 +2108,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          "GLM-5.3 hosted on the Vibe subscription (alias glm-5-3, added 2026-09-21). Rate CARRIED FORWARD from the 5.2 deployment (same 1.4/4.4, 0.26 cache read) and not independently verified. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+          'GLM-5.3 hosted on the Vibe subscription (alias glm-5-3, added 2026-09-21). Rate CARRIED FORWARD from the 5.2 deployment (same 1.4/4.4, 0.26 cache read) and not independently verified. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing.'
       },
       {
         modelId: 'codestral-2508',

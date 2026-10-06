@@ -611,7 +611,7 @@ describe('HostProfileDomainStore.onThreadRecordWritten (M4 slice 13c1)', () => {
           'archiveThread',
           'configureThread',
           'createThread',
-          'persistThreadRecord',
+          'persistThreadRecordWithCommit',
           'recordRunTool',
           'setThreadKind',
           'updateRun'

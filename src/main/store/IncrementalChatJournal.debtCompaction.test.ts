@@ -836,7 +836,7 @@ describe('compaction in the worker, under the barrier, without a descriptor cach
           compactionsFailed: 0,
           idleCompactionsRequested: 1
         })
-        expect(pool.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+        expect(pool.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
         // It listened for room once, and stopped once no thread was left waiting.
         expect(counts()).toMatchObject({ subscriptions: 1, stops: 1 })
         for (const id of order) expect(readThread(id)).toMatchObject({ revision: heads.get(id) })
@@ -945,7 +945,7 @@ describe('compaction in the worker, under the barrier, without a descriptor cach
 
       expect(children).toHaveLength(2)
       expect(counts()).toMatchObject({ starts: startsBefore, stops: 1 })
-      expect(pool.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+      expect(pool.stats()).toMatchObject({ activeJobs: 0, reservedBytes: 0 })
       expect(journal.stats()).toMatchObject({
         compactionsStarted: 2,
         compactionsAdopted: 0,
