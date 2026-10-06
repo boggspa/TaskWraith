@@ -94,7 +94,8 @@ export interface HostThreadOwnerServiceOptions {
   /** A Host run is live on the thread. */
   hostRunActive(threadId: string): boolean
   /** Defaults to the profile's own authority files. */
-  readonly files?: Pick<ThreadAuthorityFiles, 'read' | 'list' | 'remove'>
+  readonly files?: Pick<ThreadAuthorityFiles, 'read' | 'list' | 'remove'> &
+    Partial<Pick<ThreadAuthorityFiles, 'syncRemoval'>>
   /** Defaults to the head of the thread's log in `<profile>/chat-journal-v2`. */
   logRevision?(threadId: string): Promise<number | null>
   /** Defaults to signal 0 to the writer's process id. */
@@ -222,7 +223,12 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
             files: {
               read: (threadId) => this.read(files, threadId),
               list: () => files.list(),
-              remove: (threadId, guard) => this.remove(files, threadId, guard)
+              remove: (threadId, guard) => this.remove(files, threadId, guard),
+              // A seam without it leaves a sync debt owed, never paid by unlink.
+              syncRemoval: () =>
+                files.syncRemoval
+                  ? files.syncRemoval()
+                  : Promise.reject(new Error('Thread authority directory sync is unavailable'))
             },
             fullCopyRevision: (threadId) => options.fullCopyRevision(threadId),
             logRevision: options.logRevision
@@ -411,6 +417,11 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
   /** Orphan fold: release custody on every exit path that did not retire it. */
   releaseOrphanOwnership(reservation: ThreadOwnershipReservation): boolean {
     return this.registry ? this.registry.releaseOwnership(reservation) : false
+  }
+
+  /** Orphan fold: whether `reservation` is custody this service's registry minted and holds. */
+  ownsOrphanReservation(reservation: ThreadOwnershipReservation): boolean {
+    return this.registry ? this.registry.ownsReservation(reservation) : false
   }
 
   /** The socket closed: revoke its exact grants, independently of other writer sockets. */

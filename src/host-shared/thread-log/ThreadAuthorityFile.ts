@@ -395,6 +395,15 @@ export class ThreadAuthorityFiles {
     return removed
   }
 
+  /**
+   * Makes an earlier removal's unlink durable without touching any name: a
+   * removal whose directory sync failed pays that debt here, so it can never
+   * unlink a mark another writer has since put in place.
+   */
+  async syncRemoval(): Promise<void> {
+    await this.syncDirectoryIfPresent()
+  }
+
   /** Resolves false when there is no directory to sync. */
   private async syncDirectoryIfPresent(): Promise<boolean> {
     try {

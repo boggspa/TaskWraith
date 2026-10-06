@@ -76,7 +76,7 @@ export interface HostThreadOwnerRegistryOptions {
   readonly enabled: boolean
   readonly releaseBoundMs?: number
   /** The profile's authority files. Only the Host's taking of a thread removes one here. */
-  readonly files: Pick<ThreadAuthorityFiles, 'read' | 'list' | 'remove'>
+  readonly files: Pick<ThreadAuthorityFiles, 'read' | 'list' | 'remove' | 'syncRemoval'>
   /** Revision of the Host's full copy of the thread, or null when it has none. */
   fullCopyRevision(threadId: string): number | null
   /** Head revision of the thread's log, or null when it has none. Asked under a file only. */
@@ -382,6 +382,11 @@ export class HostThreadOwnerRegistry {
 
   releaseOwnership(reservation: ThreadOwnershipReservation): boolean {
     return this.reservations.release(reservation)
+  }
+
+  /** Whether `reservation` is exact custody this registry minted and still holds. */
+  ownsReservation(reservation: ThreadOwnershipReservation): boolean {
+    return this.reservations.owns(reservation)
   }
 
   /**

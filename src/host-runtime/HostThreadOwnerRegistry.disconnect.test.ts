@@ -446,11 +446,11 @@ describe('HostThreadOwnerRegistry retirement interrupted', () => {
     expect(read.kind).toBe('held')
     if (read.kind === 'held') expect(read.record.writer.writerId).toBe('desk-b')
 
-    // The retry meets the competing mark under another grant and refuses as
-    // damage: the first attempt's reservation never reaches desk-b's mark.
+    // The retry reports what stands, still uncertain: the first attempt's
+    // custody never unlinks again, so it never reaches desk-b's mark.
     expect(await host.retireOrphanAuthority(THREAD, reservation)).toEqual({
-      kind: 'busy',
-      reason: 'damaged'
+      kind: 'uncertain',
+      reason: 'witness_changed'
     })
     expect((await machine.files.read(THREAD)).kind).toBe('held')
   })

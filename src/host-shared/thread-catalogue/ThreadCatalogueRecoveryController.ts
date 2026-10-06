@@ -132,6 +132,12 @@ export class ThreadCatalogueRecoveryController {
       assertAuthority(): void
       hasLiveWork(chatId: string): boolean
       /**
+       * Whether a reservation is exact custody the Host owner registry minted
+       * and still holds. The orphan route refuses without it: a structurally
+       * valid object that the registry did not mint is never custody.
+       */
+      ownsReservation?(reservation: ThreadOwnershipReservation): boolean
+      /**
        * Called after an adoption renamed the prepared record into place, so
        * the Host's public window index can follow it (M4 slice 13c1). A
        * throwing callback never fails the adoption.
@@ -253,6 +259,7 @@ export class ThreadCatalogueRecoveryController {
     | { kind: 'busy'; reason: 'damaged' | 'live_work' | 'admission_busy' } {
     this.options.assertAuthority()
     if (reservation.threadId !== chatId) return { kind: 'busy', reason: 'damaged' }
+    if (!this.options.ownsReservation?.(reservation)) return { kind: 'busy', reason: 'damaged' }
     try {
       reservation.revalidate()
     } catch {
@@ -264,6 +271,10 @@ export class ThreadCatalogueRecoveryController {
     )
       return { kind: 'busy', reason: 'damaged' }
     if (this.options.hasLiveWork(chatId)) return { kind: 'busy', reason: 'live_work' }
+    // Never through `beginFor`'s same-owner reclaim: an ordinary Host hold
+    // pending on this thread belongs to another recovery, and an orphan begin
+    // must not cancel it (nor be cancelled by it).
+    if (this.pending.has(chatId)) return { kind: 'busy', reason: 'admission_busy' }
     try {
       return {
         kind: 'held',
@@ -573,6 +584,9 @@ export class ThreadCatalogueRecoveryController {
     foldId: string,
     reservation: ThreadOwnershipReservation
   ): Promise<ThreadCatalogueFoldAdoptOutcome> {
+    if (reservation.threadId !== chatId || !this.options.ownsReservation?.(reservation)) {
+      return { kind: 'busy', reason: 'damaged' }
+    }
     try {
       reservation.revalidate()
     } catch {
@@ -605,6 +619,9 @@ export class ThreadCatalogueRecoveryController {
     if (!fold || fold.chatId !== chatId) return { kind: 'busy', reason: 'fold_unavailable' }
     const authority = (): void => {
       this.options.assertAuthority()
+      if (!this.options.ownsReservation?.(reservation)) {
+        throw new ReservationInvalid('not_minted')
+      }
       reservation.revalidate()
       const current = this.options.publisher.catalogue.recoveryHold(chatId)
       if (

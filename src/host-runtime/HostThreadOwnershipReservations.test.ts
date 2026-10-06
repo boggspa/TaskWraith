@@ -174,7 +174,7 @@ describe('opaque orphan custody over real authority files', () => {
   })
 
   it.each(['writer', 'profile', 'generation', 'erasing'] as const)(
-    'checks %s after unlink and again during failed-sync retry',
+    'pays a failed sync with a directory sync alone and still reports a %s change',
     async (change) => {
       const h = await fixture()
       const handle = await h.reserve()
@@ -182,13 +182,20 @@ describe('opaque orphan custody over real authority files', () => {
       expect(await h.registry.retireOrphanAuthority('chat', handle)).toMatchObject({
         reason: 'sync_failed'
       })
+      // A revalidation after the unlink binds everything but the witness, so
+      // the owed custody is still usable rather than locked behind mark_moved.
+      expect(() => handle.revalidate()).not.toThrow()
       if (change === 'writer') h.state.liveness = 'alive'
       if (change === 'profile') h.state.authority = false
       if (change === 'generation') h.state.generation = 'generation-2'
       if (change === 'erasing') h.state.erasing = true
+      h.state.failSync = false
       const before = h.state.syncs
       expect(await h.registry.retireOrphanAuthority('chat', handle)).toMatchObject({ kind: 'busy' })
-      expect(h.state.syncs).toBe(before)
+      // The sync names nothing, so it needs no validation: the debt is paid
+      // and custody becomes releasable even though the change is reported.
+      expect(h.state.syncs).toBeGreaterThan(before)
+      expect(h.registry.releaseOwnership(handle)).toBe(true)
     }
   )
 
@@ -225,7 +232,46 @@ describe('opaque orphan custody over real authority files', () => {
       kind: 'held',
       record: { epoch: { host: 'replacement' } }
     })
-    expect(await h.registry.retireOrphanAuthority('chat', handle)).toMatchObject({ kind: 'busy' })
+    // A retry reports what stands and never reaches the replacement mark.
+    expect(await h.registry.retireOrphanAuthority('chat', handle)).toEqual({
+      kind: 'uncertain',
+      reason: 'witness_changed'
+    })
+    expect(await h.files.read('chat')).toMatchObject({
+      kind: 'held',
+      record: { epoch: { host: 'replacement' } }
+    })
+    expect(h.registry.releaseOwnership(handle)).toBe(true)
+  })
+
+  it('pays a sync debt without unlinking a mark written after the failed sync', async () => {
+    const h = await fixture()
+    const handle = await h.reserve()
+    h.state.failSync = true
+    expect(await h.registry.retireOrphanAuthority('chat', handle)).toEqual({
+      kind: 'uncertain',
+      reason: 'sync_failed'
+    })
+    await h.files.write({ ...h.mark, epoch: { host: 'replacement', grant: 3 } })
+    h.state.failSync = false
+    expect(await h.registry.retireOrphanAuthority('chat', handle)).toEqual({
+      kind: 'uncertain',
+      reason: 'witness_changed'
+    })
+    expect(await h.files.read('chat')).toMatchObject({
+      kind: 'held',
+      record: { epoch: { host: 'replacement', grant: 3 } }
+    })
+    expect(h.registry.releaseOwnership(handle)).toBe(true)
+  })
+
+  it('answers ownership only for the exact handle it minted and still holds', async () => {
+    const h = await fixture()
+    const handle = await h.reserve()
+    expect(h.registry.ownsReservation(handle)).toBe(true)
+    expect(h.registry.ownsReservation({ ...handle })).toBe(false)
+    expect(h.registry.releaseOwnership(handle)).toBe(true)
+    expect(h.registry.ownsReservation(handle)).toBe(false)
   })
 
   it('does not retire when the full copy is missing or still behind the log', async () => {

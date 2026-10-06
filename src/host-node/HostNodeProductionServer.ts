@@ -1,6 +1,7 @@
 import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
 import { ThreadOrphanFoldRecovery } from './ThreadOrphanFoldRecovery'
+import type { ThreadOwnershipReservation } from '../host-shared/thread-log/ThreadOwnership'
 import { hostNodeReceiptSpanChatId } from './hostNodeReceiptSpanChatId'
 import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -462,6 +463,8 @@ export class HostNodeProductionServer {
   private hostRunOrigin: HostCatalogueRunOrigin | undefined
   private hostRecovery: ThreadCatalogueHostRecovery | null = null
   private orphanFold: ThreadOrphanFoldRecovery | null = null
+  /** The owner registry's minted-custody check; null until the owner service exists. */
+  private orphanCustody: ((reservation: ThreadOwnershipReservation) => boolean) | null = null
   private threadRecovery: ThreadCatalogueRecoveryController | null = null
   identity: HostSessionHostIdentity | null = null
 
@@ -595,6 +598,7 @@ export class HostNodeProductionServer {
           incarnation: writerId,
           assertAuthority: () => this.lease!.assertHeld(),
           hasLiveWork: (chatId) => !this.domain || this.domain.hasRuntimeWorkForThread(chatId),
+          ownsReservation: (reservation) => this.orphanCustody?.(reservation) ?? false,
           onAdopted: (chatId) => this.composition?.markThreadRecord?.(chatId, 'record')
         })
         this.hostRunWindow = new ThreadCatalogueHostRunWindow(this.threadCatalogueMirror, () =>
@@ -912,6 +916,7 @@ export class HostNodeProductionServer {
           released: (threadId) => this.threadHistoryRouter?.released(threadId)
         }
       })
+      this.orphanCustody = (reservation) => threadOwners.ownsOrphanReservation(reservation)
       this.threadWriteGate =
         threadOwners.mode === 'on'
           ? new HostThreadWriteGate({
@@ -1119,6 +1124,7 @@ export class HostNodeProductionServer {
     this.hostRecovery?.dispose()
     this.orphanFold?.dispose()
     this.orphanFold = null
+    this.orphanCustody = null
     this.threadRecovery?.dispose()
     try {
       await this.domain?.shutdown()

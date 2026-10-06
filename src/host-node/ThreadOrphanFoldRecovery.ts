@@ -51,7 +51,7 @@ export interface ThreadOrphanFoldRecoveryOptions {
   client: Pick<ThreadCatalogueClient, 'query'>
   recovery: Pick<
     ThreadCatalogueRecoveryController,
-    'beginOrphanViaReservation' | 'adoptViaFold' | 'end'
+    'beginOrphanViaReservation' | 'adoptViaFold' | 'assertHeld' | 'end'
   >
   owners: {
     reserveOrphanOwnership(threadId: string): Promise<ThreadOwnershipReservation | null>
@@ -78,6 +78,11 @@ export class ThreadOrphanFoldRecovery {
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>()
   /** Custody a failed directory sync kept; only this exact handle may pay the debt. */
   private readonly syncOwed = new Map<string, ThreadOwnershipReservation>()
+  /** Custody whose hold could not be ended; kept until that hold is gone. */
+  private readonly stranded = new Map<
+    string,
+    { reservation: ThreadOwnershipReservation; token: string }
+  >()
   private running = false
   private stopped = false
 
@@ -95,32 +100,53 @@ export class ThreadOrphanFoldRecovery {
   }
 
   async foldOrphan(chatId: string): Promise<ThreadOrphanFoldOutcome> {
+    // A hold whose `end` failed keeps its custody: the thread stays reserved
+    // until that hold is gone, never released underneath it.
+    const stranded = this.stranded.get(chatId)
+    if (stranded) {
+      if (!this.endHold(chatId, stranded.token)) return { kind: 'deferred' }
+      this.stranded.delete(chatId)
+      this.settle(chatId, stranded.reservation)
+    }
+    // A retirement whose directory sync failed is paid with a directory sync
+    // alone: no hold, no unlink, nothing the debt could destroy.
     const owed = this.syncOwed.get(chatId)
-    const reservation = owed ?? (await this.options.owners.reserveOrphanOwnership(chatId))
+    if (owed) {
+      const paid = await this.retire(chatId, owed)
+      this.settle(chatId, owed)
+      return paid
+    }
+    const reservation = await this.options.owners.reserveOrphanOwnership(chatId)
     if (!reservation) return { kind: 'deferred' }
     let hold: { token: string } | null = null
-    let outcome: ThreadOrphanFoldOutcome = { kind: 'deferred' }
     try {
       const begun = this.options.recovery.beginOrphanViaReservation(chatId, reservation)
       if (begun.kind !== 'held') return { kind: 'deferred' }
       hold = begun.hold
-      outcome = owed
-        ? await this.retire(chatId, reservation)
-        : await this.foldHeld(chatId, begun.hold.token, reservation)
-      return outcome
+      return await this.foldHeld(chatId, begun.hold.token, reservation)
     } finally {
-      if (hold) {
-        try {
-          this.options.recovery.end(chatId, hold.token)
-        } catch (error) {
-          this.options.onError?.(error)
-        }
+      if (hold && !this.endHold(chatId, hold.token)) {
+        this.stranded.set(chatId, { reservation, token: hold.token })
+      } else {
+        this.settle(chatId, reservation)
       }
-      // The registry refuses to release custody that still owes a directory
-      // sync; keep that exact handle for the next attempt.
-      if (this.options.owners.releaseOrphanOwnership(reservation)) this.syncOwed.delete(chatId)
-      else this.syncOwed.set(chatId, reservation)
     }
+  }
+
+  private endHold(chatId: string, token: string): boolean {
+    try {
+      this.options.recovery.end(chatId, token)
+      return true
+    } catch (error) {
+      this.options.onError?.(error)
+      return false
+    }
+  }
+
+  /** Releases custody, or keeps the exact handle when the registry says a sync is still owed. */
+  private settle(chatId: string, reservation: ThreadOwnershipReservation): void {
+    if (this.options.owners.releaseOrphanOwnership(reservation)) this.syncOwed.delete(chatId)
+    else this.syncOwed.set(chatId, reservation)
   }
 
   private async foldHeld(
@@ -154,7 +180,16 @@ export class ThreadOrphanFoldRecovery {
         mode: 'metadata'
       })
       if (!opened) return { kind: 'deferred' }
+      let foldId: string | null = null
+      let adopted = false
       try {
+        // The wire's `fold-owned-log` asserts the hold at the parent; this
+        // in-process request asserts it the same way.
+        try {
+          this.options.recovery.assertHeld(chatId, token)
+        } catch {
+          return { kind: 'deferred' }
+        }
         const folded = await this.options.client.query<FoldedLogOutcome | null>({
           method: 'fold-owned-log',
           chatId,
@@ -166,17 +201,32 @@ export class ThreadOrphanFoldRecovery {
           logEntries: log.batches
         })
         if (!folded) return { kind: 'deferred' }
-        const adopted = await this.options.recovery.adoptViaFold(
+        foldId = folded.foldId
+        const adoption = await this.options.recovery.adoptViaFold(
           chatId,
           token,
           folded.foldId,
           reservation
         )
-        if (adopted.kind !== 'adopted') return { kind: 'deferred' }
+        if (adoption.kind !== 'adopted') return { kind: 'deferred' }
+        adopted = true
       } finally {
+        // Adoption discards its own fold; a refused or failed one must not
+        // sit in the worker's bounded pending set.
+        if (foldId !== null && !adopted) {
+          await this.options.client
+            .query({ method: 'discard-folded', foldId })
+            .catch(() => undefined)
+        }
         await this.options.client
           .query({ method: 'release', leaseId: opened.leaseId })
           .catch(() => undefined)
+      }
+      // The adoption must have carried the full copy up to the folded head;
+      // anything less is never retired over.
+      const advanced = this.options.fullCopyRevision(chatId)
+      if (advanced === null || advanced < log.headRevision) {
+        return { kind: 'unresolved', reason: 'full copy did not reach the folded head' }
       }
       if (log.complete) break
     }
@@ -229,5 +279,15 @@ export class ThreadOrphanFoldRecovery {
     this.queued.clear()
     for (const timer of this.retries.values()) clearTimeout(timer)
     this.retries.clear()
+    // The controller's own dispose ends every pending hold; custody that a
+    // sync still owes stays with the registry, which goes away with the Host.
+    for (const { reservation } of this.stranded.values()) {
+      this.options.owners.releaseOrphanOwnership(reservation)
+    }
+    this.stranded.clear()
+    for (const reservation of this.syncOwed.values()) {
+      this.options.owners.releaseOrphanOwnership(reservation)
+    }
+    this.syncOwed.clear()
   }
 }

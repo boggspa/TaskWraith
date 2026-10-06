@@ -42,7 +42,10 @@ function makeCatalogue() {
 
 const controllers: ThreadCatalogueRecoveryController[] = []
 
-function build(hasLiveWork: (chatId: string) => boolean = () => false) {
+function build(
+  hasLiveWork: (chatId: string) => boolean = () => false,
+  ownsReservation: (reservation: ThreadOwnershipReservation) => boolean = () => true
+) {
   const catalogue = makeCatalogue()
   const controller = new ThreadCatalogueRecoveryController({
     client: { query: async <T>(): Promise<T> => null as unknown as T },
@@ -56,7 +59,8 @@ function build(hasLiveWork: (chatId: string) => boolean = () => false) {
     reader: {} as never,
     incarnation: INCARNATION,
     assertAuthority: () => undefined,
-    hasLiveWork
+    hasLiveWork,
+    ownsReservation
   })
   controllers.push(controller)
   return { controller, catalogue }
@@ -437,5 +441,24 @@ describe('ThreadCatalogueRecoveryController.beginOrphanViaReservation', () => {
     ).toMatchObject({
       kind: 'held'
     })
+  })
+
+  it('refuses a reservation the owner registry did not mint, however valid it looks', () => {
+    const { controller, catalogue } = build(undefined, () => false)
+    expect(controller.beginOrphanViaReservation(CHAT, reservation())).toEqual({
+      kind: 'busy',
+      reason: 'damaged'
+    })
+    expect(catalogue.recoveryHold(CHAT)).toBeNull()
+  })
+
+  it('never reclaims an ordinary Host hold pending on the same thread', () => {
+    const { controller, catalogue } = build()
+    const ordinary = controller.beginHost(CHAT)
+    expect(controller.beginOrphanViaReservation(CHAT, reservation())).toEqual({
+      kind: 'busy',
+      reason: 'admission_busy'
+    })
+    expect(catalogue.recoveryHold(CHAT)).toEqual(ordinary)
   })
 })

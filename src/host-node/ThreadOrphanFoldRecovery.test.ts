@@ -91,6 +91,10 @@ function harness(options: {
         calls.push('release-lease')
         return null
       }
+      if (query.method === 'discard-folded') {
+        calls.push(`discard:${String(query.foldId)}`)
+        return true
+      }
       throw new Error(`unexpected ${String(query.method)}`)
     })
   }
@@ -104,6 +108,7 @@ function harness(options: {
       full = folds[folds.length - 1].headRevision
       return { kind: 'adopted' as const, projection: {} as never }
     }),
+    assertHeld: vi.fn(() => undefined),
     end: vi.fn(() => {
       calls.push('end')
       return true
@@ -162,9 +167,11 @@ describe('ThreadOrphanFoldRecovery', () => {
     expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'unresolved', reason: 'sync_failed' })
     expect(h.calls.at(-1)).toBe('release-refused')
     h.calls.length = 0
-    // No fresh reservation: the retained handle retries the sync under a new hold.
+    // No fresh reservation and no hold: the retained handle pays the debt
+    // with a directory sync alone, then custody is released.
     expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'folded' })
-    expect(h.calls).toEqual(['begin', 'retire', 'end', 'release'])
+    expect(h.calls).toEqual(['retire', 'release'])
+    expect(h.recovery.beginOrphanViaReservation).toHaveBeenCalledTimes(1)
   })
 
   it('releases custody without folding when the hold cannot begin', async () => {
@@ -182,6 +189,54 @@ describe('ThreadOrphanFoldRecovery', () => {
     h.recovery.adoptViaFold.mockResolvedValueOnce({ kind: 'busy', reason: 'damaged' } as never)
     expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'deferred' })
     expect(h.owners.retireOrphanAuthority).not.toHaveBeenCalled()
+    // The refused fold is discarded, never left in the worker's bounded set.
+    expect(h.calls.slice(-4)).toEqual(['discard:fold-1', 'release-lease', 'end', 'release'])
+  })
+
+  it('discards a fold whose adoption threw', async () => {
+    const h = harness({ log: [1] })
+    h.recovery.adoptViaFold.mockRejectedValueOnce(new Error('adoption failed'))
+    await expect(h.fold.foldOrphan(CHAT)).rejects.toThrow('adoption failed')
+    expect(h.calls).toContain('discard:fold-1')
+    expect(h.calls.at(-1)).toBe('release')
+  })
+
+  it('asks for no fold once its hold has changed', async () => {
+    const h = harness({ log: [1] })
+    h.recovery.assertHeld.mockImplementationOnce(() => {
+      throw new Error('History recovery admission changed')
+    })
+    expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'deferred' })
+    expect(h.calls).not.toContain('fold')
     expect(h.calls.slice(-3)).toEqual(['release-lease', 'end', 'release'])
+  })
+
+  it('never retires when an adoption leaves the full copy short of the folded head', async () => {
+    const h = harness({ log: [1, 2] })
+    h.recovery.adoptViaFold.mockImplementationOnce(async () => {
+      h.calls.push('adopt')
+      return { kind: 'adopted' as const, projection: {} as never }
+    })
+    expect(await h.fold.foldOrphan(CHAT)).toEqual({
+      kind: 'unresolved',
+      reason: 'full copy did not reach the folded head'
+    })
+    expect(h.owners.retireOrphanAuthority).not.toHaveBeenCalled()
+    expect(h.calls.at(-1)).toBe('release')
+  })
+
+  it('keeps custody while a hold cannot be ended, and releases it once that hold is gone', async () => {
+    const h = harness({ log: [], full: 0 })
+    h.recovery.end.mockImplementationOnce(() => {
+      h.calls.push('end-failed')
+      throw new Error('end failed')
+    })
+    expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'folded' })
+    expect(h.calls).toEqual(['reserve', 'begin', 'retire', 'end-failed'])
+    h.calls.length = 0
+    // The next attempt ends the stranded hold first, then releases custody
+    // before it reserves again.
+    expect(await h.fold.foldOrphan(CHAT)).toEqual({ kind: 'folded' })
+    expect(h.calls.slice(0, 3)).toEqual(['end', 'release', 'reserve'])
   })
 })

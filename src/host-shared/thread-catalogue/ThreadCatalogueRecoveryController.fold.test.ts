@@ -55,6 +55,7 @@ function build(
     hold?: ThreadCatalogueRecoveryHold | null | 'unreadable'
     desktopWriter?: { writerId: string; pid?: number } | null
     hasLiveWork?: boolean
+    owns?: boolean
     fold?: FoldedLogOutcome | null
     epoch?: { global: string; chat: string }
   } = {}
@@ -92,6 +93,7 @@ function build(
     incarnation: INCARNATION,
     assertAuthority: () => undefined,
     hasLiveWork: () => opts.hasLiveWork ?? false,
+    ownsReservation: () => opts.owns ?? true,
     onAdopted
   })
   return { controller, publisher, queries, onAdopted }
@@ -123,6 +125,14 @@ describe('ThreadCatalogueRecoveryController.adoptViaFold', () => {
     expect(harness.publisher.fail).not.toHaveBeenCalled()
     expect(harness.onAdopted).toHaveBeenCalledWith(CHAT)
     expect(harness.queries.map((query) => query.method)).toEqual(['folded', 'discard-folded'])
+  })
+
+  it('refuses a reservation the owner registry did not mint, before any query', async () => {
+    const harness = build({ owns: false })
+    const outcome = await harness.controller.adoptViaFold(CHAT, TOKEN, FOLD_ID, reservation())
+    expect(outcome).toEqual({ kind: 'busy', reason: 'damaged' })
+    expect(harness.queries).toEqual([])
+    expect(harness.publisher.begin).not.toHaveBeenCalled()
   })
 
   it('returns busy/damaged without querying when the reservation no longer validates', async () => {
