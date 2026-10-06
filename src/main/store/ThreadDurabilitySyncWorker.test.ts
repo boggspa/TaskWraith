@@ -116,6 +116,42 @@ describe('the thread durability sync worker', () => {
     fake.emit('message', { id: fake.posted[0].id, open: null, sync: null, close: null })
     expect(callback).toHaveBeenCalledTimes(1)
   })
+
+  it('hands back the fields of an errno error the worker met, not only its code', async () => {
+    const missing = path.join(directory(), 'gone.jsonl')
+    const worker = createThreadDurabilitySyncWorker()
+    try {
+      const { openError } = await syncOnce(worker.syncPath, missing, fs.constants.O_RDONLY)
+      expect(openError).toMatchObject({ code: 'ENOENT', syscall: 'open', path: missing })
+      expect(typeof openError?.errno).toBe('number')
+      expect(worker.snapshot()).toMatchObject({ workerSyncs: 1, lost: false })
+    } finally {
+      await worker.dispose()
+    }
+  })
+
+  it('stops a worker it could not finish starting, and syncs the old way', async () => {
+    const fake = fakeWorker()
+    const handle = {
+      ...fake.handle,
+      unref: () => {
+        throw new Error('worker already gone')
+      }
+    }
+    const worker = createThreadDurabilitySyncWorker({ createWorker: () => handle })
+    const file = path.join(directory(), 'a.jsonl')
+    writeFileSync(file, 'line\n')
+    expect(await syncOnce(worker.syncPath, file, fs.constants.O_RDONLY)).toEqual({
+      openError: null,
+      syncError: null,
+      closeError: null
+    })
+    expect(fake.handle.terminate).toHaveBeenCalledTimes(1)
+    expect(fake.posted).toHaveLength(0)
+    expect(worker.snapshot()).toMatchObject({ lost: true, inlineSyncs: 1, workerSyncs: 0 })
+    // Its error listener was attached before anything could fail: an error now is heard.
+    expect(() => fake.emit('error', new Error('late'))).not.toThrow()
+  })
 })
 
 describe('the durability port through a sync path', () => {

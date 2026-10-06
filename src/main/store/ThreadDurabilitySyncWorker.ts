@@ -80,7 +80,16 @@ export interface ThreadDurabilitySyncWorker {
 const WORKER_SOURCE = `
 const { parentPort } = require('node:worker_threads')
 const fs = require('node:fs')
-const plain = (error) => (error ? { code: error.code ?? null, message: String(error.message) } : null)
+const plain = (error) =>
+  error
+    ? {
+        code: error.code ?? null,
+        message: String(error.message),
+        errno: typeof error.errno === 'number' ? error.errno : null,
+        syscall: typeof error.syscall === 'string' ? error.syscall : null,
+        path: typeof error.path === 'string' ? error.path : null
+      }
+    : null
 parentPort.on('message', ({ id, path, flags }) => {
   fs.open(path, flags, (openError, fd) => {
     if (openError) return parentPort.postMessage({ id, open: plain(openError), sync: null, close: null })
@@ -96,12 +105,19 @@ parentPort.on('message', ({ id, path, flags }) => {
 interface PlainError {
   readonly code: string | null
   readonly message: string
+  readonly errno?: number | null
+  readonly syscall?: string | null
+  readonly path?: string | null
 }
 
+/** The error as the three calls would have thrown it, with the fields an errno error carries. */
 function errnoOf(plain: PlainError | null | undefined): NodeJS.ErrnoException | null {
   if (!plain) return null
   const error: NodeJS.ErrnoException = new Error(plain.message)
   if (plain.code) error.code = plain.code
+  if (typeof plain.errno === 'number') error.errno = plain.errno
+  if (plain.syscall) error.syscall = plain.syscall
+  if (plain.path) error.path = plain.path
   return error
 }
 
@@ -134,8 +150,13 @@ export function createThreadDurabilitySyncWorker(
   const started = (): ThreadDurabilitySyncWorkerHandle | null => {
     if (lost) return null
     if (worker) return worker
+    let created: ThreadDurabilitySyncWorkerHandle | null = null
     try {
-      const created = createWorker()
+      created = createWorker()
+      // The error listener first: a worker that fails while the others are
+      // attached must never raise an unheard 'error'.
+      created.on('error', () => lose('failed'))
+      created.on('exit', () => lose('exited'))
       created.on('message', (message) => {
         const answer = message as {
           id: number
@@ -153,13 +174,13 @@ export function createThreadDurabilitySyncWorker(
           closeError: errnoOf(answer.close)
         })
       })
-      created.on('error', () => lose('failed'))
-      created.on('exit', () => lose('exited'))
       created.unref()
       worker = created
       return created
     } catch {
       lose('could not start')
+      // Whatever was made is stopped, never left running unheard.
+      if (created) void created.terminate().catch(() => undefined)
       return null
     }
   }

@@ -167,7 +167,7 @@ export interface ThreadBarrierDurability {
    * every thread within `budgetMs` and count what was not paid.
    */
   payAll(budgetMs: number): Promise<{ threads: number; unpaid: number }>
-  /** Stops the idle timer, and stages no more tool detail. */
+  /** Stops the idle timer, stages no more tool detail, and stops the sync worker. */
   dispose(): void
   /**
    * After a save's append: a ticket for each moment the save contains, at the
@@ -368,6 +368,8 @@ export function createThreadBarrierDurability(
     dispose() {
       threads.dispose()
       staging?.abandon()
+      // Later syncs, if any, are made the old way on the main thread's pool.
+      void syncWorker?.dispose().catch(() => undefined)
     },
     noteSave(previous, next, persisted, flushReason, removalAskedByUser = false) {
       if (!persisted) return []
