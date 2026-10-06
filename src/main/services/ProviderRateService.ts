@@ -1517,12 +1517,13 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       },
       {
         modelId: 'minimax/MiniMax-M2.7-highspeed',
-        inputUsdPerMillion: 0.3,
-        outputUsdPerMillion: 1.2,
+        inputUsdPerMillion: 0.6,
+        outputUsdPerMillion: 2.4,
         cachedInputUsdPerMillion: 0.06,
-        sourceUrl: 'https://platform.minimax.io/docs/price',
+        sourceUrl: 'https://platform.minimax.io/docs/guides/pricing-paygo',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'MiniMax model ids are CASE-SENSITIVE.'
+        notes:
+          'MiniMax model ids are CASE-SENSITIVE. Highspeed variant billed at 2x standard token rates per platform.minimax.io/docs/guides/pricing-paygo (Oct 2026).'
       },
       {
         modelId: 'minimax/MiniMax-M3',

@@ -3,29 +3,107 @@
  *
  * `installStartupThreadCatalogue` (in `installThreadCatalogue.ts`) owns
  * the catalogue and the recovery controller; this file owns the receipt-
- * evidence store and the save-intent port. The full activation coordinator
- * is wired through `erasureJoins` and the `persistedEvidenceSink` once a
- * production `HostThreadOwnerRegistry` is attached; this installer creates
- * the durable persistence now so the closeout can build, run the perf
- * harness, and the existing save-intent tests stay green.
+ * evidence store and the save-intent port, and decides which coordinator
+ * stands behind them.
  *
- * The activation path itself (registry.claim → markWriter → ownedAppend)
- * remains a follow-up: the recovery controller's `begin` flow does not
- * yet bridge into the activation coordinator's `activate`. The handoff
- * doc at .local-only/HANDOFF-i7-thread-custody.md covers the remaining
- * integration work.
+ * Without activation seams, or while thread log authority is not honoured by
+ * this process, a placeholder stands in: `isActive` is false everywhere and
+ * `deactivate` does nothing. With both, the real
+ * `ThreadOwnershipActivationCoordinator` is built from the seams plus the
+ * pieces this file owns (queue, receipt store, head-receipt lookup, authority
+ * files). The seams are the parts only a live Host connection can supply: the
+ * claim, the publication binding, the owned-journal append and the grant
+ * revision the mark records. None has a default that would invent one, so an
+ * incomplete wiring fails closed (the activation rolls back and hands the
+ * queued saves back) rather than writing a mark or a receipt nobody earned.
+ * The handoff doc at .local-only/HANDOFF-i7-thread-custody.md covers the
+ * remaining integration work.
  */
 import { app } from 'electron'
 import { join } from 'path'
+import { HostThreadPublicationGuard } from '../../host-runtime/HostThreadPublicationGuard'
+import {
+  ThreadAuthorityFiles,
+  type ThreadAuthorityWriter
+} from '../../host-shared/thread-log/ThreadAuthorityFile'
+import type { ThreadOwnershipReservation } from '../../host-shared/thread-log/ThreadOwnership'
 import {
   HostOwnershipReceiptEvidenceStore,
   createFileReceiptEvidencePersistence
 } from '../host/HostOwnershipReceiptEvidenceStore'
-import { createChatSaveOwnershipWiring } from '../services/ThreadOwnershipActivationCoordinator'
+import {
+  ThreadOwnershipActivationCoordinator,
+  createChatSaveOwnershipWiring,
+  createHeadReceiptLookup,
+  type ThreadOwnershipActivationOptions
+} from '../services/ThreadOwnershipActivationCoordinator'
+import { resolveThreadDurabilitySwitches } from '../store/ThreadBarrierDurabilitySwitch'
 import type { PerChatSaveIntentQueue } from '../../shared/chatSaveIntentQueue'
 import type { CatalogueErasureJoins } from './ThreadCatalogueErasureCallbacks'
 import type { ThreadOwnershipReceiptEvidence } from '../host/ThreadOwnershipReceiptEvidence'
 import type { ChatSaveOwnershipPort } from '../../shared/chatSaveIntentQueue'
+
+/**
+ * Who the authority mark names, and the Host revision it was granted at. The
+ * revision matters: the log above `grantedAtRevision` is read as the owner's
+ * unpublished work, so a guess too low makes the Host fold rows it already
+ * holds. It comes from the grant's confirmed facts, never a default.
+ */
+export interface ThreadOwnershipMarkIdentity {
+  /** Must be the writer id the claim was made under: the Host judges liveness by it. */
+  readonly writer: ThreadAuthorityWriter
+  grantedAtRevision(chatId: string, reservation: ThreadOwnershipReservation): number
+}
+
+/** Writes the authority mark for a grant. A write the files reject rolls the activation back. */
+export function createAuthorityMarkWriter(options: {
+  readonly files: Pick<ThreadAuthorityFiles, 'write'>
+  readonly identity: ThreadOwnershipMarkIdentity
+  readonly now?: () => number
+}): ThreadOwnershipActivationOptions['markWriter'] {
+  const now = options.now ?? Date.now
+  return async (chatId, reservation) => {
+    await options.files.write({
+      threadId: chatId,
+      writer: options.identity.writer,
+      epoch: reservation.epoch,
+      grantedAtRevision: options.identity.grantedAtRevision(chatId, reservation),
+      grantedAt: now()
+    })
+  }
+}
+
+/** What only a live Host connection can supply to the coordinator. */
+export interface ThreadOwnershipActivationSeams {
+  /** Claims on the same authenticated connection the Host granted on. */
+  readonly registry: ThreadOwnershipActivationOptions['registry']
+  /**
+   * One owned-journal append, confirmed by the owned journal's barrier. There
+   * is deliberately no default: a stand-in that resolved with `exact` evidence
+   * would settle the queued saves as durable without any journal holding them.
+   */
+  readonly ownedAppend: ThreadOwnershipActivationOptions['ownedAppend']
+  /** Defaults to an inert guard (no registry), which only commits the read. */
+  readonly publicationGuard?: ThreadOwnershipActivationOptions['publicationGuard']
+  /** Defaults to an unowned, never-current binding; supply one with a registry-backed guard. */
+  readonly bindingFor?: ThreadOwnershipActivationOptions['bindingFor']
+  /** Either this or `mark` is required. */
+  readonly markWriter?: ThreadOwnershipActivationOptions['markWriter']
+  readonly mark?: ThreadOwnershipMarkIdentity
+  /** Defaults to the profile's `ThreadAuthorityFiles`. */
+  readonly authorityFiles?: Pick<ThreadAuthorityFiles, 'write' | 'remove'>
+  /** Profile root for the default authority files; defaults to Electron's userData. */
+  readonly profilePath?: string
+  /**
+   * Defaults to a no-op pair. This process resolved the authority switch once
+   * at startup and keeps that answer for its life; flipping the environment
+   * variable here would make later readers disagree with the Host.
+   */
+  readonly authoritySwitch?: ThreadOwnershipActivationOptions['authoritySwitch']
+  readonly erasing?: ThreadOwnershipActivationOptions['erasing']
+  readonly hasOwnedRows?: ThreadOwnershipActivationOptions['hasOwnedRows']
+  readonly erasureFenceTimeoutMs?: number
+}
 
 export interface InstallThreadOwnershipOptions {
   /** The save-intent queue the activation coordinator drains on every activate. */
@@ -36,6 +114,14 @@ export interface InstallThreadOwnershipOptions {
   readonly mintId?: () => string
   /** Optional error reporter; defaults to console.error. */
   readonly onError?: (error: unknown) => void
+  /** Builds the real coordinator when present and log authority is honoured. */
+  readonly activation?: ThreadOwnershipActivationSeams
+  /**
+   * Whether this process honours thread log authority. Defaults to the
+   * resolved switch, which also requires barrier durability: the app ignores
+   * authority without it and must never claim a thread.
+   */
+  readonly logAuthority?: boolean
 }
 
 export interface ThreadOwnershipWiring {
@@ -58,6 +144,10 @@ export interface ThreadOwnershipWiring {
   readonly erasureJoins: CatalogueErasureJoins
   /** The receipt store, in case another module needs direct access. */
   readonly receiptStore: HostOwnershipReceiptEvidenceStore
+  /** What `port.isActive` and erasure consult: the real coordinator, or the placeholder. */
+  readonly coordinator: Pick<ThreadOwnershipActivationCoordinator, 'isActive' | 'deactivate'>
+  /** The real coordinator; null while activation is not wired. */
+  readonly activation: ThreadOwnershipActivationCoordinator | null
   /** Load the evidence from disk; call once at startup before the first record. */
   loadEvidence(): Promise<void>
 }
@@ -70,12 +160,9 @@ export function installThreadOwnership(
   const persistence = createFileReceiptEvidencePersistence(evidenceFile)
   const receiptStore = new HostOwnershipReceiptEvidenceStore(persistence)
 
-  // The activation coordinator is built lazily: this closeout wires the
-  // durable receipt store and the save-intent port, but `activate` would
-  // require a real `HostThreadOwnerRegistry` to claim from, which the
-  // recovery controller does not yet expose. Until that bridge is in
-  // place, `isActive` reports false everywhere and the queue stays a
-  // pure bookkeeping surface.
+  // Without seams, or while this process does not honour log authority,
+  // `isActive` reports false everywhere and the queue stays a pure
+  // bookkeeping surface.
   const placeholderCoordinator = {
     isActive: (_chatId: string) => false,
     deactivate: async (_chatId: string) => {
@@ -83,11 +170,18 @@ export function installThreadOwnership(
       // stage 4 erasure to land without throwing.
     }
   }
+  const logAuthority =
+    options.logAuthority ?? resolveThreadDurabilitySwitches(process.env, () => {}).logAuthority
+  const activation =
+    logAuthority && options.activation
+      ? buildActivationCoordinator(options, options.activation, receiptStore)
+      : null
+  const coordinator = activation ?? placeholderCoordinator
 
   const wiring = createChatSaveOwnershipWiring({
     queue: options.saveIntentQueue,
     receiptStore,
-    coordinator: placeholderCoordinator,
+    coordinator,
     ...(options.mintId ? { mintId: options.mintId } : {}),
     ...(options.onError ? { onError: options.onError } : {})
   })
@@ -98,7 +192,7 @@ export function installThreadOwnership(
     erasureJoins: {
       coordinator: {
         async deactivate(chatId) {
-          await placeholderCoordinator.deactivate(chatId)
+          await coordinator.deactivate(chatId)
         }
       },
       followers: {
@@ -121,6 +215,50 @@ export function installThreadOwnership(
       }
     },
     receiptStore,
+    coordinator,
+    activation,
     loadEvidence: () => receiptStore.load()
   }
+}
+
+/**
+ * Stands in for the shared authority switch. This process resolved it once at
+ * startup and keeps that answer for its life; the activation path must not
+ * flip the environment variable under later readers or the Host.
+ */
+const INERT_AUTHORITY_SWITCH = {
+  enable: () => undefined,
+  disable: () => undefined
+}
+
+function buildActivationCoordinator(
+  options: InstallThreadOwnershipOptions,
+  seams: ThreadOwnershipActivationSeams,
+  receiptStore: HostOwnershipReceiptEvidenceStore
+): ThreadOwnershipActivationCoordinator {
+  const authorityFiles =
+    seams.authorityFiles ?? new ThreadAuthorityFiles(seams.profilePath ?? app.getPath('userData'))
+  const markWriter =
+    seams.markWriter ??
+    (seams.mark ? createAuthorityMarkWriter({ files: authorityFiles, identity: seams.mark }) : null)
+  if (!markWriter) {
+    throw new Error('Thread ownership activation needs a markWriter or a mark identity')
+  }
+  return new ThreadOwnershipActivationCoordinator({
+    queue: options.saveIntentQueue,
+    registry: seams.registry,
+    publicationGuard: seams.publicationGuard ?? new HostThreadPublicationGuard(null),
+    bindingFor: seams.bindingFor ?? (() => ({ owner: null, isCurrent: () => false })),
+    authorityFile: { remove: (chatId) => authorityFiles.remove(chatId) },
+    markWriter,
+    receiptStore,
+    authoritySwitch: seams.authoritySwitch ?? INERT_AUTHORITY_SWITCH,
+    commandHandleStore: createHeadReceiptLookup({ queue: options.saveIntentQueue, receiptStore }),
+    ownedAppend: seams.ownedAppend,
+    ...(seams.erasing ? { erasing: seams.erasing } : {}),
+    ...(seams.hasOwnedRows ? { hasOwnedRows: seams.hasOwnedRows } : {}),
+    ...(seams.erasureFenceTimeoutMs !== undefined
+      ? { erasureFenceTimeoutMs: seams.erasureFenceTimeoutMs }
+      : {})
+  })
 }
