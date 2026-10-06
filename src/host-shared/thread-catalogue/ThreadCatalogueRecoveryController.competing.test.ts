@@ -137,8 +137,17 @@ describe('ThreadCatalogueRecoveryController two writers, one thread', () => {
     const stale = controller.begin(CHAT, 'desk-a')
     controller.registerDesktop({ writerId: 'desk-b', pid: 4102 })
 
-    // The cancellation is complete before registration returns: the old token
-    // can neither end nor commit anything, and the thread is free to begin.
+    // Registration is no longer preemptive: the earlier desktop's hold is
+    // preserved. A replacement desktop must call `takeoverThread(chatId)`
+    // explicitly to cancel a hold on a specific thread. The old token
+    // is still valid until the explicit takeover runs.
+    expect(catalogue.recoveryHold(CHAT)).toEqual(stale)
+    expect(controller.end(CHAT, stale.token)).toBe(true)
+    expect(() => controller.assertHeld(CHAT, stale.token)).toThrow(
+      'History recovery admission changed'
+    )
+    // After explicit takeover the thread is free to begin.
+    controller.takeoverThread(CHAT)
     expect(catalogue.recoveryHold(CHAT)).toBeNull()
     expect(controller.end(CHAT, stale.token)).toBe(false)
     expect(() => controller.assertHeld(CHAT, stale.token)).toThrow(
@@ -232,9 +241,35 @@ describe('ThreadCatalogueRecoveryController.beginFor reclaim discrimination', ()
     const hostHold = controller.beginHost(CHAT)
     controller.registerDesktop({ writerId: 'desk-a', pid: 4101 })
 
+    // Registration is no longer preemptive: a desktop registering does not
+    // cancel a Host hold on this thread. The desktop must call
+    // `takeoverThread(chatId)` to claim the thread explicitly.
+    expect(catalogue.recoveryHold(CHAT)).toEqual(hostHold)
+    expect(controller.end(CHAT, hostHold.token)).toBe(true)
+    controller.takeoverThread(CHAT)
     expect(catalogue.recoveryHold(CHAT)).toBeNull()
     expect(controller.end(CHAT, hostHold.token)).toBe(false)
     expect(controller.begin(CHAT, 'desk-a')).toMatchObject({ desktopWriterId: 'desk-a' })
+  })
+
+  it('preserves pending recovery holds on unrelated threads when a desktop registers', () => {
+    // The product rule: a desktop registering only knows its own identity.
+    // A long-quiescent desktop restart, or a Host that began a recovery
+    // during a desktop restart, keeps every other hold. The desktop must
+    // call takeoverThread(chatId) for each thread it wants to claim.
+    const { controller, catalogue } = build()
+    const otherChat = `${CHAT}-other`
+    // Host began recovery on TWO threads before the desktop registered.
+    const hostHoldA = controller.beginHost(CHAT)
+    const hostHoldB = controller.beginHost(otherChat)
+    controller.registerDesktop({ writerId: 'desk-a', pid: 4101 })
+    // Both holds are preserved.
+    expect(catalogue.recoveryHold(CHAT)).toEqual(hostHoldA)
+    expect(catalogue.recoveryHold(otherChat)).toEqual(hostHoldB)
+    // Explicit per-thread takeover cancels only the named one.
+    controller.takeoverThread(CHAT)
+    expect(catalogue.recoveryHold(CHAT)).toBeNull()
+    expect(catalogue.recoveryHold(otherChat)).toEqual(hostHoldB)
   })
 
   it('does not let a Host request reclaim a desktop-owned hold', () => {

@@ -467,7 +467,7 @@ describe('HostThreadOwnerRegistry reservation brand', () => {
     // foreign one (built directly via ThreadOwnershipReservation, e.g. a
     // test stub or a future `endOrphanViaReservation` foreign path).
     expect(
-      (reservation as Record<symbol, unknown>)[
+      (reservation as unknown as Record<symbol, unknown>)[
         Symbol.for('taskwraith.thread-ownership-reservation.brand')
       ]
     ).toBe(true)
@@ -476,7 +476,7 @@ describe('HostThreadOwnerRegistry reservation brand', () => {
   it('foreign reservations do not carry the brand', () => {
     const foreign = foreignReservation({ host: 'host-a', grant: 1 })
     expect(
-      (foreign as Record<symbol, unknown>)[
+      (foreign as unknown as Record<symbol, unknown>)[
         Symbol.for('taskwraith.thread-ownership-reservation.brand')
       ]
     ).toBeUndefined()

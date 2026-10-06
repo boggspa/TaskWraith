@@ -6607,7 +6607,8 @@ export class AppStore {
   private static catalogueErasureBegin:
     | ((
         preparation: HistoryDeletionPreparation,
-        recorded: readonly CatalogueErasureFence[]
+        recorded: readonly CatalogueErasureFence[],
+        onFenceRaised?: (fence: CatalogueErasureFence) => void
       ) => Promise<readonly CatalogueErasureFence[] | void>)
     | null = null
   private static catalogueErasureFinish:
@@ -6630,7 +6631,8 @@ export class AppStore {
   static installCatalogueErasureBegin(
     begin: (
       preparation: HistoryDeletionPreparation,
-      recorded: readonly CatalogueErasureFence[]
+      recorded: readonly CatalogueErasureFence[],
+      onFenceRaised?: (fence: CatalogueErasureFence) => void
     ) => Promise<readonly CatalogueErasureFence[] | void>
   ): void {
     this.catalogueErasureBegin = begin
@@ -8525,7 +8527,7 @@ export class AppStore {
       saveCoalescer.intentQueue.pinAdmittedRevision(
         saved.appChatId,
         ownershipSave.commandId,
-        saved.persistenceRevision
+        saved.persistenceRevision ?? 0
       )
     }
     if (ownershipSave?.active) {

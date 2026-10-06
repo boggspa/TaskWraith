@@ -14,6 +14,7 @@ import {
   createCatalogueErasureCallbacks,
   type CatalogueErasureJoins
 } from './ThreadCatalogueErasureCallbacks'
+import { installThreadOwnership } from './installThreadOwnership'
 import { withThreadCatalogueReadContext } from '../store/ThreadCatalogueReadContextPort'
 import type { HostProfileAuthorityPort } from '../../host-runtime/HostProfileDomainStore'
 import type {
@@ -60,6 +61,15 @@ export function installStartupThreadCatalogue(options: {
   setMutationGuard(chatId: string, guard: () => boolean): () => void
 } {
   const launchAt = Date.now()
+  // Wire the I7 thread-ownership activation: receipt store, save-intent
+  // port, and erasure joins. The full activation coordinator is a
+  // placeholder; a real `HostThreadOwnerRegistry` is the follow-up that
+  // bridges `recovery.begin` to `activate(chatId)`.
+  const ownership = installThreadOwnership({
+    saveIntentQueue: AppStore.getSaveIntentQueue()
+  })
+  AppStore.installThreadOwnershipSavePort(ownership.port)
+  void ownership.loadEvidence()
   const local = options.externalHost
     ? null
     : createDesktopThreadCatalogue(
@@ -88,12 +98,12 @@ export function installStartupThreadCatalogue(options: {
         return recovery!.end(query.chatId, query.recoveryToken) as T
       if (query.method === 'adopt-prepared')
         return recovery!.adopt(query.chatId, query.recoveryToken, query.preparedId) as Promise<T>
-      if (
-        query.method === 'prepare' ||
-        query.method === 'fold-owned-log' ||
-        query.method === 'reestablish-erasure'
-      )
+      if (query.method === 'prepare' || query.method === 'fold-owned-log')
         recovery!.assertHeld(query.chatId, query.recoveryToken)
+      // `reestablish-erasure` does not carry a recovery token: the fence
+      // is identified by the recorded generation on disk. Asserting a
+      // token here would be a type error and would not match the wire
+      // contract; the host-node path documents the same in its comment.
       return local.query<T>(query)
     }
     if (!options.broker.maintainThreadCatalogue)
@@ -139,7 +149,10 @@ export function installStartupThreadCatalogue(options: {
     recovery: () => recovery,
     publisher: () => AppStore.getThreadCataloguePublisher(),
     saveIntents: AppStore.getSaveIntentQueue(),
-    ...(options.erasureJoins ? { joins: options.erasureJoins } : {})
+    // Caller-supplied joins take precedence over the wired ones, so a
+    // future HostThreadOwnerRegistry integration can override the
+    // placeholder coordinator's no-op deactivate.
+    ...(options.erasureJoins ? { joins: options.erasureJoins } : { joins: ownership.erasureJoins })
   })
   AppStore.installCatalogueErasureFinish(erasure.finish)
   AppStore.installCatalogueErasure(

@@ -1403,8 +1403,13 @@ export class HostNodeProductionServer {
       return { data }
     }
     if (request.method === 'prepare') recovery.assertHeld(request.chatId, request.recoveryToken)
-    if (request.method === 'fold-owned-log' || request.method === 'reestablish-erasure')
+    if (request.method === 'fold-owned-log')
       recovery.assertHeld(request.chatId, request.recoveryToken)
+    // `reestablish-erasure` does not carry a recovery token: the fence is
+    // identified by the recorded generation on disk. The host-node's external
+    // mode skips publisher drain and mirror forget for this method; an
+    // unheld caller can still re-raise a fence, but adoption is gated by
+    // the recovery controller's existing checks.
     // A reestablish-erasure is a fence (re-)raise; it must drain in-flight
     // publications, forget the mirror and join the recovery/publisher just
     // like a fresh erase, otherwise the resume re-raises a fence while

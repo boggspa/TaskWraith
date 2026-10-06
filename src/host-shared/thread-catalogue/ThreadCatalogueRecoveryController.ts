@@ -87,8 +87,24 @@ export class ThreadCatalogueRecoveryController {
 
   registerDesktop(owner: { writerId: string; pid?: number }): void {
     this.options.assertAuthority()
-    this.cancelForReplacedDesktop(owner.writerId)
     this.desktop = owner
+  }
+
+  /**
+   * Explicit per-thread takeover. Cancels the pending hold for `chatId`
+   * regardless of who holds it (Host-initiated or a different desktop's).
+   *
+   * A desktop that just registered is NOT preemptive: unrelated threads
+   * keep their existing holds. To claim a thread the desktop must call this
+   * once per thread, or call `begin(chatId, owner.writerId)` to start a
+   * new hold (which still requires `end` of the prior hold to make
+   * progress, because the gate keeps one hold per chat).
+   */
+  takeoverThread(chatId: string): void {
+    this.options.assertAuthority()
+    const pending = this.pending.get(chatId)
+    if (!pending) return
+    this.end(chatId, pending.hold.token)
   }
   private readonly admission = new ThreadCatalogueWriteGate()
   private readonly pending = new Map<
@@ -307,11 +323,6 @@ export class ThreadCatalogueRecoveryController {
     }, THREAD_CATALOGUE_RECOVERY_HOLD_TTL_MS)
     timer.unref?.()
     pending.timer = timer
-  }
-
-  cancelForReplacedDesktop(writerId: string): void {
-    for (const { hold } of this.pending.values())
-      if (hold.hostWriterId || hold.desktopWriterId !== writerId) this.end(hold.chatId, hold.token)
   }
 
   assertHeld(chatId: string, token: string): void {
