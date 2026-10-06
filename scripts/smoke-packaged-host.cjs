@@ -214,9 +214,13 @@ function validateHostPayload(hostRoot, label) {
       'MuseTypes.js',
       'MuseUsage.js'
     ].map((name) => path.join('muse', name)),
-    ...['MistralCliArgs.js', 'MistralCredentialLane.js', 'MistralQuotaEstimate.js'].map((name) =>
-      path.join('mistral', name)
-    ),
+    ...[
+      'MistralApiModelEnv.js',
+      'MistralCliArgs.js',
+      'MistralCredentialLane.js',
+      'MistralQuotaEstimate.js',
+      'MistralUsage.js'
+    ].map((name) => path.join('mistral', name)),
     ...[
       'DevinCliArgs.js',
       'DevinCredentialLane.js',
