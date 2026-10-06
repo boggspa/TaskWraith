@@ -12,23 +12,24 @@ context needed to answer.
 
 Phase 1 thread-custody integration is incomplete and remains behind the existing
 `TASKWRAITH_THREAD_LOG_AUTHORITY` and `TASKWRAITH_THREAD_BARRIER_DURABILITY` flags.
-Production defaults remain off. Diagnostic captures have populated moment samples,
-but do not qualify either the 50 ms user-barrier or 250 ms run-final acceptance gate:
-the production ownership path was inactive and collection was incomplete.
+Production defaults remain off, and nothing below is accepted for enablement: the
+completed enabled path was measured and **fails** both the 50 ms user-barrier and the
+250 ms run-final p95 gates (see the last item).
 
-- **Ownership reservation work.** Reservation validation and orphan retirement now have explicit interfaces and regression coverage. Opaque custody across preparation, adoption, retirement and sync still requires integration review.
-- **Failed directory-sync retry.** When a directory sync throws after the unlink succeeds, the registry records the debt in a per-thread set; the next `retireOrphanAuthority` call retries the sync even when the file is already gone, returning `busy/damaged` only when the absence is unaccounted-for.
-- **Orphan fold RPC.** `fold-owned-log` preserves the log's head revision, `updatedAt`, and `createdAt`. Production orphan-recovery sequencing remains under integration.
-- **Desktop ownership activation seam.** A new `PerChatSaveIntentQueue` records an authored save before journal or cache mutation, freezes the admitted head, and is drained by `ThreadOwnershipActivationCoordinator.activate(chatId)`. `pinAdmittedRevision` commits the post-save revision back to the admitted head so `publicationConfirmed` matches the receipt. The receipt evidence is durable in `app.getPath('userData')/thread-ownership-receipts.json`.
-- **Erasure lifecycle.** Begin and success-only finish callbacks are separate. Crash durability of partial begins and complete production joins remain acceptance work. Desktop registration preserves unrelated recovery holds; authenticated per-thread takeover is still being integrated.
-- Regression tests cover reservation, transport, downgrade and coordinator behavior. These tests do not establish acceptance of the completed production path.
+- **Orphan reservation custody.** A dead writer's thread is recovered under one registry-held custody handle that spans reservation, fold preparation, durable adoption, conditional mark retirement and directory sync. Claims, Host writes and publications are refused while custody is held. A failed directory sync is repaid by a directory sync alone, never another unlink.
+- **Orphan fold.** The Host folds a dead writer's log above its full copy through `fold-owned-log`, outside command admission, preserving content, head revision and timestamps. A refused or failed adoption discards its fold. Missing canonical sources stay unresolved rather than being recreated. An unrelated live desktop no longer blocks recovery of a dead writer's thread.
+- **Desktop ownership activation.** With both flags on, the app claims a thread over a dedicated authenticated desktop connection once the exact admitted head is confirmed in Host storage by the command that carried it. It then writes and syncs the authority mark, enables owned appends and replays pending saves. A grant lost to a disconnect or Host restart lapses ownership at once, and saves go back to waiting for Host storage. Before ownership, user saves stay pending until Host storage confirms them.
+- **Explicit per-thread takeover.** The registered desktop can take over one thread's pending recovery hold over the authenticated maintenance channel. Holds on other threads, live work and orphan-fold custody are left alone.
+- **History erasure.** Each catalogue fence is recorded durably in the deletion intent as it rises, and Host-side writers (publication permits, log followers, orphan folds) are invalidated and joined before sources are removed. The fence is lifted only after a clean, verified deletion; a failed or interrupted deletion keeps it.
+- **Measured, not accepted.** A qualified six-capture off/on pair on the `many_agents_live` workload, with the ownership path active, still exceeds the gates: user-facing barrier p95 falls in [50, 100) to [100, 250) ms, and run-final p95 in [250, 500) ms, where measured. A small unnamed main-thread sync also fails the named-sync exit. The captures were deliberately non-authoritative (`--skip-build` on a prebuilt isolated worktree; live-round workloads never claim an authoritative baseline).
 
 ### Bug Fixes and Cleanups
 
-- `AdoptThreadRecord`'s identity check now matches a tampered or moved staged file before the rename, not after. `HostThreadOwnerRegistry.endOrphan` correctly captures the pending entry before deleting it so the timer and release closure outlive the delete. The retirement's `ReservationInvalid` reason now maps to the more specific `erasing` or `live_writer` instead of collapsing to `damaged`. `IncrementalChatJournal`'s stats shape now includes the cancellation, completion, deadline, failure, refusal and start counts the pool tracks. The HostThreadAuthorityFile and ThreadOwnershipReservation's Record<symbol, …> brand check uses the documented `as unknown as` cast.
+- `AdoptThreadRecord`'s identity check now matches a tampered or moved staged file before the rename, not after. `ThreadCatalogueRecoveryController.endOrphan` captures the pending entry before deleting it so the timer and release closure outlive the delete. A retirement refused under custody now reports the specific `erasing` or `live_writer` reason instead of collapsing to `damaged`. `IncrementalChatJournal`'s stats shape now includes the cancellation, completion, deadline, failure, refusal and start counts the pool tracks.
 - The rate table for `minimax/MiniMax-M2.7-highspeed` is verified and corrected to 0.6 / 2.4 / 0.06 USD per million tokens against `platform.minimax.io/docs/guides/pricing-paygo` — the highspeed variant is billed at 2x the standard token rates (M2.7's 0.3 / 1.2 was the placeholder and was wrong for highspeed; cached-input stays 0.06).
 - Three pre-existing test failures that were unrelated to I7 are fixed: a test pin for the renamed `persistThreadRecordWithCommit` writer, `IncrementalChatJournal.debtCompaction` tests updated to `toMatchObject` for the new stats shape, and a missing rate row for `MiniMax-M2.7-highspeed`.
 - `scripts/perf/runT2Baseline.cjs` accepts `PERF_REPO_ROOT` so the perf harness can run from an isolated worktree without touching the main checkout.
+- The perf harness's main-process CPU profile no longer closes the shared inspector when it stops, which had made the later persistence-stats collection time out.
 
 ### Composition Wiring (Behind Feature Flags)
 

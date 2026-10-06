@@ -173,12 +173,26 @@ describe('AppStore.saveChat ownership save intents', () => {
     expect(AppStore.getSaveIntentQueue().peek(chat.appChatId)).toHaveLength(1)
   })
 
-  it('an owned chat is confirmed by the journal barrier, not a Host receipt', async () => {
+  it('an owned chat is confirmed by the owned journal, not a Host receipt', async () => {
     const chat = draft()
-    AppStore.installThreadOwnershipSavePort(port({ isActive: () => true }))
+    const confirmOwnedSave = vi.fn(async () => true)
+    AppStore.installThreadOwnershipSavePort(port({ isActive: () => true, confirmOwnedSave }))
     AppStore.saveChat(chat)
     await vi.waitFor(() => expect(AppStore.getSaveIntentQueue().peek(chat.appChatId)).toEqual([]))
+    expect(confirmOwnedSave).toHaveBeenCalledWith(chat.appChatId, expect.any(Number))
     expect(AppStore.getSaveIntentQueue().admittedHead(chat.appChatId)?.commandId).toBe('intent-1')
+  })
+
+  it.each([
+    ['the owned journal does not hold it', { confirmOwnedSave: async () => false }],
+    ['no owned-journal confirmation is composed', {}]
+  ])('an owned save stays pending when %s', async (_case, extra) => {
+    const chat = draft()
+    AppStore.installThreadOwnershipSavePort(port({ isActive: () => true, ...extra }))
+    AppStore.saveChat(chat)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // Neither a Host receipt nor the owned journal confirmed it: still pending.
+    expect(AppStore.getSaveIntentQueue().peek(chat.appChatId)).toHaveLength(1)
   })
 
   it('a save that throws does not leave its intent pending', () => {
