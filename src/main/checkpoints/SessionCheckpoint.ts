@@ -203,6 +203,10 @@ export class SessionCheckpointStore {
   private readonly log: (line: string) => void
   private readonly isHistoryMutationBlocked: (chatId: string, workspaceId?: string) => boolean
   private records: SessionCheckpointRecord[] = []
+  // The terminal records the archive file last received, by identity. Records
+  // are replaced, never changed in place, so the same records in the same
+  // order mean the same bytes; null until a write of the archive has succeeded.
+  private archiveWritten: SessionCheckpointRecord[] | null = null
 
   constructor(options: SessionCheckpointStoreOptions = {}) {
     this.storagePath = options.storagePath
@@ -504,11 +508,16 @@ export class SessionCheckpointStore {
     // the legacy store. This closes the migration crash window that the
     // original T3b ordering (hot-first) could permanently lose 493-class
     // terminal records.
-    if (this.archivePath) {
+    // It grows with every superseded round and most upserts leave it as it
+    // was, so it is rewritten only when its records changed: rewriting it on
+    // each upsert held the main thread for up to 105 ms late in a long run.
+    if (this.archivePath && !sameRecords(this.archiveWritten, archive)) {
+      this.archiveWritten = null
       if (archive.length === 0) {
         // Purge may have cleared all archive records.
         try {
           writeFileSync(this.archivePath, '', 'utf-8')
+          this.archiveWritten = archive
         } catch {
           // Best-effort: a missing archive is equivalent to empty.
         }
@@ -517,6 +526,7 @@ export class SessionCheckpointStore {
         const archTmpPath = `${this.archivePath}.${this.idFactory()}.tmp`
         writeFileSync(archTmpPath, lines, 'utf-8')
         renameSync(archTmpPath, this.archivePath)
+        this.archiveWritten = archive
       }
     }
 
@@ -531,6 +541,17 @@ export class SessionCheckpointStore {
 
 function stableCheckpointId(chatId: string, roundId: string): string {
   return `session-checkpoint-${chatId}-${roundId}`
+}
+
+function sameRecords(
+  written: readonly SessionCheckpointRecord[] | null,
+  next: readonly SessionCheckpointRecord[]
+): boolean {
+  return (
+    written !== null &&
+    written.length === next.length &&
+    written.every((record, index) => record === next[index])
+  )
 }
 
 function cleanOptionalText(value: unknown): string | undefined {

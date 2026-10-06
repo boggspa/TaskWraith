@@ -378,6 +378,52 @@ describe('SessionCheckpoint hot/archive split (T3b)', () => {
     }
   })
 
+  it('rewrites the archive only when its records change', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const archivePath = join(tmp, 'session-checkpoints-archive.jsonl')
+      // Each file is written through its own temporary name.
+      const temporaries: string[] = []
+      let next = 0
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => {
+          const id = `tmp-${next++}`
+          temporaries.push(id)
+          return id
+        }
+      })
+      const round = (roundId: string) => {
+        const chat = makeCheckpointChat()
+        chat.ensemble!.activeRound!.roundId = roundId
+        return chat
+      }
+      store.upsertFromChat(round('round-1'), 'round-started')
+      store.upsertFromChat(round('round-2'), 'round-started')
+      const archived = readFileSync(archivePath, 'utf-8')
+      const written = temporaries.length
+
+      // Updates within the round leave the archive's records as they were.
+      store.upsertFromChat(round('round-2'), 'round-updated')
+      store.upsertFromChat(round('round-2'), 'round-updated')
+      expect(temporaries.length - written).toBe(2)
+      expect(readFileSync(archivePath, 'utf-8')).toBe(archived)
+
+      // A new round supersedes another record, and the archive is written again.
+      store.upsertFromChat(round('round-3'), 'round-started')
+      expect(temporaries.length - written).toBe(4)
+      const lines = readFileSync(archivePath, 'utf-8')
+        .split('\n')
+        .filter((line) => line.trim())
+      expect(lines.map((line) => JSON.parse(line).roundId)).toEqual(['round-1', 'round-2'])
+      expect(JSON.parse(readFileSync(storagePath, 'utf-8'))[0].roundId).toBe('round-3')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   it('returns all records from list() including archive', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
     try {
