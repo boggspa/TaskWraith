@@ -566,7 +566,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
-    'offers %s on the documented low..max ladder with a Medium default, staged; only 6.1 Sol is the default',
+    'offers %s on the documented low..max ladder with a Medium default; only 6.1 Sol is the default and GA',
     (id, label, description) => {
       const models = getStaticProviderModels('codex') as StaticModelShape[]
       const row = models.find((model) => model.id === id)
@@ -590,7 +590,9 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
         'gpt-6.1-sol'
       ])
-      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(true)
+      // 6.1 Sol is GA and Codex's own default (2026-10-07), so it is no longer a
+      // staged-rollout append; the 6.0 pair still is.
+      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(id !== 'gpt-6.1-sol')
     }
   )
 
@@ -882,11 +884,11 @@ describe('mergeCodexLiveModelRows', () => {
     })
     // Staged-rollout rows only. The three explicitly-runnable appends were
     // retired 2026-09-18 and mergeCodexLiveModelRows filters retired ids, so
-    // re-adding a row to the static fallback cannot resurrect one here.
+    // re-adding a row to the static fallback cannot resurrect one here. GPT-6.1
+    // Sol is GA (2026-10-07) and comes from the live list, never from an append.
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'gpt-6-astra',
-      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',

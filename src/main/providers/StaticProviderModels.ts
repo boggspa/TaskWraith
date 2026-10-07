@@ -412,11 +412,10 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
   // the day discovery returns it.
   'gpt-6-sol',
   'gpt-6-luna',
-  // GPT-6.1 Sol (2026-09-29): the official model and pricing pages list the
-  // id, but Codex CLI 0.155.1 carries no metadata row for it ("Model metadata
-  // for `gpt-6.1-sol` not found") and a ChatGPT-account turn was refused with
-  // "model is not supported" — the same staged rollout as the 6.0 pair.
-  'gpt-6.1-sol',
+  // GPT-6.1 Sol left this set on 2026-10-07: it is GA and Codex's own default
+  // model, and the private-home `models_cache.json` fetched by Codex CLI
+  // 0.159.0 lists it first. A turn refused with "model is not supported" now
+  // means the Codex CLI TaskWraith launched is outdated, not a rollout gap.
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna'
@@ -434,10 +433,9 @@ export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set<
 
 // Fallback default when a persisted/unknown id can't be resolved, and the row
 // that carries `isDefault`. GPT-6.1 Sol by user decision (2026-10-07), replacing
-// GPT-5.5 once 5.5 left the Codex picker. 6.1 Sol is still listed in
-// CODEX_STAGED_ROLLOUT_MODEL_IDS, so an account not yet ramped onto it has a
-// defaulted run refused upstream ("model is not supported") rather than
-// silently swapped to another model.
+// GPT-5.5 once 5.5 left the Codex picker. 6.1 Sol is GA and Codex's own default,
+// so it is deliberately NOT in CODEX_STAGED_ROLLOUT_MODEL_IDS: a defaulted run
+// refused upstream ("model is not supported") points at an outdated Codex CLI.
 export const CODEX_DEFAULT_MODEL_ID = 'gpt-6.1-sol'
 
 /**
