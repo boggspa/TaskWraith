@@ -1157,3 +1157,23 @@
   flex: 0 0 auto;
   color: var(--model-usage-provider-glow, var(--text-secondary));
 }
+
+/* Expanded meter percentages warm with utilisation (amber from 60%, red
+ * from 90%), the same thresholds the bar's gradient and Limit Counter use. */
+.model-usage-window-percent.is-warning {
+  color: var(--quota-warning-color, #f59e0b);
+}
+
+.model-usage-window-percent.is-danger {
+  color: var(--quota-danger-color, #dc2626);
+}
+
+.app-sidebar .model-usage-liquid-card .model-usage-window-percent.is-warning {
+  color: var(--quota-warning-color, #f59e0b);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--quota-warning-color, #f59e0b) 35%, transparent);
+}
+
+.app-sidebar .model-usage-liquid-card .model-usage-window-percent.is-danger {
+  color: var(--quota-danger-color, #dc2626);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--quota-danger-color, #dc2626) 35%, transparent);
+}

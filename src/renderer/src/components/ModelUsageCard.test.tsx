@@ -11,6 +11,7 @@ import {
   ModelUsageCard,
   PeriodicModelUsageList,
   UsageCreditsSection,
+  expandedQuotaTone,
   orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
@@ -278,6 +279,35 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('6.99')
     expect(html).not.toContain('No data')
     expect(html).not.toContain('model-usage-window"')
+  })
+
+  it('tones expanded meter percentages amber from 60% and red from 90%', () => {
+    expect(expandedQuotaTone(0.59)).toBe('')
+    expect(expandedQuotaTone(0.6)).toBe(' is-warning')
+    expect(expandedQuotaTone(0.89)).toBe(' is-warning')
+    expect(expandedQuotaTone(0.9)).toBe(' is-danger')
+    expect(expandedQuotaTone(null)).toBe('')
+    const windowAt = (id: string, usedPercent: number) => ({
+      id,
+      label: id,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel: `${100 - usedPercent}% remaining`,
+      usedPercent
+    })
+    const html = renderToStaticMarkup(
+      <PeriodicModelUsageList
+        quotaEntries={[
+          quotaEntry({
+            provider: 'codex',
+            windows: [windowAt('Calm', 23), windowAt('Warm', 77), windowAt('Hot', 100)]
+          })
+        ]}
+      />
+    )
+    expect(html).toContain('<span class="model-usage-window-percent">23%</span>')
+    expect(html).toContain('<span class="model-usage-window-percent is-warning">77%</span>')
+    expect(html).toContain('<span class="model-usage-window-percent is-danger">100%</span>')
   })
 
   it('renders cached zero-usage quota windows instead of dropping the provider', () => {

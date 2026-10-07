@@ -361,6 +361,19 @@ function fillFractionForWindow(window: UsageWindowAggregate): number {
   return 0
 }
 
+/**
+ * Tone for an expanded meter's percentage, by utilisation. Limit Counter's
+ * thresholds: provider accent below 60%, amber from 60%, red from 90%. The
+ * compact grid keeps its own tighter 90/98 thresholds because its cells are
+ * too small to carry an early warning without reading as a fault.
+ */
+export function expandedQuotaTone(fraction: number | null | undefined): string {
+  if (fraction == null || !Number.isFinite(fraction)) return ''
+  if (fraction >= 0.9) return ' is-danger'
+  if (fraction >= 0.6) return ' is-warning'
+  return ''
+}
+
 function compactQuotaTone(cell: CompactQuotaCell | undefined): string {
   if (cell?.tone === 'danger') return ' is-danger'
   if (cell?.tone === 'warning') return ' is-warning'
@@ -879,7 +892,9 @@ function UsageWindowRow({
           )}
         </span>
         {windowReset && <span className="model-usage-window-reset">resets {windowReset}</span>}
-        <span className="model-usage-window-percent">{windowEntry.valueText || percentText}</span>
+        <span className={`model-usage-window-percent${expandedQuotaTone(fraction)}`}>
+          {windowEntry.valueText || percentText}
+        </span>
       </div>
       <QuotaProgressBar
         fraction={fraction}
