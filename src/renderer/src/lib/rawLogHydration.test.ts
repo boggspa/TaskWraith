@@ -13,10 +13,21 @@ const state = (
   inFlight: false,
   hasBuffer: false,
   hasRunEventsApi: true,
+  presentationVisible: true,
   ...overrides
 })
 
 describe('shouldHydrateThreadRawLogs', () => {
+  // Thread select used to fetch run events for every chat opened, which made
+  // main parse the whole chat record plus up to 120 run-event files to fill a
+  // panel that was closed. History now waits for the panel.
+  it('does not fetch while the raw-log presentation is hidden', () => {
+    expect(shouldHydrateThreadRawLogs(state({ presentationVisible: false }))).toBe(false)
+    expect(shouldHydrateThreadRawLogs(state({ presentationVisible: false, hasBuffer: true }))).toBe(
+      false
+    )
+  })
+
   // THE BUG. `appendThreadRawLog` creates a buffer for the first
   // renderer-authored line, and the old guard was buffer presence alone -- so
   // one locally-emitted log permanently suppressed run-event hydration for that
@@ -87,6 +98,26 @@ describe('App.tsx hydrates through the guard rather than buffer presence', () =>
     expect(squashed).toContain(squash('shouldHydrateThreadRawLogs({'))
     expect(squashed).toContain(squash('hasBuffer: rawLogsByChatIdRef.current.has(chatId)'))
     expect(squashed).toContain(squash('hydrated: rawLogHydratedRef.current.has(chatId)'))
+  })
+
+  // Visibility is the renderer's existing raw-log presentation gate; hydration
+  // reads it through the guard and the visibility effect is what triggers the
+  // fetch, so opening the Raw Events tab on a thread loads its history and
+  // selecting a thread with the tab closed costs main nothing.
+  it('passes raw-log presentation visibility and hydrates when the panel opens', () => {
+    expect(squashed).toContain(squash('presentationVisible: rawLogPresentationVisibleRef.current'))
+    expect(squashed).toContain(
+      squash(`setRawLogs(rawLogSnapshotForChat(chatId, true))
+        hydrateThreadRawLogsFromEvents(chatId)
+      }, [rightTab, showGeminiTerminal, currentChat?.appChatId])`)
+    )
+  })
+
+  it('no longer hydrates run events from thread select', () => {
+    expect(squashed).not.toContain(
+      squash(`requestUsageSummaryRefresh(getUsageWorkspaceIdForChat(selectedChat), provider)
+      hydrateThreadRawLogsFromEvents(selectedChat.appChatId)`)
+    )
   })
 
   // The exact guard that caused the bug: buffer presence OR'd straight into the

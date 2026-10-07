@@ -5178,7 +5178,8 @@ function App(): React.JSX.Element {
         hydrated: rawLogHydratedRef.current.has(chatId),
         inFlight: rawLogHydrationInFlightRef.current.has(chatId),
         hasBuffer: rawLogsByChatIdRef.current.has(chatId),
-        hasRunEventsApi: typeof window.api.getRunEvents === 'function'
+        hasRunEventsApi: typeof window.api.getRunEvents === 'function',
+        presentationVisible: rawLogPresentationVisibleRef.current
       })
     )
       return
@@ -11159,7 +11160,10 @@ function App(): React.JSX.Element {
     })
     scheduleAfterPaint(() => {
       requestUsageSummaryRefresh(getUsageWorkspaceIdForChat(selectedChat), provider)
-      hydrateThreadRawLogsFromEvents(selectedChat.appChatId)
+      // Run-event history is NOT fetched here: the visibility effect keyed on
+      // the Raw Events tab hydrates it when that panel is actually on screen.
+      // Fetching it per select made main parse the whole chat record plus its
+      // run-event files for every thread opened (see rawLogHydration.ts).
     })
     hydrateSelectedChatAfterPaint(selectedChat)
   }
@@ -11548,6 +11552,7 @@ function App(): React.JSX.Element {
     if (!chatId) return
     rawLogPresentationQueueRef.current?.cancelPending()
     setRawLogs(rawLogSnapshotForChat(chatId, true))
+    hydrateThreadRawLogsFromEvents(chatId)
   }, [rightTab, showGeminiTerminal, currentChat?.appChatId])
 
   useEffect(() => {

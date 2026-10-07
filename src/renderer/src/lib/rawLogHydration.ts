@@ -11,6 +11,15 @@
  * Hydration state is therefore tracked on its own. Buffer presence still
  * matters, but only in one direction: raw-log buffers are evicted under
  * retention pressure, and an evicted thread must be allowed to hydrate again.
+ *
+ * Hydration also waits for the raw-log presentation (the Raw Events tab or
+ * the provider terminal) to be visible. It used to run on every thread
+ * select, and `get-run-events` makes main parse the whole chat record just
+ * to list its run ids, then parse up to 120 run-event files — measured on a
+ * real profile 2026-10-07 at ~0.3s + ~1.5s of main-thread time for the
+ * largest thread, blocking every window, to fill a panel that was closed.
+ * The live lane already drops raw-log bursts while the presentation is
+ * hidden; history follows the same rule and loads when the panel opens.
  */
 export interface ThreadRawLogHydrationState {
   /** This chat has already been hydrated from run events in this session. */
@@ -21,10 +30,13 @@ export interface ThreadRawLogHydrationState {
   hasBuffer: boolean
   /** The run-events bridge is available. */
   hasRunEventsApi: boolean
+  /** The Raw Events tab or the provider terminal is on screen for this chat. */
+  presentationVisible: boolean
 }
 
 export function shouldHydrateThreadRawLogs(state: ThreadRawLogHydrationState): boolean {
   if (!state.hasRunEventsApi) return false
+  if (!state.presentationVisible) return false
   if (state.inFlight) return false
   // Hydrated AND still held: nothing to do. Hydrated but evicted: fetch again.
   if (state.hydrated && state.hasBuffer) return false
