@@ -43,6 +43,10 @@ import {
   resolveSystemThemeAppearance
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
+import {
+  sanitizeActiveProviderAccountIds,
+  sanitizeProviderAccounts
+} from '../providers/ProviderAccounts'
 import { MissionFactLedgerRepository } from '../missionLedger/MissionFactLedger'
 import { MissionFactShadowService } from '../missionLedger/MissionFactShadowService'
 import {
@@ -2723,6 +2727,8 @@ const defaultSettings: AppSettings = {
   ollamaDefaultModel: '',
   defaultGeminiAuthProfileId: null,
   geminiAuthProfiles: [],
+  providerAccounts: [],
+  activeProviderAccountIds: {},
   geminiApiRuntime: 'auto',
   promptCache: DEFAULT_PROMPT_CACHE_SETTINGS,
   userMcpServers: [],
@@ -5377,6 +5383,11 @@ export class AppStore {
             ? null
             : defaultSettings.defaultGeminiAuthProfileId,
       geminiAuthProfiles: Array.isArray(stored.geminiAuthProfiles) ? stored.geminiAuthProfiles : [],
+      providerAccounts: sanitizeProviderAccounts(stored.providerAccounts),
+      activeProviderAccountIds: sanitizeActiveProviderAccountIds(
+        stored.activeProviderAccountIds,
+        sanitizeProviderAccounts(stored.providerAccounts)
+      ),
       userMcpServers: normalizeUserMcpServers(stored.userMcpServers),
       transcriptFontFamily: normalizeSettingsFontFamily(
         stored.transcriptFontFamily,

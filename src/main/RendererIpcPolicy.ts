@@ -666,6 +666,16 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'provider:open-logout-terminal',
   'provider:open-upgrade-terminal',
   'provider:open-kimi-upgrade-terminal',
+  // Secondary provider accounts: a process-wide registry plus terminal
+  // sign-ins and a native folder chooser — main window only.
+  'provider-accounts:list',
+  'provider-accounts:add',
+  'provider-accounts:update',
+  'provider-accounts:remove',
+  'provider-accounts:set-active',
+  'provider-accounts:open-login-terminal',
+  'provider-accounts:pick-config-dir',
+  'provider-accounts:auth-state',
   'host-tool:open-install-terminal',
   'host-tool:status',
   'install-command:open-terminal',

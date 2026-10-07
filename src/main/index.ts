@@ -1425,6 +1425,7 @@ import {
   getStoredKimiApiKey,
   getStoredOllamaApiKey,
   importCodexUsageCredential,
+  readCodexUsageCredentialLive,
   loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
   resolveGeminiAuthProfileEnv,
@@ -2283,6 +2284,12 @@ import {
   openProviderAuthTerminal,
   registerProviderTerminalHandlers
 } from './ipc/providerTerminalHandlers'
+import { registerProviderAccountHandlers } from './ipc/providerAccountHandlers'
+import {
+  createProviderAccountRegistry,
+  providerAccountEnvironment,
+  resolveActiveProviderAccount
+} from './providers/ProviderAccounts'
 import { createProviderTerminalSetupController } from './providers/ProviderTerminalSetupController'
 import { registerHostToolTerminalHandlers } from './ipc/hostToolTerminalHandlers'
 import { registerInstallCommandTerminalHandlers } from './ipc/installCommandTerminalHandlers'
@@ -23136,7 +23143,9 @@ async function prepareClaudeRunEnvironmentAuthority(
         runId: route.appRunId,
         chatId: route.appChatId,
         apiKey: getStoredClaudeApiKey(),
-        auditRun: prepared.auditRun
+        auditRun: prepared.auditRun,
+        accountConfigDir:
+          resolveActiveProviderAccount(AppStore.getSettings(), 'claude')?.configDir ?? null
       },
       cliProviderRuntimeDeps
     )
@@ -61132,6 +61141,38 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     registerProviderTerminalHandlers(providerTerminalHandlersDeps)
+
+    // Secondary Claude / Codex accounts: the registry lives in settings, the
+    // sign-in reuses the provider terminal flow with the account's folder, and
+    // the status probe asks the CLI itself against that folder.
+    registerProviderAccountHandlers({
+      registry: createProviderAccountRegistry({
+        getSettings: () => AppStore.getSettings(),
+        updateSettings: (patch) => AppStore.updateSettings(patch),
+        getUserDataPath: () => app.getPath('userData')
+      }),
+      openAccountLoginTerminal: (account) =>
+        openProviderAuthTerminal(
+          providerTerminalHandlersDeps,
+          account.provider,
+          'login',
+          account.provider === 'codex'
+            ? { codexHome: account.configDir, accountLabel: account.label }
+            : { environment: providerAccountEnvironment(account), accountLabel: account.label }
+        ),
+      readAccountAuthState: async (account) => {
+        const resolved = await resolveCliProviderBinary(account.provider)
+        if (account.provider === 'claude') {
+          return readClaudeAuthState(resolved, cliProviderRuntimeDeps, providerAccountEnvironment(account))
+        }
+        // A Codex account is signed in when its private home holds a usable
+        // auth.json — the same live read the usage meter makes.
+        return (await readCodexUsageCredentialLive(account.configDir)) ? 'authenticated' : 'missing'
+      },
+      getMainWindow: () => mainWindow,
+      showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+      isMainRendererSender
+    })
 
     registerHostToolTerminalHandlers({
       // Same augmented search-dir probe every other CLI uses, so the popover's

@@ -660,7 +660,9 @@ export async function readResolvedCliVersion(
 
 export async function readClaudeAuthState(
   resolved: ResolvedProviderBinary,
-  deps?: CliProviderRuntimeDependencies
+  deps?: CliProviderRuntimeDependencies,
+  /** e.g. `{ CLAUDE_CONFIG_DIR }` to probe a secondary account's folder. */
+  extraEnv: Record<string, string> = {}
 ): Promise<string> {
   if (!resolved.binaryPath) return 'unknown'
   // The external CLI can query the native keychain independently of Electron.
@@ -670,7 +672,8 @@ export async function readClaudeAuthState(
     ['auth', 'status'],
     undefined,
     8_000,
-    deps
+    deps,
+    extraEnv
   )
   if (output.code === 0) return 'authenticated'
   const combined = (output.stdout + output.stderr).toLowerCase()

@@ -431,6 +431,17 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'provider:open-login-terminal': ['provider'],
   'provider:open-logout-terminal': ['provider'],
   'provider:open-upgrade-terminal': ['provider'],
+  // Secondary Claude / Codex sign-ins (providers/ProviderAccounts.ts). Every
+  // payload is re-validated in the handler; the registry rejects anything
+  // that is not a well-formed account.
+  'provider-accounts:list': ['optionalProvider'],
+  'provider-accounts:add': ['object'],
+  'provider-accounts:update': ['object'],
+  'provider-accounts:remove': ['nonEmptyString'],
+  'provider-accounts:set-active': ['object'],
+  'provider-accounts:open-login-terminal': ['nonEmptyString'],
+  'provider-accounts:pick-config-dir': [],
+  'provider-accounts:auth-state': ['nonEmptyString'],
   // Optional host CLIs (gh) — a separate lane from the provider terminal
   // channels because a host tool is not a ProviderId.
   'host-tool:open-install-terminal': ['hostCliToolId'],

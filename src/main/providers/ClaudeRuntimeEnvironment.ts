@@ -19,6 +19,14 @@ export interface ClaudeRuntimeRouteEnvironmentInput {
   readonly chatId?: string | null
   readonly apiKey?: string | null
   readonly auditRun?: boolean
+  /**
+   * The active secondary Claude account's config folder (Settings →
+   * Providers → Claude → Accounts). Exported as `CLAUDE_CONFIG_DIR` so the CLI
+   * signs the seat in with that account; null/absent keeps the primary
+   * `~/.claude` sign-in. Caller-owned launch state, so it wins over a runtime
+   * profile's inherited value the same way the other route keys do.
+   */
+  readonly accountConfigDir?: string | null
 }
 
 export interface ClaudeEnvironmentAuthorityInput extends ClaudeRuntimeRouteEnvironmentInput {
@@ -186,7 +194,8 @@ export function buildClaudeRuntimeRouteEnvironment(
     // Always stamp the negative case so a runtime profile cannot self-enrol a
     // normal or maintenance run into TaskWraith's audit-only MCP surface.
     TASKWRAITH_MCP_AUDIT: input.auditRun ? '1' : '0',
-    ...(input.apiKey ? { ANTHROPIC_API_KEY: input.apiKey } : {})
+    ...(input.apiKey ? { ANTHROPIC_API_KEY: input.apiKey } : {}),
+    ...(input.accountConfigDir ? { CLAUDE_CONFIG_DIR: input.accountConfigDir } : {})
   }
 }
 

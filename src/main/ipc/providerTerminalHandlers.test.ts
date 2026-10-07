@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { basename, join } from 'path'
 import { ipcMain } from 'electron'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
-import { registerProviderTerminalHandlers } from './providerTerminalHandlers'
+import {
+  openProviderAuthTerminal,
+  registerProviderTerminalHandlers
+} from './providerTerminalHandlers'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -281,6 +284,50 @@ describe('registerProviderTerminalHandlers', () => {
       deps.chmodSync.mock.invocationCallOrder[0]
     )
     expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+  })
+
+  it('signs a secondary Claude account in with its folder exported, in its own script file', async () => {
+    const { deps, loginDir } = createDeps()
+    await expect(
+      openProviderAuthTerminal(deps, 'claude', 'login', {
+        environment: { CLAUDE_CONFIG_DIR: '/Users/tester/.claude-work' },
+        accountLabel: 'Work (Boggspa)'
+      })
+    ).resolves.toEqual({ ok: true })
+    const [file, script] = deps.writeFileSync.mock.calls[0] as [string, string]
+    expect(file).toBe(join(loginDir, 'claude-login-work-boggspa.command'))
+    expect(script).toContain("export CLAUDE_CONFIG_DIR='/Users/tester/.claude-work'")
+    expect(script).toContain('Claude · Work (Boggspa) for TaskWraith')
+    expect(script).toContain("'/usr/local/bin/claude' 'auth' 'login'")
+    expect(script.indexOf('export CLAUDE_CONFIG_DIR')).toBeLessThan(
+      script.indexOf("'auth' 'login'")
+    )
+  })
+
+  it('signs a secondary Codex account in against its own private home, not the primary one', async () => {
+    const { deps, loginDir } = createDeps()
+    const home = '/tmp/taskwraith/codex-home-accounts/codex-second-abc123'
+    await expect(
+      openProviderAuthTerminal(deps, 'codex', 'login', { codexHome: home, accountLabel: 'Second' })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.mkdirSync).toHaveBeenCalledWith(home, { recursive: true, mode: 0o700 })
+    expect(deps.lstatSync).toHaveBeenCalledWith(home)
+    const [file, script] = deps.writeFileSync.mock.calls[0] as [string, string]
+    expect(file).toBe(join(loginDir, 'codex-login-second.command'))
+    expect(script).toContain(`export CODEX_HOME='${home}'`)
+    expect(script).not.toContain(`export CODEX_HOME='${join('/tmp/taskwraith', 'codex-home')}'`)
+  })
+
+  it('still refuses a symlinked account home exactly like the primary home', async () => {
+    const { deps } = createDeps()
+    deps.lstatSync.mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => true })
+    const result = await openProviderAuthTerminal(deps, 'codex', 'login', {
+      codexHome: '/tmp/taskwraith/codex-home-accounts/codex-x',
+      accountLabel: 'X'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/not a symlink/)
+    expect(deps.openPath).not.toHaveBeenCalled()
   })
 
   it('generates Windows .ps1/.cmd launchers and opens the .cmd', async () => {

@@ -2545,6 +2545,26 @@ export interface ProviderApiKeyStatus {
   transportSupported?: boolean
 }
 
+/** Providers that can hold extra CLI sign-ins beside the primary one. */
+export type ProviderAccountProviderId = 'claude' | 'codex'
+
+/**
+ * A secondary sign-in for a provider, tracked beside the primary account. The
+ * only identity it carries is the config folder its CLI signs in to —
+ * `CLAUDE_CONFIG_DIR` for Claude, a TaskWraith-owned private `CODEX_HOME` for
+ * Codex. Credentials never live here; see `providers/ProviderAccounts.ts`.
+ */
+export interface ProviderCliAccount {
+  id: string
+  provider: ProviderAccountProviderId
+  /** User-chosen display label ("Work"), never an email. */
+  label: string
+  /** Absolute path of the account's config folder. */
+  configDir: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type GeminiAuthProfileKind = 'api-key' | 'vertex-ai' | 'google-oauth'
 
 export interface GeminiAuthProfile {
@@ -2759,6 +2779,14 @@ export interface AppSettings {
   museMonthlySpendCapUsd?: number | null
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
+  /**
+   * Extra Claude / Codex sign-ins beside the primary one. Mutated only through
+   * the `provider-accounts:*` IPC (deliberately NOT a settings-patch key), so a
+   * stale renderer mirror can never overwrite the registry.
+   */
+  providerAccounts?: ProviderCliAccount[]
+  /** Per provider, the secondary account new seats launch with; absent/null = primary. */
+  activeProviderAccountIds?: Partial<Record<ProviderAccountProviderId, string | null>>
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}
    * for the per-mode semantics. Defaults to `'auto'`: use the API path
    * when an API key is configured, else CLI. `'always'` requires API;

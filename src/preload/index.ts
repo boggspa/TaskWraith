@@ -1901,6 +1901,23 @@ const api = {
       managedRunReady?: false
       notice?: string
     }>,
+  /** Secondary Claude / Codex accounts beside the primary sign-in. Labels and
+   * config folders only — credentials never cross this bridge. */
+  listProviderAccounts: (provider?: ProviderId) =>
+    ipcRenderer.invoke('provider-accounts:list', provider),
+  addProviderAccount: (input: { provider: ProviderId; label?: string; configDir?: string }) =>
+    ipcRenderer.invoke('provider-accounts:add', input),
+  updateProviderAccount: (input: { id: string; label?: string; configDir?: string }) =>
+    ipcRenderer.invoke('provider-accounts:update', input),
+  removeProviderAccount: (accountId: string) =>
+    ipcRenderer.invoke('provider-accounts:remove', accountId),
+  setActiveProviderAccount: (input: { provider: ProviderId; accountId: string | null }) =>
+    ipcRenderer.invoke('provider-accounts:set-active', input),
+  openProviderAccountLoginTerminal: (accountId: string) =>
+    ipcRenderer.invoke('provider-accounts:open-login-terminal', accountId),
+  pickProviderAccountConfigDir: () => ipcRenderer.invoke('provider-accounts:pick-config-dir'),
+  getProviderAccountAuthState: (accountId: string) =>
+    ipcRenderer.invoke('provider-accounts:auth-state', accountId),
   /** Catalog install commands (provider CLIs + Ollama model pulls): opens a
    * Terminal running the official command for this catalog row id. */
   openInstallCommandTerminal: (commandId: string) =>

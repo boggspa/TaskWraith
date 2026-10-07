@@ -225,6 +225,18 @@ describe('Claude environment authority', () => {
     expect(Object.isFrozen(authority.env)).toBe(true)
   })
 
+  it('exports the active secondary account folder as CLAUDE_CONFIG_DIR, and nothing when primary', () => {
+    const primary = prepareClaudeEnvironmentAuthority(authorityInput(), dependencies())
+    expect(primary.env.CLAUDE_CONFIG_DIR).toBeUndefined()
+
+    const secondary = prepareClaudeEnvironmentAuthority(
+      { ...authorityInput(), accountConfigDir: '/Users/tester/.claude-work' },
+      dependencies()
+    )
+    expect(secondary.env.CLAUDE_CONFIG_DIR).toBe('/Users/tester/.claude-work')
+    expect(secondary.env.TASKWRAITH_PARENT_PROVIDER).toBe('claude')
+  })
+
   it('stamps audit authority once for both SDK and CLI consumers', () => {
     const authority = prepareClaudeEnvironmentAuthority(
       authorityInput({ auditRun: true }),

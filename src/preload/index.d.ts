@@ -100,6 +100,8 @@ import type {
   ChatComposerSelectionPatchResult
 } from '../shared/chatComposerSelectionPatch'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type { ProviderAccountSummary } from '../main/providers/ProviderAccounts'
+import type { ProviderAccountMutationResult } from '../main/ipc/providerAccountHandlers'
 import type {
   UsageWebSessionImportOutcome,
   UsageWebSessionProviderId,
@@ -1896,6 +1898,36 @@ declare global {
         managedRunReady?: false
         notice?: string
       }>
+      /** Secondary Claude / Codex accounts beside the primary sign-in. */
+      listProviderAccounts: (provider?: ProviderId) => Promise<ProviderAccountSummary[]>
+      addProviderAccount: (input: {
+        provider: ProviderId
+        label?: string
+        configDir?: string
+      }) => Promise<ProviderAccountMutationResult<ProviderAccountSummary>>
+      updateProviderAccount: (input: {
+        id: string
+        label?: string
+        configDir?: string
+      }) => Promise<ProviderAccountMutationResult<ProviderAccountSummary>>
+      removeProviderAccount: (accountId: string) => Promise<ProviderAccountMutationResult<boolean>>
+      setActiveProviderAccount: (input: {
+        provider: ProviderId
+        accountId: string | null
+      }) => Promise<
+        ProviderAccountMutationResult<{ provider: ProviderId; accountId: string | null }>
+      >
+      openProviderAccountLoginTerminal: (accountId: string) => Promise<{
+        ok: boolean
+        error?: string
+        scope?: 'user-owned-provider-setup'
+        managedRunReady?: false
+        notice?: string
+      }>
+      pickProviderAccountConfigDir: () => Promise<string | null>
+      getProviderAccountAuthState: (
+        accountId: string
+      ) => Promise<{ accountId: string; authState: string } | null>
       /**
        * Catalog install commands (provider CLIs + Ollama model pulls): opens a
        * Terminal running the official command for this catalog row id. Main
