@@ -1092,6 +1092,7 @@ import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunD
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import { tryCommitEnsembleSeatPatch } from './lib/ensembleSeatPatchCommit'
 import { needsDispatchHistoryHydration } from './lib/dispatchHistoryHydration'
+import { preDispatchFailurePrompt } from './lib/preDispatchFailureRows'
 import {
   overlayPendingEnsembleSeatSelections,
   queuePendingEnsembleSeatSelection,
@@ -14586,6 +14587,7 @@ function App(): React.JSX.Element {
     // user always sees an error if something escapes the inner catches.
     let currentRunIdForCleanup = runRequest?.appRunId
     let dispatchAccepted = false
+    let ensembleRoundIpcInvoked = false
     let requestForClaimCleanup = runRequest
     // Hoisted so the outer catch can honour the ordering invariant: a run
     // error must never land in the transcript before the user message that
@@ -14782,6 +14784,7 @@ function App(): React.JSX.Element {
             ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
             : false
         try {
+          ensembleRoundIpcInvoked = true
           const dispatchReceipt = await window.api.runEnsembleRound({
             chatId: runChat.appChatId,
             prompt: request.prompt,
@@ -16411,23 +16414,23 @@ function App(): React.JSX.Element {
           // (before the prompt row is written) would otherwise append this
           // error first — and a re-send would then stack its prompt AFTER
           // the error, so the transcript read the failure above its own
-          // request. Ensemble prompts are excluded: their receipt rows are
-          // authored by the orchestrator in main, not by this function.
+          // request. An Ensemble prompt row is authored by the orchestrator
+          // in main, so it is landed here only when `runEnsembleRound` was
+          // provably never invoked; a throw from that IPC is ambiguous and
+          // lands nothing extra (see preDispatchFailurePrompt).
           const promptRowWritten =
             typeof promptMessageId === 'string' &&
             nextMessages.some((existing) => existing.id === promptMessageId)
-          const fallbackPrompt =
-            typeof runRequest?.displayPrompt === 'string' && runRequest.displayPrompt.trim()
-              ? runRequest.displayPrompt
-              : typeof runRequest?.prompt === 'string'
-                ? runRequest.prompt.trim()
-                : ''
-          if (
-            !promptRowWritten &&
-            !runRequest?.existingPrompt &&
-            fallbackPrompt &&
-            (runRequest?.chatRecord ?? currentChat)?.chatKind !== 'ensemble'
-          ) {
+          const fallbackPrompt = preDispatchFailurePrompt({
+            chatKind: (runRequest?.chatRecord ?? currentChat)?.chatKind,
+            dispatchAccepted,
+            ensembleRoundIpcInvoked,
+            promptRowWritten,
+            existingPrompt: runRequest?.existingPrompt,
+            displayPrompt: runRequest?.displayPrompt,
+            prompt: runRequest?.prompt
+          })
+          if (fallbackPrompt) {
             nextMessages.push({
               id: createMessageId(),
               role: 'user',
