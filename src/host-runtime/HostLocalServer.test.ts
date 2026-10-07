@@ -1642,6 +1642,7 @@ describe('HostLocalServer', () => {
         deltaListeners.push(listener)
         return vi.fn()
       })
+      const log = vi.fn<(line: string) => void>()
       server = new HostLocalServer({
         userDataPath,
         hostId: 'test-host',
@@ -1650,6 +1651,7 @@ describe('HostLocalServer', () => {
         authority: authority as unknown as HostAuthority,
         maxClients: 4,
         subscribeDeltas,
+        log,
         now: () => 1754300000000
       })
       await server.start()
@@ -1657,7 +1659,13 @@ describe('HostLocalServer', () => {
       const token = readFileSync(server.tokenPath, 'utf8').trim()
       const slowClient = await connectClient(server.socketPath)
       slowClient.writeLine(
-        JSON.stringify(makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health']))
+        JSON.stringify(
+          makeClientHello(token, ['bootstrap', 'snapshot', 'deltas', 'health'], {
+            clientId: 'slow-client',
+            clientClass: 'test',
+            clientVersion: '1.0.0'
+          })
+        )
       )
       expect((await slowClient.readFrame()).type).toBe('welcome')
       slowClient.pause()
@@ -1696,6 +1704,21 @@ describe('HostLocalServer', () => {
       }
 
       await vi.waitFor(() => expect(server.clientCount()).toBe(1), { timeout: 5_000 })
+
+      // The Host names the eviction: who, how far behind, which frame. Sizes
+      // and kinds only, never the payload.
+      const evictions = log.mock.calls
+        .map(([line]) => line)
+        .filter((line) => line.includes('evicted a client that is not draining'))
+      expect(evictions).toHaveLength(1)
+      expect(evictions[0]).toMatch(
+        /^\[host-local-server\] evicted a client that is not draining: connection=\d+ clientClass=test clientId=slow-client backlogBytes=\d+ frameBytes=\d+ ceilingBytes=\d+ frame=event:deltas:thread$/
+      )
+      const backlog = Number(/backlogBytes=(\d+)/.exec(evictions[0]!)![1])
+      const frameBytes = Number(/frameBytes=(\d+)/.exec(evictions[0]!)![1])
+      const ceiling = Number(/ceilingBytes=(\d+)/.exec(evictions[0]!)![1])
+      expect(backlog + frameBytes).toBeGreaterThan(ceiling)
+      expect(evictions[0]).not.toContain('xxxx')
 
       healthyClient.writeLine(
         JSON.stringify(makeRequest('health.get' as never, 'health-after-slow-client'))

@@ -276,6 +276,35 @@ function safeTokenEquals(expected: string, received: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+/** What is known when a client socket is evicted for not draining: sizes and kinds, no payload. */
+interface HostLocalSocketEviction {
+  readonly backlogBytes: number
+  readonly frameBytes: number
+  readonly frame: string
+}
+
+/**
+ * The server's eviction reporter for each socket it accepted. `socketWrite`
+ * is a free function its many call sites share; the reporter names the client
+ * behind a socket without every caller passing its connection state.
+ */
+const evictionReporters = new WeakMap<Socket, (eviction: HostLocalSocketEviction) => void>()
+
+/** A frame's kind for a log line: never its payload. */
+function hostLocalFrameKind(frame: HostLocalTransportHostFrame): string {
+  if (frame.type === 'event') {
+    if (frame.event !== 'deltas') return `event:${frame.event}`
+    const result = frame.payload.result
+    if (result.kind !== 'deltas') return `event:deltas:${result.kind}`
+    const families = [...new Set(result.deltas.map((delta) => delta.family))].sort()
+    return `event:deltas:${families.join('+') || 'none'}`
+  }
+  if (frame.type === 'response') {
+    return frame.ok ? `response:${frame.result.kind}` : `response:error:${frame.error.code}`
+  }
+  return frame.type
+}
+
 function socketWrite(
   socket: Socket,
   frame: HostLocalTransportHostFrame,
@@ -312,6 +341,11 @@ function socketWrite(
     }
   }
   if (socket.writableLength + bytes > MAX_SOCKET_WRITE_BACKLOG_BYTES) {
+    evictionReporters.get(socket)?.({
+      backlogBytes: socket.writableLength,
+      frameBytes: bytes,
+      frame: hostLocalFrameKind(frame)
+    })
     socket.destroy(new Error('Host local client is not draining responses.'))
     return false
   }
@@ -852,10 +886,35 @@ export class HostLocalServer {
     }
     clearTimeout(state.handshakeTimer)
     this.armHandshakeDeadline(state)
+    evictionReporters.set(socket, (eviction) => this.logEviction(state, eviction))
     this.clients.add(state)
     socket.on('data', (chunk: string) => this.onData(state, chunk))
     socket.on('error', () => this.drop(state))
     socket.on('close', () => this.drop(state))
+  }
+
+  /**
+   * Name a slow-consumer eviction: until now the Host destroyed the socket
+   * silently and only main logged a disconnect, so a drop could not be told
+   * from a crash or a stalled loop. Sizes, kinds and the client's identity
+   * only; a paired phone's clientId is its pair id, withheld as `host.status`
+   * withholds it.
+   */
+  private logEviction(state: ClientState, eviction: HostLocalSocketEviction): void {
+    const identity = state.binding?.authenticatedClient
+    const client = identity
+      ? `clientClass=${identity.clientClass}` +
+        (identity.clientClass === 'ios' ? '' : ` clientId=${identity.clientId}`)
+      : 'clientClass=unbound'
+    try {
+      this.options.log?.(
+        `[host-local-server] evicted a client that is not draining: connection=${state.connectionId} ` +
+          `${client} backlogBytes=${eviction.backlogBytes} frameBytes=${eviction.frameBytes} ` +
+          `ceilingBytes=${MAX_SOCKET_WRITE_BACKLOG_BYTES} frame=${eviction.frame}`
+      )
+    } catch {
+      // An observer never changes the eviction.
+    }
   }
 
   private drop(state: ClientState): void {
