@@ -33,6 +33,7 @@ import type { HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import {
   HOST_PROFILE_ROUND_PROJECTION_LIMIT,
   HOST_PROFILE_RUN_PROJECTION_LIMIT,
+  HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
   type HostProfileDomainSnapshotFamilies
 } from './HostProfileDomainProjection'
 import {
@@ -213,9 +214,7 @@ function assembleFromWindow(
       warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
       severity: 'warning',
       code: HOST_WARNING_PROJECTION_WINDOWED,
-      message:
-        `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${total} to ` +
-        `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
+      message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
       at: window.reduce((latest, entry) => Math.max(latest, entry.candidate.recency), 0)
     })
   }
@@ -1484,9 +1483,7 @@ export class HostPublicWindowIndex {
         warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
         severity: 'warning',
         code: HOST_WARNING_PROJECTION_WINDOWED,
-        message:
-          `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${total} to ` +
-          `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
+        message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
         at: runsAt
       })
     }
@@ -1507,10 +1504,11 @@ export class HostPublicWindowIndex {
         .sort((left, right) => compareIds(left.warningId, right.warningId))
         .map((warning) => [warning.warningId, warning])
     )
-    // The index's own warnings change only when they say something new: their
-    // time is the publication's, not news.
+    // A warning changes only when it says something new: the index's own
+    // carry the publication's time, and the donor's the newest row's, which a
+    // new run moves on every publication. Neither time is news.
     const priorWarnings = this.published.get('warning')!
-    for (const warning of own) {
+    for (const warning of [...donorWarnings, ...own]) {
       const prior = priorWarnings.get(warning.warningId) as HostWarningProjection | undefined
       if (prior && hostProjectionUnchanged('warning', { ...prior, at: 0 }, { ...warning, at: 0 })) {
         warnings.set(warning.warningId, prior)

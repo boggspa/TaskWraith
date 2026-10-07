@@ -6,6 +6,9 @@
  * order, over random sequences of models, deletes, older revisions, cut
  * models, seeds, commits and aborts. An abort leaves the index as it was.
  *
+ * Warnings are compared modulo two deliberate changes the frozen reference
+ * predates (see `comparableWarning`).
+ *
  * Declared out of scope: duplicate round ids tied on live and recency across
  * threads (the old code broke the tie by insertion order, the new by thread
  * id). Round ids here are unique per thread, or shared with a recency unique
@@ -14,7 +17,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { HOST_WARNING_PROJECTION_WINDOWED } from '../shared/hostProtocol'
 import type { HostDomainEffectDto } from './HostDomainDeltaPublisher'
+import { HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE } from './HostProfileDomainProjection'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HostPublicWindowIndex,
@@ -135,6 +140,62 @@ function same(left: unknown, right: unknown): boolean {
   return true
 }
 
+/**
+ * A warning as both indexes are compared. The frozen reference predates two
+ * deliberate changes: the runs window warning no longer carries the running
+ * total or the loading flavour in its text, and a warning keeps its time until
+ * it says something new (before, only the index's own warnings did). So the
+ * reference's runs window text is read as the stable one, and no warning's
+ * time is compared.
+ */
+function comparableWarning(entityId: string, row: unknown): unknown {
+  const warning = row as Record<string, unknown>
+  return entityId === `${HOST_WARNING_PROJECTION_WINDOWED}:runs`
+    ? { ...warning, message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE, at: 0 }
+    : { ...warning, at: 0 }
+}
+
+/** Every family's rows, warnings comparable. */
+function comparableWire(wire: HostPublicWindowWire): WireEntries {
+  return Object.fromEntries(
+    FAMILIES.map((family) => [
+      family,
+      [...wire.get(family)!.entries()].map(
+        ([id, row]) => [id, family === 'warning' ? comparableWarning(id, row) : row] as const
+      )
+    ])
+  )
+}
+
+/**
+ * The reference's effects as the index now publishes them: a warning upsert
+ * that says nothing new over the reference's published row (only its time, or
+ * the runs window's total or flavour, moved) is not published, and the rest
+ * carry comparable warnings. The index's own effects are compared unfiltered,
+ * so one it republishes needlessly still fails.
+ */
+function referenceEffectsAsPublished(
+  effects: readonly HostDomainEffectDto[],
+  published: ReadonlyMap<string, unknown>
+): HostDomainEffectDto[] {
+  return effects.flatMap((effect) => {
+    if (effect.family !== 'warning' || effect.kind !== 'upsert') return [effect]
+    const id = effect.entityId!
+    const payload = comparableWarning(id, effect.payload)
+    const prior = published.get(id)
+    if (prior !== undefined && same(comparableWarning(id, prior), payload)) return []
+    return [{ ...effect, payload }]
+  })
+}
+
+function comparableEffects(effects: readonly HostDomainEffectDto[]): HostDomainEffectDto[] {
+  return effects.map((effect) =>
+    effect.family === 'warning' && effect.kind === 'upsert'
+      ? { ...effect, payload: comparableWarning(effect.entityId!, effect.payload) }
+      : effect
+  )
+}
+
 /** Equal, with vitest's diff on a mismatch. */
 function expectSame(actual: unknown, expected: unknown): void {
   if (!same(actual, expected)) expect(actual).toEqual(expected)
@@ -181,7 +242,14 @@ class Pair {
   prepare(changes: readonly HostPublicWindowChange[], publication: HostPublicWindowPublication) {
     const fresh = this.fresh.prepare(changes, publication)
     const reference = this.reference.prepare(changes, publication)
-    expectSame(outcomeOf(fresh), outcomeOf(reference))
+    const published = this.reference.wire().get('warning')!
+    expectSame(
+      { ...outcomeOf(fresh), effects: comparableEffects(fresh.effects) },
+      {
+        ...outcomeOf(reference),
+        effects: referenceEffectsAsPublished(reference.effects, published)
+      }
+    )
     return { fresh, reference }
   }
 
@@ -201,8 +269,10 @@ class Pair {
     const fresh = this.fresh.wire()
     const reference = this.reference.wire()
     expect([...fresh.keys()].sort()).toEqual([...reference.keys()].sort())
+    const comparableFresh = comparableWire(fresh)
+    const comparableReference = comparableWire(reference)
     for (const family of FAMILIES) {
-      expectSame([...fresh.get(family)!.entries()], [...reference.get(family)!.entries()])
+      expectSame(comparableFresh[family], comparableReference[family])
     }
   }
 }

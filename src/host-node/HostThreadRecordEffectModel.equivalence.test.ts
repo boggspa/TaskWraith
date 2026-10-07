@@ -24,7 +24,10 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { projectHostProfileDomainSnapshot } from '../host-runtime/HostProfileDomainProjection'
+import {
+  HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
+  projectHostProfileDomainSnapshot
+} from '../host-runtime/HostProfileDomainProjection'
 import {
   HOST_PROFILE_CHATS_DIRECTORY,
   HostProfileDomainStore,
@@ -915,6 +918,44 @@ function applyEffects(state: ClientState, effects: readonly HostDomainEffectDto[
   return next
 }
 
+/**
+ * A client state with every warning's time set aside: the index keeps a
+ * warning's time until the warning says something new, so a client holds the
+ * time it was last published with, where the donor stamps every capture.
+ */
+function timeless(state: ClientState): ClientState {
+  return new Map(
+    [...state].map(([family, rows]) => [
+      family,
+      family === 'warning'
+        ? new Map(
+            [...rows].map(([id, row]) => [id, { ...(row as Record<string, unknown>), at: 0 }])
+          )
+        : rows
+    ])
+  )
+}
+
+/**
+ * The legacy diff's effects as the index publishes them: a warning upsert that
+ * moves only the warning's time over what the client holds is not published.
+ */
+function legacyAsPublished(
+  effects: readonly HostDomainEffectDto[],
+  client: ClientState
+): HostDomainEffectDto[] {
+  const held = client.get('warning')!
+  return effects.filter((effect) => {
+    if (effect.family !== 'warning' || effect.kind !== 'upsert') return true
+    const prior = held.get(effect.entityId!)
+    if (prior === undefined) return true
+    return (
+      JSON.stringify({ ...(prior as Record<string, unknown>), at: 0 }) !==
+      JSON.stringify({ ...(effect.payload as Record<string, unknown>), at: 0 })
+    )
+  })
+}
+
 function fromIndex(index: HostPublicWindowIndex): ClientState {
   return new Map([...index.wire()].map(([family, rows]) => [family, new Map(rows)]))
 }
@@ -955,7 +996,7 @@ const PUBLICATION = { generatedAt: POSITION.generatedAt }
 
 /**
  * A short window is what the donor shows while its catalogue has indexed
- * only those runs: the same rows, members and still-loading warning.
+ * only those runs: the same rows, members and runs window warning.
  */
 function expectLoadingDonor(
   profile: Profile,
@@ -979,9 +1020,9 @@ function expectLoadingDonor(
   const loading = wire(donorFamilies(profile))
   profile.runWindow = settled
   if (!loading.ok) throw new Error(loading.error)
-  expect(client).toEqual(snapshotState(loading.value))
+  expect(timeless(client)).toEqual(timeless(snapshotState(loading.value)))
   expect(client.get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)).toMatchObject({
-    message: expect.stringContaining('still loading')
+    message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE
   })
 }
 
@@ -1038,12 +1079,14 @@ function publishChange(
       transaction = index.prepare([modelChange(profile, transaction.refill[0]!)], PUBLICATION)
     }
   }
-  expect(client).toEqual(snapshotState(next.value))
+  expect(timeless(client)).toEqual(timeless(snapshotState(next.value)))
   const exact = prior.snapshot !== null && (mode === 'absorb' || refills === 0)
   if (exact) {
     const legacy = diffHostSnapshotDomainEffects(prior.snapshot, next.value)
     if (legacy.kind !== 'effects') throw new Error(`legacy diff ${legacy.kind}`)
-    expect(JSON.stringify(effects)).toBe(JSON.stringify(legacy.effects))
+    expect(JSON.stringify(effects)).toBe(
+      JSON.stringify(legacyAsPublished(legacy.effects, prior.client))
+    )
   }
   return { published: { snapshot: next.value, client }, effects, refills, exact }
 }

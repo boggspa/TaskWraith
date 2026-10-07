@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HOST_WARNING_PROJECTION_WINDOWED } from '../shared/hostProtocol'
 import type { HostDomainEffectDto } from './HostDomainDeltaPublisher'
+import { HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE } from './HostProfileDomainProjection'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   assembleHostPublicWindowFamilies,
@@ -168,14 +169,16 @@ describe('assembleHostPublicWindowFamilies', () => {
     expect(families.warnings.map((warning) => warning.warningId)).toEqual([
       `${HOST_WARNING_PROJECTION_WINDOWED}:runs`
     ])
+    // The text carries neither the running total nor the loading flavour: a
+    // new run must not change what the warning says.
     expect(families.warnings[0]).toMatchObject({
       message:
-        'family runs intentionally windowed from 1801 to 1800; possibly-live rows precede recent terminal rows',
+        'family runs intentionally windowed to 1800; possibly-live rows precede recent terminal rows',
       at: T0 + 11
     })
   })
 
-  it('reports a window still loading while candidates are incomplete', () => {
+  it('keeps the runs window warning up while candidates are incomplete, in the same text', () => {
     const families = assembleHostPublicWindowFamilies(
       [modelOf({ appChatId: 'a', runs: [run('r', 0)] })],
       {
@@ -186,7 +189,7 @@ describe('assembleHostPublicWindowFamilies', () => {
       expect.objectContaining({
         warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
         message:
-          'family runs still loading from 1 to 1800; possibly-live rows precede recent terminal rows',
+          'family runs intentionally windowed to 1800; possibly-live rows precede recent terminal rows',
         at: T0 + 1
       })
     ])
@@ -260,8 +263,14 @@ describe('assembleHostPublicWindowFamilies', () => {
 
 type ClientState = Map<string, Map<string, unknown>>
 const FAMILIES = ['thread', 'run', 'round', 'participant', 'warning'] as const
-/** The index's own warnings: stamped with the publication, not the data. */
-const PROJECTOR_WARNING = /^projection_(rows_omitted|truncated|rows_withheld):/
+/**
+ * A warning's time is not compared: the index's own warnings carry the
+ * publication's, and every warning keeps the time it was last published with
+ * until it says something new.
+ */
+function timeless(family: string, row: unknown): unknown {
+  return family === 'warning' ? { ...(row as Record<string, unknown>), at: 0 } : row
+}
 
 function emptyClient(): ClientState {
   return new Map(FAMILIES.map((family) => [family, new Map<string, unknown>()]))
@@ -344,19 +353,12 @@ function freshClient(
   )
 }
 
-/** Comparable state: the projector's own warnings carry the publication's time. */
+/** Comparable state: warnings without their time. */
 function comparable(state: ClientState): Record<string, Record<string, unknown>> {
   return Object.fromEntries(
     [...state].map(([family, rows]) => [
       family,
-      Object.fromEntries(
-        [...rows].map(([id, row]) => [
-          id,
-          family === 'warning' && PROJECTOR_WARNING.test(id)
-            ? { ...(row as Record<string, unknown>), at: 0 }
-            : row
-        ])
-      )
+      Object.fromEntries([...rows].map(([id, row]) => [id, timeless(family, row)]))
     ])
   )
 }
@@ -413,12 +415,6 @@ function lives() {
   }
 }
 
-function masked(family: string, entityId: string, row: unknown): unknown {
-  return family === 'warning' && PROJECTOR_WARNING.test(entityId)
-    ? { ...(row as Record<string, unknown>), at: 0 }
-    : row
-}
-
 /** Effects come in the snapshot diff's order and each one changes something. */
 function expectMinimalEffects(before: ClientState, effects: readonly HostDomainEffectDto[]): void {
   let lastFamily = -1
@@ -433,9 +429,7 @@ function expectMinimalEffects(before: ClientState, effects: readonly HostDomainE
     if (effect.kind === 'tombstone') {
       expect(prior).toBeDefined()
     } else if (prior !== undefined) {
-      expect(masked(effect.family, effect.entityId, effect.payload)).not.toEqual(
-        masked(effect.family, effect.entityId, prior)
-      )
+      expect(timeless(effect.family, effect.payload)).not.toEqual(timeless(effect.family, prior))
     }
   }
 }
@@ -445,8 +439,8 @@ function expectMinimalEffects(before: ClientState, effects: readonly HostDomainE
  * client holds with a fresh projection of every thread's full model.
  * - `absorb`: a short window is aborted and prepared again with the named
  *   threads modelled in full, so one transaction publishes the change;
- * - `publish-short`: the short window is committed (still loading) and each
- *   refill is its own transaction.
+ * - `publish-short`: the short window is committed (the runs window warning
+ *   stays up) and each refill is its own transaction.
  */
 function replay(
   steps: readonly Step[],
@@ -515,7 +509,7 @@ function replay(
         expect(refill).toHaveLength(1)
         expect(
           index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
-        ).toMatchObject({ message: expect.stringContaining('still loading') })
+        ).toMatchObject({ message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE })
         refills += 1
         transaction = index.prepare([step.models.get(refill[0]!)!], publication)
         guard += 1
@@ -691,14 +685,16 @@ describe('HostPublicWindowIndex', () => {
       runEffects.filter((effect) => effect.kind === 'upsert').map((effect) => effect.entityId)
     ).toEqual(['newer-1796', 'newer-1797', 'newer-1798', 'newer-1799'])
     // Deleting it frees 1,800 slots: the band kept five of the older thread's, then
-    // the window is short until the older thread is modelled again.
+    // the window is short until the older thread is modelled again. Its warning
+    // stays up, saying the same: the short window republishes nothing for it.
     const freed = applyNow(index, { kind: 'delete', threadId: 'newer' }, { generatedAt })
     expect(freed).toMatchObject({ complete: false, refill: ['older'] })
+    expect(freed.effects.filter((effect) => effect.family === 'warning')).toEqual([])
     expect(index.wire().get('run')!.size).toBe(5)
     expect(
       index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
     ).toMatchObject({
-      message: expect.stringContaining('still loading')
+      message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE
     })
     const refilled = applyNow(index, { kind: 'model', model: older }, { generatedAt })
     expect(refilled).toMatchObject({ complete: true, refill: [] })

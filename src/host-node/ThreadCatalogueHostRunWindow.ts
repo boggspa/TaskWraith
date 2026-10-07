@@ -43,16 +43,16 @@ export class ThreadCatalogueHostRunWindow {
    * the persist's own command-scoped diff tombstoned every one of them. Rows
    * whose witness is not current leave the window incomplete, and `refreshFor`
    * never counts one as proof.
+   *
+   * `complete` describes the rows served, not the refresh machinery: a mirror
+   * event or a refresh in flight changes nothing served until the read lands,
+   * and sampling either here turned every persist into a flap of the flag.
    */
   snapshot(): HostCatalogueRunWindow {
     return {
       entries: [...this.rows],
       total: this.total,
-      complete:
-        this.settled &&
-        this.mirror.complete &&
-        this.refreshPromise === null &&
-        this.rows.every((row) => this.isCurrent(row))
+      complete: this.loaded && this.rows.every((row) => this.isCurrent(row))
     }
   }
 

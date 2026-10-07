@@ -209,6 +209,17 @@ function latestProfileRunUsage(
 export const HOST_PROFILE_RUN_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
 export const HOST_PROFILE_ROUND_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
 
+/**
+ * The runs window warning's text, shared by every emitter. It carries no
+ * running total and no loading flavour: a delta re-sends the warning whenever
+ * its message changes, and both of those moved on nearly every publication (a
+ * new run bumped the total; a window refresh flipped "still loading"), each
+ * time republishing a warning that said nothing new.
+ */
+export const HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE =
+  `family runs intentionally windowed to ${HOST_PROFILE_RUN_PROJECTION_LIMIT}; ` +
+  'possibly-live rows precede recent terminal rows'
+
 export interface ProfileRunProjectionCandidate {
   readonly key: string
   readonly row: HostRunProjection
@@ -300,9 +311,7 @@ function projectProfileRuns(
       warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
       severity: 'warning',
       code: HOST_WARNING_PROJECTION_WINDOWED,
-      message:
-        `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${totalCount ?? candidates.length} to ` +
-        `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
+      message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
       at: warningAt
     }
   }

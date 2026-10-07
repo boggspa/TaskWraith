@@ -55,6 +55,7 @@ import type {
 } from './HostProfileDomainStore'
 import {
   HOST_PROFILE_RUN_PROJECTION_LIMIT,
+  HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE,
   projectHostProfileDomainSnapshot
 } from './HostProfileDomainProjection'
 import {
@@ -364,6 +365,30 @@ function warningsIn(effects: readonly HostDomainEffectDto[]): string[] {
     })
 }
 
+/** Run ids whose candidate is possibly live, across the given models. */
+function activeRunIds(models: readonly HostThreadRecordModelled[]): Set<string> {
+  return new Set(
+    models.flatMap((model) =>
+      model.runs.candidates
+        .filter((candidate) => candidate.rank.active === 1)
+        .map((candidate) => candidate.runId)
+    )
+  )
+}
+
+/** Invariant: no run leaves the window while it is live. */
+function expectNoLiveTombstone(
+  effects: readonly HostDomainEffectDto[],
+  models: readonly HostThreadRecordModelled[]
+): void {
+  const active = activeRunIds(models)
+  const tombstoned = effects
+    .filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
+    .map((effect) => effect.entityId)
+  expect(tombstoned.length).toBeGreaterThan(0)
+  expect(tombstoned.filter((runId) => active.has(runId))).toEqual([])
+}
+
 function median(samples: readonly number[]): number {
   const sorted = [...samples].sort((left, right) => left - right)
   return sorted[sorted.length >> 1]!
@@ -554,11 +579,13 @@ describe('runs-family re-projection goldens', () => {
         )
         expect(counts['run:upsert']).toBe(HOST_PROFILE_RUN_PROJECTION_LIMIT)
         expect(counts['run:tombstone']).toBeUndefined()
+        // The warning's text is the same loading or loaded; its time moved
+        // from the empty window's 0 to the newest row's.
         expect(counts['warning:upsert']).toBe(1)
-        expect(warningsIn(diff.result)[0]).toContain('intentionally windowed from 16000 to 1800')
-        expect(loading.snapshot.warnings.map((w) => w.message)[0]).toContain(
-          'still loading from 16000 to 1800'
-        )
+        expect(warningsIn(diff.result)[0]).toContain(HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE)
+        expect(loading.snapshot.warnings.map((w) => w.message)).toEqual([
+          HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE
+        ])
       },
       TIMEOUT
     )
@@ -651,7 +678,7 @@ describe('runs-family re-projection goldens', () => {
     )
 
     it(
-      'completeness flap: the same rows under complete=false publish one warning upsert per flip',
+      'completeness flap: the same rows under complete=false publish nothing',
       async () => {
         const complete = legacyCapture(
           legacyStore(summaries, catalogueWindow(models, { complete: true }))
@@ -668,10 +695,11 @@ describe('runs-family re-projection goldens', () => {
           0,
           `${JSON.stringify(countEffects([...toLoading, ...toComplete]))}; journal ${published.journalBytes} B, socket ${published.socketBytes} B/client`
         )
-        expect(countEffects(toLoading)).toEqual({ 'warning:upsert': 1 })
-        expect(countEffects(toComplete)).toEqual({ 'warning:upsert': 1 })
-        expect(warningsIn(toLoading)[0]).toContain('still loading')
-        expect(warningsIn(toComplete)[0]).toContain('intentionally windowed')
+        // Before the stable text: one warning upsert per flip, "still loading"
+        // then "intentionally windowed" (88 in seven minutes on 1.9.8).
+        expect(toLoading).toEqual([])
+        expect(toComplete).toEqual([])
+        expect(refreshing.warnings).toEqual(complete.warnings)
         // The run rows themselves are identical across the flip.
         expect(refreshing.runs).toEqual(complete.runs)
       },
@@ -705,8 +733,11 @@ describe('runs-family re-projection goldens', () => {
         )
         expect(counts['run:upsert']).toBe(1)
         expect(counts['run:tombstone']).toBe(1)
+        expectNoLiveTombstone(effects, nextModels)
+        // The legacy diff still compares a warning's time, which the new run
+        // moved; the text no longer carries the total (16000 -> 16001).
         expect(counts['warning:upsert']).toBe(1)
-        expect(warningsIn(effects)[0]).toContain('from 16001 to 1800')
+        expect(warningsIn(effects)[0]).toContain(HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE)
       },
       TIMEOUT
     )
@@ -731,9 +762,9 @@ describe('runs-family re-projection goldens', () => {
         expect(model.result.runs.total).toBe(SINGLE_THREAD_RUNS)
         expect(model.result.runs.candidates).toHaveLength(HOST_PROFILE_RUN_PROJECTION_LIMIT)
         expect(capture.result.snapshot.runs).toHaveLength(HOST_PROFILE_RUN_PROJECTION_LIMIT)
-        expect(capture.result.snapshot.warnings.map((w) => w.message)[0]).toContain(
-          'intentionally windowed from 10000 to 1800'
-        )
+        expect(capture.result.snapshot.warnings.map((w) => w.message)).toEqual([
+          HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE
+        ])
       },
       TIMEOUT
     )
@@ -811,15 +842,21 @@ describe('runs-family re-projection goldens', () => {
         const newRunId = changed.runs![changed.runs!.length - 1]!.runId
         expect(counts['run:upsert']).toBe(1)
         expect(counts['run:tombstone']).toBe(1)
-        expect(counts['warning:upsert']).toBe(1)
+        expectNoLiveTombstone(transaction.effects, [
+          ...models.filter((_, at) => at !== liveModelIndex),
+          modelOf(changed)
+        ])
+        // The warning says nothing new: before, its text carried the total
+        // (16000 -> 16001) and its time moved, one upsert per new run.
+        expect(counts['warning:upsert']).toBeUndefined()
         expect(transaction.complete).toBe(true)
         expect(transaction.refill).toEqual([])
         expect(transaction.effects.some((e) => e.family === 'run' && e.entityId === newRunId)).toBe(
           true
         )
-        expect(warningsIn(transaction.effects)[0]).toContain(
-          'intentionally windowed from 16001 to 1800'
-        )
+        expect(index.wire().get('warning')!.get(WINDOWED_RUNS)).toMatchObject({
+          message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE
+        })
         // The live row stays in the window after commit.
         expect(index.wire().get('run')!.has(newRunId)).toBe(true)
       },
@@ -830,12 +867,15 @@ describe('runs-family re-projection goldens', () => {
       'a cold thread persisting one new run costs the same shape',
       async () => {
         const cold = profile.records[THREADS - 1]!
+        const coldModel = modelOf(withNewRun(cold, 17))
         const { transaction } = await prepare('cold thread, one new live run', [
-          { kind: 'model', model: modelOf(withNewRun(cold, 17)) }
+          { kind: 'model', model: coldModel }
         ])
         const counts = countEffects(transaction.effects)
         expect(counts['run:upsert']).toBe(1)
         expect(counts['run:tombstone']).toBe(1)
+        expectNoLiveTombstone(transaction.effects, [...models.slice(0, THREADS - 1), coldModel])
+        expect(counts['warning:upsert']).toBeUndefined()
         expect(transaction.complete).toBe(true)
       },
       TIMEOUT

@@ -13,7 +13,7 @@
  * thread. A persist of another thread through the public command entry then
  * reports that refill in its outcome; the composition hands it to
  * `feeder.refill`, the seam now succeeds, and the refill lands as a feed
- * group that clears the `still loading` warning.
+ * group that clears the runs window warning.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -283,10 +283,13 @@ describe('HostStandaloneComposition: persist refills reach the feeder (M4 slice 
       expect(p.store.deleteThreadRecord({ threadId: 'c', expectedRevision: revisionOf('c') })).toBe(
         true
       )
-      await vi.waitFor(() => expect(warnings.at(-1)).toContain('still loading'), {
+      // The short window is published (both threads gone); the runs window
+      // warning stays up and says the same, so it is not republished.
+      await vi.waitFor(() => expect(delivered).toContain('tombstone:thread:c'), {
         timeout: 10_000
       })
       await vi.waitFor(() => expect(reads('a')).toBe(readsBefore + 2), { timeout: 10_000 })
+      expect(warnings).toHaveLength(1)
       await new Promise((resolve) => setTimeout(resolve, 100))
       expect(reads('a')).toBe(readsBefore + 2)
       expect(delivered.filter((row) => row.startsWith('upsert:run:a-'))).toHaveLength(0)
@@ -320,10 +323,10 @@ describe('HostStandaloneComposition: persist refills reach the feeder (M4 slice 
       await new Promise((resolve) => setTimeout(resolve, 50))
 
       // One refill read, after the persist; all of `a`'s runs on the wire; the
-      // still-loading warning gone: 100 runs need no window.
+      // runs window warning gone, never republished: 100 runs need no window.
       expect(reads('a')).toBe(readsBefore + 3)
       expect(delivered.filter((row) => row.startsWith('upsert:run:a-'))).toHaveLength(100)
-      expect(delivered.at(-1)).not.toContain('still loading')
+      expect(warnings).toHaveLength(1)
       // The persist's own group carried `d`'s row with the window still
       // short; the refill's feed group, with `a`'s runs, follows it.
       const persistIndex = delivered.indexOf(

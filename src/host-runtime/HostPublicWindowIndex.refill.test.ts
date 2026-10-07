@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HOST_WARNING_PROJECTION_WINDOWED } from '../shared/hostProtocol'
+import { HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE } from './HostProfileDomainProjection'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HostPublicWindowIndex,
@@ -149,7 +150,7 @@ describe('HostPublicWindowIndex: the refill change (M4 slice 13e, test 1)', () =
     ).toEqual([{ threadId: 'never', reason: 'deleted' }])
   })
 
-  it('fills a short window from the band, and clears the still-loading warning', () => {
+  it('fills a short window from the band, and clears the runs window warning', () => {
     const index = new HostPublicWindowIndex({ band: 5 })
     const olderRuns = Array.from({ length: 10 }, (_, i) => run(`older-${i}`, i))
     const older = modelOf({ appChatId: 'older', runs: olderRuns })
@@ -167,9 +168,10 @@ describe('HostPublicWindowIndex: the refill change (M4 slice 13e, test 1)', () =
     const short = applyNow(index, { kind: 'delete', threadId: 'newer' })
     expect(short).toMatchObject({ complete: false, refill: ['older'] })
     expect(index.wire().get('run')!.size).toBe(5)
+    // The warning stays up while the window is short; its text does not change.
     expect(
       index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
-    ).toMatchObject({ message: expect.stringContaining('still loading') })
+    ).toMatchObject({ message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE })
 
     // A refill read at another revision leaves the window short.
     const stale = applyNow(index, {

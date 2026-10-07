@@ -6,8 +6,8 @@
  * held, and a `model` port served from in-memory file models.
  *
  * 2. absorb: a delete that leaves the window short publishes one group whose
- *    effects equal a fresh full diff; no `still loading` warning is ever
- *    published; every refill read happens with the publication lock free;
+ *    effects equal a fresh full diff; no short window is ever published;
+ *    every refill read happens with the publication lock free;
  * 3. failure: each of throw, absent, invalid, refused and a newer revision
  *    publishes short and schedules exactly one retry; a retry that succeeds
  *    completes the window; a second failure abandons, and reads are bounded;
@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { HOST_WARNING_PROJECTION_WINDOWED } from '../shared/hostProtocol'
 import { HOST_DELTA_JOURNAL_FILENAME, HostDeltaStore } from './HostDeltaStore'
+import { HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE } from './HostProfileDomainProjection'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HOST_PUBLIC_WINDOW_ABSORB_ROUNDS,
@@ -150,8 +151,12 @@ interface Harness {
   journalFeedGroups(): string[]
   /** Every delta record appended, as `kind:family:entityId`, in cursor order. */
   appended(): string[]
-  /** Whether a `still loading` warning was ever appended to the deltas. */
-  stillLoadingPublished(): boolean
+  /**
+   * Whether a short window was ever published: a prepare that reported the
+   * window incomplete was committed. The runs window warning no longer says
+   * "still loading", so the transaction is where a short window shows.
+   */
+  shortPublished(): boolean
 }
 
 function harness(band: number): Harness {
@@ -169,6 +174,7 @@ function harness(band: number): Harness {
   const modelled: string[] = []
   const modelledUnderLock: boolean[] = []
   const preparedUnderLock: boolean[] = []
+  let shortCommits = 0
   const sources = new Map<string, Source>()
   let lockHeld = false
   let tail: Promise<unknown> = Promise.resolve()
@@ -196,7 +202,14 @@ function harness(band: number): Harness {
       prepare: (changes, publication) => {
         events.push(`index:prepare(${changes.map((c) => c.kind).join(',')})`)
         preparedUnderLock.push(lockHeld)
-        return index.prepare(changes, publication)
+        const transaction = index.prepare(changes, publication)
+        return {
+          ...transaction,
+          commit: () => {
+            if (!transaction.complete) shortCommits += 1
+            transaction.commit()
+          }
+        }
       }
     },
     publicationLock,
@@ -262,16 +275,7 @@ function harness(band: number): Harness {
         .map((event) => event.commandId!)
     },
     appended,
-    stillLoadingPublished: () => {
-      const position = deltas.getPosition()
-      for (let cursor = 1; cursor <= position.cursor; cursor += 1) {
-        const stored = deltas.getByCursor(cursor)
-        if (!stored || stored.envelope.family !== 'warning') continue
-        const payload = stored.envelope.payload as { message?: string } | undefined
-        if (payload?.message?.includes('still loading')) return true
-      }
-      return false
-    }
+    shortPublished: () => shortCommits > 0
   }
 }
 
@@ -305,7 +309,7 @@ describe('HostPublicWindowFeeder: refills (M4 slice 13e)', () => {
       expect(h.wireRunIds()).toEqual(olderAll)
       expect(comparable(h.index.wire())).toEqual(comparable(fresh([older]).wire()))
       expect(h.runsWarning()).toBeNull()
-      expect(h.stillLoadingPublished()).toBe(false)
+      expect(h.shortPublished()).toBe(false)
       // The group carries the tombstones and the refilled runs together: the
       // window held only `newer`, so all ten of `older` enter it at once.
       const appended = h.appended()
@@ -350,7 +354,7 @@ describe('HostPublicWindowFeeder: refills (M4 slice 13e)', () => {
       await h.feeder.idle()
       expect(h.journalFeedGroups()).toEqual(['feed:1'])
       expect(comparable(h.index.wire())).toEqual(comparable(fresh([older, third]).wire()))
-      expect(h.stillLoadingPublished()).toBe(false)
+      expect(h.shortPublished()).toBe(false)
       expect(h.modelled).toEqual(['third', 'older'])
       expect(h.modelledUnderLock).toEqual([false, false])
 
@@ -412,11 +416,12 @@ describe('HostPublicWindowFeeder: refills (M4 slice 13e)', () => {
         await h.feeder.idle()
         await settle()
 
-        // The short window was published: five kept runs and the still-loading warning.
+        // The short window was published: five kept runs, the runs window
+        // warning still up and saying the same.
         expect(h.journalFeedGroups()).toEqual(['feed:1'])
         expect(h.wireRunIds()).toEqual(olderKept)
-        expect(h.runsWarning()?.message).toContain('still loading')
-        expect(h.stillLoadingPublished()).toBe(true)
+        expect(h.runsWarning()?.message).toBe(HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE)
+        expect(h.shortPublished()).toBe(true)
         // One absorb read, one retry, nothing more: the thread is abandoned.
         expect(h.modelled).toEqual(['older', 'older'])
         expect(h.modelledUnderLock).toEqual([false, false])
@@ -464,12 +469,15 @@ describe('HostPublicWindowFeeder: refills (M4 slice 13e)', () => {
         expect(h.modelledUnderLock).toEqual([false, false])
         // Short first, then the retry's group completes it.
         expect(h.journalFeedGroups()).toEqual(['feed:1', 'feed:2'])
-        expect(h.stillLoadingPublished()).toBe(true)
+        expect(h.shortPublished()).toBe(true)
         expect(h.wireRunIds()).toEqual(olderAll)
         expect(h.runsWarning()).toBeNull()
         expect(comparable(h.index.wire())).toEqual(comparable(fresh([older]).wire()))
+        // The runs window warning was up from the seed (1,810 runs) and the
+        // short window left it saying the same, so it is never upserted; the
+        // completing group takes it down once.
         const appended = h.appended()
-        expect(appended.filter((row) => row === `upsert:warning:${WINDOWED_RUNS}`)).toHaveLength(1)
+        expect(appended.filter((row) => row === `upsert:warning:${WINDOWED_RUNS}`)).toHaveLength(0)
         expect(appended.filter((row) => row === `tombstone:warning:${WINDOWED_RUNS}`)).toHaveLength(
           1
         )
@@ -606,7 +614,7 @@ describe('HostPublicWindowFeeder: refills (M4 slice 13e)', () => {
         HOST_PUBLIC_WINDOW_ABSORB_ROUNDS * counters.drained
       )
       expect(h.journalFeedGroups()).toHaveLength(counters.drained)
-      expect(h.stillLoadingPublished()).toBe(true)
+      expect(h.shortPublished()).toBe(true)
       expect(
         h.appended().filter((row) => row === `tombstone:warning:${WINDOWED_RUNS}`)
       ).toHaveLength(1)

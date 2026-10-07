@@ -13,6 +13,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { HOST_WARNING_PROJECTION_WINDOWED } from '../shared/hostProtocol'
+import { HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE } from './HostProfileDomainProjection'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   HostPublicWindowIndex,
@@ -34,8 +36,7 @@ const UNBOUNDED = 1_000_000_000
 const RUN_WINDOW = 1_800
 const DEFAULT_BAND = 1_800
 const FAMILIES = ['thread', 'run', 'round', 'participant', 'warning'] as const
-/** The index's own warnings: stamped with the publication, not the data. */
-const PROJECTOR_WARNING = /^projection_(rows_omitted|truncated|rows_withheld):/
+const WINDOWED_RUNS = `${HOST_WARNING_PROJECTION_WINDOWED}:runs`
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0
@@ -101,7 +102,12 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/** Comparable wire: rows by family and id, the projector's own warnings without their time. */
+/**
+ * Comparable wire: rows by family and id, warnings without their time (a
+ * warning keeps its time until it says something new), and the runs window
+ * warning in the stable text the frozen reference predates (it still writes
+ * the running total and the loading flavour).
+ */
 function comparable(wire: HostPublicWindowWire): Record<string, Record<string, unknown>> {
   return Object.fromEntries(
     FAMILIES.map((family) => [
@@ -109,9 +115,15 @@ function comparable(wire: HostPublicWindowWire): Record<string, Record<string, u
       Object.fromEntries(
         [...wire.get(family)!].map(([id, row]) => [
           id,
-          family === 'warning' && PROJECTOR_WARNING.test(id)
-            ? { ...(row as Record<string, unknown>), at: 0 }
-            : row
+          family !== 'warning'
+            ? row
+            : {
+                ...(row as Record<string, unknown>),
+                ...(id === WINDOWED_RUNS
+                  ? { message: HOST_PROFILE_RUN_WINDOW_WARNING_MESSAGE }
+                  : {}),
+                at: 0
+              }
         ])
       )
     ])

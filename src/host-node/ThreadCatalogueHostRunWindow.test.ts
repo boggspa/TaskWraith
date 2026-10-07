@@ -774,3 +774,36 @@ describe('ThreadCatalogueHostRunWindow.loaded', () => {
     window.dispose()
   })
 })
+
+describe('ThreadCatalogueHostRunWindow.snapshot completeness', () => {
+  it('stays complete across a mirror event and the refresh it arms while the served rows are current', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    const read = deferred<RunWindowPage>()
+    let hostRunQueries = 0
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method !== 'host-runs') throw new Error(`unexpected query ${query.method}`)
+      hostRunQueries += 1
+      return hostRunQueries === 1 ? page('witness-1', 'run-1') : read.promise
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    await vi.advanceTimersByTimeAsync(100)
+    expect(window.snapshot().complete).toBe(true)
+
+    // Another chat's persist: an event, a debounce, then a refresh in flight.
+    // Nothing served changes, so the flag must not flip and flip back.
+    h.touch('chat-2')
+    expect(window.snapshot().complete).toBe(true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(hostRunQueries).toBe(2)
+    expect(window.snapshot().complete).toBe(true)
+    read.resolve(page('witness-1', 'run-1'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(window.snapshot()).toEqual({
+      entries: [expect.objectContaining({ chatId: 'chat-1', sourceWitness: 'witness-1' })],
+      total: 1,
+      complete: true
+    })
+    window.dispose()
+  })
+})
