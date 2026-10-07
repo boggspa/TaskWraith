@@ -2872,7 +2872,13 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-10-06","kind":"addition","title":"New Additions","body":"Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-10-07","kind":"addition","title":"New Additions","body":"Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"claude","label":"Claude","models":[
+              {"name":"Haiku 5.5","blurb":"Anthropic's current Haiku — 1M context, adaptive thinking with the full effort ladder, $0.10/$0.50 per Mtok."},
+              {"name":"Sonnet 5.5","blurb":"Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."},
+              {"name":"Opus 5.5","blurb":"Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."},
+              {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
+            ]},
             {"provider":"mistral","label":"Mistral","models":[
               {"name":"Mistral Large 4","blurb":"Le Chonk, the 1T flagship — 524K context, image input, thinking, $0.68/$2.09 per Mtok at launch, on your own API key."},
               {"name":"Mistral 3.5 Medium","blurb":"Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth."},
@@ -2890,11 +2896,6 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Ministral 3 (14B)","blurb":"Ministral 3 (14B) balances throughput and coding depth on the same family stack."},
               {"name":"Ministral 3 (8B)","blurb":"Ministral 3 (8B) keeps the same family strengths in a smaller profile."},
               {"name":"Ministral 3 (3B)","blurb":"Ministral 3 (3B) is the compact variant for lighter tasks and lower cost."}
-            ]},
-            {"provider":"claude","label":"Claude","models":[
-              {"name":"Sonnet 5.5","blurb":"Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."},
-              {"name":"Opus 5.5","blurb":"Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."},
-              {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
             ]},
             {"provider":"codex","label":"Codex","models":[
               {"name":"GPT-6.1 Sol","blurb":"OpenAI's near-Astra GPT-6.1 at a lower cost — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."},

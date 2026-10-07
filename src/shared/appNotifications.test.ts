@@ -150,12 +150,13 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
+    expect(newAdditions?.id).toBe('new-additions-2026-10-07')
+    expect(newAdditions?.body.startsWith('Claude Haiku 5.5, Mistral Large 4')).toBe(true)
     expect(groups.map((g) => g.provider)).toEqual([
-      // Mistral leads for Large 4 (2026-10-06), the headline of this lineup.
-      // Claude follows for Opus 5.5 (2026-09-22), with Codex right behind it
-      // for GPT-6 Sol and Luna (same day).
-      'mistral',
+      // Claude leads for Haiku 5.5, the headline of this lineup; Mistral
+      // follows for Large 4 (2026-10-06), then Codex for GPT-6 Sol and Luna.
       'claude',
+      'mistral',
       'codex',
       'kimi',
       'devin',
@@ -167,8 +168,8 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
-      'Mistral',
       'Claude',
+      'Mistral',
       'Codex',
       'Kimi',
       'Devin',
@@ -194,14 +195,22 @@ describe('notification registry', () => {
       expect(model.accentProvider).toBeUndefined()
     }
 
-    // Claude leads for Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22), with
-    // Fable 5.1 (2026-09-01) still listed beneath them; Devin is a whole new seat led by Cognition's own SWE
+    // Claude leads with Haiku 5.5, then Sonnet 5.5 (2026-09-28) and Opus 5.5
+    // (2026-09-22), with Fable 5.1 (2026-09-01) still listed beneath them; Devin is a whole new seat led by Cognition's own SWE
     // models — never a 'CLI default'.
     const claude = groups.find((g) => g.provider === 'claude')
-    expect(claude?.models.map((m) => m.name)).toEqual(['Sonnet 5.5', 'Opus 5.5', 'Fable 5.1'])
-    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*\$2\/\$10/i)
-    expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
-    expect(claude?.models[2]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
+    expect(claude?.models.map((m) => m.name)).toEqual([
+      'Haiku 5.5',
+      'Sonnet 5.5',
+      'Opus 5.5',
+      'Fable 5.1'
+    ])
+    expect(claude?.models[0]?.blurb).toMatch(
+      /current Haiku.*1M context.*adaptive thinking.*full effort ladder.*\$0\.10\/\$0\.50/i
+    )
+    expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*\$2\/\$10/i)
+    expect(claude?.models[2]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
+    expect(claude?.models[3]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
     // Codex: GPT-6.1 Sol (2026-09-29), then GPT-6 Sol and Luna (2026-09-22),
     // lead the group above Astra (2026-09-03), each blurb carrying the window,
     // ladder and list price.

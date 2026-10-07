@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-06'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-07'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,12 +162,42 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
-        // Mistral Large 4 ("Le Chonk", public preview 2026-10-06) is the
-        // headline of this lineup, so Mistral leads the card with it first.
+        // Claude Haiku 5.5, the current Haiku and successor to Haiku 4.5, is
+        // the headline of this lineup, so Claude leads the card with it first.
+        // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) follow it, with
+        // Fable 5.1 still listed beneath them.
+        provider: 'claude',
+        label: 'Claude',
+        models: [
+          {
+            name: 'Haiku 5.5',
+            blurb:
+              "Anthropic's current Haiku — 1M context, adaptive thinking with the full effort ladder, $0.10/$0.50 per Mtok."
+          },
+          {
+            name: 'Sonnet 5.5',
+            blurb:
+              "Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."
+          },
+          {
+            name: 'Opus 5.5',
+            blurb:
+              "Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."
+          },
+          {
+            name: 'Fable 5.1',
+            blurb:
+              "Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."
+          }
+        ]
+      },
+      {
+        // Mistral Large 4 ("Le Chonk", public preview 2026-10-06) headlined the
+        // previous lineup and now follows Claude Haiku 5.5, with Large 4 first.
         provider: 'mistral',
         label: 'Mistral',
         models: [
@@ -243,29 +273,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Ministral 3 (3B)',
             blurb: 'Ministral 3 (3B) is the compact variant for lighter tasks and lower cost.'
-          }
-        ]
-      },
-      {
-        // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) follow Mistral
-        // Large 4 at the top. Fable 5.1 stays listed beneath them.
-        provider: 'claude',
-        label: 'Claude',
-        models: [
-          {
-            name: 'Sonnet 5.5',
-            blurb:
-              "Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."
-          },
-          {
-            name: 'Opus 5.5',
-            blurb:
-              "Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."
-          },
-          {
-            name: 'Fable 5.1',
-            blurb:
-              "Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."
           }
         ]
       },
