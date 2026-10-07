@@ -279,6 +279,12 @@ describe('normalizeCliProviderModel (claude)', () => {
     expect(normalizeCliProviderModel('claude', 'claude-sonnet-5')).toBe('claude-sonnet-5')
   })
 
+  it('keeps Haiku 5.5 distinct from Haiku 4.5 and leaves the bare alias to the CLI', () => {
+    expect(normalizeCliProviderModel('claude', 'claude-haiku-5-5')).toBe('claude-haiku-5-5')
+    expect(normalizeCliProviderModel('claude', 'claude-haiku-4-5')).toBe('claude-haiku-4-5')
+    expect(normalizeCliProviderModel('claude', 'haiku')).toBe('haiku')
+  })
+
   it('keeps the legacy Sonnet 4.6 id runnable for historical selections', () => {
     expect(normalizeCliProviderModel('claude', 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
   })
@@ -294,6 +300,8 @@ describe('claudeModelSupportsFastMode', () => {
     expect(claudeModelSupportsFastMode('claude-fable-5-1m')).toBe(false)
     // Sonnet 5.5 is not on the platform's Fast-mode list.
     expect(claudeModelSupportsFastMode('claude-sonnet-5-5')).toBe(false)
+    // Neither is Haiku 5.5: Fast mode is Opus-only.
+    expect(claudeModelSupportsFastMode('claude-haiku-5-5')).toBe(false)
   })
 })
 
@@ -1179,6 +1187,7 @@ describe('getStaticProviderModels (claude)', () => {
       'claude-sonnet-4-6',
       'claude-opus-4-8-1m',
       'claude-opus-4-7-1m',
+      'claude-haiku-5-5',
       'claude-haiku-4-5',
       'custom'
     ])
@@ -1222,6 +1231,29 @@ describe('getStaticProviderModels (claude)', () => {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+  })
+
+  it('offers Haiku 5.5 above Haiku 4.5 on the full ladder with a Medium default and no Fast tier', () => {
+    const ids = models.map((m) => m.id)
+    expect(ids.indexOf('claude-haiku-5-5') + 1).toBe(ids.indexOf('claude-haiku-4-5'))
+    expect(byId.get('claude-haiku-5-5')).toMatchObject({
+      label: 'Haiku 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'medium',
+      ultraTaskSupported: true
+    })
+    expect(byId.get('claude-haiku-5-5')?.isDefault).toBeFalsy()
+    expect(byId.get('claude-haiku-5-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(
+      (byId.get('claude-haiku-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    // Haiku 4.5 keeps its row and its fully-disabled ladder.
+    expect(byId.get('claude-haiku-4-5')).toMatchObject({
+      label: 'Haiku 4.5',
+      ultraTaskSupported: false
+    })
   })
 
   it('offers family-specific Claude reasoning efforts', () => {

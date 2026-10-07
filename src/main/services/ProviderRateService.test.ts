@@ -258,6 +258,25 @@ describe('BAKED_IN_RATES', () => {
     })
   })
 
+  it('records Claude Haiku 5.5 at $0.10/$0.50 with its over-100K prompt tier at $0.50/$2.50', () => {
+    const claudeRows = BAKED_IN_RATES.claude.models
+    expect(claudeRows.find((model) => model.modelId === 'claude-haiku-5-5')).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.5,
+      cachedInputUsdPerMillion: 0.005,
+      longContextThresholdTokens: 100_001,
+      longContextInputUsdPerMillion: 0.5,
+      longContextOutputUsdPerMillion: 2.5,
+      longContextCachedInputUsdPerMillion: 0.025,
+      sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing'
+    })
+    // Haiku 4.5 keeps its own row and rate.
+    expect(claudeRows.find((model) => model.modelId === 'claude-haiku-4-5')).toMatchObject({
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 5
+    })
+  })
+
   it('records Claude Sonnet 5 at its now-standard $2/$10 rate, not the cancelled $3/$15', () => {
     const claudeRows = BAKED_IN_RATES.claude.models
     expect(claudeRows.find((model) => model.modelId === 'claude-sonnet-5')).toMatchObject({

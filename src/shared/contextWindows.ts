@@ -182,6 +182,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'claude-sonnet-5-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
   'claude-sonnet-4-6': 200_000,
+  'claude-haiku-5-5': 1_000_000,
   'claude-haiku-4-5': 200_000,
   'claude-opus-4-6': 200_000,
   default: 200_000,

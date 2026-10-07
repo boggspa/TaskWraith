@@ -45,6 +45,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('claude', 'claude-mythos-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-4-6')).toBe(200_000)
+    expect(resolveContextWindow('claude', 'claude-haiku-5-5')).toBe(1_000_000)
     // d19931eb8 feat(kimi): distinguish K3 context routes — kimi-k3 is the
     // 1M route; kimi-k3-256k keeps the 256K window.
     expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(1_048_576)

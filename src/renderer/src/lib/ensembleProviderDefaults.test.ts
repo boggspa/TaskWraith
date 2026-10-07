@@ -1066,6 +1066,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-sonnet-4-6',
       'claude-opus-4-8-1m',
       'claude-opus-4-7-1m',
+      'claude-haiku-5-5',
       'claude-haiku-4-5'
     ])
     expect(claude.defaultModelId).toBe('claude-opus-5-5')
@@ -1077,6 +1078,11 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-sonnet-5-5')).toBe(false)
+    expect(claude.fastModeCapableModelIds.has('claude-haiku-5-5')).toBe(false)
+    expect(claude.modelOptions.find((option) => option.id === 'claude-haiku-5-5')).toMatchObject({
+      label: 'Haiku 5.5',
+      ultraTaskSupported: true
+    })
     expect(claude.modelOptions.find((option) => option.id === 'claude-sonnet-5-5')?.label).toBe(
       'Sonnet 5.5'
     )
@@ -1132,6 +1138,20 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'ultracode'
     ])
     expect(haiku.every((o) => o.disabled)).toBe(true)
+    // Haiku 5.5 takes the full ladder; only the Haiku 4.x line stays dark.
+    const haiku55 = getEnsembleReasoningOptions('claude', 'claude-haiku-5-5')
+    expect(haiku55.map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(haiku55.filter((o) => o.disabled).map((o) => o.value)).toEqual([])
+    expect(getEnsembleReasoningOptions('claude', 'claude-haiku-50').every((o) => o.disabled)).toBe(
+      true
+    )
   })
 
   it('defaults Grok to 4.7 while retaining 4.5 with its narrower effort ladder', () => {

@@ -93,6 +93,7 @@ keep their labels.
 | **Sonnet 4.6 Legacy** `claude-sonnet-4-6`           | Light · Medium · High · Max                     | —      | 200K context legacy Sonnet.                            |
 | **Opus 4.8 1M Legacy** `claude-opus-4-8-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus, extended thinking.             |
 | **Opus 4.7 1M Legacy** `claude-opus-4-7-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus.                                |
+| **Haiku 5.5** `claude-haiku-5-5`                    | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking. Medium default effort.  |
 | **Haiku 4.5** `claude-haiku-4-5`                    | —                                               | —      | Fast and efficient; no configurable reasoning control. |
 
 Opus 5.5 (released 2026-09-22; $4 / $20 per 1M tokens, cache reads $0.20) dispatches
@@ -101,6 +102,11 @@ only through Claude Code 2.1.280 or newer: 2.1.276 rejects the id with
 
 Sonnet 5.5 (released 2026-09-28; $2 / $10 per 1M tokens, cache reads $0.20, no
 Fast mode) dispatches through Claude Code 2.1.284. Sonnet 5 stays the default.
+
+Haiku 5.5 is the current Haiku ($0.10 / $0.50 per 1M tokens for prompts up to
+100K, $0.50 / $2.50 beyond; no Fast mode). Unlike Haiku 4.5 it takes the full
+effort ladder, so the Claude CLI receives its `--effort` flag. Haiku 4.5 keeps
+its row, and the bare `haiku` alias is still passed through to the CLI.
 
 <table>
   <tr>

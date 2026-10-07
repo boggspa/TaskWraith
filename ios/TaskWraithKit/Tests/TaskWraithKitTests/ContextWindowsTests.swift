@@ -85,6 +85,10 @@ struct ContextWindowsTests {
         #expect(ContextWindows.byModel["gpt-6.1-sol"] == 1_050_000)
         #expect(ContextWindows.byModel["claude-sonnet-5-5"] == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5-5") == 1_000_000)
+        // Haiku 5.5 (1M) beside Haiku 4.5 (200K), pinned on the table.
+        #expect(ContextWindows.byModel["claude-haiku-5-5"] == 1_000_000)
+        #expect(ContextWindows.resolve(provider: "claude", model: "claude-haiku-5-5") == 1_000_000)
+        #expect(ContextWindows.byModel["claude-haiku-4-5"] == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)

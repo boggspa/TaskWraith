@@ -88,6 +88,11 @@ enum ProviderModelPickerPreviewData {
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "high"),
                 .init(
+                    id: "claude-haiku-5-5",
+                    label: "Haiku 5.5",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "medium"),
+                .init(
                     id: "claude-haiku-4-5",
                     label: "Haiku 4.5",
                     supportedReasoningEfforts: [

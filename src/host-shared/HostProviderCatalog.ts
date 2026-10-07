@@ -319,6 +319,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model('claude-sonnet-4-6', 'Sonnet 4.6 Legacy', CLAUDE_REASONING),
         model('claude-opus-4-8-1m', 'Opus 4.8 1M Legacy', CLAUDE_REASONING),
         model('claude-opus-4-7-1m', 'Opus 4.7 1M Legacy', CLAUDE_REASONING),
+        // Haiku 5.5 takes the full Claude ladder; Haiku 4.5 keeps Low..High.
+        model('claude-haiku-5-5', 'Haiku 5.5', CLAUDE_REASONING),
         model('claude-haiku-4-5', 'Haiku 4.5', [
           { reasoningId: 'low', label: 'Low', available: true },
           { reasoningId: 'medium', label: 'Medium', available: true },

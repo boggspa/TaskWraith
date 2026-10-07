@@ -133,6 +133,7 @@ struct ModelContextLengthsTests {
             "claude-sonnet-4-6",
             "claude-opus-4-8-1m",
             "claude-opus-4-7-1m",
+            "claude-haiku-5-5",
             "claude-haiku-4-5",
         ])
         #expect(!claudeModels.contains { $0.modelId == "claude-opus-4-8" })

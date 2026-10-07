@@ -598,6 +598,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION
       },
       {
+        // Haiku 5.5: $0.10/$0.50 for prompts up to 100K tokens, and the whole
+        // request at $0.50/$2.50 beyond (Anthropic API reference, cached
+        // 2026-10-06). The threshold is compared with `>=`, so the first
+        // long-tier prompt is 100,001 tokens. No cache-read price is published
+        // yet: both cached rates are derived at Opus 5.5's 0.05x ratio
+        // ($0.20 on $4), i.e. $0.005 and $0.025.
+        modelId: 'claude-haiku-5-5',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.5,
+        cachedInputUsdPerMillion: 0.005,
+        longContextThresholdTokens: 100_001,
+        longContextInputUsdPerMillion: 0.5,
+        longContextOutputUsdPerMillion: 2.5,
+        longContextCachedInputUsdPerMillion: 0.025,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current-gen Haiku (successor to Haiku 4.5). $0.10/$0.50 up to a 100K-token prompt; above that every token bills at $0.50/$2.50. Cache-read rates derived at the Opus 5.5 0.05x ratio (none published). 1M context at these rates — no -1m variant. No Fast mode.'
+      },
+      {
         modelId: 'claude-haiku-4-5',
         inputUsdPerMillion: 1.0,
         outputUsdPerMillion: 5.0,

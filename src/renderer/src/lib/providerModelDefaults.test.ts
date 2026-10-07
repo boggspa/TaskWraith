@@ -217,6 +217,7 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('claude-opus-5')).toBe(true)
     expect(isClaudeModelId('claude-opus-5-5')).toBe(true)
     expect(isClaudeModelId('claude-sonnet-5-5')).toBe(true)
+    expect(isClaudeModelId('claude-haiku-5-5')).toBe(true)
   })
 
   it('exposes only 1M Opus defaults while keeping Sonnet as the default model', () => {
@@ -260,6 +261,26 @@ describe('Claude provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
+  it('offers Haiku 5.5 above Haiku 4.5 on the full ladder with a Medium default and no Fast tier', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
+    expect(ids.indexOf('claude-haiku-5-5') + 1).toBe(ids.indexOf('claude-haiku-4-5'))
+    expect(byId.get('claude-haiku-5-5')).toMatchObject({
+      label: 'Haiku 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'medium',
+      ultraTaskSupported: true
+    })
+    expect(byId.get('claude-haiku-5-5')).not.toMatchObject({ isDefault: true })
+    expect(byId.get('claude-haiku-5-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(
+      (byId.get('claude-haiku-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option: { reasoningEffort: string; disabled?: boolean }) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(resolveClaudeDefaultReasoningEffort(byId.get('claude-haiku-5-5'))).toBe('medium')
+  })
+
   it('offers Opus 5.5 as the leading Claude row on the full Opus ladder with a Medium default', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
     expect(CLAUDE_DEFAULT_MODELS[0]?.id).toBe('claude-opus-5-5')
@@ -293,6 +314,7 @@ describe('Claude provider model defaults', () => {
       'claude-sonnet-4-6',
       'claude-opus-4-8-1m',
       'claude-opus-4-7-1m',
+      'claude-haiku-5-5',
       'claude-haiku-4-5'
     ])
   })

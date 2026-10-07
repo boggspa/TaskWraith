@@ -166,6 +166,14 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('claude', 'claude-sonnet-5-5')).toBe(1_000_000)
   })
 
+  it('carries the 1M default window for Claude Haiku 5.5 while Haiku 4.5 stays at 200K', () => {
+    expect(knownModelContextWindow('claude-haiku-5-5')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-haiku-5-5')).toBe(1_000_000)
+    expect(knownModelContextWindow('claude-haiku-4-5')).toBe(200_000)
+    // The bare alias is CLI-resolved, so it makes no catalogue claim.
+    expect(knownModelContextWindow('haiku')).toBeUndefined()
+  })
+
   it('carries the 1M window for Pi Space Bunny Alpha on the table itself', () => {
     // The Pi provider fallback is also 1_000_000, so `resolve` alone cannot
     // tell a dropped row from a present one — pin the table entry directly.

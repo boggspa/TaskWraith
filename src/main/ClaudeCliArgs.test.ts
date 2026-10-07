@@ -36,9 +36,19 @@ describe('normalizeClaudeEffortFlag', () => {
 })
 
 describe('normalizeClaudeEffortFlagForModel', () => {
-  it('drops reasoning for Haiku models', () => {
+  it('drops reasoning for Haiku 4.5 and the bare alias', () => {
     expect(normalizeClaudeEffortFlagForModel('max', 'claude-haiku-4-5')).toBeNull()
     expect(normalizeClaudeEffortFlagForModel('ultracode', 'haiku')).toBeNull()
+  })
+
+  it('lets the Haiku 5 family use the full Claude CLI ladder', () => {
+    expect(normalizeClaudeEffortFlagForModel('low', 'claude-haiku-5-5')).toBe('low')
+    expect(normalizeClaudeEffortFlagForModel('medium', 'claude-haiku-5-5')).toBe('medium')
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-haiku-5-5')).toBe('xhigh')
+    expect(normalizeClaudeEffortFlagForModel('max', 'claude-haiku-5-5')).toBe('max')
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-haiku-5-5')).toBe('max')
+    // A numeric lookalike must NOT be mistaken for the Haiku 5 family.
+    expect(normalizeClaudeEffortFlagForModel('high', 'claude-haiku-50')).toBeNull()
   })
 
   it('keeps the legacy Sonnet 4.x line on its capped effort ladder', () => {
@@ -135,13 +145,23 @@ describe('buildClaudeCliArgs', () => {
     expect(args[args.indexOf('--effort') + 1]).toBe('max')
   })
 
-  it('does not pass an effort flag for Haiku', () => {
+  it('does not pass an effort flag for Haiku 4.5', () => {
     const args = buildClaudeCliArgs({
       ...base,
       model: 'claude-haiku-4-5',
       claudeReasoningEffort: 'max'
     })
     expect(args).not.toContain('--effort')
+  })
+
+  it('passes the selected effort through for Haiku 5.5', () => {
+    const args = buildClaudeCliArgs({
+      ...base,
+      model: 'claude-haiku-5-5',
+      claudeReasoningEffort: 'medium'
+    })
+    expect(args).toContain('--effort')
+    expect(args[args.indexOf('--effort') + 1]).toBe('medium')
   })
 
   it('appends --resume when a provider session id is supplied', () => {

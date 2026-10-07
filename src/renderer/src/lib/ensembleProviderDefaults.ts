@@ -344,6 +344,7 @@ const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
   { id: 'claude-opus-4-8-1m', label: 'Opus 4.8 1M Legacy' },
   { id: 'claude-opus-4-7-1m', label: 'Opus 4.7 1M Legacy' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
   {
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
@@ -714,10 +715,20 @@ function isClaudeSonnet5Model(modelId?: string | null): boolean {
   return CLAUDE_SONNET_5_FAMILY.test(String(modelId || '').toLowerCase())
 }
 
+// Haiku 5 family (claude-haiku-5-5, …) takes the full Claude ladder; only the
+// Haiku 4.x line and the bare `haiku` alias keep reasoning dark. Kept in sync
+// with ClaudeCliArgs' CLAUDE_HAIKU_5_FAMILY.
+const CLAUDE_HAIKU_5_FAMILY = /haiku-5(?![0-9])/
+function isClaudeHaiku5Model(modelId?: string | null): boolean {
+  return CLAUDE_HAIKU_5_FAMILY.test(String(modelId || '').toLowerCase())
+}
+
 function isClaudeHaikuModel(modelId?: string | null): boolean {
-  return String(modelId || '')
-    .toLowerCase()
-    .includes('haiku')
+  return (
+    String(modelId || '')
+      .toLowerCase()
+      .includes('haiku') && !isClaudeHaiku5Model(modelId)
+  )
 }
 
 export function getEnsembleReasoningOptions(
@@ -757,7 +768,9 @@ export function getEnsembleReasoningOptions(
     }
     case 'claude':
       if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
-      return isClaudeFullReasoningModel(modelId) || isClaudeSonnet5Model(modelId)
+      return isClaudeFullReasoningModel(modelId) ||
+        isClaudeSonnet5Model(modelId) ||
+        isClaudeHaiku5Model(modelId)
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':

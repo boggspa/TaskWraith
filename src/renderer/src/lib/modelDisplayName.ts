@@ -107,6 +107,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'claude-opus-4-7': 'Claude Opus 4.7',
   'claude-opus-4-7-1m': 'Claude Opus 4.7 (1M)',
   'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+  'claude-haiku-5-5': 'Claude Haiku 5.5',
   'claude-haiku-4-5': 'Claude Haiku 4.5',
   'claude-opus-4-6': 'Claude Opus 4.6',
   // Composer-side short ids

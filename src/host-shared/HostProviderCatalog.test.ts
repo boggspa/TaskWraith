@@ -218,6 +218,31 @@ describe('HostProviderCatalog', () => {
     expect(opus55?.reasoning.every((entry) => entry.available)).toBe(true)
   })
 
+  it('offers Haiku 5.5 directly above Haiku 4.5 on the full Claude ladder without the default', () => {
+    const claude = hostProviderCatalogEntry('claude')
+    const ids = claude?.models.map((model) => model.modelId) ?? []
+    expect(ids.indexOf('claude-haiku-5-5')).toBeGreaterThan(ids.indexOf('claude-sonnet-5'))
+    expect(ids.indexOf('claude-haiku-5-5') + 1).toBe(ids.indexOf('claude-haiku-4-5'))
+    const haiku55 = claude?.models.find((model) => model.modelId === 'claude-haiku-5-5')
+    expect(haiku55).toMatchObject({ label: 'Haiku 5.5', available: true })
+    expect(haiku55?.default).toBeUndefined()
+    expect(haiku55?.reasoning.map((entry) => entry.reasoningId)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(haiku55?.reasoning.every((entry) => entry.available)).toBe(true)
+    // Haiku 4.5 keeps its reduced Low..High ladder.
+    expect(
+      claude?.models
+        .find((model) => model.modelId === 'claude-haiku-4-5')
+        ?.reasoning.map((entry) => entry.reasoningId)
+    ).toEqual(['low', 'medium', 'high'])
+  })
+
   it('offers GPT-6.1 Sol (the default), GPT-6 Sol and Luna as the leading Codex rows on the standard ladder', () => {
     const codex = hostProviderCatalogEntry('codex')
     expect(codex?.models.map((model) => model.modelId).slice(0, 4)).toEqual([

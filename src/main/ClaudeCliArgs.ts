@@ -13,6 +13,10 @@ const CLAUDE_SONNET_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
 // ladder; the trailing non-digit guard avoids matching a `claude-sonnet-50`
 // lookalike. Kept in sync with ensembleProviderDefaults' CLAUDE_SONNET_5_FAMILY.
 const CLAUDE_SONNET_5_FAMILY = /sonnet-5(?![0-9])/
+// Haiku 5 family (claude-haiku-5-5, …) takes the full ladder; Haiku 4.x and
+// the bare `haiku` alias still get no effort flag. Kept in sync with
+// ensembleProviderDefaults' CLAUDE_HAIKU_5_FAMILY.
+const CLAUDE_HAIKU_5_FAMILY = /haiku-5(?![0-9])/
 const CLAUDE_EFFORT_ALIASES: Record<string, string> = {
   extra: 'xhigh',
   ultracode: 'max',
@@ -34,7 +38,7 @@ export function normalizeClaudeEffortFlagForModel(
   const normalized = normalizeClaudeEffortFlag(value)
   if (!normalized) return null
   const modelKey = String(model || '').toLowerCase()
-  if (modelKey.includes('haiku')) return null
+  if (modelKey.includes('haiku') && !CLAUDE_HAIKU_5_FAMILY.test(modelKey)) return null
   // Sonnet 5 uses the full Opus-equivalent effort ladder; only the legacy
   // Sonnet 4.x line is clamped to the reduced set.
   if (modelKey.includes('sonnet') && !CLAUDE_SONNET_5_FAMILY.test(modelKey)) {

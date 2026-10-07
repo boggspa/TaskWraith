@@ -84,6 +84,7 @@ public enum ModelContextLengths {
                 (id: "claude-sonnet-4-6",   label: "Sonnet 4.6 Legacy"),
                 (id: "claude-opus-4-8-1m",  label: "Opus 4.8 1M Legacy"),
                 (id: "claude-opus-4-7-1m",  label: "Opus 4.7 1M Legacy"),
+                (id: "claude-haiku-5-5",    label: "Haiku 5.5"),
                 (id: "claude-haiku-4-5",    label: "Haiku 4.5"),
             ]
         case "kimi":

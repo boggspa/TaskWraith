@@ -797,6 +797,19 @@ const CLAUDE_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
+    // Haiku 5.5 (current Haiku, successor to 4.5): 1M context, 128K output,
+    // adaptive thinking with a Medium API default and the full effort ladder
+    // (`budget_tokens` is rejected). No Fast mode — that is Opus-only. Unlike
+    // Haiku 4.5 it reaches `max`, so it is an UltraTask candidate. Opus 5.5
+    // carries the default.
+    id: 'claude-haiku-5-5',
+    label: 'Haiku 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
+  },
+  {
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
     description: 'Fast & efficient',
