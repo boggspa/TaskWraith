@@ -27451,7 +27451,8 @@ const kimiHomeFsAdapter: KimiHomeFs = {
   readdir: (path) => fs.readdir(path),
   lstat: (path) => fs.lstat(path),
   realpath: (path) => fs.realpath(path),
-  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
+  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection,
+  readStoredApiKey: () => getStoredKimiApiKey()
 }
 
 /** Node fs adapter for TaskWraith-owned run- or session-scoped synthetic Kimi cwd. */

@@ -26,14 +26,22 @@ turns and native compaction. Explicit user-owned `kimi login` and `kimi upgrade`
 terminal handoffs are setup operations outside managed-run containment. They
 are labelled `user-owned-provider-setup` with `managedRunReady: false`; success
 does not qualify the runtime. Kimi has no bounded logout command, so TaskWraith
-does not replace it with a bare interactive Kimi session.
+does not replace it with a bare interactive Kimi session; Settings → Sign out
+instead removes, in-process, exactly the OAuth slot file `kimi login` wrote
+(Kimi's own logout is the same single storage removal).
 
-Managed ACP authentication is sourced only from the current `~/.kimi-code`
-home: the OAuth credential written by `kimi login`, or a provider key already
-configured in that home's `config.toml`. The encrypted Moonshot key stored in
-TaskWraith Settings is used for usage queries and is not projected into ACP.
-Legacy `~/.kimi` credentials remain usage-history compatibility only and never
-make a managed seat ready.
+Managed ACP authentication is sourced, in order, from the current
+`~/.kimi-code` home's OAuth credential written by `kimi login`, a provider key
+already configured in that home's `config.toml`, and finally the encrypted Kimi
+API key saved in TaskWraith Settings. A global-region login stores its token in
+the environment-scoped slot `config.toml` names
+(`credentials/kimi-code-env-<hash>.json`), not `credentials/kimi-code.json`;
+every reader follows that slot. The Settings key is projected only into the
+seat's private per-turn `config.toml` (as the `managed:kimi-code` provider's
+`api_key`, with its `.oauth` table removed), so it needs that provider to have
+been provisioned by an earlier `kimi login`; the user's real `config.toml` is
+never modified. Legacy `~/.kimi` credentials remain usage-history
+compatibility only and never make a managed seat ready.
 
 ## OAuth refresh authority
 

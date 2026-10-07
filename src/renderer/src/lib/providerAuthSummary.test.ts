@@ -146,7 +146,7 @@ describe('summariseProviderApiKeyStatus — Kimi', () => {
       statusText: 'Credential state not observed'
     })
     expect(summary.statusText).not.toContain('API key saved')
-    expect(summary.hint).toContain('Settings key is usage-only')
+    expect(summary.hint).toContain('save a Kimi API key in Settings')
   })
 
   it('distinguishes a present but unqualified runtime from a missing CLI', () => {

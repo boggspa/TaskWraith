@@ -314,7 +314,7 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
         provider: 'kimi',
         label: 'Kimi Code',
         installHint:
-          'Install Kimi Code, authenticate with `kimi login` or ~/.kimi-code/config.toml, and use an exactly admitted runtime. The TaskWraith Settings key is usage-query-only.',
+          'Install Kimi Code, authenticate with `kimi login`, ~/.kimi-code/config.toml, or a Kimi API key saved in TaskWraith Settings, and use an exactly admitted runtime.',
         preflightChecks: ['binary', 'auth']
       },
       {

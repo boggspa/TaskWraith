@@ -182,9 +182,10 @@ export function summariseProviderApiKeyStatus(
       hint: `Install the ${providerLabel} CLI first, then return here.`
     }
   }
-  // Kimi's encrypted Settings key is deliberately usage-query-only. Managed
-  // ACP authentication comes from the admitted Kimi Code home's OAuth or
-  // provider configuration, reported through authState below.
+  // A saved Kimi Settings key is not by itself "signed in": main projects it
+  // into a managed seat only when the Kimi Code home has no OAuth login or key
+  // of its own and has the managed provider to attach it to. Main reports the
+  // resulting managed state (oauth / api-key / unknown) through authState.
   if (providerLabel !== 'Kimi' && status.apiKeyConfigured) {
     return {
       variant: 'signed-in',
@@ -207,7 +208,7 @@ export function summariseProviderApiKeyStatus(
       statusText: 'Credential state not observed',
       hint:
         providerLabel === 'Kimi'
-          ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
+          ? 'Use `kimi login`, configure a provider key in ~/.kimi-code/config.toml, or save a Kimi API key in Settings (used when no Kimi Code login is present). Structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
           : `Open Settings → ${providerLabel} to check sign-in or paste an API key.`
     }
   }
@@ -216,7 +217,7 @@ export function summariseProviderApiKeyStatus(
     statusText: 'Not authenticated',
     hint:
       providerLabel === 'Kimi'
-        ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
+        ? 'Use `kimi login`, configure a provider key in ~/.kimi-code/config.toml, or save a Kimi API key in Settings (used when no Kimi Code login is present). Structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
         : `Open Settings → ${providerLabel} to sign in or paste an API key.`
   }
 }

@@ -4903,12 +4903,12 @@ export function SettingsPanel({
                           </span>
                         )}
                         <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                          Usage-query key: {kimiAuthStatus.apiKeyConfigured ? 'stored' : 'not stored'}
+                          Settings API key: {kimiAuthStatus.apiKeyConfigured ? 'saved' : 'not saved'}
                         </span>
                       </div>
                     )}
 
-                    <label className="settings-label">Moonshot API key (usage only)</label>
+                    <label className="settings-label">Kimi API key</label>
                     <p
                       style={{
                         fontSize: '0.72rem',
@@ -4916,10 +4916,13 @@ export function SettingsPanel({
                         margin: '0 0 var(--space-xs)'
                       }}
                     >
-                      Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
-                      (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key
-                      stored here is not projected into ACP. Structural ACP admission is always enabled;
-                      compatible unreviewed runtimes run with the explicit{' '}
+                      Managed ACP authenticates from the current Kimi Code home first:{' '}
+                      <code>kimi login</code> (OAuth), or a provider key in{' '}
+                      <code>~/.kimi-code/config.toml</code>. When neither is present, the key saved
+                      here authenticates managed runs, written only into each seat&apos;s private
+                      per-turn config (it needs the Kimi Code provider a prior <code>kimi login</code>{' '}
+                      provisioned). It also authorises the usage query. Structural ACP admission is
+                      always enabled; compatible unreviewed runtimes run with the explicit{' '}
                       <code>unattested-development</code> label. Credentials do not bypass stable
                       identity, bounded startup, or ACP compatibility checks.
                     </p>
@@ -4961,7 +4964,7 @@ export function SettingsPanel({
                     <p className="settings-hint">
                       {kimiApiKeyStorageUnavailable
                         ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                        : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on this Mac; not supplied to managed ACP.'}
+                        : 'Optional Kimi API key. Stored encrypted on this Mac; used for managed runs only when no Kimi Code login is present, and for the usage query.'}
                     </p>
 
                     <label className="settings-label">Kimi CLI binary</label>

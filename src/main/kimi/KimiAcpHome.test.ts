@@ -325,6 +325,86 @@ describe('prepareKimiIsolatedHome', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'not-authenticated' })
   })
 
+  it('authenticates a signed-out seat with the Kimi key saved in TaskWraith Settings', async () => {
+    const managedProviderConfig = [
+      REAL_CONFIG,
+      '',
+      '[providers."managed:kimi-code"]',
+      'type = "kimi"',
+      'api_key = ""',
+      'base_url = "https://api.kimi.ai/coding/v1"',
+      '',
+      '[providers."managed:kimi-code".oauth]',
+      'storage = "file"',
+      'key = "oauth/kimi-code-env-0e4f99c69cc27850"'
+    ].join('\n')
+    const storedKey = 'sk-kimi-settings-0123456789'
+
+    const status = makeFakeFs({ '/current/config.toml': managedProviderConfig })
+    expect(await detectKimiManagedAuthState('/current', status.fs)).toBe('unknown')
+    status.fs.readStoredApiKey = () => storedKey
+    expect(await detectKimiManagedAuthState('/current', status.fs)).toBe('api-key')
+
+    const { fs, files } = makeFakeFs({ '/src/config.toml': managedProviderConfig })
+    fs.readStoredApiKey = async () => storedKey
+    const projections: unknown[] = []
+    fs.prepareOAuthCredentialProjection = async (request) => {
+      projections.push(request)
+    }
+    const result = await prepareKimiIsolatedHome({
+      runId: 'settings-key',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      strictCleanup: true,
+      fs
+    })
+    expect(result).toMatchObject({ ok: true })
+    const seatConfig = files.get('/iso/config.toml') as string
+    expect(seatConfig).toContain(`api_key = "${storedKey}"`)
+    expect(seatConfig).not.toContain('[providers."managed:kimi-code".oauth]')
+    expect(projections).toEqual([])
+    // The user's real config is never rewritten.
+    expect(files.get('/src/config.toml')).toBe(managedProviderConfig)
+    if (result.ok) await result.cleanup()
+    expect([...files.keys()].some((key) => key.startsWith('/iso'))).toBe(false)
+  })
+
+  it('prefers the Kimi Code OAuth login over a saved Settings key', async () => {
+    const { fs, files } = makeFakeFs(seededSource())
+    files.set(
+      '/src/config.toml',
+      `${REAL_CONFIG}\n\n[providers."managed:kimi-code"]\ntype = "kimi"\napi_key = ""\n`
+    )
+    const readStoredApiKey = vi.fn(() => 'sk-kimi-settings-0123456789')
+    fs.readStoredApiKey = readStoredApiKey
+    fs.prepareOAuthCredentialProjection = async () => {}
+    expect(await detectKimiManagedAuthState('/src', fs)).toBe('oauth')
+    const result = await prepareKimiIsolatedHome({
+      runId: 'oauth-wins',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      fs
+    })
+    expect(result).toMatchObject({ ok: true })
+    expect(files.get('/iso/config.toml')).not.toContain('sk-kimi-settings')
+    expect(readStoredApiKey).not.toHaveBeenCalled()
+    if (result.ok) await result.cleanup()
+  })
+
+  it('stays not-authenticated when a saved key has no managed provider to attach to', async () => {
+    const { fs } = makeFakeFs({ '/src/config.toml': REAL_CONFIG })
+    fs.readStoredApiKey = () => 'sk-kimi-settings-0123456789'
+    expect(await detectKimiManagedAuthState('/src', fs)).toBe('unknown')
+    const result = await prepareKimiIsolatedHome({
+      runId: 'no-provider',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      fs
+    })
+    expect(result).toMatchObject({ ok: false, reason: 'not-authenticated' })
+    if (!result.ok) expect(result.message).not.toContain('sk-kimi-settings')
+  })
+
   it('builds an isolated home from a non-rotating Kimi provider API key', async () => {
     const { fs, files } = makeFakeFs({
       '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`

@@ -166,7 +166,7 @@ const SETUP_HINTS: Record<ProviderId, string> = {
     'Install Codex if needed, then use TaskWraith’s Codex sign-in. Its private Codex home stays separate from the Codex app history.',
   claude: 'On your Mac, open TaskWraith Settings or run the Claude auth flow.',
   kimi:
-    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. TaskWraith always applies stable identity, bounded startup, and ACP compatibility checks; admitted unreviewed runtimes are labelled unattested-development. The key saved in TaskWraith Settings is usage-only.',
+    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. TaskWraith always applies stable identity, bounded startup, and ACP compatibility checks; admitted unreviewed runtimes are labelled unattested-development. A Kimi API key saved in TaskWraith Settings authenticates runs when no Kimi Code login is present.',
   cursor:
     'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',

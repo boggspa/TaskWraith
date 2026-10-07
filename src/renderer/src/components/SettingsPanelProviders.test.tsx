@@ -545,7 +545,7 @@ describe('SettingsPanel provider cards', () => {
     expect(kimiPane).toContain('data-provider="kimi"')
     // The former "Kimi" settings group is folded in under CREDENTIAL.
     expect(kimiPane).toContain('settings-provider-rail-section-label">Credential<')
-    expect(kimiPane).toContain('Moonshot API key (usage only)')
+    expect(kimiPane).toContain('>Kimi API key<')
     expect(kimiPane).toContain('Kimi CLI binary')
     expect(kimiPane).toContain('stable identity/startup/ACP compatibility checks failed')
     expect(kimiPane).toContain('Structural ACP admission is always enabled')
@@ -576,6 +576,10 @@ describe('SettingsPanel provider cards', () => {
         )
       )
 
+    // The Settings key is a real run credential now, not a usage-only token.
+    expect(kimiPaneFor('api-key')).toContain('Managed ACP authenticated (api-key)')
+    expect(kimiPaneFor('api-key')).toContain('the key saved')
+    expect(kimiPaneFor('api-key')).not.toContain('usage only')
     const signedIn = kimiPaneFor('oauth')
     expect(signedIn).toContain('Managed ACP authenticated (oauth)')
     expect(signedIn).toContain('>Sign out<')

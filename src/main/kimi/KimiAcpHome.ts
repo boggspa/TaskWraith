@@ -26,6 +26,11 @@ import {
 } from './KimiAcpContainment'
 import { effectiveKimiModelContextWindow } from './KimiModelContext'
 import { kimiOAuthCredentialFileName } from '../../shared/kimiOAuthCredentialSlot'
+import {
+  isProjectableKimiApiKey,
+  kimiConfigHasManagedProvider,
+  projectKimiManagedApiKey
+} from './KimiManagedApiKeyProjection'
 import { isAbsolute, relative, sep } from 'path'
 import type {
   KimiOAuthCredentialLease,
@@ -69,6 +74,12 @@ export interface KimiHomeFs {
   acquireOAuthCredentialLease?: (
     request: KimiOAuthCredentialLeaseRequest
   ) => Promise<KimiOAuthCredentialLeaseAcquireResult>
+  /**
+   * The decrypted Kimi API key saved in TaskWraith Settings, if any. Used only
+   * when the Kimi Code home has no OAuth login and no provider key of its own:
+   * it is then projected into the seat's private per-turn config.toml.
+   */
+  readStoredApiKey?: () => string | null | Promise<string | null>
 }
 
 export interface PrepareKimiHomeInput {
@@ -161,14 +172,16 @@ export function hasConfiguredKimiApiKey(configBody: string): boolean {
 }
 
 /**
- * Managed ACP authentication comes only from the current Kimi Code home. The
+ * Managed ACP authentication, in precedence order: the current Kimi Code
+ * home's OAuth login, a provider key in its config.toml, then the Kimi API key
+ * saved in TaskWraith Settings (projected into the seat's private config when
+ * config.toml has the `kimi login` managed provider to attach it to). The
  * legacy ~/.kimi credential is usage-history compatibility and is never seeded
- * into a managed seat. A TaskWraith Settings key is likewise usage-only unless
- * the product later adds a separately reviewed secret-projection design.
+ * into a managed seat.
  */
 export async function detectKimiManagedAuthState(
   sourceHome: string,
-  fs: Pick<KimiHomeFs, 'exists' | 'readFile' | 'join'>
+  fs: Pick<KimiHomeFs, 'exists' | 'readFile' | 'join' | 'readStoredApiKey'>
 ): Promise<'oauth' | 'api-key' | 'unknown'> {
   let config: string | null = null
   try {
@@ -185,7 +198,24 @@ export async function detectKimiManagedAuthState(
   ) {
     return 'oauth'
   }
-  return config !== null && hasConfiguredKimiApiKey(config) ? 'api-key' : 'unknown'
+  if (config === null) return 'unknown'
+  if (hasConfiguredKimiApiKey(config)) return 'api-key'
+  return (await readProjectableStoredApiKey(fs, config)) ? 'api-key' : 'unknown'
+}
+
+/** The Settings key when it can authenticate this config's managed provider. */
+async function readProjectableStoredApiKey(
+  fs: Pick<KimiHomeFs, 'readStoredApiKey'>,
+  config: string
+): Promise<string | null> {
+  if (!fs.readStoredApiKey || !kimiConfigHasManagedProvider(config)) return null
+  let stored: string | null = null
+  try {
+    stored = await fs.readStoredApiKey()
+  } catch {
+    return null
+  }
+  return isProjectableKimiApiKey(stored) ? stored.trim() : null
 }
 
 /**
@@ -433,14 +463,23 @@ export async function prepareKimiIsolatedHome(
   const hasOAuthCredential = credentialFileName
     ? await fs.exists(fs.join(sourceHome, 'credentials', credentialFileName))
     : false
-  if (!hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig)) {
+  // A Kimi API key saved in TaskWraith Settings authenticates the seat only
+  // when the Kimi Code home has neither an OAuth login nor its own key.
+  const projectedApiKey =
+    !hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig)
+      ? await readProjectableStoredApiKey(fs, baseConfig)
+      : null
+  if (!hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig) && !projectedApiKey) {
     return {
       ok: false,
       reason: 'not-authenticated',
       message:
-        'Kimi Code has no current OAuth login or provider API key in ~/.kimi-code/config.toml. Run `kimi login` (or configure that Kimi Code provider), then retry.'
+        'Kimi Code has no current OAuth login or provider API key in ~/.kimi-code/config.toml, and no usable Kimi API key is saved in TaskWraith Settings (a saved key needs the Kimi Code provider that `kimi login` provisions). Run `kimi login` or save a Kimi API key in Settings → Providers → Kimi, then retry.'
     }
   }
+  const seatBaseConfig = projectedApiKey
+    ? (projectKimiManagedApiKey(baseConfig, projectedApiKey) ?? baseConfig)
+    : baseConfig
 
   const prepareOAuthCredentialProjection = fs.prepareOAuthCredentialProjection
   const acquireOAuthCredentialLease = fs.acquireOAuthCredentialLease
@@ -500,7 +539,7 @@ export async function prepareKimiIsolatedHome(
     }
 
     const isolatedConfig = buildKimiIsolatedConfig({
-      baseConfig,
+      baseConfig: seatBaseConfig,
       extraDenyTools: input.extraDenyTools,
       thinkingEnabled: input.thinkingEnabled,
       thinkingEffort: input.thinkingEffort

@@ -16,7 +16,7 @@ export interface KimiAuthHandlersDeps {
     | { admitted: true; version: string; mode: 'reviewed' | 'unattested-development' }
     | { admitted: false; message: string }
   >
-  /** Managed ACP credential state from the current ~/.kimi-code home only. */
+  /** Managed ACP credential state: ~/.kimi-code login/key, else the Settings key. */
   getManagedAuthState: () => Promise<'oauth' | 'api-key' | 'unknown'>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
@@ -34,9 +34,10 @@ export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
       // Runtime admission owns the only executable inventory probes. Status must
       // not run an independent --version/--help process around that gate.
       const runtime = await deps.inspectRuntime(resolved)
-      // The encrypted Settings key is used by the usage endpoint and is not
-      // projected into ACP. Only inspect current-home credentials after runtime
-      // admission succeeds; an unqualified binary is never reported ready.
+      // getManagedAuthState folds in the encrypted Settings key: it reports
+      // 'api-key' when that key will be projected into a managed seat (no
+      // Kimi Code login or key of its own). Only inspect credentials after
+      // runtime admission succeeds; an unqualified binary is never reported ready.
       const managedAuthState = runtime.admitted ? await deps.getManagedAuthState() : 'unknown'
       const status: ProviderApiKeyStatus = {
         available: runtime.admitted,
