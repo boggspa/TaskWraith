@@ -63,6 +63,7 @@ import {
   type QuotaPeriod
 } from '../lib/quotaPeriods'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
+import { buildUsageCreditRows } from '../lib/usageCredits'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
 import { formatTokenCount } from '../lib/UsageHeatmap'
@@ -917,16 +918,77 @@ function UsageWindowRow({
   )
 }
 
-/** Expanded sidebar only; Settings keeps its provider headings. Bespoke meters
- * reuse their existing views so amount provenance and loading states survive. */
+/**
+ * The "Usage Credits" stack under the period meters: one line per provider
+ * with a headline credit balance (Limit Counter's card of the same name).
+ * No bar — a balance has no ceiling to fill towards. Exported for SSR tests.
+ */
+export function UsageCreditsSection({
+  creditEntries,
+  placeholderProviders,
+  locale
+}: {
+  creditEntries: readonly ModelUsageAggregate[]
+  placeholderProviders?: readonly ModelUsageProviderId[]
+  locale?: string
+}) {
+  const rows = buildUsageCreditRows(creditEntries, { placeholderProviders, locale })
+  if (rows.length === 0) return null
+  return (
+    <section
+      className="model-usage-period-section model-usage-credits-section"
+      aria-label="Usage credits"
+    >
+      <div className="model-usage-period-heading">
+        <h3>Usage Credits</h3>
+        <span>
+          {rows.length} {rows.length === 1 ? 'balance' : 'balances'}
+        </span>
+      </div>
+      <div className="model-usage-period-rows model-usage-credit-rows">
+        {rows.map((row) => {
+          const providerName = modelUsageProviderName(row.provider)
+          return (
+            <div
+              key={row.provider}
+              className={`model-usage-credit-row provider-${row.provider} ${
+                row.hasValue ? 'has-value' : 'is-empty'
+              }`}
+              style={
+                {
+                  '--model-usage-provider-glow': `var(--provider-${row.provider}-color)`
+                } as CSSProperties
+              }
+              title={`${providerName} usage credits: ${row.valueText} · ${row.detail}`}
+            >
+              <span className="model-usage-credit-label">
+                <ProviderLogoTile provider={row.provider} size={12} />
+                <span className="model-usage-period-label-text">{providerName}</span>
+              </span>
+              <span className="model-usage-credit-value">{row.valueText}</span>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+/** Period-grouped meter list (sidebar and Settings). Bespoke meters reuse
+ * their existing views so amount provenance and loading states survive. */
 export function PeriodicModelUsageList({
   quotaEntries,
+  creditEntries,
+  creditPlaceholderProviders,
   grokUsage,
   mistralQuota,
   currency,
   locale
 }: {
   quotaEntries: ModelUsageAggregate[]
+  /** Entries carrying a credit balance; may overlap `quotaEntries`. */
+  creditEntries?: ModelUsageAggregate[]
+  creditPlaceholderProviders?: readonly ModelUsageProviderId[]
   grokUsage?: GrokCreditsMeterViewProps
   mistralQuota?: MistralQuotaMeterViewProps
   currency?: DisplayCurrency
@@ -1038,6 +1100,13 @@ export function PeriodicModelUsageList({
           </section>
         )
       })}
+      {creditEntries || creditPlaceholderProviders ? (
+        <UsageCreditsSection
+          creditEntries={creditEntries ?? []}
+          placeholderProviders={creditPlaceholderProviders}
+          locale={locale}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1614,12 +1683,32 @@ export function ModelUsageCard({
     ...(grokAvailable ? (['grok'] as const) : []),
     ...(mistralQuotaAvailable ? (['mistral'] as const) : [])
   ])
+  // Usage Credits stack: every quota entry that carries a balance, in the
+  // expanded provider order. A balance-only entry (no windows) belongs here
+  // and nowhere else — it never earns a "No data" meter row. Claude and Grok
+  // get a "—" placeholder when they report usage but no balance, as Limit
+  // Counter does, so the stack still says where a balance WOULD appear.
+  const balanceEntries = usageSummary.filter(
+    (entry) => entry.model === 'usage limits' && (entry.balances?.length || 0) > 0
+  )
+  const creditProviderOrder = orderExpandedUsageProviders(
+    balanceEntries.map((entry) => entry.provider)
+  )
+  const creditEntries = creditProviderOrder.flatMap((provider) =>
+    balanceEntries.filter((entry) => entry.provider === provider)
+  )
+  const creditPlaceholderProviders: ModelUsageProviderId[] = [
+    ...(quotaEntries.some((entry) => entry.provider === 'claude') ? (['claude'] as const) : []),
+    ...(grokAvailable ? (['grok'] as const) : [])
+  ]
+  const hasCreditRows = creditEntries.length > 0 || creditPlaceholderProviders.length > 0
   // The API-spend view is offered whenever the caller wired it (sidebar).
   const apiSpendEnabled = Boolean(apiSpend)
   // A plan-side meter exists when there are quota entries, the gated Grok
   // credit meter, or Mistral's estimated band. Only then is the Plan ⇄ Spend
   // choice meaningful.
-  const hasPlanMeters = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
+  const hasPlanMeters =
+    quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable || hasCreditRows
   const planViewAvailable =
     hasPlanMeters || (apiSpend?.planAvailabilityPending === true && view === 'plan')
   const isSidebarVariant = variant === 'sidebar'
@@ -1873,6 +1962,8 @@ export function ModelUsageCard({
             ) : isSidebarVariant ? (
               <PeriodicModelUsageList
                 quotaEntries={quotaEntries}
+                creditEntries={creditEntries}
+                creditPlaceholderProviders={creditPlaceholderProviders}
                 grokUsage={grokAvailable ? grokUsage : undefined}
                 mistralQuota={mistralQuotaAvailable ? mistralQuota : undefined}
                 currency={apiSpend?.currency}

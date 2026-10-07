@@ -10,6 +10,7 @@ import {
   EXPANDED_USAGE_PROVIDER_ORDER,
   ModelUsageCard,
   PeriodicModelUsageList,
+  UsageCreditsSection,
   orderExpandedQuotaWindows,
   orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
@@ -199,6 +200,82 @@ describe('ModelUsageCard', () => {
     expect(html.indexOf('Mistral ')).toBeLessThan(html.indexOf('Antigravity'))
     expect(html).not.toContain('model-usage-provider-heading')
     expect(html).not.toContain('aria-label="Daily usage"')
+  })
+
+  it('stacks one Usage Credits line per provider under the period meters', () => {
+    const html = renderToStaticMarkup(
+      <PeriodicModelUsageList
+        quotaEntries={[quotaEntry({ provider: 'codex' })]}
+        creditEntries={[
+          quotaEntry({
+            provider: 'codex',
+            balances: [{ id: 'c', label: 'Credits Remaining', amount: 0, unit: 'credits' }]
+          }),
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [],
+            balances: [
+              { id: 'g', label: 'Granted', amount: 0, unit: 'USD' },
+              {
+                id: 't',
+                label: 'Total available',
+                amount: 19.97,
+                unit: 'USD',
+                subtitle: 'Official DeepSeek API'
+              }
+            ]
+          })
+        ]}
+        creditPlaceholderProviders={['grok']}
+        locale="en-US"
+      />
+    )
+    expect(html).toContain('aria-label="Usage credits"')
+    expect(html).toContain('<h3>Usage Credits</h3>')
+    expect(html).toContain('3 balances')
+    const rows = [
+      ...html.matchAll(/model-usage-credit-row provider-(\w+) (has-value|is-empty)/g)
+    ].map((match) => [match[1], match[2]])
+    expect(rows).toEqual([
+      ['codex', 'has-value'],
+      ['deepseek', 'has-value'],
+      ['grok', 'is-empty']
+    ])
+    expect(html).toContain('<span class="model-usage-credit-value">0 credits</span>')
+    expect(html).toContain('<span class="model-usage-credit-value">$19.97</span>')
+    expect(html).toContain('<span class="model-usage-credit-value">—</span>')
+    expect(html).toContain('Total available · Official DeepSeek API')
+    expect(html).toContain('Grok reports subscription credits')
+    // The period sections come first; credits are the stack underneath.
+    expect(html.indexOf('aria-label="Weekly usage"')).toBeLessThan(
+      html.indexOf('aria-label="Usage credits"')
+    )
+    // A balance-only provider never earns a "No data" meter row.
+    expect(html).not.toContain('No data')
+    // The stack does not exist when nothing carries a balance.
+    expect(
+      renderToStaticMarkup(<PeriodicModelUsageList quotaEntries={[quotaEntry()]} />)
+    ).not.toContain('Usage Credits')
+    expect(renderToStaticMarkup(<UsageCreditsSection creditEntries={[]} />)).toBe('')
+  })
+
+  it('shows a balance-only provider in the sidebar credits stack without a meter row', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        variant="sidebar"
+        usageSummary={[
+          quotaEntry({
+            provider: 'openrouter',
+            windows: [],
+            balances: [{ id: 'r', label: 'Credit remaining', amount: 6.99, unit: 'USD' }]
+          })
+        ]}
+      />
+    )
+    expect(html).toContain('model-usage-credit-row provider-openrouter has-value')
+    expect(html).toContain('6.99')
+    expect(html).not.toContain('No data')
+    expect(html).not.toContain('model-usage-window"')
   })
 
   it('renders cached zero-usage quota windows instead of dropping the provider', () => {

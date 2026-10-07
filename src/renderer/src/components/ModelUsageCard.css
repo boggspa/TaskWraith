@@ -1090,3 +1090,63 @@
 [data-reduce-motion='true'] .app-sidebar .model-usage-summary--sidebar .model-usage-collapsible {
   transition: none;
 }
+
+/* Usage Credits stack — one line per provider under the period meters. A
+ * balance has no ceiling, so there is no bar: logo, provider, value. The
+ * value takes the provider accent when a balance exists and goes quiet for a
+ * "—" placeholder, matching Limit Counter's card of the same name. */
+.model-usage-credit-rows {
+  gap: 5px;
+}
+
+.model-usage-credit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.model-usage-credit-label {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 5px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.model-usage-credit-value {
+  flex: 0 0 auto;
+  color: color-mix(
+    in srgb,
+    var(--model-usage-provider-glow, var(--accent)) 88%,
+    var(--text-primary)
+  );
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-shadow: 0 0 8px
+    color-mix(in srgb, var(--model-usage-provider-glow, transparent) 22%, transparent);
+}
+
+.model-usage-credit-row.is-empty .model-usage-credit-value {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-shadow: none;
+}
+
+.app-sidebar .model-usage-liquid-card .model-usage-credit-row {
+  font-size: 10.5px;
+  color: var(--sidebar-text, var(--text-primary));
+}
+
+.app-sidebar .model-usage-liquid-card .model-usage-credit-label {
+  color: color-mix(in srgb, var(--sidebar-text, var(--text-primary)) 94%, transparent);
+  font-weight: 680;
+}
+
+.app-sidebar .model-usage-liquid-card .model-usage-credit-row.is-empty .model-usage-credit-value {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 72%, transparent);
+}
