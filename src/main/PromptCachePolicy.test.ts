@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
-  aggregatePromptCacheDiagnosticsFromChats,
+  aggregatePromptCacheDiagnosticsFromUsage,
   buildPromptCacheCapabilitySummary,
   normalizePromptCacheSettings
 } from './PromptCachePolicy'
+import type { UsageRecord } from './store/types'
+
+function usage(
+  overrides: Partial<UsageRecord> & Pick<UsageRecord, 'id' | 'timestamp'>
+): UsageRecord {
+  return {
+    workspaceId: 'ws',
+    chatId: 'chat',
+    runId: overrides.id,
+    model: 'model',
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    durationMs: 0,
+    ...overrides
+  }
+}
 
 describe('PromptCachePolicy', () => {
   it('normalizes persisted policy while dropping unknown providers and modes', () => {
@@ -91,57 +108,65 @@ describe('PromptCachePolicy', () => {
     )
   })
 
-  it('aggregates prompt cache diagnostics from recent live-provider runs', () => {
-    const rows = aggregatePromptCacheDiagnosticsFromChats(
+  it('aggregates prompt cache diagnostics from recent live-provider usage records', () => {
+    const rows = aggregatePromptCacheDiagnosticsFromUsage(
       [
-        {
+        usage({
+          id: 'run-1',
           provider: 'claude',
-          runs: [
-            {
-              runId: 'run-1',
-              provider: 'claude',
-              startedAt: '2026-07-05T10:00:00.000Z',
-              endedAt: '2026-07-05T10:01:00.000Z',
-              stats: {
-                input_tokens: 100,
-                cache_read_input_tokens: 12,
-                cache_creation_input_tokens: 3
-              }
-            },
-            {
-              runId: 'run-2',
-              provider: 'claude',
-              startedAt: '2026-07-05T11:00:00.000Z',
-              stats: {
-                inputTokens: 50,
-                cacheReadInputTokens: 8
-              }
-            }
-          ]
-        },
-        {
+          timestamp: Date.parse('2026-07-05T10:01:00.000Z'),
+          inputTokens: 100,
+          cacheReadInputTokens: 12,
+          cacheCreationInputTokens: 3
+        }),
+        usage({
+          id: 'run-2',
+          provider: 'claude',
+          timestamp: Date.parse('2026-07-05T11:00:00.000Z'),
+          inputTokens: 50,
+          cacheReadInputTokens: 8
+        }),
+        // Retired providers never surface, however much cache they reported.
+        usage({
+          id: 'legacy-gemini',
           provider: 'gemini',
-          runs: [
-            {
-              runId: 'legacy-gemini',
-              provider: 'gemini',
-              startedAt: '2026-07-05T12:00:00.000Z',
-              stats: { input_tokens: 999, cache_read_input_tokens: 999 }
-            }
-          ]
-        },
-        {
+          timestamp: Date.parse('2026-07-05T12:00:00.000Z'),
+          inputTokens: 999,
+          cacheReadInputTokens: 999
+        }),
+        // Quota hints are not runs.
+        usage({
+          id: 'claude-reset-hint',
+          provider: 'claude',
+          usageKind: 'reset_hint',
+          timestamp: Date.parse('2026-07-05T11:30:00.000Z'),
+          inputTokens: 777,
+          cacheReadInputTokens: 777
+        }),
+        // Older than the 30-day window.
+        usage({
+          id: 'claude-ancient',
+          provider: 'claude',
+          timestamp: Date.parse('2026-05-01T00:00:00.000Z'),
+          inputTokens: 555,
+          cacheReadInputTokens: 555
+        }),
+        // A provider-less row cannot be attributed.
+        usage({
+          id: 'orphan',
+          provider: undefined,
+          timestamp: Date.parse('2026-07-05T11:45:00.000Z'),
+          inputTokens: 333,
+          cacheReadInputTokens: 333
+        }),
+        usage({
+          id: 'codex-run',
           provider: 'codex',
-          runs: [
-            {
-              runId: 'codex-run',
-              provider: 'codex',
-              startedAt: '2026-07-04T12:00:00.000Z',
-              stats: { input_tokens: 25, cachedInputTokens: 5 }
-            }
-          ]
-        }
-      ] as any,
+          timestamp: Date.parse('2026-07-04T12:00:00.000Z'),
+          inputTokens: 25,
+          cacheReadInputTokens: 5
+        })
+      ],
       { nowMs: Date.parse('2026-07-05T12:00:00.000Z') }
     )
 
@@ -165,27 +190,24 @@ describe('PromptCachePolicy', () => {
     ])
   })
 
-  it('bounds prompt cache diagnostics scans to newest runs', () => {
-    const rows = aggregatePromptCacheDiagnosticsFromChats(
+  it('bounds prompt cache diagnostics scans to newest usage records', () => {
+    const rows = aggregatePromptCacheDiagnosticsFromUsage(
       [
-        {
+        usage({
+          id: 'old',
           provider: 'claude',
-          runs: [
-            {
-              runId: 'old',
-              provider: 'claude',
-              startedAt: '2026-07-01T00:00:00.000Z',
-              stats: { input_tokens: 100, cache_read_input_tokens: 100 }
-            },
-            {
-              runId: 'new',
-              provider: 'claude',
-              startedAt: '2026-07-02T00:00:00.000Z',
-              stats: { input_tokens: 10, cache_read_input_tokens: 10 }
-            }
-          ]
-        }
-      ] as any,
+          timestamp: Date.parse('2026-07-01T00:00:00.000Z'),
+          inputTokens: 100,
+          cacheReadInputTokens: 100
+        }),
+        usage({
+          id: 'new',
+          provider: 'claude',
+          timestamp: Date.parse('2026-07-02T00:00:00.000Z'),
+          inputTokens: 10,
+          cacheReadInputTokens: 10
+        })
+      ],
       { maxRuns: 1, nowMs: Date.parse('2026-07-05T12:00:00.000Z') }
     )
 
@@ -196,6 +218,26 @@ describe('PromptCachePolicy', () => {
         inputTokens: 10,
         runCount: 1
       })
+    ])
+  })
+
+  it('counts folded time-bucket usage rows by their runCount', () => {
+    const rows = aggregatePromptCacheDiagnosticsFromUsage(
+      [
+        usage({
+          id: 'bucket',
+          provider: 'codex',
+          timestamp: Date.parse('2026-07-05T09:00:00.000Z'),
+          inputTokens: 40,
+          cacheReadInputTokens: 30,
+          runCount: 4
+        })
+      ],
+      { nowMs: Date.parse('2026-07-05T12:00:00.000Z') }
+    )
+
+    expect(rows).toEqual([
+      expect.objectContaining({ provider: 'codex', cacheReadInputTokens: 30, runCount: 4 })
     ])
   })
 })

@@ -5,8 +5,8 @@ import type {
   PromptCacheMode,
   PromptCacheProviderSettings,
   PromptCacheSettings,
-  ChatRecord,
-  ProviderId
+  ProviderId,
+  UsageRecord
 } from './store/types'
 import { isRetiredProvider } from '../shared/retiredProviders'
 
@@ -246,68 +246,47 @@ function capabilityForProvider(
   }
 }
 
-const CACHE_READ_KEYS = [
-  'cacheReadInputTokens',
-  'cache_read_input_tokens',
-  'input_cache_read',
-  'cacheReadTokens',
-  'cachedInputTokens',
-  'cached_input_tokens'
-]
-
-const CACHE_CREATION_KEYS = [
-  'cacheCreationInputTokens',
-  'cache_creation_input_tokens',
-  'input_cache_creation',
-  'cacheWriteTokens'
-]
-
-const INPUT_TOKEN_KEYS = ['input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens', 'input']
-
-function statNumber(stats: Record<string, unknown>, keys: string[]): number {
-  for (const key of keys) {
-    const value = stats[key]
-    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value))
-    if (typeof value === 'string' && value.trim()) {
-      const parsed = Number(value)
-      if (Number.isFinite(parsed)) return Math.max(0, Math.trunc(parsed))
-    }
-  }
-  return 0
+function usageCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
 }
 
-function runTimestampMs(value: unknown): number | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
-export function aggregatePromptCacheDiagnosticsFromChats(
-  chats: ChatRecord[],
+/**
+ * Settings → Providers → Prompt caching diagnostics, aggregated from the usage
+ * journal rather than from chat records.
+ *
+ * This used to take `AppStore.getChats()`: a synchronous parse of EVERY chat
+ * file on the main process — measured on a real profile 2026-10-07 at 572
+ * files / 1.25GB / ~11.6s — to read a few token counters per run. Main
+ * blocked means every window blocked, so opening the Providers tab froze the
+ * whole app for the duration. The usage journal already carries the same
+ * per-run `cacheReadInputTokens` / `cacheCreationInputTokens` facts (the
+ * Claude, Codex and Pi totals matched the chat-record totals exactly on that
+ * profile), is served from the hot checkpoint plus journal (~25ms), and is
+ * what the Model usage table on the same panel reads. Never widen this back
+ * to a corpus read; extend the usage record instead.
+ *
+ * `reset_hint` rows are quota hints, not runs. Time-bucket aggregates (external
+ * activity scans) carry `runCount`; count it, never 1 per record.
+ */
+export function aggregatePromptCacheDiagnosticsFromUsage(
+  records: readonly UsageRecord[],
   options: { maxRuns?: number; sinceMs?: number; nowMs?: number } = {}
 ): PromptCacheDiagnosticRow[] {
   const maxRuns = Math.max(1, Math.trunc(options.maxRuns ?? 500))
   const sinceMs = options.sinceMs ?? (options.nowMs ?? Date.now()) - 30 * 24 * 60 * 60 * 1000
-  const runs: Array<{
-    run: NonNullable<ChatRecord['runs']>[number]
-    provider: ProviderId
-    at: number
-  }> = []
-  for (const chat of chats) {
-    for (const run of Array.isArray(chat.runs) ? chat.runs : []) {
-      const provider = run.provider || chat.provider
-      const at = runTimestampMs(run.endedAt) ?? runTimestampMs(run.startedAt) ?? 0
-      if (!provider || isRetiredProvider(provider)) continue
-      if (!isRecord(run.stats)) continue
-      if (at > 0 && at < sinceMs) continue
-      runs.push({ run, provider, at })
-    }
+  const runs: Array<{ record: UsageRecord; provider: ProviderId; at: number }> = []
+  for (const record of records) {
+    const provider = record.provider
+    if (!provider || isRetiredProvider(provider)) continue
+    if (record.usageKind === 'reset_hint') continue
+    const at = usageCount(record.timestamp)
+    if (at > 0 && at < sinceMs) continue
+    runs.push({ record, provider, at })
   }
   runs.sort((a, b) => b.at - a.at)
 
   const byProvider = new Map<ProviderId, PromptCacheDiagnosticRow>()
-  for (const { provider, run, at } of runs.slice(0, maxRuns)) {
-    const stats = run.stats as Record<string, unknown>
+  for (const { provider, record, at } of runs.slice(0, maxRuns)) {
     const row =
       byProvider.get(provider) ||
       ({
@@ -317,10 +296,10 @@ export function aggregatePromptCacheDiagnosticsFromChats(
         inputTokens: 0,
         runCount: 0
       } satisfies PromptCacheDiagnosticRow)
-    row.cacheReadInputTokens += statNumber(stats, CACHE_READ_KEYS)
-    row.cacheCreationInputTokens += statNumber(stats, CACHE_CREATION_KEYS)
-    row.inputTokens += statNumber(stats, INPUT_TOKEN_KEYS)
-    row.runCount += 1
+    row.cacheReadInputTokens += usageCount(record.cacheReadInputTokens)
+    row.cacheCreationInputTokens += usageCount(record.cacheCreationInputTokens)
+    row.inputTokens += usageCount(record.inputTokens)
+    row.runCount += Math.max(1, usageCount(record.runCount ?? 1))
     if (at > 0 && (!row.lastRunAt || at > row.lastRunAt)) row.lastRunAt = at
     byProvider.set(provider, row)
   }

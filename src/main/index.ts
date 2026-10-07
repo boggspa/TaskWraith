@@ -2170,7 +2170,7 @@ import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import {
-  aggregatePromptCacheDiagnosticsFromChats,
+  aggregatePromptCacheDiagnosticsFromUsage,
   buildPromptCacheCapabilitySummary
 } from './PromptCachePolicy'
 import { registerPluginHandlers } from './ipc/pluginHandlers'
@@ -58905,8 +58905,10 @@ if (isGeminiMcpBridgeProcess) {
       },
       getPromptCacheCapabilities: () =>
         buildPromptCacheCapabilitySummary(AppStore.getSettings()).capabilities,
+      // Usage journal, never AppStore.getChats(): the corpus parse froze the
+      // whole app for seconds every time the Providers tab opened.
       getPromptCacheDiagnostics: () =>
-        aggregatePromptCacheDiagnosticsFromChats(AppStore.getChats()),
+        aggregatePromptCacheDiagnosticsFromUsage(AppStore.getUsage()),
       setBridgeDaemonEnabled: async (enabled) => {
         settingsService.updateSettings({ bridgeDaemonEnabled: Boolean(enabled) })
         return {
