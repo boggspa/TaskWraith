@@ -74,7 +74,7 @@ function withCuratedUltraTaskSupport<T extends CodexModelOption>(
 }
 
 const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
-  // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
+  // GPT-6 Astra leads the picker; GPT-6.1 Sol below it is the default.
   // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
   // developers.openai.com): hyphenated display names, Sol defaults to LOW,
   // `max` on all three, top `ultra` tier (internal token 'ultracode') on
@@ -101,7 +101,7 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
   },
   {
     // GPT-6.1 Sol (2026-09-29): low..max with a Medium default and Fast mode on
-    // its official model page; no `ultra` documented. Not the default.
+    // its official model page; no `ultra` documented. The Codex default.
     id: 'gpt-6.1-sol',
     label: 'GPT-6.1-Sol',
     description: 'Near-Astra performance for complex work at a lower cost.',
@@ -245,10 +245,10 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
   // shown on mount before IPC resolves / on IPC failure.
 ] satisfies CodexModelOption[])
 const CODEX_DEFAULT_MODELS = withCuratedUltraTaskSupport(CODEX_DEFAULT_MODEL_ROWS)
-// The 5.6 trio now leads CODEX_DEFAULT_MODELS, so the default can't be [0] any
-// more — pin it to GPT-5.5 (falling back to the first row only if 5.5 is gone).
+// GPT-6 Astra leads CODEX_DEFAULT_MODELS, so the default can't be [0] — pin it
+// to GPT-6.1 Sol (falling back to the first row only if 6.1 Sol is gone).
 const CODEX_DEFAULT_MODEL =
-  CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')?.id ?? CODEX_DEFAULT_MODELS[0].id
+  CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-6.1-sol')?.id ?? CODEX_DEFAULT_MODELS[0].id
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
 const CLAUDE_FULL_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },
@@ -273,14 +273,15 @@ const CLAUDE_SONNET_REASONING_EFFORTS = claudeReasoningEfforts(
 const CLAUDE_HAIKU_REASONING_EFFORTS = claudeReasoningEfforts(new Set())
 const CLAUDE_THINKING_EFFORTS = CLAUDE_OPUS_REASONING_EFFORTS
 const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
-const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
+const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5'
 // Labels omit the "Claude " prefix (provider header/chip already carries it —
 // see StaticProviderModels.ts); Legacy cluster sits below the current models.
 const CLAUDE_DEFAULT_MODEL_ROWS = [
   {
-    id: 'claude-opus-5-5',
+    id: CLAUDE_DEFAULT_MODEL,
     label: 'Opus 5.5',
     description: '1M context window — adaptive thinking',
+    isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
@@ -309,10 +310,9 @@ const CLAUDE_DEFAULT_MODEL_ROWS = [
     defaultReasoningEffort: 'high'
   },
   {
-    id: CLAUDE_DEFAULT_MODEL,
+    id: 'claude-sonnet-5',
     label: 'Sonnet 5',
     description: '1M context window — extended thinking',
-    isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },

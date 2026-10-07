@@ -188,7 +188,7 @@ describe('resolveModelRate', () => {
     const rates: RendererProviderRates = {
       claude: [
         { modelId: 'claude-fable-5', inputUsdPerMillion: 10, outputUsdPerMillion: 50 },
-        { modelId: 'claude-sonnet-5', inputUsdPerMillion: 3, outputUsdPerMillion: 15 }
+        { modelId: 'claude-opus-5-5', inputUsdPerMillion: 4, outputUsdPerMillion: 20 }
       ],
       gemini: [
         { modelId: 'gemini-3.1-pro', inputUsdPerMillion: 2, outputUsdPerMillion: 12 },
@@ -196,8 +196,8 @@ describe('resolveModelRate', () => {
       ]
     }
 
-    expect(resolveModelRate(rates, 'claude', 'cli-default')?.modelId).toBe('claude-sonnet-5')
-    expect(resolveModelRate(rates, 'claude', undefined)?.modelId).toBe('claude-sonnet-5')
+    expect(resolveModelRate(rates, 'claude', 'cli-default')?.modelId).toBe('claude-opus-5-5')
+    expect(resolveModelRate(rates, 'claude', undefined)?.modelId).toBe('claude-opus-5-5')
     expect(resolveModelRate(rates, 'gemini', 'flash-lite')?.modelId).toBe(
       'gemini-3.1-flash-lite'
     )

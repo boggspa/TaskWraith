@@ -409,8 +409,8 @@ describe('humaniseModelId', () => {
     })
 
     it('maps legacy default sentinels to provider-specific concrete defaults', () => {
-      expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-5.5')
-      expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-5')
+      expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-6.1-sol')
+      expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-opus-5-5')
       expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
       expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
       expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.7')

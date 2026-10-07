@@ -308,10 +308,10 @@ function museReasoningOptions(
 }
 
 const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
-  { id: 'gpt-5.5', label: 'GPT-5.5' },
-  { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
-  // GPT-6.1 Sol (2026-09-29) follows Astra, above the 6.0 pair.
+  // The default leads this fallback list (modelOptions[0] is defaultModelId):
+  // GPT-6.1 Sol (2026-09-29), then Astra, above the 6.0 pair.
   { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' },
+  { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
   // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
   { id: 'gpt-6-sol', label: 'GPT-6-Sol' },
   { id: 'gpt-6-luna', label: 'GPT-6-Luna' },
@@ -320,7 +320,10 @@ const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // rollout yet (the id is simply absent from that account's live model/list).
   { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' }
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
+  // GPT-5.5 gave up the default (and the lead slot) to GPT-6.1 Sol; it keeps
+  // its generational place below the 5.6 trio.
+  { id: 'gpt-5.5', label: 'GPT-5.5' }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (the API rejects requests) and
   // removed from the ensemble Codex picker. gpt-5.4, gpt-5.4-mini and
   // gpt-5.3-codex-spark were retired by product decision on 2026-09-18 and are
@@ -839,7 +842,7 @@ export function getDefaultEnsembleParticipantConfig(
   switch (provider) {
     case 'codex':
       return {
-        model: 'gpt-5.5',
+        model: 'gpt-6.1-sol',
         permissionPresetId: 'default',
         reasoningEffort: 'medium',
         fastModeEnabled: false,
@@ -847,7 +850,7 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'claude':
       return {
-        model: 'claude-sonnet-5',
+        model: 'claude-opus-5-5',
         permissionPresetId: 'default',
         reasoningEffort: 'medium',
         fastModeEnabled: false
@@ -934,7 +937,7 @@ export function getDefaultEnsembleParticipantConfig(
       }
     default:
       return {
-        model: 'gpt-5.5',
+        model: 'gpt-6.1-sol',
         permissionPresetId: 'default'
       }
   }
@@ -1609,15 +1612,15 @@ export function getEnsembleModelDefaults(
         reasoningOptions: CODEX_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: CODEX_FAST_CAPABLE,
-        defaultModelId: 'gpt-5.5'
+        defaultModelId: 'gpt-6.1-sol'
       }
     case 'claude':
       return {
         modelOptions: CLAUDE_MODELS,
-        reasoningOptions: getEnsembleReasoningOptions('claude', 'claude-sonnet-5'),
+        reasoningOptions: getEnsembleReasoningOptions('claude', 'claude-opus-5-5'),
         defaultReasoning: 'medium',
         fastModeCapableModelIds: CLAUDE_FAST_CAPABLE,
-        defaultModelId: 'claude-sonnet-5'
+        defaultModelId: 'claude-opus-5-5'
       }
     case 'gemini':
       return {
@@ -1712,7 +1715,7 @@ export function getEnsembleModelDefaults(
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'gpt-5.5'
+        defaultModelId: 'gpt-6.1-sol'
       }
   }
 }

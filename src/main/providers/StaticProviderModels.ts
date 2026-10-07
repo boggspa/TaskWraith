@@ -432,12 +432,13 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
 // next discovery-hidden-but-runnable model belongs here.
 export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set<string>()
 
-// Fallback default when a persisted/unknown id can't be resolved. Deliberately
-// NOT the newest family: gpt-5.6 is still ramping account-by-account (see
-// CODEX_STAGED_ROLLOUT_MODEL_IDS), so an unramped account falling back to Sol
-// would fail its runs. Upstream's own default is gpt-5.6-sol; revisit once the
-// rollout completes.
-export const CODEX_DEFAULT_MODEL_ID = 'gpt-5.5'
+// Fallback default when a persisted/unknown id can't be resolved, and the row
+// that carries `isDefault`. GPT-6.1 Sol by user decision (2026-10-07), replacing
+// GPT-5.5 once 5.5 left the Codex picker. 6.1 Sol is still listed in
+// CODEX_STAGED_ROLLOUT_MODEL_IDS, so an account not yet ramped onto it has a
+// defaulted run refused upstream ("model is not supported") rather than
+// silently swapped to another model.
+export const CODEX_DEFAULT_MODEL_ID = 'gpt-6.1-sol'
 
 /**
  * Merge the live Codex `model/list` rows with TaskWraith-appended rows:
@@ -448,7 +449,7 @@ export const CODEX_DEFAULT_MODEL_ID = 'gpt-5.5'
  * Returns `null` when the live list is EMPTY — an empty/malformed model/list
  * response (transient hiccup, CLI warm-up race, zero-entitled account) must
  * fall back to the FULL static catalog at the call site, not to an
- * append-rows-only list that would drop gpt-5.5 and carry no default.
+ * append-rows-only list that would drop every CLI-listed row.
  */
 export function mergeCodexLiveModelRows<
   TLive extends { id: string },
@@ -491,7 +492,7 @@ export const CODEX_STATIC_MODELS = [
     // description verbatim, LOW default (confirmed live — a thread/start on
     // gpt-6-astra echoes effort 'low'), the `fast` service tier, and the full
     // low..ultra ladder. Deliberately NOT isDefault: upstream shipped Astra
-    // "without changing the default model", and GPT-5.5 stays the default.
+    // "without changing the default model", and GPT-6.1 Sol is the default.
     id: 'gpt-6-astra',
     label: 'GPT-6-Astra',
     description: 'Our most capable model for complex, demanding work.',
@@ -509,10 +510,11 @@ export const CODEX_STATIC_MODELS = [
     // (developers.openai.com/api/docs/models/gpt-6.1-sol): low..max ladder
     // with a Medium default and Fast mode at 2x; no `ultra` tier documented,
     // so `ultracode` waits for the live `model/list`. Sits behind Astra and
-    // above the 6.0 pair; GPT-5.5 stays the default.
-    id: 'gpt-6.1-sol',
+    // above the 6.0 pair, and carries the Codex default (CODEX_DEFAULT_MODEL_ID).
+    id: CODEX_DEFAULT_MODEL_ID,
     label: 'GPT-6.1-Sol',
     description: 'Near-Astra performance for complex work at a lower cost.',
+    isDefault: true,
     supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6.1-sol', [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
@@ -531,7 +533,7 @@ export const CODEX_STATIC_MODELS = [
     // and no catalog row is observable yet, so `ultracode` is deliberately NOT
     // offered until the live `model/list` says so. Display names follow the
     // Codex catalog's hyphenated convention (GPT-6-Astra, GPT-5.6-Sol).
-    // Neither takes the default: GPT-5.5 stays the fallback.
+    // Neither takes the default: GPT-6.1 Sol is the fallback.
     id: 'gpt-6-sol',
     label: 'GPT-6-Sol',
     description: 'Built to power complex coding and agentic workflows.',
@@ -597,10 +599,8 @@ export const CODEX_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
-    id: CODEX_DEFAULT_MODEL_ID,
+    id: 'gpt-5.5',
     label: 'GPT-5.5',
-    description: 'Default Codex model',
-    isDefault: true,
     supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.5', [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
@@ -686,7 +686,7 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
   max: 64000,
   ultracode: 64000
 }
-const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
+const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5'
 const CLAUDE_FAST_MODE_MODEL_IDS: ReadonlySet<string> = new Set([
   'opus',
   'claude-opus-5-5',
@@ -719,9 +719,10 @@ export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
 // models lead; the Legacy cluster (… Legacy) sits below them.
 const CLAUDE_STATIC_MODELS = [
   {
-    id: 'claude-opus-5-5',
+    id: CLAUDE_DEFAULT_MODEL,
     label: 'Opus 5.5',
     description: '1M context window — adaptive thinking',
+    isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast'],
@@ -747,7 +748,7 @@ const CLAUDE_STATIC_MODELS = [
   {
     // Sonnet 5.5 (2026-09-28): 1M context, adaptive thinking with a High
     // API default, no Fast mode (platform models overview and pricing page).
-    // Sonnet 5 keeps the default.
+    // Opus 5.5 carries the default.
     id: 'claude-sonnet-5-5',
     label: 'Sonnet 5.5',
     description: '1M context window — adaptive thinking',
@@ -756,10 +757,9 @@ const CLAUDE_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
-    id: CLAUDE_DEFAULT_MODEL,
+    id: 'claude-sonnet-5',
     label: 'Sonnet 5',
     description: '1M context window — extended thinking',
-    isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     ultraTaskSupported: true
@@ -1807,9 +1807,8 @@ export function normalizeCodexModel(model?: string | null): string {
     ['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'].includes(trimmed) ||
     isPreviewModelPlaceholder(trimmed)
   ) {
-    // Explicit default, NOT [0]: the GPT-5.6 trio leads CODEX_STATIC_MODELS
-    // but is still ramping account-by-account, so unresolved ids must keep
-    // falling back to the universally-available default.
+    // Explicit default, NOT [0]: GPT-6-Astra leads CODEX_STATIC_MODELS, while
+    // the default (GPT-6.1 Sol) is carried by CODEX_DEFAULT_MODEL_ID.
     return CODEX_DEFAULT_MODEL_ID
   }
   return trimmed

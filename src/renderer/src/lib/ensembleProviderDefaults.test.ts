@@ -70,9 +70,9 @@ describe('getDefaultEnsembleParticipantConfig', () => {
   // selected chip. Roster presets / Agent Pool are the only inheritance
   // paths; the seeded default panel (EnsembleDefaults.ts) keeps its own
   // curated writer/reader split and is pinned in EnsembleDefaults.test.ts.
-  it('returns codex defaults: GPT-5.5 model, default approval, medium reasoning, fast off', () => {
+  it('returns codex defaults: GPT-6.1 Sol model, default approval, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('codex')).toEqual({
-      model: 'gpt-5.5',
+      model: 'gpt-6.1-sol',
       permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
@@ -80,9 +80,9 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns claude defaults: Sonnet 5 model, default approval, medium reasoning, fast off', () => {
+  it('returns claude defaults: Opus 5.5 model, default approval, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('claude')).toEqual({
-      model: 'claude-sonnet-5',
+      model: 'claude-opus-5-5',
       permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false
@@ -635,7 +635,7 @@ describe('resolveEnsembleParticipantSettings', () => {
     const resolved = resolveEnsembleParticipantSettings(participant({ provider: 'codex' }))
     expect(resolved).toEqual({
       provider: 'codex',
-      model: 'gpt-5.5',
+      model: 'gpt-6.1-sol',
       permissionPresetId: 'default',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
@@ -787,7 +787,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(
       getEnsembleReasoningOptions('codex', astra?.id, astra).map((option) => option.value)
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
-    expect(defaults.defaultModelId).toBe('gpt-5.5')
+    expect(defaults.defaultModelId).toBe('gpt-6.1-sol')
     expect(defaults.modelOptions[0]?.id).toBe(defaults.defaultModelId)
   })
 
@@ -833,11 +833,12 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         'max'
       ])
       expect(codex.fastModeCapableModelIds.has(id)).toBe(true)
-      // GPT-5.5 keeps the default; the GPT-6 pair sits right behind Astra, above
-      // the 5.6 generation.
-      expect(codex.defaultModelId).toBe('gpt-5.5')
+      // GPT-6.1 Sol is the default and leads the list; the GPT-6 pair sits right
+      // behind Astra, above the 5.6 generation.
+      expect(codex.defaultModelId).toBe('gpt-6.1-sol')
       const ids = codex.modelOptions.map((option) => option.id)
-      expect(ids.indexOf(id)).toBeGreaterThan(ids.indexOf('gpt-6-astra'))
+      if (id === 'gpt-6.1-sol') expect(ids.indexOf(id)).toBe(0)
+      else expect(ids.indexOf(id)).toBeGreaterThan(ids.indexOf('gpt-6-astra'))
       expect(ids.indexOf(id)).toBeLessThan(ids.indexOf('gpt-5.6-sol'))
     }
   )
@@ -852,9 +853,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   // `defaultModelId` here should match the concrete model persisted by
   // `getDefaultEnsembleParticipantConfig`; generic Default/CLI Default rows
   // must not reappear in the picker.
-  it('exposes codex preferred model id as gpt-5.5', () => {
+  it('exposes codex preferred model id as gpt-6.1-sol', () => {
     const codex = getEnsembleModelDefaults('codex')
-    expect(codex.defaultModelId).toBe('gpt-5.5')
+    expect(codex.defaultModelId).toBe('gpt-6.1-sol')
     expect(codex.reasoningOptions.map((option) => option.value)).toEqual([
       'low',
       'medium',
@@ -1067,7 +1068,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
     ])
-    expect(claude.defaultModelId).toBe('claude-sonnet-5')
+    expect(claude.defaultModelId).toBe('claude-opus-5-5')
     expect(claude.fastModeCapableModelIds.has('claude-opus-5-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-8-1m')).toBe(true)

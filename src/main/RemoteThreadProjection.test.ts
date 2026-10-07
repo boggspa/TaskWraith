@@ -3676,9 +3676,9 @@ describe('RemoteThreadProjection', () => {
                     outputUsdPerMillion: 50
                   },
                   {
-                    modelId: 'claude-sonnet-5',
-                    inputUsdPerMillion: 3,
-                    outputUsdPerMillion: 15
+                    modelId: 'claude-opus-5-5',
+                    inputUsdPerMillion: 4,
+                    outputUsdPerMillion: 20
                   }
                 ]
               }
@@ -3687,7 +3687,7 @@ describe('RemoteThreadProjection', () => {
         }
       )
 
-      expect(summary?.costText).toBe('~$4.50')
+      expect(summary?.costText).toBe('~$6.00')
     })
 
     it('projects cumulative conversation cost separately from the latest run cost', () => {

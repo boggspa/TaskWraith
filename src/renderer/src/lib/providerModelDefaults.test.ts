@@ -97,7 +97,7 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with Astra, GPT-6.1 Sol, GPT-6 Sol and Luna, then the GPT-5.6 trio, keeping 5.5 the default', () => {
+  it('leads the picker with Astra, GPT-6.1 Sol, GPT-6 Sol and Luna, then the GPT-5.6 trio, with 6.1 Sol the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
     // Astra leads from 2026-09-03; GPT-6.1 Sol (2026-09-29) then GPT-6 Sol and
     // Luna (2026-09-22) follow it, above the 5.6 trio in Sol → Terra → Luna order.
@@ -112,8 +112,8 @@ describe('Codex provider model defaults', () => {
     ])
     expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
-    // The default must NOT follow the reorder to position 0 — it stays 5.5.
-    expect(CODEX_DEFAULT_MODEL).toBe('gpt-5.5')
+    // The default must NOT follow the reorder to position 0 — it is 6.1 Sol.
+    expect(CODEX_DEFAULT_MODEL).toBe('gpt-6.1-sol')
   })
 
   it('offers Astra the full low..ultracode ladder in the pre-IPC fallback', () => {
@@ -191,8 +191,10 @@ describe('Claude provider model defaults', () => {
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
   })
 
-  it('uses Sonnet 5 as the concrete Claude fallback model', () => {
-    expect(CLAUDE_DEFAULT_MODELS.find((model) => model.isDefault)?.id).toBe('claude-sonnet-5')
+  it('uses Opus 5.5 as the concrete Claude fallback model', () => {
+    expect(
+      CLAUDE_DEFAULT_MODELS.filter((model) => model.isDefault).map((model) => model.id)
+    ).toEqual(['claude-opus-5-5'])
     expect(
       CLAUDE_DEFAULT_MODELS.find((model) => model.id === 'claude-haiku-4-5')?.ultraTaskSupported
     ).toBe(false)
@@ -266,7 +268,7 @@ describe('Claude provider model defaults', () => {
       description: '1M context window — adaptive thinking',
       defaultReasoningEffort: 'medium'
     })
-    expect(byId.get('claude-opus-5-5')).not.toMatchObject({ isDefault: true })
+    expect(byId.get('claude-opus-5-5')).toMatchObject({ isDefault: true })
     expect(
       (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
         .filter((option: { reasoningEffort: string; disabled?: boolean }) => !option.disabled)

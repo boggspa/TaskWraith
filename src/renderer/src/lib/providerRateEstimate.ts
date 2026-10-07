@@ -65,8 +65,8 @@ const isFiniteNonNeg = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
 const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
-  codex: 'gpt-5.5',
-  claude: 'claude-sonnet-5',
+  codex: 'gpt-6.1-sol',
+  claude: 'claude-opus-5-5',
   gemini: 'gemini-3.1-flash-lite',
   kimi: 'kimi-k2.7-code',
   grok: 'grok-4.6',

@@ -110,10 +110,13 @@ struct IosParityFixesTests {
                 row?.supportedReasoningEfforts?.map(\.reasoningEffort)
                     == ["low", "medium", "high", "xhigh", "max"])
             #expect(row?.defaultReasoningEffort == "medium")
-            #expect(row?.isDefault != true)
+            #expect((row?.isDefault == true) == (id == "gpt-6.1-sol"))
         }
-        // GPT-5.5 keeps the demo default flag.
-        #expect(codex.first(where: { $0.id == "gpt-5.5" })?.isDefault == true)
+        // GPT-6.1 Sol carries the demo default flag, mirroring the desktop default.
+        #expect(codex.filter { $0.isDefault == true }.map(\.id) == ["gpt-6.1-sol"])
+        #expect(codex.first(where: { $0.id == "gpt-5.5" })?.isDefault != true)
+        let claude = model.providerModels["claude"] ?? []
+        #expect(claude.filter { $0.isDefault == true }.map(\.id) == ["claude-opus-5-5"])
     }
 
     @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {

@@ -1324,6 +1324,7 @@ import type { CliProviderRuntimeDependencies } from './providers/CliProviderRunt
 import {
   activeCodexModelRows,
   appendKimiModelArgs,
+  CODEX_DEFAULT_MODEL_ID,
   claudePermissionModeForApproval,
   codexReasoningEffortsForModel,
   getStaticProviderModels,
@@ -9254,7 +9255,8 @@ async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Pro
 
 // Codex picker ordering: keep TaskWraith-restored discovery-hidden rows in
 // their generational position instead of letting the CLI's remaining Spark row
-// precede them. GPT-5.5 stays the DEFAULT independently of array position.
+// precede them. CODEX_DEFAULT_MODEL_ID (GPT-6.1 Sol) is the DEFAULT
+// independently of array position.
 // This is the single choke point the renderer picker AND the iOS broadcast
 // both read, so ordering it here fixes both platforms.
 const CODEX_PICKER_LEAD_ORDER = [
@@ -9283,17 +9285,19 @@ function codexModelPickerRank(id?: string): number {
 function normalizeCodexDefaultModelRows<
   T extends { id?: string; isDefault?: boolean; disabled?: boolean }
 >(models: T[]): T[] {
-  const hasGpt55 = models.some((model) => model.id === 'gpt-5.5' && model.disabled !== true)
+  const hasDefaultModel = models.some(
+    (model) => model.id === CODEX_DEFAULT_MODEL_ID && model.disabled !== true
+  )
   const normalized = models
     .map((model) => ({
       ...model,
-      isDefault: hasGpt55
-        ? model.id === 'gpt-5.5'
+      isDefault: hasDefaultModel
+        ? model.id === CODEX_DEFAULT_MODEL_ID
         : Boolean(model.isDefault && model.disabled !== true)
     }))
-    // Order the picker rows (trio first, 5.5 next); the DEFAULT is carried by
-    // `isDefault` above, not by array position, so 5.5 stays default even
-    // though it is no longer first.
+    // Order the picker rows (Astra first, 6.1 Sol next); the DEFAULT is carried
+    // by `isDefault` above, not by array position, so 6.1 Sol stays default
+    // even though it is not first.
     .sort((a, b) => codexModelPickerRank(a.id) - codexModelPickerRank(b.id))
   return normalized as T[]
 }
@@ -61751,7 +61755,7 @@ if (isGeminiMcpBridgeProcess) {
         // models, explicitly runnable discovery-hidden rows, and preview rows
         // behind the preview flag; the CLI's own row wins the id-dedupe). An
         // EMPTY live list returns null so we fall back to the FULL static
-        // catalog — never an append-only list missing gpt-5.5 / a default.
+        // catalog — never an append-only list missing the CLI-listed rows.
         const mergedCodexModels = mergeCodexLiveModelRows(normalized, codexStaticFallback, {
           includePreviewAppends: previewModelCatalogEnabledForProvider('codex', process.env)
         })

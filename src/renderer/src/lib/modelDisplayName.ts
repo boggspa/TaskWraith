@@ -293,8 +293,8 @@ export function canonicalModelIdForProvider(
   if (!trimmed) return ''
   const key = trimmed.toLowerCase()
   if (key === 'default' || key === 'cli-default') {
-    if (provider === 'codex') return 'gpt-5.5'
-    if (provider === 'claude') return 'claude-sonnet-5'
+    if (provider === 'codex') return 'gpt-6.1-sol'
+    if (provider === 'claude') return 'claude-opus-5-5'
     if (provider === 'gemini') return 'flash-lite'
     if (provider === 'kimi') return 'kimi-k2.8-preview'
     if (provider === 'grok') return GROK_47_MODEL_ID

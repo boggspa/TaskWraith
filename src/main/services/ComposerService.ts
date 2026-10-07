@@ -1702,9 +1702,9 @@ function getProviderLabel(provider: ProviderId): string {
 export function getDefaultModelForProvider(provider: ProviderId): string {
   switch (provider) {
     case 'codex':
-      return 'gpt-5.5'
+      return 'gpt-6.1-sol'
     case 'claude':
-      return 'claude-sonnet-5'
+      return 'claude-opus-5-5'
     // Read the constant, not a literal: this arm and the picker default are
     // pinned against each other by providerFallthroughGuards, and a literal
     // here silently kept the retired combined id when the row split.

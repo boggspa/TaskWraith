@@ -391,7 +391,7 @@ describe('formatAssistantMessageLabel', () => {
         'claude',
         { isEnsembleChat: true }
       ).modelBadge
-    ).toBe('Sonnet 5')
+    ).toBe('Opus 5.5')
   })
 
   it('keeps an exact recorded K2.7 identity without changing current K2.8 presentation', () => {

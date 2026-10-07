@@ -299,13 +299,13 @@ const HOST_ENSEMBLE_COMPANIONS = [
     provider: 'claude',
     role: 'Claude',
     instructions: 'Explore the request, identify constraints, and propose the safest path forward.',
-    model: 'claude-sonnet-5'
+    model: 'claude-opus-5-5'
   },
   {
     provider: 'codex',
     role: 'Codex',
     instructions: 'Implement concrete code or workflow changes when the round calls for action.',
-    model: 'gpt-5.5'
+    model: 'gpt-6.1-sol'
   },
   {
     provider: 'kimi',

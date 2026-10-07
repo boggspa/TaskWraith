@@ -254,24 +254,24 @@ describe('normalizeCliProviderModel (claude)', () => {
 
   it('maps non-runnable / stale Claude preview placeholders back to the concrete default', () => {
     // claude-sonnet-5 is GA, but a persisted preview-namespaced id from before
-    // it shipped still maps to the concrete default rather than dispatching an
-    // invalid `preview:` model name.
+    // it shipped still maps to the concrete default (Opus 5.5) rather than
+    // dispatching an invalid `preview:` model name.
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-sonnet-5')).toBe(
-      'claude-sonnet-5'
+      'claude-opus-5-5'
     )
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-fable-5')).toBe(
-      'claude-sonnet-5'
+      'claude-opus-5-5'
     )
     expect(normalizeCliProviderModel('claude', 'preview:anthropic:claude-mythos-5')).toBe(
-      'claude-sonnet-5'
+      'claude-opus-5-5'
     )
   })
 
-  it('maps empty / sentinel ids to Sonnet 5', () => {
-    expect(normalizeCliProviderModel('claude', '')).toBe('claude-sonnet-5')
-    expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-sonnet-5')
-    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('claude-sonnet-5')
-    expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-5')
+  it('maps empty / sentinel ids to Opus 5.5', () => {
+    expect(normalizeCliProviderModel('claude', '')).toBe('claude-opus-5-5')
+    expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-opus-5-5')
+    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('claude-opus-5-5')
+    expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-opus-5-5')
   })
 
   it('keeps Sonnet 5.5 distinct from Sonnet 5', () => {
@@ -518,10 +518,9 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
 
   it('ships the GA GPT-5.6 trio as first-class rows regardless of the preview flag', () => {
     // Graduated 2026-07-09: the trio lives in CODEX_STATIC_MODELS itself, so it
-    // is present WITHOUT includePreviewModels; 5.5 stays the default during the
-    // staged account rollout.
+    // is present WITHOUT includePreviewModels. GPT-6.1 Sol carries the default.
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6.1-sol')
     const ids = models.map((model) => model.id)
     // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
     // shipped it "without changing the default model".
@@ -558,7 +557,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'ultracode'
     ])
     expect(astra?.isDefault).toBeFalsy()
-    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6.1-sol')
     expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-6-astra')).toBe(true)
   })
 
@@ -567,7 +566,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
-    'offers %s on the documented low..max ladder with a Medium default, staged, not the default',
+    'offers %s on the documented low..max ladder with a Medium default, staged; only 6.1 Sol is the default',
     (id, label, description) => {
       const models = getStaticProviderModels('codex') as StaticModelShape[]
       const row = models.find((model) => model.id === id)
@@ -587,8 +586,10 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         'xhigh',
         'max'
       ])
-      expect(row?.isDefault).toBeFalsy()
-      expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+      expect(Boolean(row?.isDefault)).toBe(id === 'gpt-6.1-sol')
+      expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+        'gpt-6.1-sol'
+      ])
       expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(true)
     }
   )
@@ -869,7 +870,7 @@ describe('mergeCodexLiveModelRows', () => {
   it('returns null for an EMPTY live list so the caller falls back to the full static catalog', () => {
     // An empty/malformed model/list response (transient hiccup, CLI warm-up
     // race, zero-entitled account) must NOT produce an append-rows-only list
-    // that drops gpt-5.5 and carries no default.
+    // that drops every CLI-listed row.
     expect(mergeCodexLiveModelRows([], staticFallback, { includePreviewAppends: true })).toBeNull()
     expect(mergeCodexLiveModelRows([], staticFallback, { includePreviewAppends: false })).toBeNull()
   })
@@ -1140,11 +1141,14 @@ describe('getStaticProviderModels (claude)', () => {
     expect(previewById.get('claude-mythos-5')).toBeUndefined()
   })
 
-  it('marks Claude Sonnet 5 as the default and keeps Sonnet 4.6 Legacy selectable', () => {
+  it('marks Claude Opus 5.5 as the only default and keeps Sonnet 4.6 Legacy selectable', () => {
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      'claude-opus-5-5'
+    ])
     expect(byId.get('claude-sonnet-5')).toMatchObject({
-      isDefault: true,
       description: '1M context window — extended thinking'
     })
+    expect(byId.get('claude-sonnet-5')?.isDefault).toBeFalsy()
     expect(byId.get('claude-sonnet-4-6')).toMatchObject({
       // Prefix-free label: the picker's CLAUDE header / chip provider span
       // already carries "Claude".
@@ -1194,7 +1198,7 @@ describe('getStaticProviderModels (claude)', () => {
       description: '1M context window — adaptive thinking',
       defaultReasoningEffort: 'medium'
     })
-    expect(byId.get('claude-opus-5-5')?.isDefault).toBeFalsy()
+    expect(byId.get('claude-opus-5-5')?.isDefault).toBe(true)
     expect(
       (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
         .filter((option) => !option.disabled)
@@ -1209,7 +1213,7 @@ describe('getStaticProviderModels (claude)', () => {
       defaultReasoningEffort: 'high'
     })
     expect(byId.get('claude-sonnet-5-5')?.isDefault).toBeFalsy()
-    expect(byId.get('claude-sonnet-5')?.isDefault).toBe(true)
+    expect(byId.get('claude-sonnet-5')?.isDefault).toBeFalsy()
     expect(byId.get('claude-sonnet-5-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
     expect(
       (byId.get('claude-sonnet-5-5')?.supportedReasoningEfforts ?? [])

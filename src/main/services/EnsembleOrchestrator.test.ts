@@ -4234,8 +4234,8 @@ describe('EnsembleOrchestrator', () => {
     expect(codex?.models).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'gpt-5.5',
-          label: 'GPT-5.5',
+          id: 'gpt-6.1-sol',
+          label: 'GPT-6.1-Sol',
           contextWindow: 1_050_000,
           isDefault: true
         })

@@ -36,7 +36,7 @@ describe('buildDefaultEnsembleRosterPresets', () => {
     expect(
       full.participants
         .filter((participant) => participant.provider === 'codex')
-        .every((participant) => participant.model === 'gpt-5.5')
+        .every((participant) => participant.model === 'gpt-6.1-sol')
     ).toBe(true)
     expect(
       full.participants

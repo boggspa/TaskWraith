@@ -251,8 +251,8 @@ export function createDefaultEnsembleConfig(
 }
 
 function getDefaultEnsembleModel(provider: ProviderId): string {
-  if (provider === 'codex') return 'gpt-5.5'
-  if (provider === 'claude') return 'claude-sonnet-5'
+  if (provider === 'codex') return 'gpt-6.1-sol'
+  if (provider === 'claude') return 'claude-opus-5-5'
   if (provider === 'kimi') return KIMI_K28_MODEL_ID
   if (provider === 'grok') return 'grok-4.7'
   if (provider === 'cursor') return 'composer-2.5-fast'

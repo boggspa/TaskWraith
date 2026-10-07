@@ -632,11 +632,18 @@ function seedGoldenChats(): void {
   })
   // This fixture is the exact pre-projector history captured in GOLDEN above.
   // Fresh panels intentionally move with current provider defaults, so freeze
-  // the retired K2.7 seat explicitly rather than letting today's K2.8 seed
-  // rewrite a historical projector input.
-  const historicalParticipants = created.ensemble!.participants.map((participant) =>
-    participant.provider === 'kimi' ? { ...participant, model: KIMI_K27_MODEL_ID } : participant
-  )
+  // the historical seats explicitly (K2.7, Sonnet 5, GPT-5.5) rather than
+  // letting today's seeds (K2.8, Opus 5.5, GPT-6.1 Sol) rewrite a historical
+  // projector input.
+  const HISTORICAL_SEAT_MODELS: Partial<Record<string, string>> = {
+    kimi: KIMI_K27_MODEL_ID,
+    claude: 'claude-sonnet-5',
+    codex: 'gpt-5.5'
+  }
+  const historicalParticipants = created.ensemble!.participants.map((participant) => {
+    const model = HISTORICAL_SEAT_MODELS[participant.provider]
+    return model ? { ...participant, model } : participant
+  })
   const first = historicalParticipants[0]!
   const ensemble = {
     ...created,
