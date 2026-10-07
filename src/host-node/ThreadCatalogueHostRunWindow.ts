@@ -13,6 +13,8 @@ export class ThreadCatalogueHostRunWindow {
   private rows: RunWindowEntry[] = []
   private total = 0
   private settled = false
+  /** The last read's own verdict: every chat it returned was listed, and it was not torn. */
+  private readSettled = false
   private refreshPromise: Promise<boolean> | null = null
   private readonly staleRetries = new Map<string, number>()
   private tornRetries = 0
@@ -52,6 +54,17 @@ export class ThreadCatalogueHostRunWindow {
         this.refreshPromise === null &&
         this.rows.every((row) => this.isCurrent(row))
     }
+  }
+
+  /**
+   * The served rows are a whole window: a read has completed over a complete
+   * mirror without skipping a chat or tearing. False until the first such
+   * read, so a capture before it never stands for the profile's runs. Rows
+   * whose witness moved since are still their chat's last indexed rows, so
+   * staleness does not unload the window; a mirror event alone neither.
+   */
+  get loaded(): boolean {
+    return this.readSettled && this.mirror.complete
   }
 
   private isCurrent(row: RunWindowEntry): boolean {
@@ -138,6 +151,7 @@ export class ThreadCatalogueHostRunWindow {
       this.rows = [...byRun.values()]
       this.total = total
       this.settled = unknownChats === 0 && !reindexed && !unconfirmed
+      this.readSettled = this.settled
       this.retryUntilCurrent(reindexed || unconfirmed)
       return true
     } catch {

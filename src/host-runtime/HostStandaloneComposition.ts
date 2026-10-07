@@ -200,6 +200,13 @@ export interface HostStandaloneCompositionInput {
   readonly threadRecordTransaction?: HostStandaloneThreadRecordTransactionInput
   readonly lease: HostStandaloneAuthorityLeasePort
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
+  /**
+   * Whether the donor's run window has loaded. The projection reconciler
+   * neither adopts a baseline nor diffs a pass while it has not (bounded), so
+   * a restart does not republish the whole window to clients holding it.
+   * Absent means the donor is always whole.
+   */
+  readonly snapshotDonorComplete?: () => boolean
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
   readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
@@ -584,6 +591,15 @@ export function createHostStandaloneComposition(
     },
     fetchDeltas: (position) => runtime.deltaStore.since(position),
     publishEffects: (effects) => publisher.publishDurableBatch(effects),
+    ...(input.snapshotDonorComplete
+      ? {
+          // Once the index publishes, the run window's families are not the
+          // reconciler's: their loading must not hold the others back.
+          captureComplete: () =>
+            threadRecordTransaction?.recordDerived.active() === true ||
+            input.snapshotDonorComplete!()
+        }
+      : {}),
     ...(threadRecordTransaction
       ? {
           // Slice 13f2: once the index publishes, its families are its own.

@@ -5,7 +5,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { WorkSpanAggregates } from '../host-shared/perf/WorkSpanRecorder'
-import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  type HostCommand,
+  type HostRunProjection
+} from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import { HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME } from './HostCommandReceiptStore'
 import { createHostPerfInstrumentation } from './HostPerfSnapshot'
@@ -360,6 +364,46 @@ describe('HostStandaloneComposition', () => {
       }
     }
   )
+
+  it('adopts no reconciler baseline from a donor whose run window has not loaded', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-loading-'))
+    paths.push(runtimePath)
+    const defaults = input(runtimePath, { assertHeld: vi.fn() })
+    let loaded = false
+    let runs: HostRunProjection[] = []
+    const composition = createHostStandaloneComposition({
+      ...defaults,
+      snapshotDonor: () => ({ ...defaults.snapshotDonor(), runs }),
+      snapshotDonorComplete: () => loaded
+    })
+    try {
+      await composition.startProjectionReconciliation()
+      await expect(composition.reconcileProjection()).resolves.toEqual({
+        kind: 'unavailable',
+        reason: 'capture_incomplete'
+      })
+      // The window loads the rows a client connected before the restart holds.
+      runs = [
+        {
+          runId: 'run-1',
+          threadId: 'thread-1',
+          providerId: 'codex',
+          providerOutcome: 'completed',
+          startedAt: 1
+        }
+      ]
+      loaded = true
+      await expect(composition.reconcileProjection()).resolves.toMatchObject({
+        kind: 'initialized'
+      })
+      await expect(composition.reconcileProjection()).resolves.toMatchObject({
+        kind: 'unchanged'
+      })
+      expect(composition.getPosition().cursor).toBe(0)
+    } finally {
+      await composition.shutdown()
+    }
+  })
 
   it('asserts the lease before opening the sole runtime and recovers receipt state after restart', async () => {
     const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-'))

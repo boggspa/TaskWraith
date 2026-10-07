@@ -792,6 +792,9 @@ export class HostNodeProductionServer {
         resolveReceiptSpanChatId: (record) =>
           hostNodeReceiptSpanChatId(this.domain!.interactions, record),
         snapshotDonor: () => this.domain!.snapshotDonor(),
+        ...(this.hostRunWindow
+          ? { snapshotDonorComplete: () => this.hostRunWindow?.loaded ?? true }
+          : {}),
         authorityEvaluator: async (command, context) => {
           const prepared = await this.domain!.prepareAuthorityEvaluation?.(context, command)
           if (prepared === false) {

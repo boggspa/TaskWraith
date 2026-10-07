@@ -62,6 +62,7 @@ import {
   HostPublicWindowIndex,
   type HostPublicWindowTransaction
 } from './HostPublicWindowIndex'
+import { HostProjectionReconciler } from './HostProjectionReconciler'
 import { diffHostSnapshotDomainEffects } from './HostSnapshotDomainEffectDiff'
 import { projectHostSnapshot } from './HostSnapshotProjector'
 import {
@@ -338,7 +339,7 @@ function legacyCapture(store: HostProfileDomainStore): {
 function legacyDiff(before: HostSnapshot, after: HostSnapshot): HostDomainEffectDto[] {
   const diff = diffHostSnapshotDomainEffects(before, after)
   if (diff.kind !== 'effects') throw new Error(`diff ${diff.kind}: ${diff.reason}`)
-  return diff.effects
+  return [...diff.effects]
 }
 
 // ── measurement ─────────────────────────────────────────────────────────────
@@ -558,6 +559,74 @@ describe('runs-family re-projection goldens', () => {
         expect(loading.snapshot.warnings.map((w) => w.message)[0]).toContain(
           'still loading from 16000 to 1800'
         )
+      },
+      TIMEOUT
+    )
+
+    it(
+      'boot through the reconciler: the loaded window is the baseline, so a connected client receives nothing; a new run is published on its first loaded pass',
+      async () => {
+        const loading = legacyCapture(
+          legacyStore(summaries, catalogueWindow(models, { complete: false, empty: true }))
+        ).snapshot
+        const loaded = legacyCapture(
+          legacyStore(summaries, catalogueWindow(models, { complete: true }))
+        ).snapshot
+        const changed = withNewRun(liveRecord, 11)
+        const withRun = legacyCapture(
+          legacyStore(
+            summaries.map((summary, index) =>
+              index === liveModelIndex ? summaryOf(changed) : summary
+            ),
+            catalogueWindow(
+              models.map((model, index) => (index === liveModelIndex ? modelOf(changed) : model)),
+              { complete: true }
+            )
+          )
+        ).snapshot
+        let current = { snapshot: loading, complete: false }
+        const passes: HostDomainEffectDto[][] = []
+        const reconciler = new HostProjectionReconciler({
+          captureSnapshot: () => current.snapshot,
+          captureComplete: () => current.complete,
+          fetchDeltas: () => {
+            throw new Error('captures share one position')
+          },
+          publishEffects: (effects) => {
+            passes.push([...effects])
+            return {
+              kind: 'published',
+              position: { generation: 1, cursor: 1 },
+              count: 0,
+              results: []
+            }
+          },
+          schedule: () => null,
+          cancelScheduled: () => undefined
+        })
+        await reconciler.start()
+        expect(await reconciler.reconcileNow()).toMatchObject({ reason: 'capture_incomplete' })
+        current = { snapshot: loaded, complete: true }
+        const start = performance.now()
+        expect(await reconciler.reconcileNow()).toMatchObject({ kind: 'initialized' })
+        const initializedMs = performance.now() - start
+        expect(await reconciler.reconcileNow()).toMatchObject({ kind: 'unchanged' })
+        expect(passes).toEqual([])
+        const published = await publish(deltas, 'legacy:boot-reconciler', passes.flat())
+        report(
+          'legacy',
+          'boot via reconciler (loading -> loaded)',
+          initializedMs,
+          `${JSON.stringify(countEffects(passes.flat()))}; journal ${published.journalBytes} B, socket ${published.socketBytes} B/client`
+        )
+
+        current = { snapshot: withRun, complete: true }
+        expect(await reconciler.reconcileNow()).toMatchObject({ kind: 'published' })
+        const newRunId = changed.runs![changed.runs!.length - 1]!.runId
+        expect(passes).toHaveLength(1)
+        expect(countEffects(passes[0]!)['run:upsert']).toBe(1)
+        expect(passes[0]!.some((e) => e.family === 'run' && e.entityId === newRunId)).toBe(true)
+        await reconciler.stop()
       },
       TIMEOUT
     )

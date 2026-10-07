@@ -27,6 +27,15 @@ import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 
 export const HOST_PROJECTION_RECONCILE_INTERVAL_MS = 1_000
 const MAX_STABILIZE_ATTEMPTS = 3
+/**
+ * Passes an incomplete capture may be refused before the reconciler proceeds
+ * with it anyway. A baseline waits longest: at boot the run window has not
+ * loaded, and every row it later loads would otherwise be republished to
+ * clients that already hold it. Inside the loop the wait is short, because a
+ * refused pass also holds back every other family's changes.
+ */
+export const HOST_PROJECTION_BASELINE_INCOMPLETE_LIMIT = 30
+export const HOST_PROJECTION_TICK_INCOMPLETE_LIMIT = 3
 
 export interface HostProjectionReconcilerOptions {
   readonly runProjectionOperation?: HostProjectionOperationRunner
@@ -48,6 +57,15 @@ export interface HostProjectionReconcilerOptions {
    * stale row over a newer one.
    */
   readonly owns?: (effect: HostDomainEffectDto) => boolean
+  /**
+   * Whether a capture taken now shows every family whole: false while the
+   * Host's run window has not loaded (or its last read was torn or skipped a
+   * chat the mirror had not listed). Such a capture is not a baseline and not
+   * a diffable pass, for a bounded number of passes; past the bound the
+   * reconciler proceeds as before, so a window that never completes cannot
+   * stall publication. Absent means always complete.
+   */
+  readonly captureComplete?: () => boolean
 }
 
 export type HostProjectionReconcileResult =
@@ -72,6 +90,7 @@ export type HostProjectionReconcileResult =
       readonly kind: 'unavailable'
       readonly reason:
         | 'capture_failed'
+        | 'capture_incomplete'
         | 'delta_read_failed'
         | 'journal_raced'
         | 'diff_failed'
@@ -84,6 +103,8 @@ type ReadyComparison = {
   readonly baseline: HostSnapshot
   readonly current: HostSnapshot
 }
+
+type Captured = { readonly snapshot: HostSnapshot; readonly complete: boolean }
 
 type AdvanceResult =
   | ReadyComparison
@@ -154,7 +175,10 @@ export class HostProjectionReconciler {
   private readonly cancelScheduled: (handle: unknown) => void
   private readonly log?: (line: string) => void
   private readonly owns?: (effect: HostDomainEffectDto) => boolean
+  private readonly captureComplete?: () => boolean
   private baseline: HostSnapshot | null = null
+  /** Consecutive incomplete captures refused since the last complete one. */
+  private incompleteCaptures = 0
   private scheduled: unknown = null
   private running = false
   private inFlight: Promise<HostProjectionReconcileResult> | null = null
@@ -177,6 +201,7 @@ export class HostProjectionReconciler {
     this.fetchDeltas = options.fetchDeltas
     this.publishEffects = options.publishEffects
     if (options.owns) this.owns = options.owns
+    if (options.captureComplete) this.captureComplete = options.captureComplete
     this.intervalMs =
       Number.isFinite(options.intervalMs) && Number(options.intervalMs) > 0
         ? Math.floor(Number(options.intervalMs))
@@ -191,14 +216,21 @@ export class HostProjectionReconciler {
     return this.running
   }
 
-  /** Capture the first coherent baseline, then begin one serialized loop. */
+  /**
+   * Capture the first coherent baseline, then begin one serialized loop. An
+   * incomplete first capture leaves the baseline to the loop, which adopts the
+   * first complete one (or, past the bound, the latest).
+   */
   async start(): Promise<void> {
     if (this.running) return
+    this.incompleteCaptures = 0
     const baseline = await this.captureValidSnapshot()
     if (!baseline) {
       throw new Error('host_projection_reconcile_baseline_unavailable')
     }
-    this.baseline = baseline
+    this.baseline = this.admit(baseline, HOST_PROJECTION_BASELINE_INCOMPLETE_LIMIT)
+      ? baseline.snapshot
+      : null
     this.running = true
     this.scheduleNext()
   }
@@ -238,21 +270,47 @@ export class HostProjectionReconciler {
     }, this.intervalMs)
   }
 
-  private async captureValidSnapshot(): Promise<HostSnapshot | null> {
+  /**
+   * Completeness is read on both sides of the capture and both must hold, so
+   * a window that was still loading when the capture began, or unloaded while
+   * it was taken, never passes for a loaded one.
+   */
+  private async captureValidSnapshot(): Promise<Captured | null> {
     try {
-      return decodedSnapshot(await this.captureSnapshot())
+      const before = this.captureComplete?.() ?? true
+      const snapshot = decodedSnapshot(await this.captureSnapshot())
+      if (!snapshot) return null
+      return { snapshot, complete: before && (this.captureComplete?.() ?? true) }
     } catch {
       return null
     }
   }
 
-  private async performReconcile(): Promise<HostProjectionReconcileResult> {
-    const current = await this.captureValidSnapshot()
-    if (!current) return this.unavailable('capture_failed')
-    if (!this.baseline) {
-      this.baseline = current
-      return { kind: 'initialized', position: positionOf(current) }
+  /** Whether to use a capture now; refusing an incomplete one counts toward `limit`. */
+  private admit(captured: Captured, limit: number): boolean {
+    if (captured.complete) {
+      this.incompleteCaptures = 0
+      return true
     }
+    if (this.incompleteCaptures >= limit) return true
+    this.incompleteCaptures += 1
+    return false
+  }
+
+  private async performReconcile(): Promise<HostProjectionReconcileResult> {
+    const captured = await this.captureValidSnapshot()
+    if (!captured) return this.unavailable('capture_failed')
+    if (!this.baseline) {
+      if (!this.admit(captured, HOST_PROJECTION_BASELINE_INCOMPLETE_LIMIT)) {
+        return this.unavailable('capture_incomplete')
+      }
+      this.baseline = captured.snapshot
+      return { kind: 'initialized', position: positionOf(captured.snapshot) }
+    }
+    if (!this.admit(captured, HOST_PROJECTION_TICK_INCOMPLETE_LIMIT)) {
+      return this.unavailable('capture_incomplete')
+    }
+    const current = captured.snapshot
 
     const advanced = await this.advanceBaseline(current)
     if (advanced.kind !== 'ready') return advanced
@@ -338,7 +396,10 @@ export class HostProjectionReconciler {
       if (result.generation !== current.generation || result.toCursor !== current.cursor) {
         const recaptured = await this.captureValidSnapshot()
         if (!recaptured) return this.unavailable('capture_failed')
-        current = recaptured
+        if (!this.admit(recaptured, HOST_PROJECTION_TICK_INCOMPLETE_LIMIT)) {
+          return this.unavailable('capture_incomplete')
+        }
+        current = recaptured.snapshot
         if (baseline.generation !== current.generation) {
           this.baseline = current
           return {

@@ -712,3 +712,65 @@ describe('ThreadCatalogueHostRunWindow.snapshot', () => {
     window.dispose()
   })
 })
+
+describe('ThreadCatalogueHostRunWindow.loaded', () => {
+  it('is false until a read completes, and neither a mirror event nor a moved witness unloads it', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    const read = deferred<RunWindowPage>()
+    let hostRunQueries = 0
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method !== 'host-runs') throw new Error(`unexpected query ${query.method}`)
+      hostRunQueries += 1
+      return hostRunQueries === 1 ? read.promise : page('witness-2', 'run-1')
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    // Before the first read: an empty window must never stand for the profile.
+    expect(window.loaded).toBe(false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(window.loaded).toBe(false)
+    read.resolve(page('witness-1', 'run-1'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(window.loaded).toBe(true)
+
+    // A persist: the event arms a refresh and the chat's rows go stale. The
+    // served rows are still its last indexed rows, so the window stays loaded.
+    h.setWitness('witness-2')
+    expect(window.snapshot().complete).toBe(false)
+    expect(window.loaded).toBe(true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(hostRunQueries).toBe(2)
+    expect(window.loaded).toBe(true)
+    window.dispose()
+  })
+
+  it('is false while the mirror is partial or the last read skipped a chat it has not listed', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    let unlisted = true
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method !== 'host-runs') throw new Error(`unexpected query ${query.method}`)
+      return {
+        entries: [
+          ...page('witness-1', 'run-1').entries,
+          ...(unlisted
+            ? [{ chatId: 'chat-unlisted', sourceWitness: 'witness-x', run: { runId: 'run-x' } }]
+            : [])
+        ],
+        total: unlisted ? 2 : 1,
+        next: null
+      }
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    await vi.advanceTimersByTimeAsync(100)
+    expect(window.loaded).toBe(false)
+
+    unlisted = false
+    h.touch('chat-1')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(window.loaded).toBe(true)
+    ;(h.mirror as unknown as { complete: boolean }).complete = false
+    expect(window.loaded).toBe(false)
+    window.dispose()
+  })
+})
