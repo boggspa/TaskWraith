@@ -90,9 +90,9 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(reloaded?.messages).toHaveLength(1)
   })
 
-  it('does not turn fan-out on when a solo chat becomes an ensemble', () => {
-    // Fan-out On is a creation default for NEW Ensemble chats; a converted
-    // solo chat keeps its own (absent → Off) choice.
+  it('turns fan-out on when a solo chat becomes an ensemble', () => {
+    // A converted solo chat is a NEW Ensemble, so it takes the creation
+    // default (fan-out On, user decision 2026-10-07) like a fresh one does.
     const solo = AppStore.createGlobalChat()
     AppStore.saveChat({ ...solo, provider: 'codex' } as ChatRecord)
 
@@ -100,8 +100,8 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
       seedParticipant: seedParticipant()
     })
 
-    expect(converted.ensemble?.fanoutPolicy).toBeUndefined()
-    expect(AppStore.getChat(solo.appChatId)?.ensemble?.fanoutPolicy).toBeUndefined()
+    expect(converted.ensemble?.fanoutPolicy).toBe('all')
+    expect(AppStore.getChat(solo.appChatId)?.ensemble?.fanoutPolicy).toBe('all')
   })
 
   it('starts fresh at the solo→ensemble boundary and rejects a renderer-authored seat receipt', () => {

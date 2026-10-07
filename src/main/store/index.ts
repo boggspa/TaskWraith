@@ -546,7 +546,8 @@ function resetEnsembleParticipantSession(participant: EnsembleParticipant): Ense
 /**
  * A derived ensemble config (side chat, Solo→Ensemble toggle) keeps the
  * source chat's own fan-out choice. Fan-out On is a creation default for NEW
- * Ensembles only, so the scaffold must not carry it into a derivation.
+ * Ensembles (including a solo chat the user turns into one), so a derivation
+ * from an existing Ensemble must not carry it; a side chat inherits its parent.
  */
 function ensembleScaffoldWithoutCreationFanout(provider?: ProviderId): EnsembleConfig {
   const { fanoutPolicy: _creationFanoutPolicy, ...scaffold } = createDefaultEnsembleConfig(provider)
@@ -8085,7 +8086,10 @@ export class AppStore {
         // profile receipt is main-owned and cannot be introduced through this
         // shape, even when the rest of the seed is valid.
         const trustedSeed = resetEnsembleParticipantSession(seed)
-        const base = ensembleScaffoldWithoutCreationFanout(chat.provider)
+        // A solo chat turned into an Ensemble is a NEW Ensemble, so it takes
+        // the creation defaults including fan-out On (user decision
+        // 2026-10-07); only the stash branch above restores an older choice.
+        const base = createDefaultEnsembleConfig(chat.provider)
         ensemble = {
           ...base,
           // Turning Ensemble ON means asking for a panel. Both callers (the

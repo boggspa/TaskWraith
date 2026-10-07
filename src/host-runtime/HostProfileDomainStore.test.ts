@@ -170,6 +170,8 @@ describe('HostProfileDomainStore', () => {
     expect(store.getThread(created.appChatId)).toMatchObject({ createdAt: 0, runs: [] })
     const ensemble = store.setThreadKind({ threadId: created.appChatId, targetKind: 'ensemble' })
     expect(ensemble).toMatchObject({ chatKind: 'ensemble', messages: [], runs: [], createdAt: 0 })
+    // A converted thread is a new Ensemble and starts with fan-out On.
+    expect(ensemble.ensemble).toMatchObject({ fanoutPolicy: 'all' })
     const solo = store.setThreadKind({
       threadId: created.appChatId,
       targetKind: 'single',

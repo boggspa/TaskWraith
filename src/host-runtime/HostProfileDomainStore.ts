@@ -1720,6 +1720,10 @@ export class HostProfileDomainStore {
         maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
         orchestrationMode: 'turn_bound',
         maxContinuationHops: 6,
+        // A solo thread turned into an Ensemble is a NEW Ensemble, so it
+        // starts with fan-out On like the desktop creation default (user
+        // decision 2026-10-07); the stash branch above restores an older choice.
+        fanoutPolicy: 'all',
         participants: [seed, companion],
         bossmanParticipantId: seed.id,
         captainParticipantIds: [companion.id],
