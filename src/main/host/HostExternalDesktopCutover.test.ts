@@ -166,9 +166,10 @@ describe('Desktop Host lease wiring', () => {
     const broker = probe.binding('desktopHostBroker')
     if (!ts.isCallExpression(broker)) throw new Error('desktopHostBroker is not a call')
     expect(calleeOf(broker)).toBe('createHostProjectionBroker')
-    expect(probe.propText(broker, 0, 'onTransportError')).toBe(
-      '(report) => hostPoisonDetectorRef?.report(report)'
-    )
+    // The transport log observes the same reports; the poison guard still gets every one.
+    const onTransportError = probe.propText(broker, 0, 'onTransportError')
+    expect(onTransportError).toContain('hostPoisonDetectorRef?.report(report)')
+    expect(onTransportError).toContain('hostTransportLog.transportError(report)')
     const [assigned] = probe.assignmentsTo(probe.source, 'hostPoisonDetectorRef')
     expect(assigned.startsWith('desktopHostLease ? createHostPoisonDetector({')).toBe(true)
     const [detector] = probe.callsTo(probe.source, 'createHostPoisonDetector')
@@ -179,6 +180,23 @@ describe('Desktop Host lease wiring', () => {
     expect(probe.propText(detector, 0, 'isUpdateRestartPending')).toBe(
       '() => updateService.snapshot().restartPending === true'
     )
+  })
+
+  it('keeps a rolling Host transport log fed by the broker and the lifecycle', () => {
+    const log = probe.binding('hostTransportLog')
+    if (!ts.isCallExpression(log)) throw new Error('hostTransportLog is not a call')
+    expect(calleeOf(log)).toBe('installHostTransportEventLog')
+    const broker = probe.binding('desktopHostBroker')
+    if (!ts.isCallExpression(broker)) throw new Error('desktopHostBroker is not a call')
+    expect(probe.propText(broker, 0, 'onClientEvent')).toBe(
+      '(event) => hostTransportLog.clientEvent(event)'
+    )
+    const [lifecycle] = probe.construction('HostLifecycleController')
+    expect(probe.propText(lifecycle, 0, 'onFailure')).toBe(
+      '(failure) => hostTransportLog.lifecycleFailure(failure)'
+    )
+    const [observe] = probe.callsTo(probe.source, 'observeLifecycle')
+    expect(probe.argText(observe, 0)).toBe('hostLifecycle')
   })
 
   it("answers the inspect channel from main's lease, and routes the menu's Restart Host to a confirmed restart", () => {

@@ -20,6 +20,7 @@
 import type { ProviderId } from '../../../main/store/types'
 import { getProviderLabel } from './providerLabels'
 import { isContextOverflowErrorText } from '../../../shared/contextCompaction'
+import { isHostTransportFailureText } from '../../../shared/hostTransportFailure'
 
 /**
  * The deterministic failure families the cards know how to voice. Order of
@@ -35,6 +36,7 @@ export type FailureRemedyKind =
   | 'missing-cli'
   | 'dispatch'
   | 'network'
+  | 'host-disconnected'
   | 'catalogue-reindexing'
 
 /**
@@ -98,6 +100,10 @@ const CATALOGUE_REINDEXING_MARKER_PATTERN =
 export function classifyFailureRemedy(text: string): FailureRemedyKind | null {
   if (!text) return null
   if (AUTH_MARKER_PATTERN.test(text)) return 'auth'
+  // Before the catalogue race: a dropped Host socket fails a catalogue read
+  // with the channel name in the text, and that card used to promise
+  // "Nothing was lost" about a prompt that was never sent.
+  if (isHostTransportFailureText(text)) return 'host-disconnected'
   if (CATALOGUE_REINDEXING_MARKER_PATTERN.test(text)) return 'catalogue-reindexing'
   if (MODEL_RETIRED_MARKER_PATTERN.test(text)) return 'model-retired'
   if (isContextOverflowErrorText(text)) return 'context-overflow'
@@ -259,6 +265,18 @@ export function describeFailureRemedyCopy(
       return {
         title: `${subject} couldn’t connect`,
         body: 'The provider could not be reached. Check the network or the provider’s status, then retry.'
+      }
+    case 'host-disconnected':
+      return {
+        title: 'TaskWraith lost contact with its Host',
+        body: `The connection to TaskWraith Host — the local helper that runs your providers — dropped while this turn was starting, so your prompt was not sent. The Host normally reconnects within seconds; ${
+          surface === 'seat' ? 'check its status in Settings' : 'check its status below'
+        } if this keeps happening, then resend.`,
+        // The run card's live Host row says whether the Host is back; a note
+        // here would replace it, so only the seat surface (no row) gets one.
+        ...(surface === 'seat'
+          ? { note: 'The prompt was not sent — resend it once the Host is back.' }
+          : {})
       }
     case 'catalogue-reindexing':
       return {

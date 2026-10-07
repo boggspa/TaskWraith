@@ -509,3 +509,53 @@ describe('HostProjectionBroker', () => {
     broker.close()
   })
 })
+
+describe('HostProjectionBroker client events (transport log)', () => {
+  it('reports connect, reconnect, an unexpected disconnect and Host closing', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    const listeners: Array<Record<string, (...args: any[]) => void>> = []
+    const makeClient = (): HostProjectionClientPort => {
+      const handlers: Record<string, (...args: any[]) => void> = {}
+      listeners.push(handlers)
+      return {
+        connected: true,
+        connect: vi.fn(async () => undefined),
+        getSnapshot: vi.fn(async () => ({ snapshot })),
+        getDeltasSince: vi.fn(),
+        submitCommand: vi.fn(),
+        lookupReceipt: vi.fn(),
+        close: vi.fn(),
+        on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+          handlers[event] = listener
+        }) as never
+      }
+    }
+    const events: unknown[] = []
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient: makeClient,
+      onClientEvent: (event) => {
+        events.push(event)
+        throw new Error('a failing observer must not change the request')
+      }
+    })
+
+    await expect(broker.snapshot()).resolves.toMatchObject({ ok: true })
+    listeners[0].hostClosing()
+    listeners[0].disconnected(new Error('read ECONNRESET'))
+    broker.close()
+    await expect(broker.snapshot()).resolves.toMatchObject({ ok: true })
+
+    expect(events).toEqual([
+      { kind: 'connected', clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID, reconnect: false },
+      { kind: 'host-closing', clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID },
+      {
+        kind: 'disconnected',
+        clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+        error: 'read ECONNRESET'
+      },
+      { kind: 'connected', clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID, reconnect: true }
+    ])
+  })
+})

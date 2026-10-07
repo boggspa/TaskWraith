@@ -31,6 +31,9 @@ const HOST_ERROR =
 
 const GENERIC_ERROR = 'Run execution failed unexpectedly: Error: socket hang up'
 
+const HOST_DISCONNECTED_ERROR =
+  "Run execution failed unexpectedly: Error: Error invoking remote method 'thread-catalogue:read': Error: TaskWraith Host disconnected."
+
 function message(content: string): ChatMessage {
   return { id: 'm1', role: 'error', content, timestamp: '2026-09-19T00:25:00.000Z' }
 }
@@ -112,6 +115,11 @@ describe('classifyRunError', () => {
     expect(
       classifyRunError('Run execution failed unexpectedly: Error: connect ECONNREFUSED 10.0.0.1')
     ).toBe('network-issue')
+  })
+
+  it('classifies a dropped Host connection on a catalogue read as host-disconnected', () => {
+    expect(classifyRunError(HOST_DISCONNECTED_ERROR)).toBe('host-disconnected')
+    expect(RETRYABLE_RUN_KINDS.has('host-disconnected')).toBe(true)
   })
 
   it('classifies the catalogue indexing race', () => {
@@ -303,6 +311,28 @@ describe('RunExecutionErrorCard', () => {
       />
     )
     expect(html).toContain('The Host is currently offline')
+    expect(html).toContain('Would you like to restart the Host?')
+  })
+
+  it('tells the truth about a dropped Host: not sent, resend, and the live Host row', () => {
+    const client = {
+      subscribe: vi.fn(() => () => undefined),
+      status: vi.fn(),
+      set: vi.fn()
+    }
+    const html = renderToStaticMarkup(
+      <RunExecutionErrorCard
+        message={message(HOST_DISCONNECTED_ERROR)}
+        onCopy={() => undefined}
+        onRetryRun={() => undefined}
+        lifecycleClient={client as never}
+      />
+    )
+    expect(html).toContain('TaskWraith lost contact with its Host')
+    expect(html).toContain('your prompt was not sent')
+    expect(html).not.toContain('A background refresh interrupted this run')
+    expect(html).not.toContain('Nothing was lost')
+    expect(html).toContain('Retry run')
     expect(html).toContain('Would you like to restart the Host?')
   })
 

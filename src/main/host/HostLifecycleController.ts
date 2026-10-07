@@ -48,7 +48,18 @@ export interface HostLifecycleControllerOptions {
   readonly now?: () => number
   /** Drops any authenticated Desktop socket after Host goes offline. */
   readonly onOffline?: () => void
+  /**
+   * The unbounded failure behind a `failed` transition (the snapshot carries
+   * only a bounded message), e.g. a launch error with its Host stderr tail.
+   * Diagnosis only: called synchronously and must not throw.
+   */
+  readonly onFailure?: (failure: HostLifecycleFailure) => void
   readonly log?: (line: string) => void
+}
+
+export interface HostLifecycleFailure {
+  readonly reason: HostLifecycleReason
+  readonly error: unknown
 }
 
 export type HostLifecycleListener = (snapshot: HostLifecycleSnapshot) => void
@@ -63,6 +74,7 @@ export class HostLifecycleController {
   private readonly createSupervisor: () => HostLifecycleSupervisor
   private readonly now: () => number
   private readonly onOffline?: () => void
+  private readonly onFailure?: (failure: HostLifecycleFailure) => void
   private readonly log?: (line: string) => void
   private readonly listeners = new Set<HostLifecycleListener>()
   private supervisor: HostLifecycleSupervisor | null = null
@@ -77,6 +89,7 @@ export class HostLifecycleController {
     this.createSupervisor = options.createSupervisor
     this.now = options.now ?? (() => Date.now())
     this.onOffline = options.onOffline
+    this.onFailure = options.onFailure
     this.log = options.log
     this.state = {
       revision: 0,
@@ -240,6 +253,7 @@ export class HostLifecycleController {
       if (this.supervisor === active) this.supervisor = null
       this.notifyOffline()
       const message = boundedError(error, 'Host could not be re-attached.')
+      this.reportFailure('start-failed', error)
       this.transition('failed', 'running', 'start-failed', message)
       this.log?.(`[host-lifecycle] Host re-attach failed: ${message}`)
       return { ok: false, error: message, snapshot: this.getSnapshot() }
@@ -293,6 +307,7 @@ export class HostLifecycleController {
       this.supervisor = null
       this.notifyOffline()
       const message = boundedError(error, 'Host failed to start.')
+      this.reportFailure('start-failed', error)
       this.transition('failed', 'running', 'start-failed', message)
       this.log?.(`[host-lifecycle] Host start failed: ${message}`)
       return { ok: false, error: message, snapshot: this.getSnapshot() }
@@ -322,6 +337,7 @@ export class HostLifecycleController {
       this.supervisor = active
       this.notifyOffline()
       const message = boundedError(error, 'Host failed to stop.')
+      this.reportFailure('stop-failed', error)
       this.transition('failed', 'stopped', 'stop-failed', message)
       this.log?.(`[host-lifecycle] Host stop failed: ${message}`)
       return { ok: false, error: message, snapshot: this.getSnapshot() }
@@ -353,6 +369,14 @@ export class HostLifecycleController {
           `[host-lifecycle] listener failed: ${boundedError(listenerError, 'unknown failure')}`
         )
       }
+    }
+  }
+
+  private reportFailure(reason: HostLifecycleReason, error: unknown): void {
+    try {
+      this.onFailure?.({ reason, error })
+    } catch {
+      // Diagnosis must never change the lifecycle's own outcome.
     }
   }
 

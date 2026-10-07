@@ -48,6 +48,7 @@ export type RunErrorKind =
   | 'dispatch-failed'
   | 'network-issue'
   | 'run-interrupted'
+  | 'host-disconnected'
   | 'catalogue-reindexing'
 
 export interface RunErrorDescription {
@@ -99,6 +100,7 @@ const RUN_KIND_BY_REMEDY: Record<FailureRemedyKind, RunErrorKind> = {
   'missing-cli': 'missing-cli',
   dispatch: 'dispatch-failed',
   network: 'network-issue',
+  'host-disconnected': 'host-disconnected',
   'catalogue-reindexing': 'catalogue-reindexing'
 }
 
@@ -109,6 +111,7 @@ const RUN_KIND_BY_REMEDY: Record<FailureRemedyKind, RunErrorKind> = {
  * pending to retry.
  */
 export const RETRYABLE_RUN_KINDS: ReadonlySet<RunErrorKind> = new Set([
+  'host-disconnected',
   'catalogue-reindexing',
   'network-issue',
   'dispatch-failed',

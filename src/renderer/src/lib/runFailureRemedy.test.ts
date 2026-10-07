@@ -68,6 +68,40 @@ describe('classifyFailureRemedy', () => {
   })
 })
 
+describe('Host disconnects', () => {
+  // THE INCIDENT: the channel name matched the catalogue-race marker, so the
+  // card said "Nothing was lost" about a prompt that was never sent.
+  it('names a dropped Host before the catalogue race can claim the channel name', () => {
+    expect(
+      classifyFailureRemedy(
+        "Run execution failed unexpectedly: Error: Error invoking remote method 'thread-catalogue:read': Error: TaskWraith Host disconnected."
+      )
+    ).toBe('host-disconnected')
+    expect(classifyFailureRemedy('Error: TaskWraith Host projection client closed.')).toBe(
+      'host-disconnected'
+    )
+    expect(
+      classifyFailureRemedy('Host is not running; only an explicit start brings it back.')
+    ).toBe('host-disconnected')
+  })
+
+  it('says the prompt was not sent and asks for a resend', () => {
+    const copy = describeFailureRemedyCopy('host-disconnected', {
+      subject: 'The run',
+      surface: 'run'
+    })
+    expect(copy.title).toBe('TaskWraith lost contact with its Host')
+    expect(copy.body).toContain('your prompt was not sent')
+    expect(copy.body).toContain('then resend')
+    expect(copy.body).not.toContain('Nothing was lost')
+    // No note on the run card: it would hide the live "Host is running again" row.
+    expect(copy.note).toBeUndefined()
+    expect(
+      describeFailureRemedyCopy('host-disconnected', { subject: 'Review 1', surface: 'seat' }).note
+    ).toContain('not sent')
+  })
+})
+
 describe('describeFailureRemedyCopy', () => {
   it('voices the seat surface with the seat name', () => {
     const copy = describeFailureRemedyCopy('model-retired', {

@@ -1120,6 +1120,7 @@ import { createHostProductionChannelAdapter } from './host/HostProductionChannel
 import { createHostProjectionBroker } from './host/HostProjectionBroker'
 import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandClient'
 import { HostLifecycleController } from './host/HostLifecycleController'
+import { installHostTransportEventLog } from './host/HostTransportEventLog'
 import { createHostExternalLifecycleAdapter } from './host/HostExternalLifecycleAdapter'
 import { releaseExternalHostBootHold } from './host/HostExternalBootHold'
 import { startDesktopHostLease, type DesktopHostLeaseWiring } from './host/HostLeaseReasons'
@@ -55041,10 +55042,15 @@ if (isGeminiMcpBridgeProcess) {
     // poisoned-session guard fed by this broker's typed Host errors.
     let desktopHostLeaseRef: DesktopHostLeaseWiring | null = null
     let hostPoisonDetectorRef: HostPoisonDetector | null = null
+    const hostTransportLog = installHostTransportEventLog(app.getPath('userData'))
     const desktopHostBroker = createHostProjectionBroker({
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion(),
-      onTransportError: (report) => hostPoisonDetectorRef?.report(report)
+      onTransportError: (report) => {
+        hostTransportLog.transportError(report)
+        hostPoisonDetectorRef?.report(report)
+      },
+      onClientEvent: (event) => hostTransportLog.clientEvent(event)
     })
     /**
      * Wake-up Host re-check. Registered here rather than beside the power
@@ -56796,8 +56802,10 @@ if (isGeminiMcpBridgeProcess) {
     const hostLifecycle = new HostLifecycleController({
       createSupervisor: createSelectedHost,
       onOffline: () => desktopHostBroker.close(),
+      onFailure: (failure) => hostTransportLog.lifecycleFailure(failure),
       log: (line) => console.log(line)
     })
+    hostTransportLog.observeLifecycle(hostLifecycle)
     // Main's lease on an external Host (Host-lifetime D6, phase 1): held for
     // `app` from the app start until will-quit releases it.
     const desktopHostLease = preparedExternalHost

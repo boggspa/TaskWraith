@@ -656,3 +656,29 @@ describe('HostLifecycleController host identity block (D11)', () => {
     expect(controller.getSnapshot()).not.toHaveProperty('host')
   })
 })
+
+describe('HostLifecycleController failure detail (transport log)', () => {
+  it('hands the unbounded launch error to onFailure while the snapshot stays bounded', async () => {
+    const stderr = `boot trace ${'x'.repeat(1_500)} FATAL: authority busy`
+    const failed = supervisor({
+      start: vi.fn(async () => {
+        throw new Error(`External Host exited 1 before readiness. stderr: ${stderr}`)
+      })
+    })
+    const failures: Array<{ reason: string; error: unknown }> = []
+    const controller = new HostLifecycleController({
+      createSupervisor: () => failed,
+      onFailure: (failure) => {
+        failures.push(failure)
+        throw new Error('a failing observer must not change the lifecycle')
+      }
+    })
+
+    const result = await controller.start()
+    expect(result).toMatchObject({ ok: false, snapshot: { phase: 'failed' } })
+    expect(controller.getSnapshot().error!.length).toBeLessThanOrEqual(512)
+    expect(failures).toHaveLength(1)
+    expect(failures[0].reason).toBe('start-failed')
+    expect((failures[0].error as Error).message).toContain('FATAL: authority busy')
+  })
+})

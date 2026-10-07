@@ -57,6 +57,9 @@ export interface HostProjectionClientPort {
   maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
   /** Say this socket is not a holder of the Host (`host.lease` decline). */
   declineHostLease?(): Promise<void>
+  /** HostProjectionClient's own events; absent on fakes, which then report none. */
+  on?(event: 'disconnected', listener: (error: Error | null) => void): unknown
+  on?(event: 'hostClosing', listener: () => void): unknown
 }
 
 /** What a broker request was doing when the Host answered a typed error. */
@@ -77,6 +80,17 @@ export interface HostProjectionTransportErrorReport {
   /** Whether the failing socket was still connected (a request-scoped refusal). */
   readonly connected: boolean
 }
+
+/**
+ * Connection-level facts about the broker's Host socket, for diagnosis only.
+ * `disconnected` is an UNEXPECTED loss after the handshake (the client does
+ * not emit it for its own close); `error` is the socket error's message, if
+ * any, and is untrusted text for the consumer to bound and redact.
+ */
+export type HostProjectionClientEvent =
+  | { readonly kind: 'connected'; readonly clientId: string; readonly reconnect: boolean }
+  | { readonly kind: 'disconnected'; readonly clientId: string; readonly error?: string }
+  | { readonly kind: 'host-closing'; readonly clientId: string }
 
 export interface HostProjectionBroker {
   maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
@@ -103,6 +117,8 @@ export interface HostProjectionBrokerOptions {
    * the identity it ran under. Called synchronously; must not throw.
    */
   readonly onTransportError?: (report: HostProjectionTransportErrorReport) => void
+  /** Connect / unexpected disconnect / Host-closing. Called synchronously; must not throw. */
+  readonly onClientEvent?: (event: HostProjectionClientEvent) => void
 }
 
 function errorText(error: unknown): string {
@@ -192,6 +208,29 @@ export function createHostProjectionBroker(
   let connecting: Promise<HostProjectionClientPort> | null = null
   let connectingClient: HostProjectionClientPort | null = null
   let connectionEpoch = 0
+  let everConnected = false
+
+  const reportClientEvent = (event: HostProjectionClientEvent): void => {
+    if (!options.onClientEvent) return
+    try {
+      options.onClientEvent(event)
+    } catch {
+      // Diagnosis must never change the connection's own outcome.
+    }
+  }
+
+  const observeClient = (candidate: HostProjectionClientPort): void => {
+    if (!options.onClientEvent || typeof candidate.on !== 'function') return
+    const clientId = clientIdentity.clientId
+    candidate.on('disconnected', (error) =>
+      reportClientEvent({
+        kind: 'disconnected',
+        clientId,
+        ...(error?.message ? { error: error.message } : {})
+      })
+    )
+    candidate.on('hostClosing', () => reportClientEvent({ kind: 'host-closing', clientId }))
+  }
 
   const closeClient = (candidate: HostProjectionClientPort | null): void => {
     if (!candidate) return
@@ -227,6 +266,7 @@ export function createHostProjectionBroker(
     if (client) return client
     if (connecting) return connecting
     const next = createClient()
+    observeClient(next)
     const epoch = connectionEpoch
     const work = (async (): Promise<HostProjectionClientPort> => {
       try {
@@ -239,6 +279,12 @@ export function createHostProjectionBroker(
           throw new Error('Host projection connection was superseded')
         }
         client = next
+        reportClientEvent({
+          kind: 'connected',
+          clientId: clientIdentity.clientId,
+          reconnect: everConnected
+        })
+        everConnected = true
         return next
       } catch (error) {
         if (client !== next) closeClient(next)

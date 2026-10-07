@@ -186,7 +186,10 @@ export function RunExecutionErrorCard({
     message.metadata?.kind === 'providerRunFailure'
       ? describeProviderRunFailureMessage(message)
       : describeRunError(message.content || '')
-  const needsHostControl = description.kind === 'host-unavailable'
+  // A dropped Host connection shows the same live status/restart row, so
+  // "check its status below" points at something real.
+  const needsHostControl =
+    description.kind === 'host-unavailable' || description.kind === 'host-disconnected'
   const [lifecycleClient] = useState(() => injectedLifecycleClient ?? new HostLifecycleIpcClient())
   const [lifecycle, setLifecycle] = useState<HostLifecycleSnapshot | null>(null)
   const [lifecycleError, setLifecycleError] = useState<string>()
