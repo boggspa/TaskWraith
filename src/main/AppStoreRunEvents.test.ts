@@ -221,6 +221,134 @@ describe('AppStore run events', () => {
     expect(runIds).toEqual(['rNewer', 'rNewer', 'rNewer'])
   })
 
+  it('skips a run file that cannot rank in the newest {limit} and still returns the exact newest set', async () => {
+    // runs=[rOld, rNew] → reverse() reads rNew FIRST. Once rNew alone supplies
+    // `limit` accepted events, rOld's file (whose newest event is older than
+    // the oldest kept) is never read in full: its tail is probed and it is
+    // skipped. The result must still equal the unbounded read exactly.
+    AppStore.saveChat({
+      appChatId: 'big',
+      scope: 'workspace',
+      chatKind: 'single',
+      provider: 'gemini',
+      title: 'B',
+      workspaceId: 'ws',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        { runId: 'rOld', provider: 'gemini', startedAt: '2026-01-01T00:00:01.000Z', status: 'success' },
+        { runId: 'rNew', provider: 'gemini', startedAt: '2026-01-01T00:00:02.000Z', status: 'success' }
+      ]
+    } as never)
+    const ev = (runId: string, ms: number, kind = 'provider_raw'): void => {
+      AppStore.appendRunEvent({
+        runId,
+        chatId: 'big',
+        provider: 'gemini',
+        kind,
+        phase: kind === 'provider_raw' ? 'raw' : 'artifact',
+        source: 'provider',
+        payload: { data: 'x\n' },
+        timestamp: new Date(ms).toISOString()
+      } as never)
+    }
+    ev('rOld', 1000)
+    ev('rOld', 1001)
+    ev('rOld', 1002)
+    ev('rNew', 2000)
+    ev('rNew', 2001)
+    ev('rNew', 2002, 'tool') // a kind the query does not ask for must not count toward the bound
+    ev('rNew', 2003)
+
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+    try {
+      const bounded = await AppStore.getRunEventsAsync({
+        chatId: 'big',
+        kinds: ['provider_raw'],
+        limit: 3
+      } as never)
+      expect(bounded.map((e) => [e.runId, e.timestamp])).toEqual(
+        AppStore.getRunEvents({ chatId: 'big', kinds: ['provider_raw'], limit: 3 } as never).map(
+          (e) => [e.runId, e.timestamp]
+        )
+      )
+      expect(bounded.map((e) => e.runId)).toEqual(['rNew', 'rNew', 'rNew'])
+      const fullyRead = readFile.mock.calls.map((call) => String(call[0]))
+      expect(fullyRead.some((p) => p.includes('rNew'))).toBe(true)
+      expect(fullyRead.some((p) => p.includes('rOld'))).toBe(false)
+    } finally {
+      readFile.mockRestore()
+    }
+
+    // The interleaved-sibling case: rOld's file carries the NEWER events, so its
+    // tail is newer than the oldest kept and it is read in full. Same answer as
+    // the sync twin, which never skips.
+    ev('rOld', 3000)
+    ev('rOld', 3001)
+    ev('rOld', 3002)
+    const interleaved = await AppStore.getRunEventsAsync({ chatId: 'big', limit: 3 } as never)
+    expect(interleaved.map((e) => e.runId)).toEqual(['rOld', 'rOld', 'rOld'])
+    expect(interleaved.map((e) => e.timestamp)).toEqual(
+      AppStore.getRunEvents({ chatId: 'big', limit: 3 } as never).map((e) => e.timestamp)
+    )
+  })
+
+  it('does not close the newest {limit} bound until enough events of the queried kind are held', async () => {
+    // mNew holds two provider_raw events plus one `tool` event. A {kinds:
+    // ['provider_raw'], limit: 3} query is NOT satisfied by mNew alone, so mOld
+    // must still be read and its newest raw event returned. Closing the bound
+    // on fewer accepted events, or on the wrong kind, would silently drop it.
+    AppStore.saveChat({
+      appChatId: 'mixed',
+      scope: 'workspace',
+      chatKind: 'single',
+      provider: 'gemini',
+      title: 'M',
+      workspaceId: 'ws',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        { runId: 'mOld', provider: 'gemini', startedAt: '2026-01-01T00:00:01.000Z', status: 'success' },
+        { runId: 'mNew', provider: 'gemini', startedAt: '2026-01-01T00:00:02.000Z', status: 'success' }
+      ]
+    } as never)
+    const ev = (runId: string, ms: number, kind = 'provider_raw'): void => {
+      AppStore.appendRunEvent({
+        runId,
+        chatId: 'mixed',
+        provider: 'gemini',
+        kind,
+        phase: kind === 'provider_raw' ? 'raw' : 'artifact',
+        source: 'provider',
+        payload: { data: 'x\n' },
+        timestamp: new Date(ms).toISOString()
+      } as never)
+    }
+    ev('mOld', 1000)
+    ev('mOld', 1001)
+    ev('mOld', 1002)
+    ev('mNew', 2000)
+    ev('mNew', 2001, 'tool')
+    ev('mNew', 2002)
+
+    const bounded = await AppStore.getRunEventsAsync({
+      chatId: 'mixed',
+      kinds: ['provider_raw'],
+      limit: 3
+    } as never)
+    expect(bounded.map((e) => [e.runId, new Date(e.timestamp).getTime()])).toEqual([
+      ['mOld', 1002],
+      ['mNew', 2000],
+      ['mNew', 2002]
+    ])
+  })
+
   it('refuses appends into a prepared (uncommitted) deletion scope with tombstone semantics', () => {
     AppStore.saveChat({
       appChatId: 'chat-frozen',

@@ -5056,15 +5056,108 @@ async function readRunEventFileAsync(
 
 /** Async twin of `readRunEventFile` over many paths — sequential `await` per file
  * yields the event loop between files. */
+/** Bytes read from a run-event file's tail to learn its newest timestamp. */
+const RUN_EVENT_TAIL_PROBE_BYTES = 64 * 1024
+
+/**
+ * The newest event timestamp (ms) in a run-event file, from its tail only, or
+ * `null` when it cannot be known — the caller then reads the file in full.
+ *
+ * Events are appended in sequence order by one process clock, so the newest
+ * record is at the end; the max over the tail's complete lines is taken rather
+ * than the last line alone so a single odd stamp cannot under-report. The
+ * first line of a mid-file chunk may be cut, which `parseRunEventLine` rejects.
+ */
+async function newestRunEventTimestampMsAsync(filePath: string): Promise<number | null> {
+  let handle: fs.promises.FileHandle | undefined
+  try {
+    handle = await fs.promises.open(filePath, 'r')
+    const { size } = await handle.stat()
+    if (size <= 0) return null
+    const length = Math.min(size, RUN_EVENT_TAIL_PROBE_BYTES)
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, size - length)
+    let newest: number | null = null
+    for (const line of buffer.toString('utf-8').split(/\r?\n/)) {
+      const event = parseRunEventLine(line)
+      if (!event) continue
+      const ms = new Date(event.timestamp).getTime()
+      if (!Number.isFinite(ms)) continue
+      if (newest === null || ms > newest) newest = ms
+    }
+    return newest
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+/**
+ * Newest-N bound for a scoped read. `accepts` is the exact filter the caller
+ * will apply downstream, so the count of kept events is never overstated.
+ */
+interface RunEventNewestBound {
+  limit: number
+  accepts: (event: RunEventRecord) => boolean
+}
+
+/**
+ * Reads the files in the order given — newest run first for a `{chatId}`
+ * query. With a bound, a file is skipped once the caller already holds
+ * `limit` accepted events AND the file's newest event is strictly older than
+ * the oldest of those: nothing in it can rank in the newest `limit`, however
+ * the runs interleave. A file whose tail cannot be read is read in full.
+ *
+ * Measured on a real profile 2026-10-07: the largest thread's 120 run-event
+ * files hold 109MB / 71k events, parsed synchronously on main (~1.5s) to hand
+ * the renderer 1,000 raw-log lines. Equal timestamps are never skipped.
+ */
 async function readRunEventFilesAsync(
   paths: string[],
-  kinds?: RunEventKind[]
+  kinds?: RunEventKind[],
+  bound?: RunEventNewestBound
 ): Promise<RunEventRecord[]> {
   const all: RunEventRecord[] = []
+  const acceptedMs: number[] = []
+  let oldestKeptMs: number | null = null
   for (const filePath of paths) {
-    for (const event of await readRunEventFileAsync(filePath, kinds)) all.push(event)
+    if (bound && oldestKeptMs !== null) {
+      const newest = await newestRunEventTimestampMsAsync(filePath)
+      if (newest !== null && newest < oldestKeptMs) continue
+    }
+    for (const event of await readRunEventFileAsync(filePath, kinds)) {
+      all.push(event)
+      if (bound && bound.accepts(event)) {
+        const ms = new Date(event.timestamp).getTime()
+        if (Number.isFinite(ms)) acceptedMs.push(ms)
+      }
+    }
+    if (bound && acceptedMs.length >= bound.limit) {
+      acceptedMs.sort((a, b) => b - a)
+      acceptedMs.length = bound.limit
+      oldestKeptMs = acceptedMs[bound.limit - 1]
+    }
   }
   return all
+}
+
+/**
+ * The newest-N bound for a filter, or `undefined` when the filter carries any
+ * predicate the bound does not model (then every file is read, as before).
+ */
+function runEventNewestBoundForFilter(filter: RunEventFilter): RunEventNewestBound | undefined {
+  if (!filter.chatId || !filter.limit || !(filter.limit > 0)) return undefined
+  if (filter.runId || filter.workspaceId || filter.provider || filter.approvalId) return undefined
+  if (filter.phases?.length || Number.isFinite(filter.fromSequence)) return undefined
+  const limit = Math.floor(filter.limit)
+  if (limit < 1) return undefined
+  const kindSet = filter.kinds?.length ? new Set<RunEventKind>(filter.kinds) : null
+  const chatId = filter.chatId
+  return {
+    limit,
+    accepts: (event) => event.chatId === chatId && (!kindSet || kindSet.has(event.kind))
+  }
 }
 
 /** Async twin of `readAllRunEventFiles`.
@@ -15033,7 +15126,7 @@ export class AppStore {
     const events =
       paths === null
         ? await readAllRunEventFilesAsync(filter.kinds)
-        : await readRunEventFilesAsync(paths, filter.kinds)
+        : await readRunEventFilesAsync(paths, filter.kinds, runEventNewestBoundForFilter(filter))
     return filterRunEvents(events, filter)
   }
 
