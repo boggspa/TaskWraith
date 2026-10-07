@@ -288,15 +288,14 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Codex',
       shortCode: 'CODEX',
       models: [
-        // GPT-6 Sol and Luna (rolling out from 2026-09-22) lead the offers on
-        // the standard Host ladder; Terra keeps the requested default flag
-        // until that default is moved on purpose. GPT-6.1 Sol (2026-09-29)
-        // leads them.
-        model('gpt-6.1-sol', 'GPT-6.1-Sol'),
+        // GPT-6.1 Sol (2026-09-29) leads the offers on the standard Host
+        // ladder and carries the default flag, matching the Codex default
+        // everywhere else; GPT-6 Sol and Luna (from 2026-09-22) follow.
+        model('gpt-6.1-sol', 'GPT-6.1-Sol', STANDARD_REASONING, true),
         model('gpt-6-sol', 'GPT-6-Sol'),
         model('gpt-6-luna', 'GPT-6-Luna'),
         model('gpt-5.6-sol', 'GPT-5.6-Sol'),
-        model('gpt-5.6-terra', 'GPT-5.6-Terra', STANDARD_REASONING, true),
+        model('gpt-5.6-terra', 'GPT-5.6-Terra'),
         model('gpt-5.6-luna', 'GPT-5.6-Luna'),
         model('gpt-5.5', 'GPT-5.5'),
         model('gpt-5.4', 'GPT-5.4'),
@@ -309,10 +308,10 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Claude',
       shortCode: 'CL',
       models: [
-        // Opus 5.5 (released 2026-09-22) leads the Claude offers; Opus 5 keeps
-        // the requested default flag until that default is moved on purpose.
-        model('claude-opus-5-5', 'Opus 5.5', CLAUDE_REASONING),
-        model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
+        // Opus 5.5 (released 2026-09-22) leads the Claude offers and carries
+        // the default flag, matching the Claude default everywhere else.
+        model('claude-opus-5-5', 'Opus 5.5', CLAUDE_REASONING, true),
+        model('claude-opus-5', 'Opus 5', CLAUDE_REASONING),
         model('claude-fable-5-1', 'Fable 5.1', CLAUDE_REASONING),
         model('claude-sonnet-5-5', 'Sonnet 5.5', CLAUDE_REASONING),
         model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),

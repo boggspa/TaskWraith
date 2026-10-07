@@ -175,11 +175,17 @@ describe('HostProviderCatalog', () => {
   })
 
   it('flags the requested default model for each provider without fabricating availability', () => {
-    expect(hostProviderCatalogEntry('codex')?.models.find((model) => model.default)?.modelId).toBe(
-      'gpt-5.6-terra'
+    expect(hostProviderCatalogEntry('codex')?.models.filter((model) => model.default)).toHaveLength(
+      1
     )
+    expect(hostProviderCatalogEntry('codex')?.models.find((model) => model.default)?.modelId).toBe(
+      'gpt-6.1-sol'
+    )
+    expect(
+      hostProviderCatalogEntry('claude')?.models.filter((model) => model.default)
+    ).toHaveLength(1)
     expect(hostProviderCatalogEntry('claude')?.models.find((model) => model.default)?.modelId).toBe(
-      'claude-opus-5'
+      'claude-opus-5-5'
     )
     expect(
       hostProviderCatalogEntry('mistral')?.models.find((model) => model.default)?.modelId
@@ -189,7 +195,7 @@ describe('HostProviderCatalog', () => {
     )
   })
 
-  it('offers Opus 5.5 as the leading Claude row on the full Claude ladder without moving the default', () => {
+  it('offers Opus 5.5 as the leading, default Claude row on the full Claude ladder', () => {
     const claude = hostProviderCatalogEntry('claude')
     expect(claude?.models.map((model) => model.modelId).slice(0, 3)).toEqual([
       'claude-opus-5-5',
@@ -197,8 +203,10 @@ describe('HostProviderCatalog', () => {
       'claude-fable-5-1'
     ])
     const opus55 = claude?.models.find((model) => model.modelId === 'claude-opus-5-5')
-    expect(opus55).toMatchObject({ label: 'Opus 5.5', available: true })
-    expect(opus55?.default).toBeUndefined()
+    expect(opus55).toMatchObject({ label: 'Opus 5.5', available: true, default: true })
+    expect(
+      claude?.models.find((model) => model.modelId === 'claude-opus-5')?.default
+    ).toBeUndefined()
     expect(opus55?.reasoning.map((entry) => entry.reasoningId)).toEqual([
       'low',
       'medium',
@@ -210,7 +218,7 @@ describe('HostProviderCatalog', () => {
     expect(opus55?.reasoning.every((entry) => entry.available)).toBe(true)
   })
 
-  it('offers GPT-6.1 Sol, GPT-6 Sol and Luna as the leading Codex rows on the standard ladder without moving the default', () => {
+  it('offers GPT-6.1 Sol (the default), GPT-6 Sol and Luna as the leading Codex rows on the standard ladder', () => {
     const codex = hostProviderCatalogEntry('codex')
     expect(codex?.models.map((model) => model.modelId).slice(0, 4)).toEqual([
       'gpt-6.1-sol',
@@ -225,7 +233,7 @@ describe('HostProviderCatalog', () => {
     ] as const) {
       const row = codex?.models.find((model) => model.modelId === modelId)
       expect(row).toMatchObject({ label, available: true })
-      expect(row?.default).toBeUndefined()
+      expect(row?.default).toBe(modelId === 'gpt-6.1-sol' ? true : undefined)
       expect(row?.reasoning.map((entry) => entry.reasoningId)).toEqual([
         'low',
         'medium',
@@ -234,7 +242,10 @@ describe('HostProviderCatalog', () => {
       ])
       expect(row?.reasoning.every((entry) => entry.available)).toBe(true)
     }
-    expect(codex?.models.find((model) => model.default)?.modelId).toBe('gpt-5.6-terra')
+    expect(codex?.models.find((model) => model.default)?.modelId).toBe('gpt-6.1-sol')
+    expect(
+      codex?.models.find((model) => model.modelId === 'gpt-5.6-terra')?.default
+    ).toBeUndefined()
   })
 
   it('offers Full Access only for transports with an exact verified mapping', () => {
