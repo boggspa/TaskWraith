@@ -7,7 +7,7 @@
  * real one-shot HostNodeInteractionRegistry continuation is wired.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -33,6 +33,7 @@ import {
   type KimiManagedModelRow
 } from '../host-shared/kimi/KimiManagedModelCatalog'
 import { kimiExplicitCliModelAlias } from '../shared/kimiModels'
+import { kimiOAuthCredentialFileName } from '../shared/kimiOAuthCredentialSlot'
 import { buildHostToolPresentation } from '../shared/hostToolPresentation'
 import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../host-shared/KimiAcpUsage'
 import type {
@@ -105,8 +106,18 @@ export interface HostNodeKimiProviderOptions {
 function hasConfiguredKimiCredential(): boolean {
   if (['KIMI_API_KEY', 'MOONSHOT_API_KEY'].some((name) => Boolean(process.env[name]?.trim())))
     return true
-  const configuredHome = join(homedir(), '.kimi-code', 'credentials', 'kimi-code.json')
-  return existsSync(configuredHome)
+  const kimiCodeHome = join(homedir(), '.kimi-code')
+  let config: string | null = null
+  try {
+    config = readFileSync(join(kimiCodeHome, 'config.toml'), 'utf8')
+  } catch {
+    config = null
+  }
+  // A global-region `kimi login` writes the env-scoped slot config.toml names.
+  const credentialFileName = kimiOAuthCredentialFileName(config)
+  return Boolean(
+    credentialFileName && existsSync(join(kimiCodeHome, 'credentials', credentialFileName))
+  )
 }
 
 function timestamp(): string {

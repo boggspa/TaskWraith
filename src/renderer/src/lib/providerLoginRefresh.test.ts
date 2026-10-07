@@ -29,6 +29,12 @@ describe('openInteractiveProviderLogin', () => {
     expect(refresh).toHaveBeenCalledTimes(1 + INTERACTIVE_PROVIDER_LOGIN_REFRESH_DELAYS_MS.length)
   })
 
+  it('keeps probing long enough for a device-code sign-in to finish', () => {
+    expect(Math.max(...INTERACTIVE_PROVIDER_LOGIN_REFRESH_DELAYS_MS)).toBeGreaterThanOrEqual(
+      180_000
+    )
+  })
+
   it('does not schedule refreshes when the Terminal handoff cannot open', async () => {
     const refresh = vi.fn()
     const schedule = vi.fn()

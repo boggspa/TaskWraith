@@ -260,6 +260,71 @@ describe('prepareKimiIsolatedHome', () => {
     expect(await detectKimiManagedAuthState('/current', legacyOnly.fs)).toBe('unknown')
   })
 
+  it('follows the env-scoped OAuth slot a global-region `kimi login` writes', async () => {
+    const globalLoginConfig = [
+      REAL_CONFIG,
+      '',
+      '[providers."managed:kimi-code"]',
+      'type = "kimi"',
+      'api_key = ""',
+      'base_url = "https://api.kimi.ai/coding/v1"',
+      '',
+      '[providers."managed:kimi-code".oauth]',
+      'storage = "file"',
+      'key = "oauth/kimi-code-env-0e4f99c69cc27850"',
+      'oauth_host = "https://auth.kimi.ai"'
+    ].join('\n')
+    const envSlot = makeFakeFs({
+      '/current/config.toml': globalLoginConfig,
+      '/current/credentials/kimi-code-env-0e4f99c69cc27850.json': '{"access_token":"current"}'
+    })
+    expect(await detectKimiManagedAuthState('/current', envSlot.fs)).toBe('oauth')
+
+    // A stale default-slot file does not authenticate a provider bound to the
+    // env slot: the runtime would never read it.
+    const staleDefault = makeFakeFs({
+      '/current/config.toml': globalLoginConfig,
+      '/current/credentials/kimi-code.json': '{"access_token":"stale"}'
+    })
+    expect(await detectKimiManagedAuthState('/current', staleDefault.fs)).toBe('unknown')
+
+    const { fs, files } = makeFakeFs({
+      '/src/config.toml': globalLoginConfig,
+      '/src/credentials/kimi-code-env-0e4f99c69cc27850.json': '{"token":"SECRET"}'
+    })
+    const projections: unknown[] = []
+    fs.prepareOAuthCredentialProjection = async (request) => {
+      projections.push(request)
+    }
+    const result = await prepareKimiIsolatedHome({
+      runId: 'global-login',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      fs
+    })
+    expect(result).toMatchObject({ ok: true })
+    expect(projections).toEqual([
+      {
+        sourceHome: '/src',
+        isolatedHome: '/iso',
+        boundaryRoot: '/iso',
+        credentialFileName: 'kimi-code-env-0e4f99c69cc27850.json'
+      }
+    ])
+    expect(files.get('/iso/config.toml')).toContain('key = "oauth/kimi-code-env-0e4f99c69cc27850"')
+    if (result.ok) await result.cleanup()
+
+    const missing = makeFakeFs({ '/src/config.toml': globalLoginConfig })
+    await expect(
+      prepareKimiIsolatedHome({
+        runId: 'signed-out',
+        homeDir: '/iso',
+        sourceHome: '/src',
+        fs: missing.fs
+      })
+    ).resolves.toMatchObject({ ok: false, reason: 'not-authenticated' })
+  })
+
   it('builds an isolated home from a non-rotating Kimi provider API key', async () => {
     const { fs, files } = makeFakeFs({
       '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`

@@ -21,7 +21,16 @@ export interface KimiOAuthCredentialProjectionRequest {
   isolatedHome: string
   /** TaskWraith-owned private root that contains the seat home. */
   boundaryRoot: string
+  /**
+   * `credentials/`-relative file of the OAuth slot config.toml binds the
+   * managed provider to (see shared/kimiOAuthCredentialSlot). Defaults to the
+   * historical default-environment slot.
+   */
+  credentialFileName?: string
 }
+
+const DEFAULT_CREDENTIAL_FILE_NAME = 'kimi-code.json'
+const SAFE_CREDENTIAL_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/
 
 function isErrno(error: unknown, code: string): boolean {
   return !!error && typeof error === 'object' && (error as NodeJS.ErrnoException).code === code
@@ -188,7 +197,11 @@ export async function prepareKimiOAuthCredentialProjection(
       assertPrivateDirectory(join(sourceHome, 'credentials'), 'Kimi credential directory'),
       ensurePrivateDirectory(join(sourceHome, 'oauth'), 'Kimi OAuth lock directory')
     ])
-    const credential = join(credentials, 'kimi-code.json')
+    const credentialFileName = input.credentialFileName ?? DEFAULT_CREDENTIAL_FILE_NAME
+    if (!SAFE_CREDENTIAL_FILE_NAME.test(credentialFileName) || credentialFileName.includes('..')) {
+      throw new Error('The Kimi OAuth credential slot name is not a plain file name.')
+    }
+    const credential = join(credentials, credentialFileName)
     if (!(await assertPrivateRegularFile(sourceHome, credential, 'Kimi OAuth credential'))) {
       throw new Error('The current Kimi OAuth credential is unavailable.')
     }

@@ -8,6 +8,7 @@
 
 import os from 'os'
 import { join } from 'path'
+import { kimiOAuthCredentialFileName } from '../../shared/kimiOAuthCredentialSlot'
 
 /**
  * Extract a non-expired access token from a Kimi credential file body. Returns
@@ -29,10 +30,20 @@ export function selectValidKimiAccessToken(rawJson: string, nowMs: number = Date
   }
 }
 
-/** Credential locations tried in order: Kimi Code home first, legacy second. */
-export function kimiCredentialCandidatePaths(): string[] {
+/**
+ * Credential locations tried in order: Kimi Code home first, legacy second.
+ * `kimiCodeConfigBody` is ~/.kimi-code/config.toml when readable: a global
+ * region `kimi login` stores its token in the env-scoped slot that file names
+ * (credentials/kimi-code-env-<hash>.json), which is then tried first.
+ */
+export function kimiCredentialCandidatePaths(kimiCodeConfigBody?: string | null): string[] {
+  const kimiCodeCredentials = join(os.homedir(), '.kimi-code', 'credentials')
+  const defaultPath = join(kimiCodeCredentials, 'kimi-code.json')
+  const slotFileName = kimiOAuthCredentialFileName(kimiCodeConfigBody)
+  const slotPath = slotFileName ? join(kimiCodeCredentials, slotFileName) : null
   return [
-    join(os.homedir(), '.kimi-code', 'credentials', 'kimi-code.json'),
+    ...(slotPath && slotPath !== defaultPath ? [slotPath] : []),
+    defaultPath,
     join(os.homedir(), '.kimi', 'credentials', 'kimi-code.json')
   ]
 }

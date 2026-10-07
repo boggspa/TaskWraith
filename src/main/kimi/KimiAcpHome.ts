@@ -25,6 +25,7 @@ import {
   UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
 } from './KimiAcpContainment'
 import { effectiveKimiModelContextWindow } from './KimiModelContext'
+import { kimiOAuthCredentialFileName } from '../../shared/kimiOAuthCredentialSlot'
 import { isAbsolute, relative, sep } from 'path'
 import type {
   KimiOAuthCredentialLease,
@@ -169,14 +170,22 @@ export async function detectKimiManagedAuthState(
   sourceHome: string,
   fs: Pick<KimiHomeFs, 'exists' | 'readFile' | 'join'>
 ): Promise<'oauth' | 'api-key' | 'unknown'> {
-  const oauthCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
-  if (await fs.exists(oauthCredential)) return 'oauth'
+  let config: string | null = null
   try {
-    const config = await fs.readFile(fs.join(sourceHome, 'config.toml'))
-    return hasConfiguredKimiApiKey(config) ? 'api-key' : 'unknown'
+    config = await fs.readFile(fs.join(sourceHome, 'config.toml'))
   } catch {
-    return 'unknown'
+    config = null
   }
+  // `kimi login` may store the token in an environment-scoped slot (global
+  // region) rather than the historical kimi-code.json; follow config.toml.
+  const credentialFileName = kimiOAuthCredentialFileName(config)
+  if (
+    credentialFileName &&
+    (await fs.exists(fs.join(sourceHome, 'credentials', credentialFileName)))
+  ) {
+    return 'oauth'
+  }
+  return config !== null && hasConfiguredKimiApiKey(config) ? 'api-key' : 'unknown'
 }
 
 /**
@@ -417,8 +426,13 @@ export async function prepareKimiIsolatedHome(
   // OAuth seats share Kimi's own credential storage plus refresh lock. Hosted
   // canaries instead use a protected, non-rotating API key in config.toml and
   // deliberately have no OAuth credential file.
-  const sourceCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
-  const hasOAuthCredential = await fs.exists(sourceCredential)
+  // Follow the OAuth slot config.toml binds the managed provider to: a
+  // global-region `kimi login` writes credentials/kimi-code-env-<hash>.json,
+  // never the historical kimi-code.json.
+  const credentialFileName = kimiOAuthCredentialFileName(baseConfig)
+  const hasOAuthCredential = credentialFileName
+    ? await fs.exists(fs.join(sourceHome, 'credentials', credentialFileName))
+    : false
   if (!hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig)) {
     return {
       ok: false,
@@ -469,7 +483,8 @@ export async function prepareKimiIsolatedHome(
       await prepareOAuthCredentialProjection({
         sourceHome,
         isolatedHome: homeDir,
-        boundaryRoot
+        boundaryRoot,
+        ...(credentialFileName ? { credentialFileName } : {})
       })
     } else {
       await fs.mkdir(fs.join(homeDir, 'credentials'))

@@ -102,6 +102,49 @@ describe('prepareKimiOAuthCredentialProjection', () => {
     await expect(fs.lstat(join(f.sourceHome, 'oauth', 'kimi-code.lock'))).resolves.toBeDefined()
   })
 
+  it('projects the env-scoped credential slot named by config.toml', async () => {
+    const f = await fixture()
+    const slot = 'kimi-code-env-0e4f99c69cc27850.json'
+    await fs.unlink(f.credential)
+    await privateFile(
+      join(f.sourceHome, 'credentials', slot),
+      JSON.stringify({ expires_at: 1_000, refresh_token: 'global' })
+    )
+
+    await expect(
+      prepareKimiOAuthCredentialProjection({
+        sourceHome: f.sourceHome,
+        boundaryRoot: f.boundaryRoot,
+        isolatedHome: f.homeA
+      })
+    ).rejects.toThrow('The current Kimi OAuth credential is unavailable.')
+
+    await prepareKimiOAuthCredentialProjection({
+      sourceHome: f.sourceHome,
+      boundaryRoot: f.boundaryRoot,
+      isolatedHome: f.homeA,
+      credentialFileName: slot
+    })
+    await expect(fs.readFile(join(f.homeA, 'credentials', slot), 'utf8')).resolves.toContain(
+      'global'
+    )
+  })
+
+  it('refuses a credential slot name that is not a plain file name', async () => {
+    const f = await fixture()
+    for (const credentialFileName of ['../device_id', 'nested/kimi-code.json', '.json', 'x']) {
+      await expect(
+        prepareKimiOAuthCredentialProjection({
+          sourceHome: f.sourceHome,
+          boundaryRoot: f.boundaryRoot,
+          isolatedHome: f.homeA,
+          credentialFileName
+        })
+      ).rejects.toThrow('not a plain file name')
+    }
+    await expect(fs.lstat(join(f.homeA, 'credentials'))).rejects.toThrow()
+  })
+
   it.skipIf(process.platform === 'win32')(
     'refuses a credential symlink from the real Kimi home',
     async () => {

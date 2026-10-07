@@ -3,8 +3,13 @@
  * browser owned by the provider. There is no reliable completion callback, so
  * refresh runtime discovery immediately and on a short bounded backoff. This
  * keeps provider cards current without asking users to find a manual refresh.
+ * Device-code sign-ins (`kimi login`, `grok login --device-auth`) routinely take
+ * longer than a minute, so the backoff runs out to three minutes; the same
+ * schedule refreshes a card after a terminal sign-out.
  */
-export const INTERACTIVE_PROVIDER_LOGIN_REFRESH_DELAYS_MS = [4_000, 15_000, 45_000] as const
+export const INTERACTIVE_PROVIDER_LOGIN_REFRESH_DELAYS_MS = [
+  4_000, 15_000, 45_000, 90_000, 180_000
+] as const
 
 type InteractiveLoginResult = { ok?: boolean; error?: string } | null | undefined
 

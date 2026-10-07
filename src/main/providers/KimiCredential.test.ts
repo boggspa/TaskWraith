@@ -51,4 +51,15 @@ describe('kimiCredentialCandidatePaths', () => {
     expect(paths[0]).toBe(join(homedir(), '.kimi-code', 'credentials', 'kimi-code.json'))
     expect(paths[1]).toBe(join(homedir(), '.kimi', 'credentials', 'kimi-code.json'))
   })
+
+  it('tries the env-scoped slot config.toml names before the default slot', () => {
+    const paths = kimiCredentialCandidatePaths(
+      '[providers."managed:kimi-code".oauth]\nkey = "oauth/kimi-code-env-0e4f99c69cc27850"\n'
+    )
+    expect(paths).toEqual([
+      join(homedir(), '.kimi-code', 'credentials', 'kimi-code-env-0e4f99c69cc27850.json'),
+      join(homedir(), '.kimi-code', 'credentials', 'kimi-code.json'),
+      join(homedir(), '.kimi', 'credentials', 'kimi-code.json')
+    ])
+  })
 })

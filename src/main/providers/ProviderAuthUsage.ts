@@ -1322,7 +1322,10 @@ let kimiUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: numb
  * KimiCredential module so they stay unit-testable.
  */
 export async function readKimiOAuthAccessToken(): Promise<string | null> {
-  for (const path of kimiCredentialCandidatePaths()) {
+  const kimiCodeConfig = await fs
+    .readFile(join(os.homedir(), '.kimi-code', 'config.toml'), 'utf8')
+    .catch(() => null)
+  for (const path of kimiCredentialCandidatePaths(kimiCodeConfig)) {
     let raw: string
     try {
       raw = await fs.readFile(path, 'utf8')
