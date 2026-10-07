@@ -354,6 +354,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     handleTriggerClaudeLogin,
     handleUpdateWorkspaceBoardCard,
     handleProviderLogin,
+    handleProviderLogout,
     handleUpgradeProviderCli,
     handleWorkspaceSidebarResizeKeyDown,
     hasCurrentHandoffDraft,
@@ -1720,9 +1721,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               void handleProviderLogin(provider)
             }}
             onProviderLogout={(provider) => {
-              void window.api.openProviderLogoutTerminal(provider).then((r) => {
-                if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
-              })
+              void handleProviderLogout(provider)
             }}
             onRefreshProviderStatus={(provider) => void refreshProviderAuthStatus(provider)}
             onRemoveAgenticWorkspaceGrant={(provider, workspacePath, service) =>

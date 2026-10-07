@@ -2116,6 +2116,7 @@ export function SettingsPanel({
     ? !claudeAuthStatus.encryptionAvailable
     : false
   const kimiApiKeyStorageUnavailable = kimiAuthStatus ? !kimiAuthStatus.encryptionAvailable : false
+  const kimiOAuthSignedIn = (kimiAuthStatus?.authState || '').toLowerCase() === 'oauth'
   const cursorAuthSummary = summariseCliProviderEnabled(
     cursorProviderAvailable,
     'Cursor',
@@ -4820,7 +4821,9 @@ export function SettingsPanel({
                           Open Terminal to sign in
                         </PillButton>
                       )}
-                      {onProviderLogout && (
+                      {/* Sign out removes the `kimi login` OAuth token; it is only
+                          offered when that token is what authenticates runs. */}
+                      {onProviderLogout && kimiOAuthSignedIn && (
                         <PillButton
                           size="compact"
                           variant="danger"
@@ -5019,9 +5022,10 @@ export function SettingsPanel({
                     optional
                   >
                     <div className="settings-provider-auth-command">
-                      <code>grok</code>
+                      <code>grok login</code>
                       <span>
-                        Run the Grok CLI in Terminal and sign in (installs under ~/.grok/bin).
+                        Run once in Terminal to sign in the Grok CLI (installs under ~/.grok/bin);
+                        sign out runs <code>grok logout</code>.
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
@@ -5273,6 +5277,14 @@ export function SettingsPanel({
                       >
                         Open Terminal to sign in
                       </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
+                        onClick={() => onProviderLogout?.('muse')}
+                        disabled={!onProviderLogout}
+                      >
+                        Open Terminal to sign out
+                      </PillButton>
                       {renderProviderUpgradeButton('muse')}
                     </div>
                     {renderProviderUpgradeFootnote('muse')}
@@ -5307,6 +5319,14 @@ export function SettingsPanel({
                         disabled={!onProviderLogin}
                       >
                         Open Terminal to sign in
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
+                        onClick={() => onProviderLogout?.('devin')}
+                        disabled={!onProviderLogout}
+                      >
+                        Open Terminal to sign out
                       </PillButton>
                       {renderProviderUpgradeButton('devin')}
                     </div>

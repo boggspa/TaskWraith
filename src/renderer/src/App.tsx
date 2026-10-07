@@ -8279,6 +8279,21 @@ function App(): React.JSX.Element {
     })
   }
 
+  // Sign-out reuses the sign-in refresh schedule: a terminal sign-out (codex,
+  // claude, cursor, grok, ollama, muse, devin) finishes outside the renderer,
+  // and Kimi's in-process sign-out resolves immediately — either way the card
+  // re-reads the real credential state instead of trusting the click.
+  const handleProviderLogout = (provider: ProviderId): Promise<boolean> => {
+    if (typeof window.api.openProviderLogoutTerminal !== 'function') return Promise.resolve(false)
+    return openInteractiveProviderLogin(provider, {
+      openTerminal: (target) => window.api.openProviderLogoutTerminal(target),
+      refresh: refreshProviderAfterInteractiveLogin,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      onOpenError: (error) =>
+        console.warn('[provider sign-out] could not sign out:', error || 'unknown error')
+    })
+  }
+
   const buildQueuedProviderChange = useCallback(
     (
       provider: ProviderId,
@@ -32649,6 +32664,7 @@ function App(): React.JSX.Element {
     handleTriggerClaudeLogin,
     handleUpdateWorkspaceBoardCard,
     handleProviderLogin,
+    handleProviderLogout,
     handleUpgradeProviderCli,
     handleWorkspaceSidebarResizeKeyDown,
     hasCurrentHandoffDraft,
@@ -33020,9 +33036,7 @@ function App(): React.JSX.Element {
           void handleProviderLogin(provider)
         }}
         onProviderLogout={(provider) => {
-          void window.api.openProviderLogoutTerminal(provider).then((r) => {
-            if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
-          })
+          void handleProviderLogout(provider)
         }}
         codexStatus={codexStatus}
         claudeAuthStatus={claudeAuthStatus}

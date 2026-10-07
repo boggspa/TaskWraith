@@ -465,7 +465,10 @@ export function FirstLaunchSheet({
       description:
         'Moonshot Kimi. Every run receives structural identity, probe, and posture admission checks. When no reviewed runtime tuple exists, TaskWraith labels the run unattested-development explicitly; that unreviewed state does not remove Kimi from the provider set.',
       ...kimiSummary,
-      optional: true
+      optional: true,
+      // Kimi sign-out removes the `kimi login` OAuth token; a seat running on
+      // a configured API key has no login for it to remove.
+      logoutUnsupported: (kimiAuthStatus?.authState || '').toLowerCase() !== 'oauth'
     },
     {
       id: 'cursor',
@@ -553,8 +556,7 @@ export function FirstLaunchSheet({
       description:
         'Devin CLI coding agent over ACP (`devin acp`) on your own paid seat. Authenticate with WINDSURF_API_KEY or `devin auth login`; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
       ...devinSummary,
-      optional: true,
-      logoutUnsupported: true
+      optional: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the

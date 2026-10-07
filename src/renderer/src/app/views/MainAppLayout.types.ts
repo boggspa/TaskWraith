@@ -418,6 +418,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleTriggerClaudeLogin: any
   handleUpdateWorkspaceBoardCard: any
   handleProviderLogin: any
+  handleProviderLogout: any
   handleUpgradeProviderCli: any
   handleWorkspaceSidebarResizeKeyDown: MainAppLayoutSidebarProps['handleWorkspaceSidebarResizeKeyDown']
   hasCurrentHandoffDraft: any

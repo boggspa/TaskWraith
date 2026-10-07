@@ -1,4 +1,5 @@
 import { join, basename } from 'path'
+import { homedir } from 'os'
 import { ipcMain } from 'electron'
 import type { ProviderId } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
@@ -17,6 +18,7 @@ import {
   providerManualSetupNotice
 } from '../providers/ProviderManualSetupFlowCatalog'
 import { createProviderTerminalSetupController } from '../providers/ProviderTerminalSetupController'
+import { signOutKimiOAuth, type KimiOAuthSignOutResult } from '../kimi/KimiOAuthSignOut'
 
 /** Best-effort realpath. A failure classifies as 'unknown', which refuses to
  *  guess rather than upgrading the wrong copy. */
@@ -57,6 +59,9 @@ export interface ProviderTerminalHandlersDeps {
    *  Optional: when absent the raw path is classified, which simply yields
    *  'unknown' for a symlinked install rather than guessing wrong. */
   realpathSync?: (path: string) => string
+  /** Kimi sign-out seam (tests). Defaults to removing the managed OAuth slot
+   *  under ~/.kimi-code, the home `kimi login` and every managed run use. */
+  signOutKimi?: () => Promise<KimiOAuthSignOutResult>
 }
 
 function shQuote(value: string): string {
@@ -181,16 +186,20 @@ export async function openProviderAuthTerminal(
     } else if (provider === 'kimi') {
       label = 'Kimi'
       if (action === 'logout') {
-        // Never replace a missing logout verb with a bare interactive Kimi
-        // session. That would be an unadmitted provider process with a much
-        // broader surface than the explicit account action the user asked for.
+        // Kimi Code exposes no bounded logout subcommand, and a bare
+        // interactive Kimi session would be an unadmitted provider process.
+        // Kimi's own logout only deletes the OAuth slot file, so do exactly
+        // that in-process; no Kimi process is started.
+        const signedOut = await (
+          deps.signOutKimi ??
+          (() => signOutKimiOAuth({ sourceHome: join(homedir(), '.kimi-code') }))
+        )()
+        if (!signedOut.ok) return { ok: false, error: signedOut.error }
         return {
-          ok: false,
-          error:
-            'Kimi Code does not expose a bounded logout command. No Kimi process was started; remove Kimi credentials using the documented account controls instead.',
-          scope: 'user-owned-provider-setup',
-          managedRunReady: false,
-          notice: providerManualSetupNotice('kimi') || undefined
+          ok: true,
+          notice: signedOut.removed
+            ? 'Signed out of Kimi Code: removed the `kimi login` OAuth token. No Kimi process was started.'
+            : 'No Kimi Code OAuth login was stored, so there was nothing to remove.'
         }
       }
       const resolved = await deps.resolveCliProviderBinary('kimi')
@@ -241,13 +250,12 @@ export async function openProviderAuthTerminal(
     } else if (provider === 'grok') {
       label = 'Grok'
       const resolved = await deps.resolveCliProviderBinary('grok')
-      commandParts = action === 'upgrade' ? null : [resolved.binaryPath || 'grok']
+      // `grok login` / `grok logout` are the CLI's bounded account verbs
+      // ("Sign out and clear cached credentials"); neither opens the TUI.
+      // Managed Grok runs read the same default ~/.grok home.
+      commandParts = action === 'upgrade' ? null : [resolved.binaryPath || 'grok', action]
       if (action === 'upgrade') {
         rawCommand = 'curl -fsSL https://x.ai/cli/install.sh | bash'
-      }
-      if (action === 'logout') {
-        postscript =
-          'Grok CLI does not expose a logout subcommand yet. Use the opened Grok session to manage account state, then close this window.'
       }
     } else if (provider === 'ollama') {
       label = 'Ollama'

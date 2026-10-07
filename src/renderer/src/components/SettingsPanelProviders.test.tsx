@@ -483,7 +483,7 @@ describe('SettingsPanel provider cards', () => {
     )
     expect(pane(grokHtml)).toContain('settings-provider-auth-card-partial provider-grok')
     expect(pane(grokHtml)).toContain('Available · CLI sign-in')
-    expect(pane(grokHtml)).toContain('<code>grok</code>')
+    expect(pane(grokHtml)).toContain('<code>grok login</code>')
     expect(cursorHtml).toContain('Provider tools')
     for (const html of [cursorHtml, grokHtml]) {
       expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
@@ -552,6 +552,72 @@ describe('SettingsPanel provider cards', () => {
     expect(kimiPane).toContain('unattested-development')
     expect(html).not.toContain('reviewed ACP runtime admission')
     expect(html).not.toContain('reviewed runtime admission')
+  })
+
+  it('offers Kimi Sign out only while a `kimi login` OAuth token authenticates runs', () => {
+    const kimiPaneFor = (authState: string): string =>
+      pane(
+        renderToStaticMarkup(
+          <SettingsPanel
+            {...makeSettingsProps({
+              defaultProviderRailSelection: 'kimi',
+              onProviderLogin: () => {},
+              onProviderLogout: () => {},
+              kimiAuthStatus: {
+                available: true,
+                authState,
+                apiKeyConfigured: authState === 'api-key',
+                encryptionAvailable: true,
+                binaryPath: '/opt/kimi',
+                transportSupported: true
+              }
+            })}
+          />
+        )
+      )
+
+    const signedIn = kimiPaneFor('oauth')
+    expect(signedIn).toContain('Managed ACP authenticated (oauth)')
+    expect(signedIn).toContain('>Sign out<')
+    for (const authState of ['api-key', 'unknown', 'missing']) {
+      const pane = kimiPaneFor(authState)
+      expect(pane).toContain('Open Terminal to sign in')
+      expect(pane).not.toContain('>Sign out<')
+    }
+  })
+
+  it.each(['muse', 'devin'] as const)('gives the %s pane a real terminal sign-out action', (provider) => {
+    const providerPane = pane(
+      renderToStaticMarkup(
+        <SettingsPanel
+          {...makeSettingsProps({
+            defaultProviderRailSelection: provider,
+            onProviderLogin: () => {},
+            onProviderLogout: () => {}
+          })}
+        />
+      )
+    )
+    expect(providerPane).toContain(`data-provider="${provider}"`)
+    expect(providerPane).toContain('Open Terminal to sign in')
+    expect(providerPane).toContain('Open Terminal to sign out')
+  })
+
+  it('names the bounded grok login/logout verbs on the Grok pane', () => {
+    const grokPane = pane(
+      renderToStaticMarkup(
+        <SettingsPanel
+          {...makeSettingsProps({
+            defaultProviderRailSelection: 'grok',
+            onProviderLogin: () => {},
+            onProviderLogout: () => {}
+          })}
+        />
+      )
+    )
+    expect(grokPane).toContain('<code>grok login</code>')
+    expect(grokPane).toContain('<code>grok logout</code>')
+    expect(grokPane).toContain('Open Terminal to sign out')
   })
 
   it('renders the Ollama cloud sign-in card as the Ollama pane', () => {

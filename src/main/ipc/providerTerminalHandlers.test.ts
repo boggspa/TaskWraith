@@ -208,6 +208,28 @@ describe('registerProviderTerminalHandlers', () => {
     }
   )
 
+  it.each(['login', 'logout'] as const)(
+    'runs the bounded `grok %s` verb instead of opening the Grok TUI',
+    async (action) => {
+      const { deps, loginDir } = createDeps()
+      deps.resolveCliProviderBinary.mockResolvedValueOnce(
+        createResolved('/Users/me/.grok/bin/grok')
+      )
+      registerProviderTerminalHandlers(deps)
+
+      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'grok')).resolves.toEqual({
+        ok: true
+      })
+      const commandFile = join(loginDir, `grok-${action}.command`)
+      const script = String(
+        deps.writeFileSync.mock.calls.find(([path]) => path === commandFile)?.[1] || ''
+      )
+      expect(script).toContain(`'/Users/me/.grok/bin/grok' '${action}'`)
+      expect(script).not.toContain('does not expose a logout subcommand')
+      expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+    }
+  )
+
   it.each([
     ['login', 'signin'],
     ['logout', 'signout']
@@ -467,20 +489,42 @@ describe('registerProviderTerminalHandlers', () => {
     )
   })
 
-  it('rejects Kimi logout without resolving or launching a bare Kimi session', async () => {
+  it('signs Kimi out in-process without resolving or launching any Kimi session', async () => {
     const { deps } = createDeps()
-    registerProviderTerminalHandlers(deps)
+    const signOutKimi = vi.fn(async () => ({
+      ok: true as const,
+      removed: true,
+      credentialFileName: 'kimi-code-env-0e4f99c69cc27850.json'
+    }))
+    registerProviderTerminalHandlers({ ...deps, signOutKimi })
 
     await expect(handlerFor('provider:open-logout-terminal')({}, 'kimi')).resolves.toEqual({
-      ok: false,
-      error: expect.stringMatching(/bounded logout command.*No Kimi process was started/i),
-      scope: 'user-owned-provider-setup',
-      managedRunReady: false,
-      notice: expect.stringMatching(/outside TaskWraith managed-run containment/i)
+      ok: true,
+      notice: expect.stringMatching(/Signed out of Kimi Code.*No Kimi process was started/i)
     })
+    expect(signOutKimi).toHaveBeenCalledTimes(1)
     expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
     expect(deps.mkdirSync).not.toHaveBeenCalled()
     expect(deps.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.openPath).not.toHaveBeenCalled()
+  })
+
+  it('reports an already signed-out Kimi and surfaces a refused sign-out', async () => {
+    const { deps } = createDeps()
+    const signOutKimi = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, removed: false, credentialFileName: 'kimi-code.json' })
+      .mockResolvedValueOnce({ ok: false, error: 'not a regular file' })
+    registerProviderTerminalHandlers({ ...deps, signOutKimi })
+
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'kimi')).resolves.toEqual({
+      ok: true,
+      notice: expect.stringMatching(/nothing to remove/i)
+    })
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'kimi')).resolves.toEqual({
+      ok: false,
+      error: 'not a regular file'
+    })
     expect(deps.openPath).not.toHaveBeenCalled()
   })
 

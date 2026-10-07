@@ -104,6 +104,51 @@ describe('FirstLaunchSheet', () => {
     expect(card).not.toContain('Sign out')
   })
 
+  it('offers Kimi Sign out only for a `kimi login` OAuth seat', () => {
+    const kimiCardFor = (authState: string): string =>
+      providerCardMarkup(
+        renderToStaticMarkup(
+          <FirstLaunchSheet
+            open={true}
+            onDismiss={() => {}}
+            onOpenSettings={() => {}}
+            onProviderLogin={() => {}}
+            onProviderLogout={() => {}}
+            codexStatus={null}
+            claudeAuthStatus={null}
+            kimiAuthStatus={{
+              available: true,
+              authState,
+              apiKeyConfigured: false,
+              encryptionAvailable: true,
+              binaryPath: '/opt/kimi',
+              transportSupported: true
+            }}
+          />
+        ),
+        'kimi'
+      )
+    expect(kimiCardFor('oauth')).toContain('aria-label="Sign out of Kimi"')
+    expect(kimiCardFor('api-key')).not.toContain('aria-label="Sign out of Kimi"')
+  })
+
+  it('offers Devin Sign out once `devin auth login` has signed the CLI in', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        devinStatus={{ available: true, credentialPresent: true }}
+      />
+    )
+    expect(providerCardMarkup(html, 'devin')).toContain('aria-label="Sign out of Devin"')
+  })
+
   it('offers the Devin CLI seat with its env/TOML credential guidance', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
