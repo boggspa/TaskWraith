@@ -171,6 +171,36 @@ function pane(html: string): string {
   return html.slice(start, end === -1 ? undefined : end)
 }
 
+describe('SettingsPanel provider accounts', () => {
+  it('offers an Accounts block on the Claude and Codex panes only', () => {
+    const claude = pane(
+      renderToStaticMarkup(
+        <SettingsPanel
+          {...makeSettingsProps({ activeTab: 'providers', defaultProviderRailSelection: 'claude' })}
+        />
+      )
+    )
+    expect(claude).toContain('settings-provider-rail-section-label">Accounts<')
+    expect(claude.indexOf('>Accounts<')).toBeLessThan(claude.indexOf('>Credential<'))
+    const codex = pane(
+      renderToStaticMarkup(
+        <SettingsPanel
+          {...makeSettingsProps({ activeTab: 'providers', defaultProviderRailSelection: 'codex' })}
+        />
+      )
+    )
+    expect(codex).toContain('settings-provider-rail-section-label">Accounts<')
+    const kimi = pane(
+      renderToStaticMarkup(
+        <SettingsPanel
+          {...makeSettingsProps({ activeTab: 'providers', defaultProviderRailSelection: 'kimi' })}
+        />
+      )
+    )
+    expect(kimi).not.toContain('>Accounts<')
+  })
+})
+
 describe('SettingsPanel provider cards', () => {
   it('renders message bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
     const html = renderToStaticMarkup(

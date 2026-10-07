@@ -169,6 +169,7 @@ import { MistralApiKeyControls } from './MistralApiKeyControls'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
+import { ProviderAccountsSection } from './ProviderAccountsSection'
 import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   useAntigravityGeminiApiSecretRefreshIdentity
@@ -4634,6 +4635,8 @@ export function SettingsPanel({
                       )}
                     </div>
                     {renderProviderUpgradeFootnote('codex')}
+                    <div className="settings-provider-rail-section-label">Accounts</div>
+                    <ProviderAccountsSection provider="codex" />
                     {renderProviderPauseControls('codex')}
                   </SettingsProviderAuthCard>
                   )}
@@ -4673,6 +4676,8 @@ export function SettingsPanel({
                       )}
                     </div>
                     {renderProviderUpgradeFootnote('claude')}
+                    <div className="settings-provider-rail-section-label">Accounts</div>
+                    <ProviderAccountsSection provider="claude" />
                     <div className="settings-provider-rail-section-label">Credential</div>
                     {claudeAuthStatus && (
                       <div

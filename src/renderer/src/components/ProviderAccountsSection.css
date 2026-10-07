@@ -1,0 +1,123 @@
+/* Accounts block inside a provider's Settings pane: active picker, one row per
+ * secondary account (status dot · label · folder · status · actions), add form. */
+.settings-provider-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-provider-accounts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-provider-accounts-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.settings-provider-accounts-title > span {
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.settings-provider-accounts-active {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-provider-accounts-active > span {
+  flex: 0 0 auto;
+}
+
+.settings-provider-accounts-active .settings-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-provider-accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-provider-accounts-row {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 160px) minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 60%, transparent);
+}
+
+.settings-provider-accounts-row.is-active {
+  border-color: color-mix(in srgb, currentColor 36%, var(--panel-border) 50%);
+}
+
+.settings-provider-accounts-label {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.settings-provider-accounts-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.settings-provider-accounts-status {
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.settings-provider-accounts-active-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.settings-provider-accounts-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-provider-accounts-add .settings-select {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .settings-provider-accounts-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .settings-provider-accounts-folder {
+    grid-column: 2 / -1;
+  }
+}
