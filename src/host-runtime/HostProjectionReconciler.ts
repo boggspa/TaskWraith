@@ -22,7 +22,7 @@ import {
 } from '../shared/hostProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
-import { diffHostSnapshotDomainEffects } from './HostSnapshotDomainEffectDiff'
+import { diffDecodedHostSnapshots } from './HostSnapshotDomainEffectDiff'
 import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 
 export const HOST_PROJECTION_RECONCILE_INTERVAL_MS = 1_000
@@ -317,7 +317,9 @@ export class HostProjectionReconciler {
     this.baseline = advanced.baseline
 
     const before = comparableBaseline(advanced.baseline, advanced.current)
-    const diff = diffHostSnapshotDomainEffects(before, advanced.current)
+    // Both are decoded already: the capture when it was taken, the baseline
+    // likewise or by the delta apply that advanced it.
+    const diff = diffDecodedHostSnapshots(before, advanced.current)
     if (diff.kind !== 'effects') return this.unavailable('diff_failed')
     const owns = this.owns
     const effects = owns ? diff.effects.filter((effect) => !owns(effect)) : diff.effects

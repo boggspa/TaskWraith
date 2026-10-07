@@ -659,6 +659,53 @@ describe('runs-family re-projection goldens', () => {
     )
 
     it(
+      'steady tick through the reconciler: the pass after the capture decodes each snapshot once and publishes nothing',
+      async () => {
+        const loaded = legacyCapture(
+          legacyStore(summaries, catalogueWindow(models, { complete: true }))
+        ).snapshot
+        // A fresh object per capture, as the donor builds one, made up front so
+        // the timing below is the reconciler's own: decode, align and diff.
+        const captures = Array.from({ length: SAMPLES + 1 }, () => structuredClone(loaded))
+        let next = 0
+        const published: HostDomainEffectDto[] = []
+        const reconciler = new HostProjectionReconciler({
+          captureSnapshot: () => captures[next++]!,
+          fetchDeltas: () => {
+            throw new Error('captures share one position')
+          },
+          publishEffects: (effects) => {
+            published.push(...effects)
+            return {
+              kind: 'published',
+              position: { generation: 1, cursor: 1 },
+              count: 0,
+              results: []
+            }
+          },
+          schedule: () => null,
+          cancelScheduled: () => undefined
+        })
+        await reconciler.start()
+        const durations: number[] = []
+        for (let sample = 0; sample < SAMPLES; sample += 1) {
+          const start = performance.now()
+          expect(await reconciler.reconcileNow()).toMatchObject({ kind: 'unchanged' })
+          durations.push(performance.now() - start)
+        }
+        await reconciler.stop()
+        report(
+          'legacy',
+          'steady tick: reconciler pass (no change)',
+          median(durations),
+          `decode + align + diff, capture excluded; ${published.length} effects`
+        )
+        expect(published).toEqual([])
+      },
+      TIMEOUT
+    )
+
+    it(
       'steady tick: nothing changed costs a full capture and a double decode, publishes nothing',
       () => {
         const store = legacyStore(summaries, catalogueWindow(models, { complete: true }))

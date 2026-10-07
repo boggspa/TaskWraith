@@ -5,9 +5,13 @@ import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   createEmptyHostSnapshot,
+  decodeHostSnapshot,
   type HostSnapshot
 } from '../shared/hostProtocol'
-import { diffHostSnapshotDomainEffects } from './HostSnapshotDomainEffectDiff'
+import {
+  diffDecodedHostSnapshots,
+  diffHostSnapshotDomainEffects
+} from './HostSnapshotDomainEffectDiff'
 
 const GENERATED_AT = '2026-08-04T03:00:00.000Z'
 
@@ -871,5 +875,62 @@ describe('diffHostSnapshotDomainEffects', () => {
     expect(snap.protocolVersion).toBe(HOST_PROTOCOL_VERSION)
     expect(snap.projectionVersion).toBe(HOST_PROJECTION_VERSION)
     expect(diffHostSnapshotDomainEffects(snap, snap)).toEqual({ kind: 'effects', effects: [] })
+  })
+})
+
+describe('diffDecodedHostSnapshots', () => {
+  const decoded = (snapshot: HostSnapshot): HostSnapshot => {
+    const result = decodeHostSnapshot(snapshot)
+    if (!result.ok) throw new Error(result.error)
+    return result.value
+  }
+  const thread = (title: string) => ({
+    id: 'th-1',
+    workspaceId: null,
+    title,
+    chatKind: 'single' as const,
+    archived: false,
+    pinned: false,
+    updatedAt: 1,
+    messageCount: 0
+  })
+
+  it('finds what the decoding diff finds over decoded snapshots', () => {
+    const before = decoded(baseSnapshot({ threads: [thread('Before')] }))
+    const after = decoded(
+      baseSnapshot({
+        threads: [thread('After')],
+        warnings: [{ warningId: 'w-1', severity: 'info', code: 'x', message: 'new', at: 1 }]
+      })
+    )
+    const result = diffDecodedHostSnapshots(before, after)
+    expect(result).toEqual(diffHostSnapshotDomainEffects(before, after))
+    expect(result).toMatchObject({
+      kind: 'effects',
+      effects: [
+        { kind: 'upsert', family: 'thread', entityId: 'th-1' },
+        { kind: 'upsert', family: 'warning', entityId: 'w-1' }
+      ]
+    })
+    expect(diffDecodedHostSnapshots(after, after)).toEqual({ kind: 'effects', effects: [] })
+  })
+
+  it('still refuses an after snapshot whose rows would leak, without the body', () => {
+    const dirty = decoded(
+      baseSnapshot({
+        warnings: [
+          {
+            warningId: 'w-secret',
+            severity: 'warning',
+            code: 'x',
+            message: 'export TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+            at: 1
+          }
+        ]
+      })
+    )
+    const result = diffDecodedHostSnapshots(decoded(baseSnapshot()), dirty)
+    expect(result).toMatchObject({ kind: 'invalid', reason: 'privacy_failed' })
+    expect(JSON.stringify(result)).not.toMatch(/ghp_/)
   })
 })

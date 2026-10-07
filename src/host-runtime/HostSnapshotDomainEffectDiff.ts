@@ -160,9 +160,35 @@ export function diffHostSnapshotDomainEffects(
     return { kind: 'invalid', reason: 'privacy_failed', detail: afterPrivacy.error }
   }
 
-  const before = beforeDecoded.value
-  const after = afterDecoded.value
+  return diffInspectedSnapshots(beforeDecoded.value, afterDecoded.value)
+}
 
+/**
+ * `diffHostSnapshotDomainEffects` for a caller that already holds decoded
+ * snapshots, as the projection reconciler does: it decodes each capture once
+ * when it takes it, and its baseline is a capture it decoded earlier or one
+ * advanced by applying journal envelopes. Decoding both again every pass was
+ * most of an idle tick's cost.
+ *
+ * `after` is privacy-inspected here, because its rows become the effects'
+ * payloads. `before` contributes only entity ids, and was inspected when it
+ * was captured; a `before` that is not a decoded snapshot is the caller's bug.
+ */
+export function diffDecodedHostSnapshots(
+  before: HostSnapshot,
+  after: HostSnapshot
+): HostSnapshotDomainEffectDiffResult {
+  const afterPrivacy = inspectHostSnapshotPrivacy(after)
+  if (!afterPrivacy.ok) {
+    return { kind: 'invalid', reason: 'privacy_failed', detail: afterPrivacy.error }
+  }
+  return diffInspectedSnapshots(before, after)
+}
+
+function diffInspectedSnapshots(
+  before: HostSnapshot,
+  after: HostSnapshot
+): HostSnapshotDomainEffectDiffResult {
   if (before.protocolVersion !== after.protocolVersion) {
     return incoherent(
       'protocol_version_mismatch',
