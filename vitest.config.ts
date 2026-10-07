@@ -61,6 +61,10 @@ export default defineConfig({
       // Fan-out lane worktrees are the same class of copy (their stale tests
       // read main-tree files via process.cwd() and rot as the main tree moves).
       '**/.taskwraith-worktrees/**',
+      // work-guard QA-build checkouts (`.work-guard/qa-build-*`) are detached
+      // worktrees of an older master; their copies tripled a full run and failed
+      // against the live main tree.
+      '**/.work-guard/**',
       ...(includeSwiftInterop ? [] : ['ios/**'])
     ]
   }
