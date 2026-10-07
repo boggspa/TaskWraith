@@ -72,6 +72,12 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   readDevinPlanInfoRows?: () => Promise<string[]>
   /** Injectable platform for the Devin darwin gate (tests). */
   devinPlatform?: NodeJS.Platform
+  /**
+   * Secondary Claude / Codex account meters (usage/ProviderAccountUsage.ts),
+   * appended after the native lanes. Each snapshot carries its accountId so
+   * the renderer keys it apart from the primary sign-in's first-class meter.
+   */
+  readProviderAccountSnapshots?: () => Promise<QuotaSnapshotHookSnapshot[]>
   fetchImpl?: FetchLike
   now?: () => number
   deepSeekCacheTtlMs?: number
@@ -1168,6 +1174,14 @@ export function createTaskWraithQuotaSnapshotHook(
     // "joins concurrent balance reads" test is undisturbed.
     const devinReader = dependencies.readDevinPlanInfoRows ?? defaultDevinPlanInfoRows
     const devinPlatform = dependencies.devinPlatform ?? process.platform
+    // Account meters join the same Promise.all so a slow account never
+    // serialises behind the native lanes; a failure drops to no rows.
+    const accountSnapshotsPromise: Promise<QuotaSnapshotHookSnapshot[]> =
+      dependencies.readProviderAccountSnapshots
+        ? Promise.resolve()
+            .then(() => dependencies.readProviderAccountSnapshots!())
+            .catch(() => [])
+        : Promise.resolve([])
     const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb], devinUsage] =
       await Promise.all([
         deepSeekKey
@@ -1259,7 +1273,8 @@ export function createTaskWraithQuotaSnapshotHook(
         ? [museSubscriptionSnapshot(museWeb, readAt, museCliReading)]
         : []),
       ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
-      ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])
+      ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : []),
+      ...(await accountSnapshotsPromise)
     ]
   }
 }

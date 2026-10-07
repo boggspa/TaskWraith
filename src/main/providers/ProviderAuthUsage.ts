@@ -33,6 +33,7 @@ import {
   extractKimiPlanType
 } from './ProviderPlanMetadata'
 import { AppStore } from '../store'
+import { claudeAccountKeychainService } from './ProviderAccounts'
 import { looksLikeTailscaleOAuthClientSecret } from '../../shared/tailscaleAuthKey'
 import {
   kimiCredentialCandidatePaths,
@@ -126,7 +127,7 @@ type GeminiOAuthLoginRun = GeminiOAuthLoginStatus & {
   output?: string
 }
 
-interface ClaudeOAuthCredential {
+export interface ClaudeOAuthCredential {
   accessToken: string
   subscriptionType?: string
   expiresAt?: number
@@ -992,6 +993,31 @@ function markStaleUsageSnapshot(
   return { ...snapshot, stale: true }
 }
 
+/** One live read of the ChatGPT wham/usage endpoint for a given credential. No caching. */
+export async function fetchCodexUsageForCredential(
+  credential: CodexUsageCredential
+): Promise<NormalizedProviderUsageSnapshot> {
+  const response = await fetchUsageEndpoint('https://chatgpt.com/backend-api/wham/usage', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${credential.accessToken}`,
+      'chatgpt-account-id': credential.accountId,
+      Accept: 'application/json'
+    }
+  })
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('Imported Codex session is expired or not authorized.')
+  }
+  if (response.status === 429) {
+    throw new Error('Codex usage endpoint is rate limited.')
+  }
+  if (!response.ok) {
+    throw new Error(`Codex usage endpoint returned HTTP ${response.status}.`)
+  }
+  const payload = await response.json()
+  return normalizeCodexUsagePayload(payload, credential)
+}
+
 async function loadCodexUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
   if (codexUsageInFlight) return codexUsageInFlight
   codexUsageInFlight = (async () => {
@@ -1014,25 +1040,7 @@ async function loadCodexUsageSnapshotLive(): Promise<NormalizedProviderUsageSnap
     }
 
     try {
-      const response = await fetchUsageEndpoint('https://chatgpt.com/backend-api/wham/usage', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${credential.accessToken}`,
-          'chatgpt-account-id': credential.accountId,
-          Accept: 'application/json'
-        }
-      })
-      if (response.status === 401 || response.status === 403) {
-        throw new Error('Imported Codex session is expired or not authorized.')
-      }
-      if (response.status === 429) {
-        throw new Error('Codex usage endpoint is rate limited.')
-      }
-      if (!response.ok) {
-        throw new Error(`Codex usage endpoint returned HTTP ${response.status}.`)
-      }
-      const payload = await response.json()
-      const snapshot = normalizeCodexUsagePayload(payload, credential)
+      const snapshot = await fetchCodexUsageForCredential(credential)
       codexUsageCache = { snapshot, fetchedAt: Date.now() }
       codexUsageLastFailureAt = 0
       cacheProviderUsageSnapshot('codex', snapshot)
@@ -1624,12 +1632,13 @@ const CLAUDE_USAGE_FAILURE_BACKOFF_MS = 90_000
 let claudeUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
 let claudeUsageLastFailureAt = 0
 
-export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential | null> {
-  const candidates = [
+export async function readClaudeCredentialsFile(
+  candidates: readonly string[] = [
     join(os.homedir(), '.claude', '.credentials.json'),
     join(os.homedir(), '.claude', 'credentials.json'),
     join(os.homedir(), '.config', 'claude', 'credentials.json')
   ]
+): Promise<ClaudeOAuthCredential | null> {
   for (const path of candidates) {
     try {
       const raw = await fs.readFile(path, 'utf8')
@@ -1661,7 +1670,11 @@ export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential
   return null
 }
 
-export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredential | null> {
+export async function readClaudeKeychainCredential(
+  /** Claude Code's Keychain item: the bare name for `~/.claude`, or the
+   * per-folder `Claude Code-credentials-<sha256 prefix>` of a CLAUDE_CONFIG_DIR. */
+  service: string = 'Claude Code-credentials'
+): Promise<ClaudeOAuthCredential | null> {
   if (process.platform !== 'darwin') return null
   // Electron's mock switch does not cover the native `security` helper. Keep
   // isolated launches from querying the user's keychain or opening system prompts.
@@ -1684,12 +1697,7 @@ export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredent
       resolve(credential)
     }
     try {
-      const securityProcess = spawn('security', [
-        'find-generic-password',
-        '-s',
-        'Claude Code-credentials',
-        '-w'
-      ])
+      const securityProcess = spawn('security', ['find-generic-password', '-s', service, '-w'])
       proc = securityProcess
       // A locked/unavailable Keychain can leave `security` waiting without an
       // exit event. Credential discovery is telemetry only, so never let it
@@ -1764,6 +1772,49 @@ export async function getClaudeOAuthCredential(): Promise<ClaudeOAuthCredential 
   }
 }
 
+/**
+ * The OAuth credential of a SECONDARY Claude account: the one Claude Code keeps
+ * for a `CLAUDE_CONFIG_DIR` — its `.credentials.json`, else the folder's own
+ * Keychain item. Read-only, never written or copied; the plan type comes from
+ * that folder's `.claude.json` when present.
+ */
+export async function readClaudeAccountOAuthCredential(
+  configDir: string
+): Promise<ClaudeOAuthCredential | null> {
+  const credential =
+    (await readClaudeCredentialsFile([
+      join(configDir, '.credentials.json'),
+      join(configDir, 'credentials.json')
+    ])) || (await readClaudeKeychainCredential(claudeAccountKeychainService(configDir)))
+  if (!credential) return null
+  try {
+    const raw = await fs.readFile(join(configDir, '.claude.json'), 'utf8')
+    const exactPlanType = extractClaudeAccountPlanType(JSON.parse(raw))
+    return exactPlanType ? { ...credential, subscriptionType: exactPlanType } : credential
+  } catch {
+    return credential
+  }
+}
+
+/** One live read of the Claude OAuth usage endpoint for a given credential. No caching. */
+export async function fetchClaudeUsageForCredential(
+  credential: ClaudeOAuthCredential
+): Promise<NormalizedProviderUsageSnapshot> {
+  const response = await fetchUsageEndpoint('https://api.anthropic.com/api/oauth/usage', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${credential.accessToken}`,
+      'anthropic-beta': 'oauth-2025-04-20',
+      Accept: 'application/json'
+    }
+  })
+  if (!response.ok) {
+    throw new Error(`Claude OAuth usage endpoint returned HTTP ${response.status}.`)
+  }
+  const payload = await response.json()
+  return normalizeClaudeUsageSnapshot(payload, credential)
+}
+
 let claudeUsageInFlight: Promise<NormalizedProviderUsageSnapshot> | null = null
 
 async function loadClaudeUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
@@ -1781,19 +1832,7 @@ async function loadClaudeUsageSnapshotLive(): Promise<NormalizedProviderUsageSna
     }
 
     try {
-      const response = await fetchUsageEndpoint('https://api.anthropic.com/api/oauth/usage', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${credential.accessToken}`,
-          'anthropic-beta': 'oauth-2025-04-20',
-          Accept: 'application/json'
-        }
-      })
-      if (!response.ok) {
-        throw new Error(`Claude OAuth usage endpoint returned HTTP ${response.status}.`)
-      }
-      const payload = await response.json()
-      const snapshot = normalizeClaudeUsageSnapshot(payload, credential)
+      const snapshot = await fetchClaudeUsageForCredential(credential)
       claudeUsageCache = { snapshot, fetchedAt: Date.now() }
       claudeUsageLastFailureAt = 0
       cacheProviderUsageSnapshot('claude', snapshot)

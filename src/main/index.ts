@@ -1425,6 +1425,9 @@ import {
   getStoredKimiApiKey,
   getStoredOllamaApiKey,
   importCodexUsageCredential,
+  fetchClaudeUsageForCredential,
+  fetchCodexUsageForCredential,
+  readClaudeAccountOAuthCredential,
   readCodexUsageCredentialLive,
   loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
@@ -2287,9 +2290,11 @@ import {
 import { registerProviderAccountHandlers } from './ipc/providerAccountHandlers'
 import {
   createProviderAccountRegistry,
+  listProviderAccounts,
   providerAccountEnvironment,
   resolveActiveProviderAccount
 } from './providers/ProviderAccounts'
+import { createProviderAccountUsageReader } from './usage/ProviderAccountUsage'
 import { createProviderTerminalSetupController } from './providers/ProviderTerminalSetupController'
 import { registerHostToolTerminalHandlers } from './ipc/hostToolTerminalHandlers'
 import { registerInstallCommandTerminalHandlers } from './ipc/installCommandTerminalHandlers'
@@ -59953,7 +59958,16 @@ if (isGeminiMcpBridgeProcess) {
           managedRunConfiguredProviderDiscovery
             .statusSnapshot(settingsService.getSettings())
             .configuredProviders.has('muse'),
-        getMuseMonthlySpendCapUsd: () => settingsService.getSettings().museMonthlySpendCapUsd
+        getMuseMonthlySpendCapUsd: () => settingsService.getSettings().museMonthlySpendCapUsd,
+        // Secondary Claude / Codex accounts ride the same credential-free hook
+        // lane, each read with its own folder's credential (never written).
+        readProviderAccountSnapshots: createProviderAccountUsageReader({
+          listAccounts: () => listProviderAccounts(AppStore.getSettings()),
+          readClaudeCredential: (account) => readClaudeAccountOAuthCredential(account.configDir),
+          fetchClaudeUsage: fetchClaudeUsageForCredential,
+          readCodexCredential: (account) => readCodexUsageCredentialLive(account.configDir),
+          fetchCodexUsage: fetchCodexUsageForCredential
+        })
       }),
       getProviderCapabilityContract,
       getPluginActivationSnapshot: () =>

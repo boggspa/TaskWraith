@@ -35,6 +35,9 @@ export const USAGE_CREDIT_LABEL_PRIORITY: readonly string[] = [
 
 export interface UsageCreditRow {
   provider: ModelUsageProviderId
+  /** Set for a secondary provider account; the row reads "Provider · Label". */
+  accountId?: string
+  accountLabel?: string
   /** The leading balance, or null for a placeholder row that reads "—". */
   balance: UsageBalanceAggregate | null
   /** Display value: "$12.34", "0 credits", "1.5K credits", or "—". */
@@ -132,14 +135,21 @@ export function buildUsageCreditRows(
   entries: readonly ModelUsageAggregate[],
   options: BuildUsageCreditRowsOptions = {}
 ): UsageCreditRow[] {
-  const rows = new Map<ModelUsageProviderId, UsageCreditRow>()
+  // One row per provider, or per provider ACCOUNT when the entry belongs to
+  // a secondary sign-in — two Claude accounts are two balances, not one.
+  const rowKey = (entry: Pick<ModelUsageAggregate, 'provider' | 'accountId'>): string =>
+    entry.accountId ? `${entry.provider}#${entry.accountId}` : entry.provider
+  const rows = new Map<string, UsageCreditRow>()
   for (const entry of entries) {
     const balance = selectUsageCreditBalance(entry.balances)
-    const existing = rows.get(entry.provider)
+    const existing = rows.get(rowKey(entry))
     if (existing?.hasValue) continue
     if (balance) {
-      rows.set(entry.provider, {
+      rows.set(rowKey(entry), {
         provider: entry.provider,
+        ...(entry.accountId
+          ? { accountId: entry.accountId, accountLabel: entry.accountLabel }
+          : {}),
         balance,
         valueText: formatUsageCreditValue(balance.amount, balance.unit, options.locale),
         detail: [balance.label, balance.subtitle].filter(Boolean).join(' · '),
@@ -157,14 +167,18 @@ export function buildUsageCreditRows(
       hasValue: false
     })
   }
-  const order = new Map<ModelUsageProviderId, number>()
+  const order = new Map<string, number>()
   entries.forEach((entry, index) => {
-    if (!order.has(entry.provider)) order.set(entry.provider, index)
+    if (!order.has(rowKey(entry))) order.set(rowKey(entry), index)
   })
   for (const provider of options.placeholderProviders ?? []) {
-    if (!order.has(provider)) order.set(provider, entries.length + order.size)
+    if (order.has(provider)) continue
+    // A primary placeholder sits just ahead of that provider's account rows
+    // (if any), otherwise after everything that reported a balance.
+    const firstOfProvider = entries.findIndex((entry) => entry.provider === provider)
+    order.set(provider, firstOfProvider >= 0 ? firstOfProvider - 0.5 : entries.length + order.size)
   }
   return [...rows.values()].sort(
-    (left, right) => (order.get(left.provider) ?? 0) - (order.get(right.provider) ?? 0)
+    (left, right) => (order.get(rowKey(left)) ?? 0) - (order.get(rowKey(right)) ?? 0)
   )
 }

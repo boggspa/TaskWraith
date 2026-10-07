@@ -315,18 +315,32 @@ export function orderExpandedUsageProviders(
   })
 }
 
+/** "Claude" for the primary sign-in, "Claude · Work" for a secondary account. */
+function modelUsageEntryName(
+  provider: ModelUsageProviderId | undefined,
+  accountLabel?: string
+): string {
+  const name = modelUsageProviderName(provider)
+  const label = accountLabel?.trim()
+  return label ? `${name} · ${label}` : name
+}
+
 function ProviderLabel({
   provider,
-  planName
+  planName,
+  accountLabel
 }: {
   provider: ModelUsageProviderId | undefined
   planName?: string
+  accountLabel?: string
 }) {
   const providerName = provider || 'gemini'
   return (
     <span className={`sidebar-provider-label provider-${providerName}`}>
       <ProviderLogoTile provider={provider} />
-      <span className="model-usage-provider-name">{modelUsageProviderName(provider)}</span>
+      <span className="model-usage-provider-name">
+        {modelUsageEntryName(provider, accountLabel)}
+      </span>
       {planName && planName.trim() && (
         <span className="model-usage-tier-badge">{planName.trim()}</span>
       )}
@@ -835,12 +849,15 @@ function UsageWindowRow({
   windowEntry,
   inlineProvider = false,
   planName,
-  showPlanBadge = false
+  showPlanBadge = false,
+  accountLabel
 }: {
   provider: ModelUsageProviderId
   windowEntry: UsageWindowAggregate
   inlineProvider?: boolean
   planName?: string
+  /** Secondary account label: the row reads "Provider · Label". */
+  accountLabel?: string
   /** Render the plan tier as a pill after the inline provider name (Settings
    * has the width for it; the sidebar keeps the plan in the tooltip). */
   showPlanBadge?: boolean
@@ -848,9 +865,8 @@ function UsageWindowRow({
   const fraction = fillFractionForWindow(windowEntry)
   const percentText = `${Math.round(fraction * 100)}%`
   const windowReset = formatResetShort({ resetAt: windowEntry.resetAt })
-  const providerTitle = inlineProvider
-    ? `${modelUsageProviderName(provider)}${planName ? ` (${planName})` : ''} `
-    : ''
+  const entryName = modelUsageEntryName(provider, accountLabel)
+  const providerTitle = inlineProvider ? `${entryName}${planName ? ` (${planName})` : ''} ` : ''
   const title = `${providerTitle}${windowEntry.label}: ${windowEntry.limitLabel}${
     windowReset ? ` · resets ${windowReset}` : ''
   }`
@@ -877,10 +893,10 @@ function UsageWindowRow({
               <span className="model-usage-period-label-text">
                 {glyph ? (
                   <>
-                    {modelUsageProviderName(provider)} {label}
+                    {entryName} {label}
                   </>
                 ) : (
-                  quotaPeriodRowLabel(modelUsageProviderName(provider), windowEntry.label)
+                  quotaPeriodRowLabel(entryName, windowEntry.label)
                 )}
               </span>
               {showPlanBadge && planName && planName.trim() ? (
@@ -945,10 +961,10 @@ export function UsageCreditsSection({
       </div>
       <div className="model-usage-period-rows model-usage-credit-rows">
         {rows.map((row) => {
-          const providerName = modelUsageProviderName(row.provider)
+          const providerName = modelUsageEntryName(row.provider, row.accountLabel)
           return (
             <div
-              key={row.provider}
+              key={row.accountId ? `${row.provider}#${row.accountId}` : row.provider}
               className={`model-usage-credit-row provider-${row.provider} ${
                 row.hasValue ? 'has-value' : 'is-empty'
               }`}
@@ -1014,11 +1030,19 @@ export function PeriodicModelUsageList({
             <div
               className="model-usage-period-unavailable"
               role="status"
-              title={[modelUsageProviderName(provider), entry.planName, entry.quotaError]
+              title={[
+                modelUsageEntryName(provider, entry.accountLabel),
+                entry.planName,
+                entry.quotaError
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             >
-              <ProviderLabel provider={provider} planName={entry.planName} />
+              <ProviderLabel
+                provider={provider}
+                planName={entry.planName}
+                accountLabel={entry.accountLabel}
+              />
               <span>No data</span>
             </div>
           )
@@ -1041,6 +1065,7 @@ export function PeriodicModelUsageList({
                 provider={provider}
                 windowEntry={windowEntry}
                 planName={entry.planName}
+                accountLabel={entry.accountLabel}
                 showPlanBadge={showPlanBadges}
                 inlineProvider
               />
@@ -1640,6 +1665,9 @@ export function ModelUsageCard({
       ((entry.windows?.length || 0) > 0 ||
         (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
+  // The collapsed grid has one column per provider, so it shows the PRIMARY
+  // sign-in only; secondary accounts live in the expanded period rows.
+  const compactQuotaEntries = quotaEntries.filter((entry) => !entry.accountId)
   // Usage Credits stack: every quota entry that carries a balance, in the
   // expanded provider order. A balance-only entry (no windows) belongs here
   // and nowhere else — it never earns a "No data" meter row. Claude and Grok
@@ -1899,7 +1927,7 @@ export function ModelUsageCard({
       <div className="model-usage-liquid-card">
         {showCollapsedCompactUsage && (
           <CompactModelUsageGrid
-            quotaEntries={quotaEntries}
+            quotaEntries={compactQuotaEntries}
             grokUsage={grokUsage}
             mistralQuota={mistralQuota}
             currency={apiSpend?.currency}

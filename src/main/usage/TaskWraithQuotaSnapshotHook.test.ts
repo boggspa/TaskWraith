@@ -327,6 +327,49 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('appends secondary-account meters after the native lanes and survives a failing reader', async () => {
+    const accountSnapshot = {
+      provider: 'claude' as const,
+      source: 'claude-oauth-usage' as const,
+      accountId: 'claude-work-abc123',
+      accountLabel: 'Work',
+      configured: true,
+      fetchedAt: new Date(NOW).toISOString(),
+      stale: false,
+      windows: [],
+      balances: []
+    }
+    const baseDeps = {
+      loadPiKeys: () => ({ status: 'missing' as const }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(),
+      readDevinPlanInfoRows: async () => [],
+      now: () => NOW
+    }
+    const withAccounts = createTaskWraithQuotaSnapshotHook({
+      ...baseDeps,
+      readProviderAccountSnapshots: async () => [accountSnapshot]
+    })
+    const snapshots = await withAccounts()
+    expect(snapshots[snapshots.length - 1]).toEqual(accountSnapshot)
+    expect(snapshots.filter((snapshot) => snapshot.accountId)).toHaveLength(1)
+
+    const failing = createTaskWraithQuotaSnapshotHook({
+      ...baseDeps,
+      readProviderAccountSnapshots: async () => {
+        throw new Error('keychain locked')
+      }
+    })
+    const survived = await failing()
+    expect(survived.some((snapshot) => snapshot.accountId)).toBe(false)
+    expect(survived.map((snapshot) => snapshot.provider)).toContain('deepseek')
+  })
+
   it('combines manual API billing anchors with native balances and post-anchor Muse spend', async () => {
     const read = createTaskWraithQuotaSnapshotHook({
       loadPiKeys: () => ({

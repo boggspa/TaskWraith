@@ -24,6 +24,10 @@ export interface ModelUsageAggregate {
   provider: ModelUsageProviderId
   model: string
   planName?: string
+  /** Set when this entry belongs to a secondary provider account; the primary
+   * sign-in leaves both absent. Rows read "Provider · Label". */
+  accountId?: string
+  accountLabel?: string
   runs: number
   inputTokens: number
   outputTokens: number

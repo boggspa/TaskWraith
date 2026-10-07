@@ -122,6 +122,25 @@ describe('buildUsageCreditRows', () => {
     expect(rows[1].detail).toContain('Grok reports subscription credits')
   })
 
+  it('keeps two accounts of one provider as two rows, each with its label', () => {
+    const rows = buildUsageCreditRows(
+      [
+        entry('codex', [balance('Credits Remaining', 0, 'credits')]),
+        {
+          ...entry('codex', [balance('Credits Remaining', 12, 'credits')]),
+          accountId: 'codex-second',
+          accountLabel: 'Second'
+        }
+      ],
+      { locale: 'en-US' }
+    )
+    expect(rows.map((row) => [row.provider, row.accountLabel, row.valueText])).toEqual([
+      ['codex', undefined, '0 credits'],
+      ['codex', 'Second', '12 credits']
+    ])
+    expect(rows[1].accountId).toBe('codex-second')
+  })
+
   it('lets a later entry with a balance replace an earlier placeholder for the same provider', () => {
     const rows = buildUsageCreditRows(
       [entry('claude', []), entry('claude', [balance('Usage Credits', 1.25, 'GBP')])],

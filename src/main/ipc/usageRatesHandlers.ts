@@ -407,6 +407,10 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
         (entry): entry is NonNullable<(typeof entries)[number]> => Boolean(entry)
       )
       for (const snapshot of hookSnapshots) {
+        // Secondary-account meters are not projected to the phone yet: the
+        // remote payload keys providers by id, and a second 'claude' row would
+        // read as a duplicate or replace the primary meter on older builds.
+        if (snapshot.accountId) continue
         const windows = snapshot.windows.slice(0, 8).map((window) => ({
           id: window.id,
           label: window.label,

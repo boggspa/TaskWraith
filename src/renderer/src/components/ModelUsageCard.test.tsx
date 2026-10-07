@@ -281,6 +281,67 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('model-usage-window"')
   })
 
+  it('labels a secondary account "Provider · Label" in the period rows and credits, but keeps it out of the compact grid', () => {
+    const primary = quotaEntry({
+      provider: 'claude',
+      planName: 'Pro',
+      windows: [
+        {
+          id: 'claude-5h',
+          label: 'Session',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '80% remaining',
+          usedPercent: 20
+        }
+      ]
+    })
+    const work = quotaEntry({
+      provider: 'claude',
+      planName: 'Max',
+      accountId: 'claude-work-abc123',
+      accountLabel: 'Work',
+      windows: [
+        {
+          id: 'claude-work-abc123:claude-5h',
+          label: 'Session',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '3% remaining',
+          usedPercent: 97
+        }
+      ],
+      balances: [{ id: 'w', label: 'Extra Usage', amount: 4.25, unit: 'USD' }]
+    })
+    const list = renderToStaticMarkup(
+      <PeriodicModelUsageList
+        quotaEntries={[primary, work]}
+        creditEntries={[work]}
+        locale="en-US"
+      />
+    )
+    expect(list).toContain('<span class="model-usage-period-label-text">Claude Session</span>')
+    expect(list).toContain(
+      '<span class="model-usage-period-label-text">Claude · Work Session</span>'
+    )
+    expect(list).toContain('title="Claude · Work (Max) Session: 3% remaining"')
+    expect(list).toContain('Claude · Work usage credits: $4.25')
+    expect(list.match(/model-usage-period-row provider-claude/g)).toHaveLength(2)
+
+    const sidebar = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[primary, work]} variant="sidebar" />
+    )
+    // Collapsed grid: one Claude column, fed by the primary sign-in only. (The
+    // expanded period list is still in the markup, aria-hidden, so scope the
+    // negative assertions to the table itself.)
+    const grid = sidebar.slice(sidebar.indexOf('<table'), sidebar.indexOf('</table>'))
+    expect(grid.match(/<th scope="col" class="provider-claude">/g)).toHaveLength(1)
+    expect(grid).toContain('Claude Session: 20%')
+    expect(grid).not.toContain('97%')
+    expect(grid).not.toContain('Work')
+    expect(sidebar).toContain('Claude · Work Session')
+  })
+
   it('tones expanded meter percentages amber from 60% and red from 90%', () => {
     expect(expandedQuotaTone(0.59)).toBe('')
     expect(expandedQuotaTone(0.6)).toBe(' is-warning')

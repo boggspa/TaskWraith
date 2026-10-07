@@ -109,6 +109,55 @@ describe('buildQuotaSnapshotHookAggregates', () => {
   })
 })
 
+describe('buildQuotaSnapshotHookAggregates (secondary accounts)', () => {
+  it('carries the account identity so a second Claude account renders as its own entry', () => {
+    const aggregates = buildQuotaSnapshotHookAggregates([
+      {
+        provider: 'claude',
+        source: 'claude-oauth-usage',
+        accountId: 'claude-work-abc123',
+        accountLabel: 'Work',
+        configured: true,
+        fetchedAt: '2026-10-07T12:00:00.000Z',
+        stale: false,
+        planType: 'max',
+        windows: [
+          {
+            id: 'claude-work-abc123:claude-5h',
+            label: 'Session',
+            usedPercent: 23,
+            remainingPercent: 77,
+            limitLabel: '77% remaining'
+          }
+        ],
+        balances: []
+      }
+    ])
+    expect(aggregates).toEqual([
+      expect.objectContaining({
+        provider: 'claude',
+        accountId: 'claude-work-abc123',
+        accountLabel: 'Work',
+        planName: 'max'
+      })
+    ])
+    // A native lane carries no account fields at all (not even undefined keys).
+    expect(
+      buildQuotaSnapshotHookAggregates([
+        {
+          provider: 'deepseek',
+          source: 'taskwraith-native',
+          configured: false,
+          fetchedAt: '2026-10-07T12:00:00.000Z',
+          stale: false,
+          windows: [],
+          balances: []
+        }
+      ])[0]
+    ).not.toHaveProperty('accountId')
+  })
+})
+
 describe('mergeQuotaSnapshotHookSnapshots', () => {
   const MERGE_NOW = Date.parse('2026-08-05T12:00:00.000Z')
 
@@ -146,6 +195,35 @@ describe('mergeQuotaSnapshotHookSnapshots', () => {
     expect(merged.map((snapshot) => snapshot.provider)).toEqual(['deepseek', 'cerebras', 'meta'])
     // A five-minute-old reading served from cache is not stale.
     expect(merged.map((snapshot) => snapshot.stale)).toEqual([false, false, false])
+  })
+
+  it('keeps two accounts of one provider apart and lets each refresh independently', () => {
+    const work = hookSnapshot('claude', {
+      accountId: 'claude-work',
+      accountLabel: 'Work',
+      source: 'claude-oauth-usage'
+    })
+    const home = hookSnapshot('claude', {
+      accountId: 'claude-home',
+      accountLabel: 'Home',
+      source: 'claude-oauth-usage',
+      fetchedAt: '2026-08-05T11:40:00.000Z'
+    })
+    const freshHome = { ...home, fetchedAt: '2026-08-05T11:58:00.000Z' }
+
+    const merged = mergeQuotaSnapshotHookSnapshots(
+      [hookSnapshot('deepseek'), work, home],
+      [freshHome],
+      MERGE_NOW
+    )
+
+    expect(merged.map((snapshot) => snapshot.accountLabel ?? snapshot.provider)).toEqual([
+      'deepseek',
+      'Work',
+      'Home'
+    ])
+    expect(merged[2]!.fetchedAt).toBe('2026-08-05T11:58:00.000Z')
+    expect(merged[1]!.fetchedAt).toBe('2026-08-05T11:55:00.000Z')
   })
 
   it('keeps every last-known meter when a native read produces an empty result', () => {

@@ -1,6 +1,7 @@
 import {
   QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS,
   QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
+  quotaSnapshotHookKey,
   type QuotaSnapshotHookSnapshot
 } from '../../../shared/quotaSnapshotHook'
 import type { ModelUsageAggregate } from './usageAggregateTypes'
@@ -40,18 +41,22 @@ export function mergeQuotaSnapshotHookSnapshots(
   fresh: ReadonlyArray<QuotaSnapshotHookSnapshot> | null | undefined,
   now = Date.now()
 ): QuotaSnapshotHookSnapshot[] {
-  const merged = new Map<QuotaSnapshotHookSnapshot['provider'], QuotaSnapshotHookSnapshot>()
+  // Keyed per provider AND account: a second Claude account is its own
+  // last-known reading, never a replacement for the first one's.
+  const merged = new Map<string, QuotaSnapshotHookSnapshot>()
   for (const snapshot of previous) {
-    merged.set(snapshot.provider, withRecomputedStaleness(snapshot, now))
+    merged.set(quotaSnapshotHookKey(snapshot), withRecomputedStaleness(snapshot, now))
   }
   for (const snapshot of fresh ?? []) {
-    merged.set(snapshot.provider, snapshot)
+    merged.set(quotaSnapshotHookKey(snapshot), snapshot)
   }
-  return [...merged.values()].sort(
-    (left, right) =>
-      (HOOK_PROVIDER_ORDER.get(left.provider) ?? Number.MAX_SAFE_INTEGER) -
-      (HOOK_PROVIDER_ORDER.get(right.provider) ?? Number.MAX_SAFE_INTEGER)
-  )
+  // Native lanes keep their canonical order; account snapshots trail them in
+  // arrival order (the card re-sorts by provider for display anyway).
+  const rank = (snapshot: QuotaSnapshotHookSnapshot): number =>
+    HOOK_PROVIDER_ORDER.get(
+      snapshot.provider as (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]
+    ) ?? Number.MAX_SAFE_INTEGER
+  return [...merged.values()].sort((left, right) => rank(left) - rank(right))
 }
 
 /**
@@ -66,6 +71,9 @@ export function buildQuotaSnapshotHookAggregates(
     provider: snapshot.provider,
     model: 'usage limits',
     planName: snapshot.planType,
+    ...(snapshot.accountId
+      ? { accountId: snapshot.accountId, accountLabel: snapshot.accountLabel }
+      : {}),
     runs: 0,
     inputTokens: 0,
     outputTokens: 0,

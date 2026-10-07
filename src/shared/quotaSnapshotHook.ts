@@ -45,9 +45,23 @@ export interface QuotaSnapshotHookBalance {
   resetAt?: string
 }
 
+/**
+ * Providers whose SECONDARY accounts (Settings → Providers → Accounts) ride
+ * this lane. The primary Claude / Codex sign-in keeps its own first-class
+ * fetcher; only the extra accounts are projected here, each stamped with the
+ * account it belongs to so the renderer can key, label, and merge per account.
+ */
+export type QuotaSnapshotHookAccountProviderId = 'claude' | 'codex'
+
+export type QuotaSnapshotHookSource = 'taskwraith-native' | 'claude-oauth-usage' | 'chatgpt-wham'
+
 export interface QuotaSnapshotHookSnapshot {
-  provider: QuotaSnapshotHookProviderId
-  source: 'taskwraith-native'
+  provider: QuotaSnapshotHookProviderId | QuotaSnapshotHookAccountProviderId
+  source: QuotaSnapshotHookSource
+  /** Set only for a secondary provider account; absent for the native lanes. */
+  accountId?: string
+  /** The account's user-chosen label ("Work"), shown as "Claude · Work". */
+  accountLabel?: string
   configured: boolean
   fetchedAt: string
   stale: boolean
@@ -55,4 +69,15 @@ export interface QuotaSnapshotHookSnapshot {
   planType?: string
   windows: QuotaSnapshotHookWindow[]
   balances: QuotaSnapshotHookBalance[]
+}
+
+/**
+ * Identity a snapshot is merged and cached under: the provider alone for the
+ * native lanes, `provider#accountId` for a secondary account, so two accounts
+ * of one provider never collapse into each other.
+ */
+export function quotaSnapshotHookKey(
+  snapshot: Pick<QuotaSnapshotHookSnapshot, 'provider' | 'accountId'>
+): string {
+  return snapshot.accountId ? `${snapshot.provider}#${snapshot.accountId}` : snapshot.provider
 }

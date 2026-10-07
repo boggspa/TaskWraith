@@ -588,6 +588,52 @@ describe('registerUsageRatesHandlers', () => {
     })
   })
 
+  it('keeps secondary-account hook meters out of the remote payload', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+    deps.fetchCodexUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchClaudeUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchKimiUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchCursorUsageSnapshot.mockResolvedValue({ windows: [] })
+    const window = {
+      id: 'w',
+      label: 'Session',
+      usedPercent: 50,
+      remainingPercent: 50,
+      limitLabel: '50% remaining'
+    }
+    deps.fetchQuotaSnapshotHook.mockResolvedValue([
+      {
+        provider: 'claude',
+        source: 'claude-oauth-usage',
+        accountId: 'claude-work-abc123',
+        accountLabel: 'Work',
+        configured: true,
+        fetchedAt: '2026-10-07T12:00:00.000Z',
+        stale: false,
+        windows: [window],
+        balances: []
+      },
+      {
+        provider: 'deepseek',
+        source: 'taskwraith-native',
+        configured: true,
+        fetchedAt: '2026-10-07T12:00:00.000Z',
+        stale: false,
+        windows: [{ ...window, id: 'deepseek-credit', label: 'Credit used' }],
+        balances: []
+      }
+    ])
+
+    callbacks.triggerUsageModel()
+    await flushAsyncTasks()
+
+    const payload = deps.broadcastModelUsage.mock.calls[0]?.[0] as {
+      usage: { providers: Array<{ provider: string }> }
+    }
+    expect(payload.usage.providers.map((entry) => entry.provider)).toEqual(['deepseek'])
+  })
+
   it('adds spend and AntiGravity budget fields without changing quota providers', async () => {
     const { deps, callbacks } = createDeps()
     registerUsageRatesHandlers(deps)
@@ -705,9 +751,7 @@ describe('registerUsageRatesHandlers', () => {
       usage: expect.objectContaining({
         providers: [],
         spend: expect.objectContaining({
-          providers: expect.arrayContaining([
-            expect.objectContaining({ provider: 'antigravity' })
-          ])
+          providers: expect.arrayContaining([expect.objectContaining({ provider: 'antigravity' })])
         }),
         antigravityBudget: expect.objectContaining({
           provider: 'antigravity',
