@@ -6,6 +6,17 @@ import { ComposerShellPreview } from './ComposerShellPreview'
 import { SettingsDiffStatColorControl } from './SettingsDiffStatColorControl'
 import { SettingsDiffStatPreview } from './SettingsDiffStatPreview'
 import { SettingsProviderAuthCard } from './SettingsProviderAuthCard'
+import {
+  SETTINGS_PROVIDER_RAIL_ORDER,
+  SettingsProviderRail,
+  readSettingsProviderRailBrowserStorage,
+  rememberSettingsProviderRailSelection,
+  resolveInitialSettingsProviderRailSelection,
+  settingsProviderRailPaneId,
+  settingsProviderRailTabId,
+  type SettingsProviderRailEntry,
+  type SettingsProviderRailId
+} from './SettingsProviderRail'
 import { SettingsSharedAccentControl } from './SettingsSharedAccentControl'
 import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
 import type {
@@ -328,6 +339,9 @@ export type { RuntimeProfileFormState } from './settings/runtimeProfileForm'
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
 
+/** Element-id prefix joining the Providers rail tabs to their pane. */
+const PROVIDER_RAIL_ID_PREFIX = 'settings-provider-rail'
+
 interface SettingsPanelProps {
   mode: AppearanceMode
   visualEffectStyle: VisualEffectStyle
@@ -466,6 +480,12 @@ interface SettingsPanelProps {
   /** Cursor and Grok are CLI-login providers with terminal-managed auth. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
+  /**
+   * Which Providers-tab rail entry is selected on first render, when it names
+   * a live rail entry. Wins over the per-viewer remembered tab; omitted, the
+   * rail opens on the remembered tab or its first entry.
+   */
+  defaultProviderRailSelection?: string
   claudeLoginState?: 'idle' | 'loading' | 'success' | 'error'
   providerCliUpgradeState?: Partial<Record<ProviderId, ProviderCliUpgradeState>>
   onImportCodexUsageCredential?: () => void
@@ -1061,6 +1081,7 @@ export function SettingsPanel({
   ollamaStatus,
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
+  defaultProviderRailSelection,
   claudeLoginState = 'idle',
   providerCliUpgradeState = {},
   onImportCodexUsageCredential,
@@ -1105,6 +1126,21 @@ export function SettingsPanel({
   const usageSummary = useUsageSummary(usageSummaryFallback)
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
+  // Providers tab: which rail entry's pane is open. Seeded once — an explicit
+  // default, else the per-viewer remembered tab, else the first entry (which
+  // is also what SSR renders, since there is no storage there).
+  const [providerRailSelection, setProviderRailSelection] = useState<SettingsProviderRailId>(
+    () =>
+      resolveInitialSettingsProviderRailSelection(
+        SETTINGS_PROVIDER_RAIL_ORDER.map((entry) => entry.id),
+        defaultProviderRailSelection,
+        readSettingsProviderRailBrowserStorage()
+      )
+  )
+  const selectProviderRailEntry = (id: SettingsProviderRailId): void => {
+    setProviderRailSelection(id)
+    rememberSettingsProviderRailSelection(id)
+  }
   // Optional host CLI presence for the Providers tab's tools card. Probed
   // through MAIN so the answer matches what GitService will actually resolve,
   // not what a renderer guess would infer from an error string.
@@ -2180,6 +2216,54 @@ export function SettingsPanel({
   const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
   const museAuthSummary = summariseMuseCodeStatus(providerStatusByProvider?.muse)
   const devinAuthSummary = summariseDevinStatus(providerStatusByProvider?.devin)
+  // Providers-tab rail: one tab per pane, in SETTINGS_PROVIDER_RAIL_ORDER. Pi,
+  // API usage and AntiGravity own their status inside their cards (hook-fed),
+  // so the rail carries a neutral or consent-derived dot for those three.
+  const antigravityConsentRecorded =
+    antigravityEnabled === true &&
+    typeof antigravityOptInAcceptedAt === 'number' &&
+    antigravityOptInAcceptedAt > 0
+  const providerRailLabels: Partial<
+    Record<SettingsProviderRailId, { label: string; summary: ProviderAuthSummary }>
+  > = {
+    codex: { label: 'Codex', summary: codexAuthSummary },
+    claude: { label: 'Claude', summary: claudeAuthSummary },
+    kimi: { label: 'Kimi', summary: kimiSetupSummary },
+    cursor: { label: 'Cursor', summary: cursorAuthSummary },
+    grok: { label: 'Grok', summary: grokAuthSummary },
+    muse: { label: 'Muse', summary: museAuthSummary },
+    devin: { label: 'Devin', summary: devinAuthSummary },
+    ollama: { label: 'Ollama', summary: ollamaAuthSummary },
+    pi: {
+      label: 'Pi',
+      summary: { variant: 'not-signed-in', statusText: 'Upstream API keys', hint: '' }
+    },
+    mistral: { label: 'Mistral', summary: mistralAuthSummary },
+    'api-usage': {
+      label: 'API usage',
+      summary: { variant: 'not-signed-in', statusText: 'Usage and credit anchors', hint: '' }
+    },
+    antigravity: {
+      label: 'AntiGravity',
+      summary: {
+        variant: antigravityConsentRecorded ? 'partial' : 'not-available',
+        statusText: antigravityConsentRecorded
+          ? 'Risk acceptance recorded'
+          : 'Disabled — explicit consent required',
+        hint: ''
+      }
+    }
+  }
+  const providerRailEntries: SettingsProviderRailEntry[] = SETTINGS_PROVIDER_RAIL_ORDER.map(
+    ({ id, group }) => ({
+      id,
+      group,
+      ...(providerRailLabels[id] ?? {
+        label: id,
+        summary: { variant: 'not-signed-in', statusText: 'Not checked yet', hint: '' }
+      })
+    })
+  )
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -4475,7 +4559,24 @@ export function SettingsPanel({
                     />
                   </div>
                 </details>
-                <div className="settings-provider-auth-grid">
+                <div className="settings-provider-rail-layout">
+                  <SettingsProviderRail
+                    entries={providerRailEntries}
+                    selectedId={providerRailSelection}
+                    onSelect={selectProviderRailEntry}
+                    idPrefix={PROVIDER_RAIL_ID_PREFIX}
+                  />
+                  <div
+                    className="settings-provider-rail-pane"
+                    role="tabpanel"
+                    id={settingsProviderRailPaneId(PROVIDER_RAIL_ID_PREFIX, providerRailSelection)}
+                    aria-labelledby={settingsProviderRailTabId(
+                      PROVIDER_RAIL_ID_PREFIX,
+                      providerRailSelection
+                    )}
+                    data-provider-pane={providerRailSelection}
+                  >
+                  {providerRailSelection === 'codex' && (
                   <SettingsProviderAuthCard
                     provider="codex"
                     label="Codex"
@@ -4535,7 +4636,9 @@ export function SettingsPanel({
                     {renderProviderUpgradeFootnote('codex')}
                     {renderProviderPauseControls('codex')}
                   </SettingsProviderAuthCard>
+                  )}
 
+                  {providerRailSelection === 'claude' && (
                   <SettingsProviderAuthCard
                     provider="claude"
                     label="Claude"
@@ -4570,9 +4673,131 @@ export function SettingsPanel({
                       )}
                     </div>
                     {renderProviderUpgradeFootnote('claude')}
+                    <div className="settings-provider-rail-section-label">Credential</div>
+                    {claudeAuthStatus && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          gap: 'var(--space-sm)',
+                          marginBottom: 'var(--space-xs)'
+                        }}
+                      >
+                        {!claudeAuthStatus.available ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            ● Binary not found
+                          </span>
+                        ) : claudeAuthStatus.apiKeyConfigured ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
+                            ● API key configured
+                          </span>
+                        ) : claudeAuthStatus.authState &&
+                          !['not logged in', 'not authenticated', 'unauthenticated', 'error'].some(
+                            (p) => claudeAuthStatus.authState.toLowerCase().includes(p)
+                          ) ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-success, #3fb950)' }}>
+                            ● Authenticated
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                            ● Not authenticated
+                          </span>
+                        )}
+                        {claudeAuthStatus.version && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                            {claudeAuthStatus.version}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sign-in is the Login button in the action row above; this
+                        section keeps the API-key / CLI-path controls plus the shared
+                        login-state feedback (which reflects that single Login button). */}
+                    {(claudeLoginState === 'success' || claudeLoginState === 'error') && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 'var(--space-sm)',
+                          flexWrap: 'wrap',
+                          marginBottom: 'var(--space-xs)'
+                        }}
+                      >
+                        {claudeLoginState === 'success' && (
+                          <span
+                            className="settings-hint"
+                            style={{ margin: 0, color: 'var(--color-success, #3fb950)' }}
+                          >
+                            Browser opened
+                          </span>
+                        )}
+                        {claudeLoginState === 'error' && (
+                          <span
+                            className="settings-hint"
+                            style={{ margin: 0, color: 'var(--color-danger, #f85149)' }}
+                          >
+                            Login failed — check CLI is installed
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <label className="settings-label">Anthropic API key</label>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 'var(--space-sm)',
+                        marginBottom: 'var(--space-xs)'
+                      }}
+                    >
+                      <input
+                        className="settings-select"
+                        type="password"
+                        value={claudeKeyInput}
+                        disabled={claudeApiKeyStorageUnavailable}
+                        onChange={(e) => setClaudeKeyInput(e.target.value)}
+                        placeholder={
+                          claudeAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'sk-ant-...'
+                        }
+                        style={{ flex: 1 }}
+                      />
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        disabled={!claudeKeyInput.trim() || claudeApiKeyStorageUnavailable}
+                        onClick={() => {
+                          onStoreClaudeApiKey?.(claudeKeyInput)
+                          setClaudeKeyInput('')
+                        }}
+                      >
+                        Save
+                      </PillButton>
+                      {claudeAuthStatus?.apiKeyConfigured && (
+                        <PillButton size="compact" variant="danger" onClick={onClearClaudeApiKey}>
+                          Clear
+                        </PillButton>
+                      )}
+                    </div>
+                    <p className="settings-hint">
+                      {claudeApiKeyStorageUnavailable
+                        ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
+                        : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
+                    </p>
+
+                    <label className="settings-label">Claude CLI binary</label>
+                    <CommittedDraftField
+                      className="settings-select"
+                      committed={claudeBinaryPath}
+                      onCommit={(value) => onChange({ claudeBinaryPath: value })}
+                      placeholder="Auto-detect, or /Users/you/.local/bin/claude"
+                    />
+                    <p className="settings-hint">Optional path override.</p>
                     {renderProviderPauseControls('claude')}
                   </SettingsProviderAuthCard>
+                  )}
 
+                  {providerRailSelection === 'kimi' && (
                   <SettingsProviderAuthCard
                     provider="kimi"
                     label="Kimi"
@@ -4633,8 +4858,119 @@ export function SettingsPanel({
                       <p className="settings-provider-auth-error">{kimiWebSessionError}</p>
                     ) : null}
                     {renderProviderUpgradeFootnote('kimi')}
+                    <div className="settings-provider-rail-section-label">Credential</div>
+                    {kimiAuthStatus && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 'var(--space-sm)',
+                          marginBottom: 'var(--space-xs)'
+                        }}
+                      >
+                        {!kimiAuthStatus.available ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            {kimiAuthStatus.binaryPath
+                              ? '● Binary found — stable identity/startup/ACP compatibility checks failed'
+                              : '● Binary not found'}
+                          </span>
+                        ) : kimiAuthStatus.transportSupported === false ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                            ● Kimi Code detected — stable identity/startup/ACP compatibility checks
+                            failed
+                          </span>
+                        ) : ['authenticated', 'api-key', 'oauth'].includes(
+                            (kimiAuthStatus.authState || '').toLowerCase()
+                          ) ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
+                            ● Managed ACP authenticated ({kimiAuthStatus.authState})
+                          </span>
+                        ) : (kimiAuthStatus.authState || '').toLowerCase() === 'unknown' ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                            ● Managed ACP credential state not observed
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                            ● Managed ACP not authenticated
+                          </span>
+                        )}
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                          Usage-query key: {kimiAuthStatus.apiKeyConfigured ? 'stored' : 'not stored'}
+                        </span>
+                      </div>
+                    )}
+
+                    <label className="settings-label">Moonshot API key (usage only)</label>
+                    <p
+                      style={{
+                        fontSize: '0.72rem',
+                        color: 'var(--text-secondary)',
+                        margin: '0 0 var(--space-xs)'
+                      }}
+                    >
+                      Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
+                      (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key
+                      stored here is not projected into ACP. Structural ACP admission is always enabled;
+                      compatible unreviewed runtimes run with the explicit{' '}
+                      <code>unattested-development</code> label. Credentials do not bypass stable
+                      identity, bounded startup, or ACP compatibility checks.
+                    </p>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 'var(--space-sm)',
+                        marginBottom: 'var(--space-xs)'
+                      }}
+                    >
+                      <input
+                        className="settings-select"
+                        type="password"
+                        value={kimiKeyInput}
+                        disabled={kimiApiKeyStorageUnavailable}
+                        onChange={(e) => setKimiKeyInput(e.target.value)}
+                        placeholder={
+                          kimiAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'moonshot-...'
+                        }
+                        style={{ flex: 1 }}
+                      />
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        disabled={!kimiKeyInput.trim() || kimiApiKeyStorageUnavailable}
+                        onClick={() => {
+                          onStoreKimiApiKey?.(kimiKeyInput)
+                          setKimiKeyInput('')
+                        }}
+                      >
+                        Save
+                      </PillButton>
+                      {kimiAuthStatus?.apiKeyConfigured && (
+                        <PillButton size="compact" variant="danger" onClick={onClearKimiApiKey}>
+                          Clear
+                        </PillButton>
+                      )}
+                    </div>
+                    <p className="settings-hint">
+                      {kimiApiKeyStorageUnavailable
+                        ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
+                        : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on this Mac; not supplied to managed ACP.'}
+                    </p>
+
+                    <label className="settings-label">Kimi CLI binary</label>
+                    <CommittedDraftField
+                      className="settings-select"
+                      committed={kimiBinaryPath}
+                      onCommit={(value) => onChange({ kimiBinaryPath: value })}
+                      placeholder="Auto-detect, or /path/to/kimi"
+                    />
+                    <p className="settings-hint">
+                      Optional path override for Kimi Code CLI.
+                      {kimiAuthStatus?.version ? ` Current: ${kimiAuthStatus.version}.` : ''}
+                    </p>
                     {renderProviderPauseControls('kimi')}
                   </SettingsProviderAuthCard>
+                  )}
+                  {providerRailSelection === 'cursor' && (
                   <SettingsProviderAuthCard
                     provider="cursor"
                     label="Cursor"
@@ -4668,6 +5004,8 @@ export function SettingsPanel({
                     {renderProviderUpgradeFootnote('cursor')}
                     {renderProviderPauseControls('cursor')}
                   </SettingsProviderAuthCard>
+                  )}
+                  {providerRailSelection === 'grok' && (
                   <SettingsProviderAuthCard
                     provider="grok"
                     label="Grok"
@@ -4703,6 +5041,8 @@ export function SettingsPanel({
                     {renderProviderUpgradeFootnote('grok')}
                     {renderProviderPauseControls('grok')}
                   </SettingsProviderAuthCard>
+                  )}
+                  {providerRailSelection === 'ollama' && (
                   <SettingsProviderAuthCard
                     provider="ollama"
                     label="Ollama"
@@ -4738,8 +5078,139 @@ export function SettingsPanel({
                     <OllamaApiKeyControls
                       onChanged={() => onRefreshProviderMcpStatus?.('ollama')}
                     />
+                    <div className="settings-provider-rail-section-label">Local / Ollama</div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-sm)',
+                        marginBottom: 'var(--space-xs)',
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      {(ollamaStatus?.localAvailable ?? ollamaStatus?.available) ? (
+                        <span style={{ fontSize: '0.78rem', color: 'var(--color-success, #3fb950)' }}>
+                          ● Local service reachable
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                          ● Local service not reachable
+                        </span>
+                      )}
+                      {typeof ollamaStatus?.localModelCount === 'number' && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                          {ollamaStatus.localModelCount} local model
+                          {ollamaStatus.localModelCount === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      {typeof ollamaStatus?.cloudModelCount === 'number' && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                          {ollamaStatus.cloudModelCount} Cloud model
+                          {ollamaStatus.cloudModelCount === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      {ollamaStatus?.available && !ollamaCloudDisabled && (
+                        <span
+                          style={{
+                            fontSize: '0.75rem',
+                            // Not signed in is a neutral state here, not a warning —
+                            // the same read every other provider gets.
+                            color: ollamaCloudAuthenticated
+                              ? 'var(--color-success, #3fb950)'
+                              : 'var(--text-tertiary)'
+                          }}
+                        >
+                          {ollamaCloudAuthenticated
+                            ? ollamaCloudApiKeyConfigured
+                              ? 'Cloud API key configured'
+                              : `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
+                            : 'Cloud not signed in'}
+                        </span>
+                      )}
+                      <PillButton
+                        size="compact"
+                        variant="secondary"
+                        onClick={() => onRefreshProviderMcpStatus?.('ollama')}
+                      >
+                        Refresh
+                      </PillButton>
+                    </div>
+
+                    <label className="settings-label">Ollama endpoint</label>
+                    <CommittedDraftField
+                      className="settings-select"
+                      committed={ollamaBaseUrl}
+                      onCommit={(value) => onChange({ ollamaBaseUrl: value })}
+                      placeholder="http://127.0.0.1:11434"
+                    />
+                    <p className="settings-hint">
+                      This endpoint is only for the local Ollama service. Cloud API-key requests go
+                      directly to ollama.com and the key is never added to local requests.
+                    </p>
+
+                    <label className="settings-label">Default Ollama model</label>
+                    {ollamaCatalogModels.length > 0 ? (
+                      <div className="settings-option-list">
+                        {ollamaCloudModels.length > 0 && (
+                          <div style={{ display: 'grid', gap: '6px' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                color: 'var(--text-secondary)',
+                                fontSize: '0.76rem',
+                                fontWeight: 700
+                              }}
+                            >
+                              <OllamaCloudIcon decorative />
+                              <span>Ollama Cloud</span>
+                            </div>
+                            {ollamaCloudModels.map(renderOllamaModelOption)}
+                          </div>
+                        )}
+                        {ollamaLocalModels.length > 0 && (
+                          <div style={{ display: 'grid', gap: '6px' }}>
+                            <div
+                              style={{
+                                color: 'var(--text-secondary)',
+                                fontSize: '0.76rem',
+                                fontWeight: 700,
+                                marginTop: ollamaCloudModels.length > 0 ? '4px' : 0
+                              }}
+                            >
+                              Local models
+                            </div>
+                            {ollamaLocalModels.map(renderOllamaModelOption)}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <CommittedDraftField
+                        className="settings-select"
+                        committed={ollamaDefaultModel}
+                        onCommit={(value) => onChange({ ollamaDefaultModel: value })}
+                        placeholder={ollamaStatus?.defaultModel || 'qwen3:4b-instruct'}
+                      />
+                    )}
+                    <p className="settings-hint">
+                      Cloud rows run remotely through your signed-in local daemon; local rows are exact
+                      installed tags. Leave blank only when no model catalog is available.
+                    </p>
+                    {/* Tier retirement (2026-07): the Ollama coding-profile picker + tool-control
+                        tier radios + provider-parity grant were removed. Local models are governed
+                        by the standard permission role (set per chat from the composer), identical
+                        to every other provider — no Ollama-only tiering to configure here. */}
+                    {ollamaStatus?.error && (
+                      <p className="settings-hint" style={{ color: 'var(--color-warning, #d29922)' }}>
+                        {String(ollamaStatus.error)}
+                      </p>
+                    )}
                     {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
+                  )}
+                  {providerRailSelection === 'mistral' && (
+                  <>
                   <SettingsProviderAuthCard
                     provider="mistral"
                     label="Mistral"
@@ -4771,6 +5242,10 @@ export function SettingsPanel({
                     {renderProviderUpgradeFootnote('mistral')}
                     {renderProviderPauseControls('mistral')}
                   </SettingsProviderAuthCard>
+                  <MistralQuotaCard />
+                  </>
+                  )}
+                  {providerRailSelection === 'muse' && (
                   <SettingsProviderAuthCard
                     provider="muse"
                     label="Muse"
@@ -4802,6 +5277,8 @@ export function SettingsPanel({
                     />
                     {renderProviderPauseControls('muse')}
                   </SettingsProviderAuthCard>
+                  )}
+                  {providerRailSelection === 'devin' && (
                   <SettingsProviderAuthCard
                     provider="devin"
                     label="Devin"
@@ -4843,10 +5320,11 @@ export function SettingsPanel({
                     </p>
                     {renderProviderPauseControls('devin')}
                   </SettingsProviderAuthCard>
-                  <PiProviderKeysCard />
-                  <ApiUsageQuotaCard />
-                  <MistralQuotaCard />
+                  )}
+                  {providerRailSelection === 'pi' && <PiProviderKeysCard />}
+                  {providerRailSelection === 'api-usage' && <ApiUsageQuotaCard />}
 
+                  {providerRailSelection === 'antigravity' && (
                   <AntigravityOptInCard
                     enabled={antigravityEnabled}
                     acceptedAt={antigravityOptInAcceptedAt}
@@ -4860,6 +5338,8 @@ export function SettingsPanel({
                     }
                     upgradeState={providerUpgradeState('antigravity')}
                   />
+                  )}
+                  </div>
                 </div>
               </div>
 
@@ -5348,382 +5828,6 @@ export function SettingsPanel({
                     disabled
                   />
                 </label>
-              </div>
-
-              <div className="settings-group">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Claude
-                </h4>
-
-                {claudeAuthStatus && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'flex-start',
-                      gap: 'var(--space-sm)',
-                      marginBottom: 'var(--space-xs)'
-                    }}
-                  >
-                    {!claudeAuthStatus.available ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        ● Binary not found
-                      </span>
-                    ) : claudeAuthStatus.apiKeyConfigured ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
-                        ● API key configured
-                      </span>
-                    ) : claudeAuthStatus.authState &&
-                      !['not logged in', 'not authenticated', 'unauthenticated', 'error'].some(
-                        (p) => claudeAuthStatus.authState.toLowerCase().includes(p)
-                      ) ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--color-success, #3fb950)' }}>
-                        ● Authenticated
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                        ● Not authenticated
-                      </span>
-                    )}
-                    {claudeAuthStatus.version && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                        {claudeAuthStatus.version}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Sign-in lives in the "Provider sign-in" checklist above; this
-                    section keeps the API-key / CLI-path controls plus the shared
-                    login-state feedback (which reflects that single Login button). */}
-                {(claudeLoginState === 'success' || claudeLoginState === 'error') && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-sm)',
-                      flexWrap: 'wrap',
-                      marginBottom: 'var(--space-xs)'
-                    }}
-                  >
-                    {claudeLoginState === 'success' && (
-                      <span
-                        className="settings-hint"
-                        style={{ margin: 0, color: 'var(--color-success, #3fb950)' }}
-                      >
-                        Browser opened
-                      </span>
-                    )}
-                    {claudeLoginState === 'error' && (
-                      <span
-                        className="settings-hint"
-                        style={{ margin: 0, color: 'var(--color-danger, #f85149)' }}
-                      >
-                        Login failed — check CLI is installed
-                      </span>
-                    )}
-                  </div>
-                )}
-                <label className="settings-label">Anthropic API key</label>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 'var(--space-sm)',
-                    marginBottom: 'var(--space-xs)'
-                  }}
-                >
-                  <input
-                    className="settings-select"
-                    type="password"
-                    value={claudeKeyInput}
-                    disabled={claudeApiKeyStorageUnavailable}
-                    onChange={(e) => setClaudeKeyInput(e.target.value)}
-                    placeholder={
-                      claudeAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'sk-ant-...'
-                    }
-                    style={{ flex: 1 }}
-                  />
-                  <PillButton
-                    size="compact"
-                    variant="primary"
-                    disabled={!claudeKeyInput.trim() || claudeApiKeyStorageUnavailable}
-                    onClick={() => {
-                      onStoreClaudeApiKey?.(claudeKeyInput)
-                      setClaudeKeyInput('')
-                    }}
-                  >
-                    Save
-                  </PillButton>
-                  {claudeAuthStatus?.apiKeyConfigured && (
-                    <PillButton size="compact" variant="danger" onClick={onClearClaudeApiKey}>
-                      Clear
-                    </PillButton>
-                  )}
-                </div>
-                <p className="settings-hint">
-                  {claudeApiKeyStorageUnavailable
-                    ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
-                </p>
-
-                <label className="settings-label">Claude CLI binary</label>
-                <CommittedDraftField
-                  className="settings-select"
-                  committed={claudeBinaryPath}
-                  onCommit={(value) => onChange({ claudeBinaryPath: value })}
-                  placeholder="Auto-detect, or /Users/you/.local/bin/claude"
-                />
-                <p className="settings-hint">Optional path override.</p>
-              </div>
-
-              <div className="settings-group">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Kimi
-                </h4>
-
-                {kimiAuthStatus && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-sm)',
-                      marginBottom: 'var(--space-xs)'
-                    }}
-                  >
-                    {!kimiAuthStatus.available ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        {kimiAuthStatus.binaryPath
-                          ? '● Binary found — stable identity/startup/ACP compatibility checks failed'
-                          : '● Binary not found'}
-                      </span>
-                    ) : kimiAuthStatus.transportSupported === false ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                        ● Kimi Code detected — stable identity/startup/ACP compatibility checks
-                        failed
-                      </span>
-                    ) : ['authenticated', 'api-key', 'oauth'].includes(
-                        (kimiAuthStatus.authState || '').toLowerCase()
-                      ) ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
-                        ● Managed ACP authenticated ({kimiAuthStatus.authState})
-                      </span>
-                    ) : (kimiAuthStatus.authState || '').toLowerCase() === 'unknown' ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                        ● Managed ACP credential state not observed
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                        ● Managed ACP not authenticated
-                      </span>
-                    )}
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                      Usage-query key: {kimiAuthStatus.apiKeyConfigured ? 'stored' : 'not stored'}
-                    </span>
-                  </div>
-                )}
-
-                <label className="settings-label">Moonshot API key (usage only)</label>
-                <p
-                  style={{
-                    fontSize: '0.72rem',
-                    color: 'var(--text-secondary)',
-                    margin: '0 0 var(--space-xs)'
-                  }}
-                >
-                  Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
-                  (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key
-                  stored here is not projected into ACP. Structural ACP admission is always enabled;
-                  compatible unreviewed runtimes run with the explicit{' '}
-                  <code>unattested-development</code> label. Credentials do not bypass stable
-                  identity, bounded startup, or ACP compatibility checks.
-                </p>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 'var(--space-sm)',
-                    marginBottom: 'var(--space-xs)'
-                  }}
-                >
-                  <input
-                    className="settings-select"
-                    type="password"
-                    value={kimiKeyInput}
-                    disabled={kimiApiKeyStorageUnavailable}
-                    onChange={(e) => setKimiKeyInput(e.target.value)}
-                    placeholder={
-                      kimiAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'moonshot-...'
-                    }
-                    style={{ flex: 1 }}
-                  />
-                  <PillButton
-                    size="compact"
-                    variant="primary"
-                    disabled={!kimiKeyInput.trim() || kimiApiKeyStorageUnavailable}
-                    onClick={() => {
-                      onStoreKimiApiKey?.(kimiKeyInput)
-                      setKimiKeyInput('')
-                    }}
-                  >
-                    Save
-                  </PillButton>
-                  {kimiAuthStatus?.apiKeyConfigured && (
-                    <PillButton size="compact" variant="danger" onClick={onClearKimiApiKey}>
-                      Clear
-                    </PillButton>
-                  )}
-                </div>
-                <p className="settings-hint">
-                  {kimiApiKeyStorageUnavailable
-                    ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on this Mac; not supplied to managed ACP.'}
-                </p>
-
-                <label className="settings-label">Kimi CLI binary</label>
-                <CommittedDraftField
-                  className="settings-select"
-                  committed={kimiBinaryPath}
-                  onCommit={(value) => onChange({ kimiBinaryPath: value })}
-                  placeholder="Auto-detect, or /path/to/kimi"
-                />
-                <p className="settings-hint">
-                  Optional path override for Kimi Code CLI.
-                  {kimiAuthStatus?.version ? ` Current: ${kimiAuthStatus.version}.` : ''}
-                </p>
-              </div>
-
-              <div className="settings-group">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Local / Ollama
-                </h4>
-
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'var(--space-sm)',
-                    marginBottom: 'var(--space-xs)',
-                    flexWrap: 'wrap'
-                  }}
-                >
-                  {(ollamaStatus?.localAvailable ?? ollamaStatus?.available) ? (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--color-success, #3fb950)' }}>
-                      ● Local service reachable
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-                      ● Local service not reachable
-                    </span>
-                  )}
-                  {typeof ollamaStatus?.localModelCount === 'number' && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                      {ollamaStatus.localModelCount} local model
-                      {ollamaStatus.localModelCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                  {typeof ollamaStatus?.cloudModelCount === 'number' && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                      {ollamaStatus.cloudModelCount} Cloud model
-                      {ollamaStatus.cloudModelCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                  {ollamaStatus?.available && !ollamaCloudDisabled && (
-                    <span
-                      style={{
-                        fontSize: '0.75rem',
-                        // Not signed in is a neutral state here, not a warning —
-                        // the same read every other provider gets.
-                        color: ollamaCloudAuthenticated
-                          ? 'var(--color-success, #3fb950)'
-                          : 'var(--text-tertiary)'
-                      }}
-                    >
-                      {ollamaCloudAuthenticated
-                        ? ollamaCloudApiKeyConfigured
-                          ? 'Cloud API key configured'
-                          : `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
-                        : 'Cloud not signed in'}
-                    </span>
-                  )}
-                  <PillButton
-                    size="compact"
-                    variant="secondary"
-                    onClick={() => onRefreshProviderMcpStatus?.('ollama')}
-                  >
-                    Refresh
-                  </PillButton>
-                </div>
-                {renderProviderPauseControls('ollama')}
-
-                <label className="settings-label">Ollama endpoint</label>
-                <CommittedDraftField
-                  className="settings-select"
-                  committed={ollamaBaseUrl}
-                  onCommit={(value) => onChange({ ollamaBaseUrl: value })}
-                  placeholder="http://127.0.0.1:11434"
-                />
-                <p className="settings-hint">
-                  This endpoint is only for the local Ollama service. Cloud API-key requests go
-                  directly to ollama.com and the key is never added to local requests.
-                </p>
-
-                <label className="settings-label">Default Ollama model</label>
-                {ollamaCatalogModels.length > 0 ? (
-                  <div className="settings-option-list">
-                    {ollamaCloudModels.length > 0 && (
-                      <div style={{ display: 'grid', gap: '6px' }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            color: 'var(--text-secondary)',
-                            fontSize: '0.76rem',
-                            fontWeight: 700
-                          }}
-                        >
-                          <OllamaCloudIcon decorative />
-                          <span>Ollama Cloud</span>
-                        </div>
-                        {ollamaCloudModels.map(renderOllamaModelOption)}
-                      </div>
-                    )}
-                    {ollamaLocalModels.length > 0 && (
-                      <div style={{ display: 'grid', gap: '6px' }}>
-                        <div
-                          style={{
-                            color: 'var(--text-secondary)',
-                            fontSize: '0.76rem',
-                            fontWeight: 700,
-                            marginTop: ollamaCloudModels.length > 0 ? '4px' : 0
-                          }}
-                        >
-                          Local models
-                        </div>
-                        {ollamaLocalModels.map(renderOllamaModelOption)}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <CommittedDraftField
-                    className="settings-select"
-                    committed={ollamaDefaultModel}
-                    onCommit={(value) => onChange({ ollamaDefaultModel: value })}
-                    placeholder={ollamaStatus?.defaultModel || 'qwen3:4b-instruct'}
-                  />
-                )}
-                <p className="settings-hint">
-                  Cloud rows run remotely through your signed-in local daemon; local rows are exact
-                  installed tags. Leave blank only when no model catalog is available.
-                </p>
-                {/* Tier retirement (2026-07): the Ollama coding-profile picker + tool-control
-                    tier radios + provider-parity grant were removed. Local models are governed
-                    by the standard permission role (set per chat from the composer), identical
-                    to every other provider — no Ollama-only tiering to configure here. */}
-                {ollamaStatus?.error && (
-                  <p className="settings-hint" style={{ color: 'var(--color-warning, #d29922)' }}>
-                    {String(ollamaStatus.error)}
-                  </p>
-                )}
               </div>
             </>
           ) /* end providers */

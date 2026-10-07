@@ -21,6 +21,7 @@ import {
   userMcpServerStatusLabel,
   uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
+import { SETTINGS_PROVIDER_RAIL_ORDER } from './SettingsProviderRail'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import {
   TRANSCRIPT_TEXT_SIZE_OPTIONS,
@@ -146,6 +147,28 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
   }
+}
+
+/** Rail tab ids in render order (role="tab" buttons carry data-provider). */
+function railTabOrder(html: string): string[] {
+  return [...html.matchAll(/role="tab"[^>]*data-provider="([^"]+)"/g)].map((match) => match[1])
+}
+
+/** One whole rail tab (logo + dot), for dot / tooltip / selection assertions. */
+function railTab(html: string, id: string): string {
+  return (
+    html.match(
+      new RegExp(`<button[^>]*role="tab"[^>]*data-provider="${id}"[^>]*>[\\s\\S]*?</button>`)
+    )?.[0] ?? ''
+  )
+}
+
+/** The selected provider pane: from the tabpanel to the Prompt caching section after it. */
+function pane(html: string): string {
+  const start = html.indexOf('role="tabpanel"')
+  if (start === -1) return ''
+  const end = html.indexOf('Prompt caching', start)
+  return html.slice(start, end === -1 ? undefined : end)
 }
 
 describe('SettingsPanel provider cards', () => {
@@ -358,35 +381,124 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('>Install<')
   })
 
+  it('renders the Providers tab as a rail of provider tabs beside ONE pane, first entry open under SSR', () => {
+    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+
+    // The rail is the model picker's vocabulary: a vertical tablist, one logo
+    // tab per provider, in the canonical order, with AntiGravity last and no
+    // retired Gemini anywhere.
+    expect(html).toContain('class="settings-provider-rail" role="tablist"')
+    expect(railTabOrder(html)).toEqual(SETTINGS_PROVIDER_RAIL_ORDER.map((entry) => entry.id))
+    expect(html).not.toContain('data-provider="gemini"')
+    expect(html).not.toContain('settings-provider-auth-grid')
+
+    // Without storage (SSR), the first entry's pane is the only card rendered.
+    expect(railTab(html, 'codex')).toContain('aria-selected="true"')
+    expect(html.match(/aria-selected="true"/g)).toHaveLength(1)
+    expect(html).toContain('role="tabpanel"')
+    expect(html).toContain('data-provider-pane="codex"')
+    expect(html.match(/<article class="settings-provider-auth-card/g)).toHaveLength(1)
+    expect(pane(html)).toContain('data-provider="codex"')
+    expect(pane(html)).toContain('TaskWraith Codex sign-in')
+    expect(pane(html)).not.toContain('Login with Claude')
+    expect(pane(html)).not.toContain('Anthropic API key')
+  })
+
+  it('opens the rail on an explicit default selection and labels the pane from its tab', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'devin' })} />
+    )
+
+    expect(railTab(html, 'devin')).toContain('aria-selected="true"')
+    expect(railTab(html, 'devin')).toContain('id="settings-provider-rail-tab-devin"')
+    expect(railTab(html, 'devin')).toContain('aria-controls="settings-provider-rail-pane-devin"')
+    expect(html).toContain('id="settings-provider-rail-pane-devin"')
+    expect(html).toContain('aria-labelledby="settings-provider-rail-tab-devin"')
+    expect(html.match(/<article class="settings-provider-auth-card/g)).toHaveLength(1)
+    expect(pane(html)).toContain('data-provider="devin"')
+    // An unknown default falls back to the first entry rather than an empty pane.
+    const fallback = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'gemini' })} />
+    )
+    expect(pane(fallback)).toContain('data-provider="codex"')
+  })
+
   it('renders Cursor and Grok as CLI-login providers without raw env flags', () => {
+    const props = makeSettingsProps({
+      onProviderLogin: () => {},
+      onProviderLogout: () => {},
+      onProviderUpgrade: () => {}
+    })
+    const cursorHtml = renderToStaticMarkup(
+      <SettingsPanel {...props} defaultProviderRailSelection="cursor" />
+    )
+    const grokHtml = renderToStaticMarkup(
+      <SettingsPanel {...props} defaultProviderRailSelection="grok" />
+    )
+
+    // Rail: both CLI-owned auth surfaces read as ready (green dot), with the
+    // label · status tooltip, regardless of which pane is open.
+    for (const html of [cursorHtml, grokHtml]) {
+      expect(railTab(html, 'cursor')).toContain('settings-provider-auth-status-dot-signed-in')
+      expect(railTab(html, 'cursor')).toContain('title="Cursor · Available · CLI sign-in"')
+      expect(railTab(html, 'grok')).toContain('settings-provider-auth-status-dot-signed-in')
+      expect(railTab(html, 'grok')).toContain('title="Grok · Available · CLI sign-in"')
+    }
+
+    expect(pane(cursorHtml)).toContain('settings-provider-auth-card-partial provider-cursor')
+    expect(pane(cursorHtml)).toContain('cursor-agent login')
+    expect(pane(cursorHtml)).toContain('Open Terminal to sign in')
+    expect(pane(cursorHtml)).toContain(
+      'settings-provider-auth-status-dot settings-provider-auth-status-dot-signed-in'
+    )
+    expect(pane(grokHtml)).toContain('settings-provider-auth-card-partial provider-grok')
+    expect(pane(grokHtml)).toContain('Available · CLI sign-in')
+    expect(pane(grokHtml)).toContain('<code>grok</code>')
+    expect(cursorHtml).toContain('Provider tools')
+    for (const html of [cursorHtml, grokHtml]) {
+      expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
+      expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
+      expect(html).not.toContain('Managed runs unavailable')
+    }
+  })
+
+  it('folds the Claude credential controls into the Claude pane', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
-          onProviderLogin: () => {},
-          onProviderLogout: () => {},
-          onProviderUpgrade: () => {}
+          defaultProviderRailSelection: 'claude',
+          claudeAuthStatus: {
+            available: true,
+            authState: 'logged in',
+            apiKeyConfigured: false,
+            encryptionAvailable: true,
+            version: '2.1.0'
+          }
         })}
       />
     )
 
-    expect(html).toContain('settings-provider-auth-card-partial provider-cursor')
-    expect(html).toContain('cursor-agent login')
-    expect(html).toContain('Open Terminal to sign in')
-    expect(html).toContain('settings-provider-auth-card-partial provider-grok')
-    expect(html).toContain('Available · CLI sign-in')
-    expect(html).toContain(
-      'settings-provider-auth-status-dot settings-provider-auth-status-dot-signed-in'
-    )
-    expect(html).toContain('Provider tools')
-    expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
-    expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
-    expect(html).not.toContain('Managed runs unavailable')
+    const claudePane = pane(html)
+    expect(claudePane).toContain('data-provider="claude"')
+    expect(claudePane).toContain('Login with Claude')
+    // The former "Claude" settings group now lives under a CREDENTIAL label.
+    expect(claudePane).toContain('settings-provider-rail-section-label">Credential<')
+    expect(claudePane).toContain('● Authenticated')
+    expect(claudePane).toContain('2.1.0')
+    expect(claudePane).toContain('Anthropic API key')
+    expect(claudePane).toContain('placeholder="sk-ant-..."')
+    expect(claudePane).toContain('API key takes priority over the Claude Code login session')
+    expect(claudePane).toContain('Claude CLI binary')
+    expect(claudePane).toContain('Optional path override.')
+    // No stand-alone "Claude" group remains below the sign-in area.
+    expect(html.match(/sidebar-section-title" style="margin:0">Claude</g)).toBeNull()
   })
 
   it('describes Kimi structural compatibility failures without a reviewed-roster gate', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'kimi',
           kimiAuthStatus: {
             available: false,
             authState: 'oauth',
@@ -399,33 +511,49 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('stable identity/startup/ACP compatibility checks failed')
-    expect(html).toContain('Structural ACP admission is always enabled')
-    expect(html).toContain('unattested-development')
+    const kimiPane = pane(html)
+    expect(kimiPane).toContain('data-provider="kimi"')
+    // The former "Kimi" settings group is folded in under CREDENTIAL.
+    expect(kimiPane).toContain('settings-provider-rail-section-label">Credential<')
+    expect(kimiPane).toContain('Moonshot API key (usage only)')
+    expect(kimiPane).toContain('Kimi CLI binary')
+    expect(kimiPane).toContain('stable identity/startup/ACP compatibility checks failed')
+    expect(kimiPane).toContain('Structural ACP admission is always enabled')
+    expect(kimiPane).toContain('unattested-development')
     expect(html).not.toContain('reviewed ACP runtime admission')
     expect(html).not.toContain('reviewed runtime admission')
   })
 
-  it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
-    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+  it('renders the Ollama cloud sign-in card as the Ollama pane', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'ollama' })} />
+    )
 
     // Ollama's sign-in card (filling the retired-Gemini slot) reports the
     // ollama.com account in the same vocabulary as every other provider —
     // before any status lands, that is the shared "not checked yet", never the
-    // retired amber "setup optional".
-    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
-    expect(html).not.toContain('settings-provider-auth-card-partial provider-ollama')
+    // retired amber "setup optional". The rail dot agrees: neutral, not amber.
+    expect(railTab(html, 'ollama')).toContain('settings-provider-auth-status-dot-not-signed-in')
+    expect(railTab(html, 'ollama')).not.toContain('settings-provider-auth-status-dot-partial')
+    const ollamaPane = pane(html)
+    expect(ollamaPane).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(ollamaPane).not.toContain('settings-provider-auth-card-partial provider-ollama')
     expect(html).not.toContain('Local setup optional')
-    expect(html).toContain('ollama signin')
-    expect(html).toContain('sign in or add a key for Ollama Cloud')
-    expect(html).toContain('Open Terminal to sign in')
-    expect(html).toContain('Ollama Cloud API key')
+    expect(ollamaPane).toContain('ollama signin')
+    expect(ollamaPane).toContain('sign in or add a key for Ollama Cloud')
+    expect(ollamaPane).toContain('Open Terminal to sign in')
+    expect(ollamaPane).toContain('Ollama Cloud API key')
+    // The former "Local / Ollama" group is folded into the same pane.
+    expect(ollamaPane).toContain('settings-provider-rail-section-label">Local / Ollama<')
+    expect(ollamaPane).toContain('Ollama endpoint')
+    expect(ollamaPane).toContain('Default Ollama model')
   })
 
   it('reads a running but signed-out Ollama as ready, not as optional setup', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'ollama',
           ollamaStatus: {
             available: true,
             localAvailable: true,
@@ -440,11 +568,12 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
-    expect(html).toContain('Running · not signed in')
+    expect(railTab(html, 'ollama')).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(pane(html)).toContain('settings-provider-auth-card-signed-in provider-ollama')
+    expect(pane(html)).toContain('Running · not signed in')
     expect(html).not.toContain('Local runtime ready')
     expect(html).not.toContain('Cloud sign-in optional')
-    // The Local / Ollama group keeps the runtime signal, without amber.
+    // The Local / Ollama section keeps the runtime signal, without amber.
     const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
     expect(localGroup).toContain('Local service reachable')
     expect(localGroup).toContain('Cloud not signed in')
@@ -455,6 +584,7 @@ describe('SettingsPanel provider cards', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'ollama',
           ollamaStatus: {
             available: false,
             localAvailable: false,
@@ -468,9 +598,10 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
-    expect(html).not.toContain('settings-provider-auth-card-not-available provider-ollama')
-    expect(html).toContain('Ollama not running')
+    expect(railTab(html, 'ollama')).not.toContain('settings-provider-auth-status-dot-not-available')
+    expect(pane(html)).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(pane(html)).not.toContain('settings-provider-auth-card-not-available provider-ollama')
+    expect(pane(html)).toContain('Ollama not running')
     expect(html).not.toContain('Local setup optional')
     const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
     expect(localGroup).toContain('Local service not reachable')
@@ -482,6 +613,7 @@ describe('SettingsPanel provider cards', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'ollama',
           ollamaStatus: {
             available: true,
             setupRequired: false,
@@ -517,20 +649,22 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
-    expect(html).toContain('Signed in (pro)')
-    expect(html).toContain('Ollama Cloud</span>')
-    expect(html).toContain('Local models')
-    expect(html).toContain('glm-5.2:cloud')
-    expect(html).toContain('qwen3.5:9b')
-    expect(html).toContain('aria-label="Ollama Cloud model"')
-    expect(html).toContain('1000k ctx')
+    const ollamaPane = pane(html)
+    expect(ollamaPane).toContain('settings-provider-auth-card-signed-in provider-ollama')
+    expect(ollamaPane).toContain('Signed in (pro)')
+    expect(ollamaPane).toContain('Ollama Cloud</span>')
+    expect(ollamaPane).toContain('Local models')
+    expect(ollamaPane).toContain('glm-5.2:cloud')
+    expect(ollamaPane).toContain('qwen3.5:9b')
+    expect(ollamaPane).toContain('aria-label="Ollama Cloud model"')
+    expect(ollamaPane).toContain('1000k ctx')
   })
 
   it('labels the direct API-key route without implying local-daemon auth', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'ollama',
           ollamaStatus: {
             available: true,
             localAvailable: false,
@@ -558,15 +692,16 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('Cloud API key saved')
-    expect(html).toContain('Cloud models use Ollama’s direct API')
-    expect(html).toContain('Local service not reachable')
+    expect(pane(html)).toContain('Cloud API key saved')
+    expect(pane(html)).toContain('Cloud models use Ollama’s direct API')
+    expect(pane(html)).toContain('Local service not reachable')
   })
 
-  it('renders the Mistral Vibe plan setup card separately from Pi API keys', () => {
+  it('renders the Mistral Vibe plan setup card as the Mistral pane, with its usage meter and apart from Pi keys', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'mistral',
           providerStatusByProvider: {
             mistral: { available: true, authState: 'unknown' }
           },
@@ -576,24 +711,28 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    const mistralStart = html.indexOf('provider-mistral')
-    expect(mistralStart).toBeGreaterThanOrEqual(0)
-    const nextProviderCard = html.indexOf(
-      '<article class="settings-provider-auth-card',
-      mistralStart + 'provider-mistral'.length
+    const mistralPane = pane(html)
+    expect(mistralPane).toContain('data-provider="mistral"')
+    expect(mistralPane).toContain('Mistral Vibe over managed ACP')
+    expect(mistralPane).toContain('vibe --setup')
+    expect(mistralPane).toContain('Open Terminal to sign in')
+    expect(mistralPane).toContain('Upgrade CLI…')
+    expect(mistralPane).not.toContain('Sign out')
+    // The Mistral usage meter folds into the same pane, under the auth card.
+    expect(mistralPane).toContain('Mistral usage meter')
+    expect(mistralPane.indexOf('Mistral usage meter')).toBeGreaterThan(
+      mistralPane.indexOf('vibe --setup')
     )
-    const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
-    expect(card).toContain('Mistral Vibe over managed ACP')
-    expect(card).toContain('vibe --setup')
-    expect(card).toContain('Open Terminal to sign in')
-    expect(card).toContain('Upgrade CLI…')
-    expect(card).not.toContain('Sign out')
+    // Pi keeps its own rail tab and pane; nothing of it leaks into Mistral's.
+    expect(mistralPane).not.toContain('data-provider="pi"')
+    expect(railTab(html, 'pi')).toContain('title="Pi · Upstream API keys"')
   })
 
   it("renders Vibe's authenticated ACP status as a green signed-in card", () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'mistral',
           providerStatusByProvider: {
             mistral: {
               available: true,
@@ -607,12 +746,9 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    const mistralStart = html.indexOf('provider-mistral')
-    const nextProviderCard = html.indexOf(
-      '<article class="settings-provider-auth-card',
-      mistralStart + 'provider-mistral'.length
-    )
-    const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(railTab(html, 'mistral')).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(railTab(html, 'mistral')).toContain('title="Mistral · Mistral Vibe signed in"')
+    const card = pane(html)
     expect(card).toContain('Mistral Vibe signed in')
     expect(card).toContain('settings-provider-auth-status-dot-signed-in')
     expect(card).toContain('did not read or store the credential')
@@ -623,6 +759,7 @@ describe('SettingsPanel provider cards', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'muse',
           providerStatusByProvider: {
             muse: {
               available: true,
@@ -635,13 +772,10 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    const museStart = html.indexOf('provider-muse')
-    expect(museStart).toBeGreaterThanOrEqual(0)
-    const nextProviderCard = html.indexOf(
-      '<article class="settings-provider-auth-card',
-      museStart + 'provider-muse'.length
-    )
-    const card = html.slice(museStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(railTab(html, 'muse')).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(railTab(html, 'muse')).toContain('title="Muse · Muse Code configured"')
+    const card = pane(html)
+    expect(card).toContain('data-provider="muse"')
     expect(card).toContain('Muse Code configured')
     expect(card).toContain('settings-provider-auth-status-dot-signed-in')
     expect(card).not.toContain('setup unverified')
@@ -651,6 +785,7 @@ describe('SettingsPanel provider cards', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'devin',
           providerStatusByProvider: {
             devin: {
               available: true,
@@ -662,35 +797,67 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    const devinStart = html.indexOf('provider-devin')
-    expect(devinStart).toBeGreaterThanOrEqual(0)
-    const nextProviderCard = html.indexOf(
-      '<article class="settings-provider-auth-card',
-      devinStart + 'provider-devin'.length
-    )
-    const card = html.slice(devinStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(railTab(html, 'devin')).toContain('settings-provider-auth-status-dot-signed-in')
+    const card = pane(html)
+    expect(card).toContain('data-provider="devin"')
     expect(card).toContain('Devin signed in')
     expect(card).toContain('settings-provider-auth-status-dot-signed-in')
     expect(card).toContain('Custom API server URL')
     expect(card).not.toContain('credential state not observed')
   })
 
-  it('buries the AntiGravity risk-consent card after Ollama', () => {
+  it('gives Pi and API usage their own rail entries and panes', () => {
+    const piHtml = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'pi' })} />
+    )
+    expect(railTab(piHtml, 'pi')).toContain('aria-selected="true"')
+    expect(pane(piHtml)).toContain('data-provider="pi"')
+    expect(pane(piHtml)).toContain('<strong>Pi</strong>')
+    expect(pane(piHtml)).not.toContain('data-provider="api-usage"')
+
+    // API usage spans several API providers, so it is its own entry with the
+    // generic key glyph rather than a brand logo, and never hides under Pi.
+    const usageHtml = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'api-usage' })} />
+    )
+    expect(railTab(usageHtml, 'api-usage')).toContain('settings-provider-rail-generic-icon')
+    expect(railTab(usageHtml, 'api-usage')).toContain(
+      'title="API usage · Usage and credit anchors"'
+    )
+    expect(pane(usageHtml)).toContain('data-provider="api-usage"')
+    expect(pane(usageHtml)).toContain('API usage and credit anchors')
+    expect(pane(usageHtml)).toContain('<strong>DeepSeek</strong>')
+    expect(pane(usageHtml)).not.toContain('data-provider="pi"')
+  })
+
+  it('buries the AntiGravity risk-consent tab after Ollama, last on the rail', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
-    const ollamaCard = html.indexOf('data-provider="ollama"')
-    const antigravityCard = html.indexOf('data-provider="antigravity"')
-    expect(ollamaCard).toBeGreaterThan(-1)
-    expect(antigravityCard).toBeGreaterThan(ollamaCard)
-    expect(html).toContain('Disabled — explicit consent required')
-    expect(html).toContain('ban-risk; requires explicit consent')
-    expect(html).toContain('Accept risk and enable')
+    const order = railTabOrder(html)
+    expect(order.indexOf('ollama')).toBeGreaterThan(-1)
+    expect(order.indexOf('antigravity')).toBeGreaterThan(order.indexOf('ollama'))
+    expect(order[order.length - 1]).toBe('antigravity')
+    // Unconsented: the rail dot is red and says why.
+    expect(railTab(html, 'antigravity')).toContain('settings-provider-auth-status-dot-not-available')
+    expect(railTab(html, 'antigravity')).toContain(
+      'title="AntiGravity · Disabled — explicit consent required"'
+    )
+
+    const antigravityHtml = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'antigravity' })} />
+    )
+    const card = pane(antigravityHtml)
+    expect(card).toContain('data-provider="antigravity"')
+    expect(card).toContain('Disabled — explicit consent required')
+    expect(card).toContain('ban-risk; requires explicit consent')
+    expect(card).toContain('Accept risk and enable')
   })
 
   it('offers the shared CLI upgrade flow inside the consented AntiGravity lane', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
         {...makeSettingsProps({
+          defaultProviderRailSelection: 'antigravity',
           antigravityEnabled: true,
           antigravityOptInAcceptedAt: 1_700_000_000_000,
           onProviderLogin: () => {},
@@ -700,22 +867,30 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    const antigravityStart = html.indexOf('data-provider="antigravity"')
-    expect(antigravityStart).toBeGreaterThanOrEqual(0)
-    const card = html.slice(antigravityStart)
+    // Consent recorded: the rail dot turns amber with the card's own wording.
+    expect(railTab(html, 'antigravity')).toContain('settings-provider-auth-status-dot-partial')
+    expect(railTab(html, 'antigravity')).toContain(
+      'title="AntiGravity · Risk acceptance recorded"'
+    )
+    const card = pane(html)
+    expect(card).toContain('data-provider="antigravity"')
     expect(card).toContain('Open Terminal to sign in')
     expect(card).toContain('Upgrade CLI…')
     expect(card).toContain('Upgrade terminal opened')
   })
 
   it('does not render the retired Gemini sign-in card on the Providers tab', () => {
-    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ defaultProviderRailSelection: 'claude' })} />
+    )
 
     // Gemini is RETIRED — its sign-in offer surface is gone (its chat history
-    // and the deeper shared-bridge wiring stay preserved).
+    // and the deeper shared-bridge wiring stay preserved): no rail tab, no pane.
+    expect(railTabOrder(html)).not.toContain('gemini')
+    expect(html).not.toContain('data-provider="gemini"')
     expect(html).not.toContain('Google Gemini profiles for OAuth')
     // Live providers still render their sign-in cards.
-    expect(html).toContain('Login with Claude')
+    expect(pane(html)).toContain('Login with Claude')
   })
 
   it('does not render the retired Gemini card in the MCP connected surfaces', () => {

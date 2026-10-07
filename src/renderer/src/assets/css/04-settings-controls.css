@@ -1478,6 +1478,165 @@
   gap: 10px;
 }
 
+/*
+ * Providers tab, compacted: a vertical rail of provider logo tabs on the left
+ * (the composer's combined model picker vocabulary — same 26px tab, same
+ * gliding selection pill) and ONE pane for the selected provider beside it.
+ * The pill is positioned from two counts the rail sets declaratively (tabs
+ * above it, group dividers above it), so first paint needs no measurement.
+ */
+.settings-provider-rail-layout {
+  --settings-provider-rail-tab-size: 26px;
+  --settings-provider-rail-tab-gap: 2px;
+  --settings-provider-rail-divider-size: 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.settings-provider-rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--settings-provider-rail-tab-gap);
+  min-width: 0;
+  padding: 4px 6px 4px 4px;
+  border-right: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .settings-provider-rail {
+  border-right-color: var(--surface-border);
+}
+
+/* ONE selection pill that glides between tabs and re-tints to each provider. */
+.settings-provider-rail-indicator {
+  --settings-provider-rail-indicator-accent: var(--accent);
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: var(--settings-provider-rail-tab-size);
+  height: var(--settings-provider-rail-tab-size);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--settings-provider-rail-indicator-accent) 17%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--settings-provider-rail-indicator-accent) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  transform: translateY(
+    calc(
+      var(--settings-provider-rail-active-index, 0) *
+        (var(--settings-provider-rail-tab-size) + var(--settings-provider-rail-tab-gap)) +
+        var(--settings-provider-rail-active-dividers, 0) *
+        (var(--settings-provider-rail-divider-size) + var(--settings-provider-rail-tab-gap))
+    )
+  );
+  pointer-events: none;
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+:root[data-reduce-motion="true"] .settings-provider-rail-indicator {
+  transition: none;
+}
+
+.settings-provider-rail-tab {
+  --settings-provider-rail-tab-accent: var(--accent);
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--settings-provider-rail-tab-size);
+  width: var(--settings-provider-rail-tab-size);
+  height: var(--settings-provider-rail-tab-size);
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 120ms ease;
+}
+
+.settings-provider-rail-tab .sidebar-provider-icon,
+.settings-provider-rail-tab .provider-brand-logo {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+}
+
+.settings-provider-rail-tab .provider-brand-logo {
+  opacity: 0.8;
+  transition: opacity 120ms ease;
+}
+
+.settings-provider-rail-generic-icon svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-secondary);
+}
+
+.settings-provider-rail-tab:hover:not(.is-active) {
+  background: color-mix(in srgb, var(--settings-provider-rail-tab-accent) 9%, transparent);
+}
+
+.settings-provider-rail-tab:hover .provider-brand-logo,
+.settings-provider-rail-tab.is-active .provider-brand-logo {
+  opacity: 1;
+}
+
+.settings-provider-rail-tab:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--settings-provider-rail-tab-accent) 64%, transparent);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+/*
+ * Provider Hub's rail dot: the auth status on the tab's bottom-right corner,
+ * ringed in the surface colour instead of the card dot's 3px halo so it reads
+ * as a badge on the logo rather than a glow behind it.
+ */
+.settings-provider-rail-tab .settings-provider-rail-dot {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--panel-bg) 92%, transparent);
+}
+
+.settings-provider-rail-divider {
+  display: block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 1px;
+  margin: 5px 0;
+  background: color-mix(in srgb, var(--panel-border) 70%, transparent);
+}
+
+.settings-provider-rail-pane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Pane sub-sections in the Provider Hub voice: CREDENTIAL, LOCAL / OLLAMA. */
+.settings-provider-rail-section-label {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .settings-provider-auth-card {
   display: flex;
   flex-direction: column;
@@ -3275,6 +3434,36 @@
   .settings-effects-grid,
   .settings-effects-labs-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* The provider rail lies flat above its pane; the pill cannot follow a
+     wrapping row, so the active tab carries its own tint instead. */
+  .settings-provider-rail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-provider-rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 0 0 6px;
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+  }
+
+  .settings-provider-rail-indicator {
+    display: none;
+  }
+
+  .settings-provider-rail-tab.is-active {
+    background: color-mix(in srgb, var(--settings-provider-rail-tab-accent) 17%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--settings-provider-rail-tab-accent) 28%, transparent);
+  }
+
+  .settings-provider-rail-divider {
+    width: 1px;
+    height: 16px;
+    margin: 0 5px;
   }
 
   .settings-mcp-header,
