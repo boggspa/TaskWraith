@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from './types'
 import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
+import { resolveEnsembleFanoutPolicy } from '../services/EnsembleFanoutPolicy'
 
 describe('Host-native draft normalization', () => {
   it('rejects a missing transcript instead of inventing empty history', () => {
@@ -87,5 +88,65 @@ describe('Host-native draft normalization', () => {
     expect(normalized.createdAt).toBe(50)
     expect(normalized.messages).toBe(stored.messages)
     expect(normalized.runs).toBe(stored.runs)
+  })
+})
+
+describe('ensemble fan-out normalization', () => {
+  function legacyEnsembleRecord(ensemble: Record<string, unknown> | undefined): ChatRecord {
+    return {
+      appChatId: 'legacy-ensemble',
+      scope: 'global',
+      chatKind: 'ensemble',
+      title: 'Legacy ensemble',
+      provider: 'codex',
+      archived: false,
+      messages: [],
+      runs: [],
+      createdAt: 1,
+      updatedAt: 2,
+      ...(ensemble ? { ensemble } : {})
+    } as unknown as ChatRecord
+  }
+
+  const legacySeat = {
+    id: 'seat-1',
+    provider: 'codex',
+    enabled: true,
+    role: 'Boss',
+    instructions: '',
+    order: 1
+  }
+
+  it('does not turn fan-out on for a legacy record that never set a policy', () => {
+    const normalized = normalizeCatalogueChatRecord(
+      legacyEnsembleRecord({ enabled: true, maxParticipants: 20, participants: [legacySeat] }),
+      () => 'codex'
+    )
+    expect(normalized.ensemble?.fanoutPolicy).toBeUndefined()
+    expect(resolveEnsembleFanoutPolicy(normalized.ensemble)).toBe('off')
+  })
+
+  it('does not turn fan-out on for an ensemble record with no stored config', () => {
+    const normalized = normalizeCatalogueChatRecord(legacyEnsembleRecord(undefined), () => 'codex')
+    expect(normalized.ensemble?.participants.length).toBeGreaterThan(0)
+    expect(resolveEnsembleFanoutPolicy(normalized.ensemble)).toBe('off')
+  })
+
+  it('keeps a stored policy and the legacy concurrent boolean as written', () => {
+    const on = normalizeCatalogueChatRecord(
+      legacyEnsembleRecord({ participants: [legacySeat], fanoutPolicy: 'all' }),
+      () => 'codex'
+    )
+    const off = normalizeCatalogueChatRecord(
+      legacyEnsembleRecord({ participants: [legacySeat], fanoutPolicy: 'off' }),
+      () => 'codex'
+    )
+    const legacyOn = normalizeCatalogueChatRecord(
+      legacyEnsembleRecord({ participants: [legacySeat], concurrentModeEnabled: true }),
+      () => 'codex'
+    )
+    expect(resolveEnsembleFanoutPolicy(on.ensemble)).toBe('all')
+    expect(resolveEnsembleFanoutPolicy(off.ensemble)).toBe('off')
+    expect(resolveEnsembleFanoutPolicy(legacyOn.ensemble)).toBe('all')
   })
 })

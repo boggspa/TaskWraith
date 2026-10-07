@@ -171,6 +171,22 @@ describe('chat-list index projection', () => {
     expect(JSON.stringify(roundTripped)).not.toContain(ROSTER_MARKER)
   })
 
+  it('does not turn fan-out on for a legacy row that never set a policy', () => {
+    // fatEnsemble() predates fanoutPolicy. New Ensembles start with fan-out
+    // On, but that is a creation default: the row and its read-back must keep
+    // the legacy chat Off.
+    const chat = ensembleChat('chat-projection-fanout')
+    const item = AppStore.toChatListItem(chat)
+    expect(item.ensemble?.fanoutPolicy).toBeUndefined()
+    expect(AppStore.normalizeChatListItem(item).ensemble?.fanoutPolicy).toBeUndefined()
+
+    AppStore.saveChat(chat)
+    const row = AppStore.getChatList().find((c) => c.appChatId === 'chat-projection-fanout')
+    expect(row?.ensemble?.participants).toHaveLength(15)
+    expect(row?.ensemble?.fanoutPolicy).toBeUndefined()
+    expect(AppStore.getChat('chat-projection-fanout')?.ensemble?.fanoutPolicy).toBeUndefined()
+  })
+
   it('refuses to persist a hollow roster that arrived via a list row', () => {
     const chat = ensembleChat('chat-projection-3')
     AppStore.saveChat(chat)

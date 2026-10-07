@@ -634,7 +634,8 @@ function seedGoldenChats(): void {
   // Fresh panels intentionally move with current provider defaults, so freeze
   // the historical seats explicitly (K2.7, Sonnet 5, GPT-5.5) rather than
   // letting today's seeds (K2.8, Opus 5.5, GPT-6.1 Sol) rewrite a historical
-  // projector input.
+  // projector input. The same holds for fan-out: new Ensembles now start On,
+  // but the captured chat predates that and never set a policy (Off).
   const HISTORICAL_SEAT_MODELS: Partial<Record<string, string>> = {
     kimi: KIMI_K27_MODEL_ID,
     claude: 'claude-sonnet-5',
@@ -652,6 +653,7 @@ function seedGoldenChats(): void {
     pinnedNotes: 'Remember the deadline',
     ensemble: {
       ...created.ensemble!,
+      fanoutPolicy: undefined,
       participants: historicalParticipants,
       activeRosterPresetId: 'build-review',
       activeRound: {

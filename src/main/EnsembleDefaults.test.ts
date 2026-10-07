@@ -128,6 +128,17 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     expect(typeof config.updatedAt).toBe('string')
     expect(Number.isNaN(Date.parse(config.updatedAt ?? ''))).toBe(false)
   })
+
+  it('starts a new Ensemble with fan-out On', () => {
+    // 'all' is the On policy. Set explicitly (not left to the legacy boolean)
+    // so every resolver reads On without the legacy fallback.
+    expect(createDefaultEnsembleConfig().fanoutPolicy).toBe('all')
+    expect(createDefaultEnsembleConfig('codex').fanoutPolicy).toBe('all')
+    expect(
+      createDefaultEnsembleConfig('claude', new Set<ProviderId>(['claude', 'codex'])).fanoutPolicy
+    ).toBe('all')
+    expect(createDefaultEnsembleConfig().concurrentModeEnabled).toBeUndefined()
+  })
 })
 
 describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () => {

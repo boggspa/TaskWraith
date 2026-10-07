@@ -67,7 +67,12 @@ export function normalizeCatalogueChatRecord(
   const ensemble =
     chatKind === 'ensemble'
       ? (() => {
-          const defaults = createDefaultEnsembleConfig(chat.provider || getDefaultProvider())
+          // Fan-out On is a CREATION default for new Ensembles. Filling a stored
+          // config's gaps must not inherit it: a legacy record without
+          // `fanoutPolicy` was Off and keeps reading Off.
+          const { fanoutPolicy: _creationFanoutPolicy, ...defaults } = createDefaultEnsembleConfig(
+            chat.provider || getDefaultProvider()
+          )
           const stored = chat.ensemble
           const participants =
             Array.isArray(stored?.participants) && stored.participants.length > 0

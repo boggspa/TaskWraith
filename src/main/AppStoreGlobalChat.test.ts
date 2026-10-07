@@ -164,6 +164,34 @@ describe('AppStore global chats', () => {
     expect(AppStore.createEnsembleChat().workflowMode).toBe('normal')
   })
 
+  it('creates new Ensemble chats with fan-out On', () => {
+    const chat = AppStore.createEnsembleChat()
+    expect(chat.ensemble?.fanoutPolicy).toBe('all')
+    // The read path keeps the creation default rather than re-deriving it.
+    expect(AppStore.normalizeChatRecord(chat).ensemble?.fanoutPolicy).toBe('all')
+  })
+
+  it("inherits the parent's fan-out choice on an ensemble side chat", () => {
+    const parent = AppStore.createEnsembleChat()
+    AppStore.saveChat({ ...parent, ensemble: { ...parent.ensemble!, fanoutPolicy: 'off' } })
+    const sideChat = AppStore.createSideChat({ parentChatId: parent.appChatId })
+
+    expect(sideChat.ensemble?.fanoutPolicy).toBe('off')
+  })
+
+  it('does not turn fan-out on for an ensemble side chat of a solo parent', () => {
+    const parent = AppStore.createGlobalChat()
+    AppStore.saveChat(parent)
+    const sideChat = AppStore.createSideChat({
+      parentChatId: parent.appChatId,
+      chatKind: 'ensemble'
+    })
+
+    expect(sideChat.chatKind).toBe('ensemble')
+    expect(sideChat.ensemble?.fanoutPolicy).toBeUndefined()
+    expect(AppStore.normalizeChatRecord(sideChat).ensemble?.fanoutPolicy).toBeUndefined()
+  })
+
   it('defaults side-chat lifecycle metadata for legacy records', () => {
     const activeSideChat = AppStore.normalizeChatRecord({
       appChatId: 'side-chat',

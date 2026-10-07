@@ -543,8 +543,18 @@ function resetEnsembleParticipantSession(participant: EnsembleParticipant): Ense
   }
 }
 
+/**
+ * A derived ensemble config (side chat, Solo→Ensemble toggle) keeps the
+ * source chat's own fan-out choice. Fan-out On is a creation default for NEW
+ * Ensembles only, so the scaffold must not carry it into a derivation.
+ */
+function ensembleScaffoldWithoutCreationFanout(provider?: ProviderId): EnsembleConfig {
+  const { fanoutPolicy: _creationFanoutPolicy, ...scaffold } = createDefaultEnsembleConfig(provider)
+  return scaffold
+}
+
 function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
-  const source = parent.ensemble || createDefaultEnsembleConfig(provider)
+  const source = parent.ensemble || ensembleScaffoldWithoutCreationFanout(provider)
   return {
     ...source,
     participants: (source.participants || []).map((participant) => ({
@@ -8075,7 +8085,7 @@ export class AppStore {
         // profile receipt is main-owned and cannot be introduced through this
         // shape, even when the rest of the seed is valid.
         const trustedSeed = resetEnsembleParticipantSession(seed)
-        const base = createDefaultEnsembleConfig(chat.provider)
+        const base = ensembleScaffoldWithoutCreationFanout(chat.provider)
         ensemble = {
           ...base,
           // Turning Ensemble ON means asking for a panel. Both callers (the

@@ -242,6 +242,10 @@ export function createDefaultEnsembleConfig(
     maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
     orchestrationMode: 'continuous',
     maxContinuationHops: 6,
+    // A new Ensemble starts with fan-out On ('all' is the On policy). This is a
+    // CREATION default only: normalization never injects it into a stored
+    // config, so an existing chat without `fanoutPolicy` keeps reading Off.
+    fanoutPolicy: 'all',
     participants,
     bossmanParticipantId: participants[0]?.id,
     captainParticipantIds: participants[1]?.id ? [participants[1].id] : [],
