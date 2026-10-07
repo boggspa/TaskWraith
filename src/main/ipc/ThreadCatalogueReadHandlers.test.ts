@@ -156,3 +156,39 @@ describe('transient catalogue read failures', () => {
     expect(query).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('Host transport loss during a catalogue read', () => {
+  beforeEach(() => handlers.clear())
+
+  const readerFor = (query: ReturnType<typeof vi.fn>) => {
+    const mirror = new ThreadCatalogueMirror({ query: query as never })
+    registerThreadCatalogueReadHandlers(
+      () => ({ kind: 'chat', chatId: 'owned' }),
+      () => mirror,
+      { retryDelayMs: () => 0 }
+    )
+    return handlers.get('thread-catalogue:read')!
+  }
+  const event = () => ({ sender: { id: 1, once: vi.fn() } })
+  const open = { method: 'open', chatId: 'owned', mode: 'record' }
+
+  // THE INCIDENT: a <200 ms socket drop rejected the open with this text, the
+  // renderer had no fallback for a throw, and an intact thread rendered blank.
+  it.each([
+    'TaskWraith Host disconnected.',
+    'TaskWraith Host projection client closed.',
+    'read ECONNRESET'
+  ])('answers "%s" as an unavailable catalogue so the reader falls back', async (text) => {
+    const query = vi.fn().mockRejectedValue(new Error(text))
+    await expect(readerFor(query)(event(), open)).resolves.toEqual({ available: false })
+    expect(query).toHaveBeenCalledTimes(1)
+  })
+
+  it('still rejects an erasure so no fallback can read around a deletion', async () => {
+    const erased = vi.fn().mockRejectedValue(new ThreadCatalogueRequestError('lease_erased'))
+    await expect(readerFor(erased)(event(), open)).rejects.toThrow('invalidated by erasure')
+    handlers.clear()
+    const erasing = vi.fn().mockRejectedValue(new Error('History is being erased'))
+    await expect(readerFor(erasing)(event(), open)).rejects.toThrow('History is being erased')
+  })
+})

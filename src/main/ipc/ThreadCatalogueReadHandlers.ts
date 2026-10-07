@@ -5,6 +5,7 @@ import {
   type ThreadCatalogueReadQuery
 } from '../../shared/threadCatalogueProtocol'
 import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
+import { isHostCatalogueTransportFailure } from '../../shared/hostTransportFailure'
 import type { SenderChatReadScope } from './chatHandlers'
 import type { ThreadCatalogueOpenResult } from '../store/ThreadCatalogueClient'
 
@@ -107,7 +108,23 @@ export function registerThreadCatalogueReadHandlers(
       if (query.method === 'chunk' && query.reference.chatId !== lease.chatId)
         throw new Error('History reference belongs to another chat')
     }
-    const data = await queryWithRetry(mirror, query, retryDelayMs)
+    let data: unknown
+    try {
+      data = await queryWithRetry(mirror, query, retryDelayMs)
+    } catch (error) {
+      // Losing the Host socket means this read never got an answer, which is
+      // the same fact as "no catalogue": answer `available: false` so every
+      // preload reader takes the canonical record read it already takes when
+      // the mirror is absent. Thrown instead, it surfaced as a blank
+      // transcript and "Run execution failed unexpectedly" while
+      // chats/<id>.json was intact. Only transport loss is translated here:
+      // `lease_erased`, "History is being erased" and every other answer the
+      // index gave still reject, so a fallback can never read around an
+      // erasure. Classified in main because only main still holds the error
+      // before Electron flattens it into "Error invoking remote method ...".
+      if (isHostCatalogueTransportFailure(error)) return { available: false }
+      throw error
+    }
     if (query.method === 'open' && data) {
       const opened = data as ThreadCatalogueOpenResult
       owned.set(opened.leaseId, { chatId: query.chatId, expires: Date.now() + 120_000 })

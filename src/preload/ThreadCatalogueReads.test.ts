@@ -37,6 +37,72 @@ describe('getChat falls back to the canonical disk read', () => {
   })
 })
 
+describe('a catalogue lost part-way through a read falls back to the canonical read', () => {
+  /** `open` succeeds, then main reports the catalogue unavailable mid-read. */
+  const lostAfterOpen = (extra: Record<string, (...args: any[]) => any>) =>
+    makeInvoke({
+      'thread-catalogue:read': (q: { method: string }) => {
+        if (q.method === 'open') {
+          return {
+            available: true,
+            data: {
+              leaseId: 'lease-1',
+              entry: { projection: { summary: { messageCount: 1, updatedAt: 2 } } }
+            }
+          }
+        }
+        if (q.method === 'release') return { available: false }
+        return { available: false }
+      },
+      ...extra
+    })
+
+  it('getChat reads the canonical record', async () => {
+    const invoke = lostAfterOpen({ 'get-chat': () => RECORD })
+    await expect(createThreadCatalogueReads(invoke).getChat('chat-1')).resolves.toEqual(RECORD)
+    expect(invoke).toHaveBeenCalledWith('get-chat', 'chat-1')
+  })
+
+  it('getChatTranscriptPage reads the canonical page', async () => {
+    const page = { messages: [], hasOlder: false }
+    const invoke = lostAfterOpen({ 'get-chat-transcript-page': () => page })
+    const request = { chatId: 'chat-1', maxMessages: 1 }
+    await expect(
+      createThreadCatalogueReads(invoke).getChatTranscriptPage(request as never)
+    ).resolves.toEqual(page)
+    expect(invoke).toHaveBeenCalledWith('get-chat-transcript-page', request)
+  })
+
+  // An integrity failure is not unavailability: serving the canonical record
+  // here would hide a real defect, and an erasure must never be read around.
+  it('does not fall back on an integrity failure', async () => {
+    const invoke = makeInvoke({
+      'thread-catalogue:read': (q: { method: string }) => {
+        if (q.method === 'open') return { available: true, data: { leaseId: 'lease-1' } }
+        if (q.method === 'objects') {
+          return {
+            available: true,
+            data: [
+              {
+                kind: 'chunked',
+                ordinal: 0,
+                reference: { byteLength: 2, sha256: '0'.repeat(64) }
+              }
+            ]
+          }
+        }
+        if (q.method === 'chunk') return { available: true, data: new Uint8Array([123, 125]) }
+        return { available: true, data: null }
+      },
+      'get-chat': () => RECORD
+    })
+    await expect(createThreadCatalogueReads(invoke).getChat('chat-1')).rejects.toThrow(
+      'History object changed during reading'
+    )
+    expect(invoke).not.toHaveBeenCalledWith('get-chat', 'chat-1')
+  })
+})
+
 describe('lease cleanup never blocks or replaces a completed read', () => {
   it.each(['record', 'message', 'page'] as const)(
     'returns a completed %s while cleanup is still pending',

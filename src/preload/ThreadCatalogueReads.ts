@@ -11,11 +11,25 @@ import { estimateJsonishBytes } from '../shared/transcriptPage'
 
 type Invoke = (channel: string, ...args: unknown[]) => Promise<any>
 
+/**
+ * Main answered `available: false` part-way through a leased read: it does
+ * that only when there is no catalogue or the Host transport was lost
+ * (ThreadCatalogueReadHandlers), never for an erasure or an integrity
+ * failure. Readers catch exactly this class and take the same canonical read
+ * they take when `open` itself reports unavailable.
+ */
+class ThreadCatalogueUnavailableError extends Error {
+  readonly name = 'ThreadCatalogueUnavailableError'
+  constructor() {
+    super('History catalogue is unavailable')
+  }
+}
+
 /** Large JSON is reconstructed in the requesting renderer, never Electron main. */
 export function createThreadCatalogueReads(invoke: Invoke) {
   const query = async <T>(q: ThreadCatalogueReadQuery): Promise<T> => {
     const reply = await invoke('thread-catalogue:read', q)
-    if (!reply.available) throw new Error('History catalogue is unavailable')
+    if (!reply.available) throw new ThreadCatalogueUnavailableError()
     return reply.data as T
   }
   const open = async (chatId: string, mode: 'record' | 'pages' | 'runs') =>
@@ -123,7 +137,11 @@ export function createThreadCatalogueReads(invoke: Invoke) {
             }
           }
           chat.runsSummary = summaries
-        } catch {
+        } catch (error) {
+          // Losing the catalogue mid-read is not one bad thread: the next
+          // `open` would report it too, so take the canonical list now.
+          if (error instanceof ThreadCatalogueUnavailableError)
+            return invoke('get-chat-list', workspaceId)
           // A thread whose run history is unreadable leaves ITS OWN summaries
           // unset and nothing else. These throws previously escaped the loop --
           // only a `finally` stood between them and the caller -- so one bad
@@ -148,6 +166,9 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           recordId: messageId
         })
         return ordinal === null ? null : await one<ChatMessage>(leaseId, 'message', ordinal)
+      } catch (error) {
+        if (error instanceof ThreadCatalogueUnavailableError) return null
+        throw error
       } finally {
         void releaseLease(leaseId)
       }
@@ -163,6 +184,9 @@ export function createThreadCatalogueReads(invoke: Invoke) {
       if (!reply.data) return invoke('get-chat', chatId)
       try {
         return await one<ChatRecord>(reply.data.leaseId, 'record')
+      } catch (error) {
+        if (error instanceof ThreadCatalogueUnavailableError) return invoke('get-chat', chatId)
+        throw error
       } finally {
         void releaseLease(reply.data.leaseId)
       }
@@ -316,6 +340,10 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           updatedAt: entry.projection.summary.updatedAt,
           ...(shell ? { shell } : {})
         }
+      } catch (error) {
+        if (error instanceof ThreadCatalogueUnavailableError)
+          return invoke('get-chat-transcript-page', request)
+        throw error
       } finally {
         void releaseLease(leaseId)
       }
