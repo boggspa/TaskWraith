@@ -507,7 +507,7 @@
   content: none;
 }
 
-.app-sidebar .model-usage-period-rows .model-usage-window-label {
+.model-usage-period-rows .model-usage-window-label {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
@@ -525,7 +525,7 @@
   flex: 0 0 auto;
 }
 
-.app-sidebar .model-usage-period-rows .model-usage-window-reset {
+.model-usage-period-rows .model-usage-window-reset {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1149,4 +1149,11 @@
 
 .app-sidebar .model-usage-liquid-card .model-usage-credit-row.is-empty .model-usage-credit-value {
   color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 72%, transparent);
+}
+
+/* Settings period rows carry the plan tier inline; the pill takes the row's
+ * provider accent the same way the old provider-heading stack did. */
+.model-usage-period-row .model-usage-tier-badge {
+  flex: 0 0 auto;
+  color: var(--model-usage-provider-glow, var(--text-secondary));
 }

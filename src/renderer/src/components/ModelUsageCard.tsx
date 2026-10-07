@@ -440,30 +440,6 @@ function isAgyThirdPartyFiveHourWindow(text: string): boolean {
   return isThirdPartyAgyWindow(text) && isFiveHourWindow(text)
 }
 
-/**
- * Expanded quota blocks lead with the short/session window, then weekly. Any
- * provider-specific extras retain their source order after those two groups.
- * The collapsed grid does its own label-based placement and never calls this.
- */
-export function orderExpandedQuotaWindows(
-  windows: readonly UsageWindowAggregate[]
-): UsageWindowAggregate[] {
-  const rank = (windowEntry: UsageWindowAggregate): number => {
-    const text = normaliseQuotaWindowText(windowEntry)
-    if (isThirdPartyAgyWindow(text)) return 2
-    if (isFiveHourWindow(text)) return 0
-    if (isWeeklyWindow(text)) return 1
-    return 2
-  }
-  return windows
-    .map((windowEntry, sourceIndex) => ({ windowEntry, sourceIndex }))
-    .sort(
-      (left, right) =>
-        rank(left.windowEntry) - rank(right.windowEntry) || left.sourceIndex - right.sourceIndex
-    )
-    .map(({ windowEntry }) => windowEntry)
-}
-
 function isCodexSparkWindow(text: string): boolean {
   return text.includes('spark') || text.includes('gpt 5.3 codex')
 }
@@ -845,12 +821,16 @@ function UsageWindowRow({
   provider,
   windowEntry,
   inlineProvider = false,
-  planName
+  planName,
+  showPlanBadge = false
 }: {
   provider: ModelUsageProviderId
   windowEntry: UsageWindowAggregate
   inlineProvider?: boolean
   planName?: string
+  /** Render the plan tier as a pill after the inline provider name (Settings
+   * has the width for it; the sidebar keeps the plan in the tooltip). */
+  showPlanBadge?: boolean
 }) {
   const fraction = fillFractionForWindow(windowEntry)
   const percentText = `${Math.round(fraction * 100)}%`
@@ -890,6 +870,9 @@ function UsageWindowRow({
                   quotaPeriodRowLabel(modelUsageProviderName(provider), windowEntry.label)
                 )}
               </span>
+              {showPlanBadge && planName && planName.trim() ? (
+                <span className="model-usage-tier-badge">{planName.trim()}</span>
+              ) : null}
             </>
           ) : (
             label
@@ -983,12 +966,15 @@ export function PeriodicModelUsageList({
   grokUsage,
   mistralQuota,
   currency,
-  locale
+  locale,
+  showPlanBadges = false
 }: {
   quotaEntries: ModelUsageAggregate[]
   /** Entries carrying a credit balance; may overlap `quotaEntries`. */
   creditEntries?: ModelUsageAggregate[]
   creditPlaceholderProviders?: readonly ModelUsageProviderId[]
+  /** Settings shows plan tiers inline; the sidebar keeps them in tooltips. */
+  showPlanBadges?: boolean
   grokUsage?: GrokCreditsMeterViewProps
   mistralQuota?: MistralQuotaMeterViewProps
   currency?: DisplayCurrency
@@ -1040,6 +1026,7 @@ export function PeriodicModelUsageList({
                 provider={provider}
                 windowEntry={windowEntry}
                 planName={entry.planName}
+                showPlanBadge={showPlanBadges}
                 inlineProvider
               />
             </div>
@@ -1107,46 +1094,6 @@ export function PeriodicModelUsageList({
           locale={locale}
         />
       ) : null}
-    </div>
-  )
-}
-
-function ProviderUsageBlock({ entry }: { entry: ModelUsageAggregate }) {
-  const hasWindows = Boolean(entry.windows?.length)
-  return (
-    <div
-      key={`${entry.provider}-${entry.model}`}
-      className={`model-usage-item provider-${entry.provider} quota-only`}
-    >
-      <div className="model-usage-provider-heading">
-        <ProviderLabel provider={entry.provider} planName={entry.planName} />
-      </div>
-      <div className="model-usage-window-list">
-        {hasWindows ? (
-          orderExpandedQuotaWindows(entry.windows!).map((windowEntry) => (
-            <UsageWindowRow
-              key={`${entry.provider}-${windowEntry.id}`}
-              provider={entry.provider}
-              windowEntry={windowEntry}
-            />
-          ))
-        ) : (
-          // An empty quota row says "No data" and carries the WHY in its
-          // title, exactly as the compact strip already does. The reason is a
-          // full sentence ("no authenticated agy connection was detected. Sign
-          // in with the official CLI, then refresh.") — rendering it inline
-          // turned one provider's row into a paragraph that swamped every other
-          // provider in the card. The explanation is still one hover away, and
-          // still identical to the compact strip's, so the two cannot disagree.
-          <div
-            className="model-usage-quota-unavailable"
-            role="status"
-            title={entry.quotaError || 'Quota unavailable.'}
-          >
-            No data
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -1678,11 +1625,6 @@ export function ModelUsageCard({
       ((entry.windows?.length || 0) > 0 ||
         (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
-  const expandedUsageProviders = orderExpandedUsageProviders([
-    ...quotaEntries.map((entry) => entry.provider),
-    ...(grokAvailable ? (['grok'] as const) : []),
-    ...(mistralQuotaAvailable ? (['mistral'] as const) : [])
-  ])
   // Usage Credits stack: every quota entry that carries a balance, in the
   // expanded provider order. A balance-only entry (no windows) belongs here
   // and nowhere else — it never earns a "No data" meter row. Claude and Grok
@@ -1959,7 +1901,7 @@ export function ModelUsageCard({
               <ApiSpendView options={apiSpend} />
             ) : effectiveView === 'context' ? (
               <ContextLengthsView />
-            ) : isSidebarVariant ? (
+            ) : (
               <PeriodicModelUsageList
                 quotaEntries={quotaEntries}
                 creditEntries={creditEntries}
@@ -1968,35 +1910,8 @@ export function ModelUsageCard({
                 mistralQuota={mistralQuotaAvailable ? mistralQuota : undefined}
                 currency={apiSpend?.currency}
                 locale={apiSpend?.locale}
+                showPlanBadges={!isSidebarVariant}
               />
-            ) : (
-              <div className="model-usage-list">
-                {expandedUsageProviders.map((provider) => (
-                  <Fragment key={provider}>
-                    {quotaEntries
-                      .filter((entry) => entry.provider === provider)
-                      .map((entry) => (
-                        <ProviderUsageBlock
-                          key={`${entry.provider}-${entry.model}`}
-                          entry={entry}
-                        />
-                      ))}
-                    {/* Grok and Mistral have bespoke quota data models rather
-                     * than `entry.windows`; place them through the same provider
-                     * ordering path so they no longer fall to the list tail. */}
-                    {provider === 'grok' && grokAvailable ? (
-                      <GrokCreditsMeterView {...grokUsage} />
-                    ) : null}
-                    {provider === 'mistral' && mistralQuotaAvailable ? (
-                      <MistralQuotaMeterView
-                        {...mistralQuota}
-                        currency={apiSpend?.currency}
-                        locale={apiSpend?.locale}
-                      />
-                    ) : null}
-                  </Fragment>
-                ))}
-              </div>
             )}
           </div>
         </div>

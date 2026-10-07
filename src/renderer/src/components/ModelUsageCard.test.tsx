@@ -11,7 +11,6 @@ import {
   ModelUsageCard,
   PeriodicModelUsageList,
   UsageCreditsSection,
-  orderExpandedQuotaWindows,
   orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
@@ -166,7 +165,10 @@ describe('ModelUsageCard', () => {
       [...markup.matchAll(/class="quota-[^"]*"[^>]*>/g)].map((match) => match[0]).sort()
     const original = renderToStaticMarkup(<ModelUsageCard usageSummary={entries} />)
     expect(barParts(html)).toEqual(barParts(original))
-    expect(original).not.toContain('model-usage-period-section')
+    // Settings (card variant) and the sidebar share the period layout now —
+    // the per-provider heading stack is gone from both.
+    expect(original).toContain('model-usage-period-section')
+    expect(original).not.toContain('model-usage-provider-heading')
     expect(
       renderToStaticMarkup(<ModelUsageCard usageSummary={entries} variant="sidebar" />)
     ).toContain('model-usage-period-section')
@@ -296,6 +298,16 @@ describe('ModelUsageCard', () => {
 
     expect(html).toContain('model-usage-tier-badge')
     expect(html).toContain('>Pro<')
+    // The sidebar keeps the plan in the row tooltip only; its rows are too
+    // narrow for a second pill beside the provider name.
+    const sidebar = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[quotaEntry({ provider: 'codex', planName: 'Pro' })]}
+        variant="sidebar"
+      />
+    )
+    expect(sidebar).not.toContain('model-usage-tier-badge')
+    expect(sidebar).toContain('Codex (Pro) 5H')
   })
 
   it('prefixes Spark, Luna Reserve, and Fable meters with display-only glyphs', () => {
@@ -370,9 +382,9 @@ describe('ModelUsageCard', () => {
     )
     // The plain aggregate row stays glyph-free — asserted as the exact
     // glyph-less label span, not a not.toContain that could pass vacuously.
-    expect(html).toContain('<span class="model-usage-window-label">Weekly</span>')
+    expect(html).toContain('<span class="model-usage-period-label-text">Codex Weekly</span>')
     // Tooltips keep the clean label: no emoji leaks into title text.
-    expect(html).toContain('title="Spark 5h: 100% remaining"')
+    expect(html).toContain('title="Codex Spark 5h: 100% remaining"')
   })
 
   it('moons a stale gpt-reserve label from a pre-rename cached snapshot', () => {
@@ -424,7 +436,9 @@ describe('ModelUsageCard', () => {
       />
     )
 
-    expect(html).toContain('<span class="model-usage-window-label">Spark 1.2 Monthly</span>')
+    expect(html).toContain(
+      '<span class="model-usage-period-label-text">Muse Spark 1.2 Monthly</span>'
+    )
     expect(html).not.toContain('model-usage-window-glyph')
   })
 
@@ -487,7 +501,7 @@ describe('ModelUsageCard', () => {
     )
   })
 
-  it('puts 5H/session meters above weekly meters only in expanded quota blocks', () => {
+  it('puts 5H/session meters above weekly meters in the expanded card', () => {
     const sourceWindows = [
       {
         id: 'agy-gemini-weekly',
@@ -515,15 +529,7 @@ describe('ModelUsageCard', () => {
       }
     ]
 
-    expect(
-      orderExpandedQuotaWindows(sourceWindows).map((windowEntry) => windowEntry.label)
-    ).toEqual(['Gemini 5H', 'Gemini Weekly', 'Gemini extra'])
-    expect(sourceWindows.map((windowEntry) => windowEntry.label)).toEqual([
-      'Gemini Weekly',
-      'Gemini extra',
-      'Gemini 5H'
-    ])
-
+    // The period sections order the meters; the source order is untouched.
     const html = renderToStaticMarkup(
       <ModelUsageCard
         usageSummary={[quotaEntry({ provider: 'antigravity', windows: sourceWindows })]}
@@ -547,7 +553,8 @@ describe('ModelUsageCard', () => {
     )
 
     expect(html).toContain('Antigravity')
-    expect(html).toContain('model-usage-quota-unavailable')
+    expect(html).toContain('model-usage-period-unavailable')
+    expect(html).toContain('>No data<')
     expect(html).toContain('official agy /usage timed out')
     expect(html).not.toContain('200 / 200 remaining')
   })
