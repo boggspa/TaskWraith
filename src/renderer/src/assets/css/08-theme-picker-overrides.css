@@ -8870,18 +8870,19 @@
  * left, the active provider's models in a fixed-height, independently
  * scrollable list beside it, and the current model's reasoning / Fast sidecar
  * fixed on the right. The height fits today's eleven provider tabs without the
- * rail scrolling; more tabs scroll the rail. */
+ * rail scrolling; more tabs scroll the rail. The 128px sidecar gives the
+ * bolt + "Fast" + switch row its natural width without truncating the label. */
 .composer-combined-picker-popover.is-unified-provider-picker {
   --provider-tab-size: 26px;
   --provider-tab-gap: 2px;
   /* tab + 4px either side (room for the current-model dot) + the divider gap */
   --provider-tab-rail-w: calc(var(--provider-tab-size) + 12px);
   display: grid;
-  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 128px;
   grid-template-rows: minmax(0, 1fr);
-  width: min(452px, calc(100vw - 16px));
-  min-width: min(452px, calc(100vw - 16px));
-  max-width: min(452px, calc(100vw - 16px));
+  width: min(468px, calc(100vw - 16px));
+  min-width: min(468px, calc(100vw - 16px));
+  max-width: min(468px, calc(100vw - 16px));
   height: min(334px, calc(100vh - 24px));
   max-height: min(334px, calc(100vh - 24px));
   box-sizing: border-box;

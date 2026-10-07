@@ -766,7 +766,7 @@ describe('CombinedModelPicker', () => {
     )?.[1]
 
     expect(popoverRule).toContain(
-      'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;'
+      'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 128px;'
     )
     expect(popoverRule).toContain('height: min(334px, calc(100vh - 24px));')
     // The column holds the header still; only the rows beneath it scroll.

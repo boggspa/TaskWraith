@@ -2681,7 +2681,7 @@
     .is-ensemble-add-participant
   ) {
   display: grid;
-  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 128px;
   grid-template-rows: minmax(0, 1fr) auto;
   height: min(366px, calc(100vh - 24px));
   max-height: min(366px, calc(100vh - 24px));

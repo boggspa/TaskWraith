@@ -1853,7 +1853,7 @@ export function CombinedModelPicker({
       const popoverWidth = hasTopContent
         ? 520
         : isUnifiedProviderPicker
-          ? 452
+          ? 468
           : isOllamaProviderPicker
             ? 500
             : showReasoningSidecar
