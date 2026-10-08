@@ -20,6 +20,19 @@ workflows, media, Canvas state or Browser profile data. The 0.1.0 candidate must
 therefore remain storage-compatible with 1.9.9. Unreadable identities are never
 regenerated as part of this route.
 
+Windows also retains the published beta's NSIS installer GUID
+(`47ec134f-b60a-536f-9f7e-125e215054fe`). The GUID selects the existing install
+location and uninstall registration independently of the new app ID. Letting
+electron-builder derive a new GUID from the public app ID would lose that
+registration and could leave two uninstall entries pointing at one directory.
+Installer replacement keeps `deleteAppDataOnUninstall: false`.
+The Windows handoff build lanes install the final beta in a custom directory,
+then run the hash-pinned public installer without specifying a destination.
+On both x64 and native arm64 they check that the existing directory and one
+uninstall registration are retained, the app launches, an opaque profile
+fixture survives, and uninstall removes the registration. This is installer
+replacement evidence; the complete user-facing handoff matrix remains required.
+
 `allowDowngrade` remains disabled. The new Release app uses the generic provider
 at `https://taskwraith.dev/updates/release/` and requests `release-mac.yml`,
 `release-win-{x64,arm64}.yml` or `release-linux.yml`. Its metadata contains

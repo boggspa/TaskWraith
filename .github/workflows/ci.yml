@@ -670,6 +670,7 @@ jobs:
     outputs:
       source-sha: ${{ steps.unsigned-source.outputs.sha }}
       artifact-name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
+      handoff-target-artifact-name: handoff-windows-targets-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -735,6 +736,23 @@ jobs:
       - name: Generate Windows source-identity SBOM
         if: inputs.unsigned_distribution != 'debut'
         run: npm run security:sbom
+      - name: Rehearse the Windows x64 beta-to-Release installer replacement
+        if: inputs.unsigned_distribution == 'handoff'
+        shell: pwsh
+        run: |
+          $payload = Get-Content -LiteralPath $env:TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD -Raw | ConvertFrom-Json
+          $target = Join-Path $env:TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR 'TaskWraith-0.1.0-win-x64-setup.exe'
+          ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath $target -PreviousInstallerPath 'dist/TaskWraith-1.9.9-win-x64-setup.exe' -ExpectedInstallerSha256 $payload.artifacts.'win32-x64'.sha256 -InstallDir (Join-Path $env:TEMP 'TaskWraith Migration x64')
+      - name: Retain verified Windows target bytes for the native arm64 rehearsal
+        if: inputs.unsigned_distribution == 'handoff'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: handoff-windows-targets-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR }}/TaskWraith-0.1.0-win-arm64-setup.exe
+            ${{ env.TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD }}
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload SHA/run-labelled unsigned Windows test artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -770,6 +788,18 @@ jobs:
         run: |
           $version = if ($env:TASKWRAITH_BUILD_DISTRIBUTION -eq 'debut') { '0.1.0' } else { (Get-Content package.json | ConvertFrom-Json).version }
           ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath "candidate/TaskWraith-$version-win-arm64-setup.exe"
+      - name: Download verified public target bytes for the native arm64 replacement
+        if: inputs.unsigned_distribution == 'handoff'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.unsigned-windows-build.outputs.handoff-target-artifact-name }}
+          path: migration-target
+      - name: Rehearse the Windows arm64 beta-to-Release installer replacement
+        if: inputs.unsigned_distribution == 'handoff'
+        shell: pwsh
+        run: |
+          $payload = Get-Content -LiteralPath 'migration-target/identity-handoff.json' -Raw | ConvertFrom-Json
+          ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath 'migration-target/TaskWraith-0.1.0-win-arm64-setup.exe' -PreviousInstallerPath 'candidate/TaskWraith-1.9.9-win-arm64-setup.exe' -ExpectedInstallerSha256 $payload.artifacts.'win32-arm64'.sha256 -InstallDir (Join-Path $env:TEMP 'TaskWraith Migration arm64')
 
   unsigned-linux-build:
     name: Unsigned Linux Build (testing)

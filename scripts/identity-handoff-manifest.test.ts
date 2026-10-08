@@ -215,6 +215,50 @@ describe('validateBuilderIdentityFiles', () => {
     expect(validateBuilderIdentityFiles()).toEqual([])
   })
 
+  it('keeps the published beta installer registration across both application identities', () => {
+    const { UUID } = require('builder-util-runtime')
+    const { loadBuilderIdentity } = require('./release-distribution.cjs')
+    const namespace = UUID.parse('50e065bc-3134-11e6-9bab-38c9862bdaf3')
+    const legacyGuid = UUID.v5('com.chrisizatt.taskwraith', namespace)
+    expect(legacyGuid).toBe('47ec134f-b60a-536f-9f7e-125e215054fe')
+    for (const file of builderFiles) {
+      const identity = loadBuilderIdentity(repoRoot, file)
+      const effectiveGuid = identity.config.nsis?.guid || UUID.v5(identity.appId, namespace)
+      expect(effectiveGuid, `${file} must discover and replace the existing installer`).toBe(
+        legacyGuid
+      )
+    }
+  })
+
+  it.each([
+    ['guid', undefined, 'Windows installer GUID'],
+    ['guid', '8efbcc00-341c-5be7-8c7f-bea2add339f7', 'Windows installer GUID'],
+    ['deleteAppDataOnUninstall', true, 'preserve profile data']
+  ])('rejects a registration or profile-preservation regression: %s=%s', (key, value, error) => {
+    const root = builderRoot(readFileSync(join(repoRoot, updaterSource), 'utf8'))
+    const yaml = require('js-yaml')
+    const configPath = join(root, 'electron-builder.yml')
+    const config = yaml.load(readFileSync(configPath, 'utf8'))
+    if (value === undefined) delete config.nsis[key as string]
+    else config.nsis[key as string] = value
+    writeFileSync(configPath, yaml.dump(config))
+    expect(
+      validateBuilderIdentityFiles(root).some((message) => message.includes(error as string))
+    ).toBe(true)
+  })
+
+  it('rejects a public identity that overrides the inherited installer GUID', () => {
+    const root = builderRoot(readFileSync(join(repoRoot, updaterSource), 'utf8'))
+    const configPath = join(root, 'electron-builder.release.yml')
+    writeFileSync(
+      configPath,
+      `${readFileSync(configPath, 'utf8')}\nnsis:\n  guid: 8efbcc00-341c-5be7-8c7f-bea2add339f7\n`
+    )
+    expect(validateBuilderIdentityFiles(root)).toContain(
+      'builder release must retain the published Windows installer GUID'
+    )
+  })
+
   it('rejects a Release feed redirected into GitHub Latest discovery', () => {
     const root = builderRoot(readFileSync(join(repoRoot, updaterSource), 'utf8'))
     const configPath = join(root, 'electron-builder.release.yml')

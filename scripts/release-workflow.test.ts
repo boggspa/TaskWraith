@@ -83,6 +83,15 @@ describe('release workflow contract', () => {
     )
     expect(runText(nativeArm)).toContain('win-arm64-setup.exe')
     expect(runText(nativeArm)).toContain('-AllowUnsigned')
+    for (const name of ['unsigned-windows-build', 'unsigned-windows-arm64-smoke']) {
+      const replacement = jobs[name].steps?.find((step) =>
+        step.run?.includes('-PreviousInstallerPath')
+      )
+      expect(replacement?.if).toBe("inputs.unsigned_distribution == 'handoff'")
+      expect(replacement?.run).toContain('-ExpectedInstallerSha256')
+      expect(replacement?.run).toContain('TaskWraith-0.1.0-win-')
+      expect(replacement?.run).toContain('TaskWraith-1.9.9-win-')
+    }
   })
 
   it('keeps artifact builders read-only and reserves mutation for the disabled publisher', () => {

@@ -23,6 +23,7 @@ const SOURCE_VERSION = '1.9.9'
 const TARGET_VERSION = '0.1.0'
 const SOURCE_APP_ID = 'com.chrisizatt.taskwraith'
 const TARGET_APP_ID = 'com.taskwraith.desktop'
+const WINDOWS_INSTALLER_GUID = '47ec134f-b60a-536f-9f7e-125e215054fe'
 const DEFAULT_MANIFEST_PATH = join(REPO_ROOT, 'resources', 'identity-handoff.json')
 const DEFAULT_RELEASE_BASE_URL = 'https://github.com/boggspa/TaskWraith/releases/download/v0.1.0'
 
@@ -243,6 +244,12 @@ function validateBuilderIdentityFiles(repoRoot = REPO_ROOT) {
       identity.updateFeedChannel !== channel
     ) {
       errors.push(`builder ${series} identity/appId/feed declaration drifted`)
+    }
+    if (identity.config.nsis?.guid !== WINDOWS_INSTALLER_GUID) {
+      errors.push(`builder ${series} must retain the published Windows installer GUID`)
+    }
+    if (identity.config.nsis?.deleteAppDataOnUninstall !== false) {
+      errors.push(`builder ${series} must preserve profile data during installer replacement`)
     }
   }
   if (release.version !== TARGET_VERSION) errors.push('builder debut version drifted')

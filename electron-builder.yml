@@ -206,6 +206,9 @@ win:
         - x64
         - arm64
 nsis:
+  # Keep the published beta's install/uninstall registration across the appId
+  # handoff. This is UUID v5 of com.chrisizatt.taskwraith in builder's namespace.
+  guid: 47ec134f-b60a-536f-9f7e-125e215054fe
   artifactName: TaskWraith-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
