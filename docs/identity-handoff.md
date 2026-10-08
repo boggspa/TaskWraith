@@ -46,7 +46,7 @@ distributed Linux arm64 package.
    waits for active work through the existing update-restart coordinator, then
    records `awaiting-target`, opens the installer and exits the beta app.
 5. The first launch of the `com.taskwraith.desktop` identity writes `complete`,
-   removes the cached installer and maps the historical beta `nightly` setting
+   removes disposable cached installers when possible and maps the historical beta `nightly` setting
    to `stable`/Release. The public identity always clamps that retired beta
    choice back to Release, including a manual repair install whose receipt was
    lost; a fresh 0.1.0 profile already defaults to `stable`.
@@ -215,7 +215,9 @@ Retain the legacy release, its feeds, installers and blockmaps, plus the exact
 `v0.1.0` installers pinned inside 1.9.9. Do not delete them to hide updates.
 Independent discovery keeps legacy releases out of the public updater, while
 retained bytes preserve late migration and repair. The handoff already removes
-its cached installer after a successful target launch; its receipt is retained.
+disposable cached installers after a successful target launch; its receipt is retained.
+The Linux AppImage is retained because it is the application itself, not an
+installer. Locked installer cleanup is deferred without preventing target startup.
 
 ## Required 1.9.9 rehearsal matrix
 

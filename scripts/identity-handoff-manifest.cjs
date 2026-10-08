@@ -57,7 +57,7 @@ const ARTIFACT_CONTRACT = Object.freeze({
     fileName: 'TaskWraith-0.1.0.AppImage',
     launchKind: 'appimage',
     instructions:
-      'Launch the verified TaskWraith Release AppImage and replace your beta launcher or desktop entry when ready. Keep the beta package only for bounded repair.'
+      'Launch the verified TaskWraith Release AppImage. This portable application is retained after migration; move it to your preferred applications folder and update your launcher when ready. Keep the beta package only for bounded repair.'
   }
 })
 

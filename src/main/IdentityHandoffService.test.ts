@@ -291,6 +291,71 @@ describe('IdentityHandoffService', () => {
     ).toBe(false)
   })
 
+  it('retains the Linux AppImage because the downloaded file is the installed application', async () => {
+    const root = tempRoot()
+    const source = service(root, { platform: 'linux', arch: 'x64' })
+    await source.download()
+    expect(source.launch()).toBe(true)
+    const executable = join(root, IDENTITY_HANDOFF_STATE_DIR, 'TaskWraith-0.1.0.AppImage')
+    const partial = `${executable}.partial`
+    writeFileSync(partial, 'interrupted old download')
+    const target = service(root, {
+      platform: 'linux',
+      arch: 'x64',
+      currentVersion: IDENTITY_HANDOFF_TARGET_VERSION,
+      currentDistribution: distribution('release')
+    })
+    expect(target.snapshot().phase).toBe('complete')
+    expect(readFileSync(executable).equals(BODY)).toBe(true)
+    expect(existsSync(partial)).toBe(false)
+    expect(
+      service(root, {
+        platform: 'linux',
+        arch: 'x64',
+        currentVersion: IDENTITY_HANDOFF_TARGET_VERSION,
+        currentDistribution: distribution('release')
+      }).snapshot().phase
+    ).toBe('complete')
+    expect(readFileSync(executable).equals(BODY)).toBe(true)
+  })
+
+  it('does not abort a completed target launch when cached installer removal fails', async () => {
+    const root = tempRoot()
+    const source = service(root, { platform: 'win32', arch: 'x64' })
+    await source.download()
+    expect(source.launch()).toBe(true)
+    const cached = join(root, IDENTITY_HANDOFF_STATE_DIR, 'TaskWraith-0.1.0-win-x64-setup.exe')
+    rmSync(cached)
+    // A directory at the exact owned path deterministically makes rmSync fail
+    // on every test platform, as a locked executable does on Windows.
+    mkdirSync(cached)
+    const log = vi.fn()
+    const target = service(root, {
+      platform: 'win32',
+      arch: 'x64',
+      currentVersion: IDENTITY_HANDOFF_TARGET_VERSION,
+      currentDistribution: distribution('release'),
+      log
+    })
+    expect(target.snapshot().phase).toBe('complete')
+    expect(
+      JSON.parse(readFileSync(join(root, IDENTITY_HANDOFF_STATE_DIR, 'state.json'), 'utf8')).phase
+    ).toBe('complete')
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cleanup deferred'))
+    expect(existsSync(cached)).toBe(true)
+    rmSync(cached, { recursive: true })
+    writeFileSync(cached, BODY)
+    expect(
+      service(root, {
+        platform: 'win32',
+        arch: 'x64',
+        currentVersion: IDENTITY_HANDOFF_TARGET_VERSION,
+        currentDistribution: distribution('release')
+      }).snapshot().phase
+    ).toBe('complete')
+    expect(existsSync(cached)).toBe(false)
+  })
+
   it('does not complete a target receipt without installer-launch evidence', async () => {
     const root = tempRoot()
     const source = service(root, {

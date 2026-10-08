@@ -388,6 +388,7 @@ export class IdentityHandoffService {
         return
       }
       if (this.state?.phase === 'complete') {
+        this.cleanupArtifacts()
         this.phase = 'complete'
       } else if (this.state) {
         this.block(
@@ -753,8 +754,21 @@ export class IdentityHandoffService {
     if (!this.state) return
     const fileName = safeArtifactFileName(this.state.artifactFileName)
     if (!fileName) return
-    rmSync(join(this.stateDir, fileName), { force: true })
-    rmSync(join(this.stateDir, `${fileName}.partial`), { force: true })
+    // The AppImage is the portable application itself. Removing it after its
+    // first launch would leave the user with no executable for the next launch.
+    const artifacts =
+      EXPECTED_ARTIFACT_CONTRACT[this.state.artifactKey].launchKind === 'appimage'
+        ? [`${fileName}.partial`]
+        : [fileName, `${fileName}.partial`]
+    for (const artifact of artifacts) {
+      try {
+        rmSync(join(this.stateDir, artifact), { force: true })
+      } catch (error) {
+        // Windows may still hold its installer open while starting the target.
+        // The completion receipt is durable; optional cleanup cannot undo it.
+        this.log(`[IdentityHandoff] cleanup deferred for ${artifact}: ${boundedError(error)}`)
+      }
+    }
   }
 
   private nowIso(): string {
