@@ -86,7 +86,7 @@ describe('release workflow contract', () => {
     const windowsText = JSON.stringify(windows)
     const windowsSteps = windows.steps || []
     const packageIndex = windowsSteps.findIndex((step) =>
-      step.run?.includes('npx electron-builder --win --x64 --arm64 --publish never')
+      step.run?.includes('node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never')
     )
     const overlayIndex = windowsSteps.findIndex(
       (step) => step.name === 'Overlay current Windows smoke harness after packaging'

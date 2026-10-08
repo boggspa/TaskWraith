@@ -61,7 +61,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       # Configuration-honest breadcrumb for the platform-evidence loop: records
@@ -148,7 +148,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - name: Verify tag and release metadata
@@ -236,7 +236,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - name: Verify tag and release metadata
@@ -336,7 +336,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - name: Download signed Windows candidate
@@ -408,7 +408,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - name: Download verified macOS artifacts
@@ -663,7 +663,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - run: npm run security:deps
@@ -671,7 +671,7 @@ jobs:
       # an older exact release SHA, overlay only the current CI smoke harness
       # after electron-builder has finished creating the installers.
       - run: npm run build:win:compile
-      - run: npx electron-builder --win --x64 --arm64 --publish never
+      - run: node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never
       - name: Check out current Windows smoke harness for exact-ref recovery
         if: steps.unsigned-source.outputs.sha != github.sha
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -726,7 +726,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.2'
+          node-version: '22.23.3'
           cache: npm
       - run: npm ci
       - run: npm run security:deps

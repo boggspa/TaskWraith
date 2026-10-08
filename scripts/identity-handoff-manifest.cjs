@@ -14,6 +14,7 @@ const {
   writeFileSync
 } = require('node:fs')
 const { basename, dirname, join, resolve } = require('node:path')
+const { loadBuilderIdentity } = require('./release-distribution.cjs')
 
 const REPO_ROOT = join(__dirname, '..')
 const SCHEMA_VERSION = 1
@@ -223,23 +224,45 @@ async function verifyArtifactDirectory(manifest, artifactDir) {
 
 function validateBuilderIdentityFiles(repoRoot = REPO_ROOT) {
   const errors = []
-  const beta = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-  const release = readFileSync(join(repoRoot, 'electron-builder.debut.yml'), 'utf8')
-  const combined = `${beta}\n${release}`
-  for (const [text, label] of [
-    [beta, `appId: ${SOURCE_APP_ID}`],
-    [beta, 'taskwraithDistributionIdentity: beta'],
-    [beta, 'taskwraithUpdateFeedChannel: latest'],
-    [release, `appId: ${TARGET_APP_ID}`],
-    [release, `version: ${TARGET_VERSION}`],
-    [release, 'taskwraithDistributionIdentity: release'],
-    [release, 'taskwraithUpdateFeedChannel: release'],
-    [release, 'generateUpdatesFilesForAllChannels: false'],
-    [release, 'channel: release']
-  ]) {
-    if (!text.includes(label)) errors.push(`builder identity is missing ${label}`)
+  let beta
+  let release
+  try {
+    beta = loadBuilderIdentity(repoRoot, 'electron-builder.yml')
+    release = loadBuilderIdentity(repoRoot, 'electron-builder.debut.yml')
+  } catch (error) {
+    return [`builder identity could not be resolved: ${error.message}`]
   }
-  if (/allowDowngrade\s*:\s*true/i.test(combined)) {
+  for (const [identity, appId, series, channel] of [
+    [beta, SOURCE_APP_ID, 'beta', 'latest'],
+    [release, TARGET_APP_ID, 'release', 'release']
+  ]) {
+    if (
+      identity.appId !== appId ||
+      identity.distributionIdentity !== series ||
+      identity.config.extraMetadata?.taskwraithAppId !== appId ||
+      identity.updateFeedChannel !== channel
+    ) {
+      errors.push(`builder ${series} identity/appId/feed declaration drifted`)
+    }
+  }
+  if (release.version !== TARGET_VERSION) errors.push('builder debut version drifted')
+  if (release.config.generateUpdatesFilesForAllChannels !== false) {
+    errors.push('builder Release must generate only its own update channel')
+  }
+  const publishEntries = Array.isArray(release.config.publish)
+    ? release.config.publish
+    : [release.config.publish]
+  const publish = publishEntries[0]
+  if (
+    publishEntries.length !== 1 ||
+    publish?.provider !== 'generic' ||
+    publish.url !== 'https://taskwraith.dev/updates/release/' ||
+    publish.channel !== 'release' ||
+    publish.useMultipleRangeRequest !== false
+  ) {
+    errors.push('builder Release requires the independent generic Release feed')
+  }
+  if (beta.config.allowDowngrade === true || release.config.allowDowngrade === true) {
     errors.push('allowDowngrade must never be enabled for the identity handoff')
   }
   // electron-updater's channel setter flips allowDowngrade back to true on

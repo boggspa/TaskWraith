@@ -4,6 +4,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
+const { resolveUpdateFeedChannel } = require('./release-distribution.cjs')
 
 function sha512Base64(filePath) {
   return crypto.createHash('sha512').update(fs.readFileSync(filePath)).digest('base64')
@@ -146,7 +147,10 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
   const result = finalizeMacReleaseArtifacts({
     distDir: path.resolve(repoRoot, distArg),
     version: parsed.version || packageJson.version,
-    channel: parsed.channel,
+    channel: resolveUpdateFeedChannel(parsed.version || packageJson.version, {
+      distribution: packageJson.taskwraithRelease?.distribution,
+      channelOverride: parsed.channel
+    }),
     appleId: process.env.APPLE_ID,
     applePassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
     teamId: process.env.APPLE_TEAM_ID,

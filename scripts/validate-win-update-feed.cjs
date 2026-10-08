@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const { resolveUpdateFeedChannel } = require('./release-distribution.cjs')
 
 const WINDOWS_ARCHES = ['x64', 'arm64']
 
@@ -255,7 +256,10 @@ function runCli(argv = process.argv.slice(2)) {
   )
   const parsed = parseCliArgs(argv)
   const version = parsed.version || packageJson.version
-  const channel = parsed.channel
+  const channel = resolveUpdateFeedChannel(version, {
+    distribution: packageJson.taskwraithRelease?.distribution,
+    channelOverride: parsed.channel
+  })
   const targets = parsed.targets.length > 0 ? parsed.targets : ['dist']
   const files = resolveFeedFiles(targets, version, channel)
   const directoryErrors = targets.flatMap((target) => {

@@ -1,0 +1,12 @@
+extends: electron-builder.yml
+appId: com.taskwraith.desktop
+generateUpdatesFilesForAllChannels: false
+extraMetadata:
+  taskwraithDistributionIdentity: release
+  taskwraithAppId: com.taskwraith.desktop
+  taskwraithUpdateFeedChannel: release
+publish:
+  - provider: generic
+    url: https://taskwraith.dev/updates/release/
+    channel: release
+    useMultipleRangeRequest: false

@@ -3,6 +3,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { resolveUpdateFeedChannel } = require('./release-distribution.cjs')
 
 function parseFeedScalar(value) {
   if (!value || typeof value !== 'string') return undefined
@@ -197,7 +198,11 @@ function readPackageVersion(repoRoot) {
 function runCli(argv = process.argv.slice(2), repoRoot = path.join(__dirname, '..')) {
   const parsed = parseCliArgs(argv)
   const version = parsed.version || readPackageVersion(repoRoot)
-  const channel = parsed.channel
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  const channel = resolveUpdateFeedChannel(version, {
+    distribution: packageJson.taskwraithRelease?.distribution,
+    channelOverride: parsed.channel
+  })
   const targets = parsed.targets.length > 0 ? parsed.targets : [path.join(repoRoot, 'dist')]
   const files = resolveFeedFiles(targets, version, channel)
   const errors = targets.flatMap((target) => {

@@ -2,6 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { resolveReleaseDistribution } = require('./release-distribution.cjs')
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -33,13 +34,23 @@ function extractReleaseNotes(changelogText, version) {
   return `${body}\n`
 }
 
+function parseDistribution(argv) {
+  const option = argv.find((arg) => arg.startsWith('--distribution='))
+  return option ? option.slice('--distribution='.length) : undefined
+}
+
 function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
-  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
-  const version = argv[0] || packageJson.version
-  const outputPath = path.resolve(repoRoot, argv[1] || `dist/RELEASE_NOTES-${version}.md`)
-  if (version !== packageJson.version) {
+  const requestedDistribution = parseDistribution(argv)
+  const positional = argv.filter((arg) => !arg.startsWith('--'))
+  const resolved = resolveReleaseDistribution({
+    repoRoot,
+    ...(requestedDistribution ? { distribution: requestedDistribution } : {})
+  })
+  const version = positional[0] || resolved.version
+  const outputPath = path.resolve(repoRoot, positional[1] || `dist/RELEASE_NOTES-${version}.md`)
+  if (version !== resolved.version) {
     throw new Error(
-      `Requested release notes ${version} do not match package.json ${packageJson.version}`
+      `Requested release notes ${version} do not match ${resolved.distribution} distribution version ${resolved.version}`
     )
   }
   const notes = extractReleaseNotes(

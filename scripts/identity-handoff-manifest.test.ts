@@ -176,7 +176,11 @@ describe('identity-handoff-manifest', () => {
 
 describe('validateBuilderIdentityFiles', () => {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-  const builderFiles = ['electron-builder.yml', 'electron-builder.debut.yml']
+  const builderFiles = [
+    'electron-builder.yml',
+    'electron-builder.release.yml',
+    'electron-builder.debut.yml'
+  ]
   const updaterSource = join('src', 'main', 'UpdateService.ts')
 
   function builderRoot(updaterText: string): string {
@@ -192,6 +196,29 @@ describe('validateBuilderIdentityFiles', () => {
 
   it('accepts the repository builder files and updater source', () => {
     expect(validateBuilderIdentityFiles()).toEqual([])
+  })
+
+  it('rejects a Release feed redirected into GitHub Latest discovery', () => {
+    const root = builderRoot(readFileSync(join(repoRoot, updaterSource), 'utf8'))
+    const configPath = join(root, 'electron-builder.release.yml')
+    const original = readFileSync(configPath, 'utf8')
+    writeFileSync(configPath, original.replace('provider: generic', 'provider: github'))
+    expect(validateBuilderIdentityFiles(root)).toContain(
+      'builder Release requires the independent generic Release feed'
+    )
+  })
+
+  it('checks the inherited packaged app identity as well as the bundle app id', () => {
+    const root = builderRoot(readFileSync(join(repoRoot, updaterSource), 'utf8'))
+    const configPath = join(root, 'electron-builder.release.yml')
+    const original = readFileSync(configPath, 'utf8')
+    writeFileSync(
+      configPath,
+      original.replace('taskwraithAppId: com.taskwraith.desktop', 'taskwraithAppId: com.other.app')
+    )
+    expect(validateBuilderIdentityFiles(root)).toContain(
+      'builder release identity/appId/feed declaration drifted'
+    )
   })
 
   it('rejects an updater that no longer resets allowDowngrade after choosing the feed', () => {

@@ -20,9 +20,18 @@ workflows, media, Canvas state or Browser profile data. The 0.1.0 candidate must
 therefore remain storage-compatible with 1.9.9. Unreadable identities are never
 regenerated as part of this route.
 
-`allowDowngrade` remains disabled. The new Release app uses `release-mac.yml`,
-`release-win-{x64,arm64}.yml` and `release-linux.yml`; it cannot accidentally
-consume the beta `latest` feed.
+`allowDowngrade` remains disabled. The new Release app uses the generic provider
+at `https://taskwraith.dev/updates/release/` and requests `release-mac.yml`,
+`release-win-{x64,arm64}.yml` or `release-linux.yml`. Its metadata contains
+absolute, versioned GitHub installer URLs. The legacy beta keeps GitHub's
+repository-wide Latest discovery, which must remain pointed at `v1.9.9` after
+the bridge is published. Different channel filenames in the same GitHub
+provider do not separate discovery: that provider picks Latest before finding
+the requested channel file.
+
+The packaging inventory covers macOS universal, Windows x64 and arm64, and
+Linux x64. Protocol support for a Linux arm64 filename is not evidence of a
+distributed Linux arm64 package.
 
 ## Product journey
 
@@ -61,6 +70,11 @@ where the platform permits it, the parent directory after atomic rename.
 After the final beta source is committed with `package.json` exactly `1.9.9`,
 build the public identity from that same commit using
 `electron-builder.debut.yml`:
+
+Keep `taskwraithRelease.distribution` set to `beta` in that frozen source. The
+debut config extends the reusable `electron-builder.release.yml` and overrides
+only the packaged version and output directory. Ordinary package commands use
+the source's declared distribution through `run-electron-builder.cjs`.
 
 ```bash
 npm run build:debut:mac:notarized
@@ -145,6 +159,53 @@ Publish the already-approved macOS, signed Windows and Linux bytes plus their
 against the external payload before making the release the public debut route.
 This deliberately does not activate the policy-disabled hosted signing jobs or
 upload signing credentials to GitHub Actions.
+
+### Separate discovery and publication order
+
+1. Keep both dated changelog sections in the frozen source: `1.9.9` first and
+   `0.1.0` below it. Validate `v1.9.9` normally, and validate `v0.1.0` with
+   `node scripts/verify-release-tag.cjs --distribution=debut v0.1.0`.
+   Generate the public identity's notes with
+   `node scripts/prepare-release-notes.cjs --distribution=debut 0.1.0 <notes-path>`.
+   Both tags identify the same source commit; the root lockfile remains `1.9.9`.
+2. Publish the immutable `v0.1.0` installer assets with GitHub `make_latest=false`
+   (`gh release create/edit ... --latest=false`). Verify remote sizes and hashes
+   against the final local bytes before making an update feed visible.
+3. Prepare the four Release manifests from the complete final platform outputs:
+
+   ```bash
+   npm run prepare:release-update-feed -- --version 0.1.0 \
+     --output .local-only/identity-handoff/prepared-release-feed \
+     <mac-output> <windows-output> <linux-output>
+   ```
+
+   The output directory must be new and separate from the inputs. The preparer
+   checks the exact inventory, versions, artifact sizes and SHA-512 digests,
+   requires updater blockmaps, and rejects beta feeds and unexpected paths.
+   It stages metadata only; it does not publish or overwrite existing output.
+4. Copy that verified metadata into the website's `updates/release/` directory
+   and publish it in one website deployment. Check each live YAML response and
+   its immutable asset URLs. Point new-user download links directly at the
+   public identity's versioned release, never at GitHub's Latest shortcut.
+5. Publish the prepared `v1.9.9` bridge and explicitly mark it GitHub Latest.
+   Every subsequent public Release uses `--latest=false`. An older beta that
+   returns months later must still discover and download the bridge.
+6. Prove both paths from installed candidates: `1.9.8 → 1.9.9 → 0.1.0` and
+   `0.1.0 →` a later Release candidate. A development provider test proves
+   routing logic, not the installed application's signing or preservation.
+
+After the crossing, begin a new source commit with the next public package and
+lockfile version and `taskwraithRelease.distribution: "release"`. The ordinary
+build commands then use `electron-builder.release.yml` and the Release feed.
+The public line retains that identity even when its major version reaches 1
+or 2; identity is never inferred from semver ordering. Keep the two original
+tags and frozen debut configuration available as provenance.
+
+Retain the legacy release, its feeds, installers and blockmaps, plus the exact
+`v0.1.0` installers pinned inside 1.9.9. Do not delete them to hide updates.
+Independent discovery keeps legacy releases out of the public updater, while
+retained bytes preserve late migration and repair. The handoff already removes
+its cached installer after a successful target launch; its receipt is retained.
 
 ## Required 1.9.9 rehearsal matrix
 

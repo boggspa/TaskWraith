@@ -3,6 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const { resolveUpdateFeedChannel } = require('./release-distribution.cjs')
 
 function expectedChannel(version, channelOverride) {
   return channelOverride || (String(version).includes('-') ? 'beta' : 'latest')
@@ -275,7 +276,10 @@ function runCli(argv = process.argv.slice(2)) {
   )
   const parsed = parseCliArgs(argv)
   const version = parsed.version || packageJson.version
-  const channel = parsed.channel
+  const channel = resolveUpdateFeedChannel(version, {
+    distribution: packageJson.taskwraithRelease?.distribution,
+    channelOverride: parsed.channel
+  })
   const targets = parsed.targets.length > 0 ? parsed.targets : ['dist']
   const files = resolveFeedFiles(targets, version, channel)
   const directoryErrors = targets.flatMap((target) => {

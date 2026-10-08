@@ -3,6 +3,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { resolveUpdateFeedChannel } = require('./release-distribution.cjs')
 
 const WINDOWS_ARCHES = ['x64', 'arm64']
 
@@ -98,11 +99,15 @@ function runCli(argv = process.argv.slice(2)) {
   const repoRoot = process.cwd()
   const parsed = parseCliArgs(argv)
   const distDir = path.resolve(repoRoot, parsed.targets[0] || 'dist')
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
   const results = writeWindowsUpdateFeeds({
     repoRoot,
     distDir,
     version: parsed.version,
-    channel: parsed.channel
+    channel: resolveUpdateFeedChannel(parsed.version || packageJson.version, {
+      distribution: packageJson.taskwraithRelease?.distribution,
+      channelOverride: parsed.channel
+    })
   })
   for (const result of results) {
     console.log(

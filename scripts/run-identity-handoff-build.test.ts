@@ -70,11 +70,11 @@ async function fixture(baseUrl?: string) {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '1.9.9' }))
   writeFileSync(
     join(root, 'electron-builder.yml'),
-    'appId: com.chrisizatt.taskwraith\ntaskwraithDistributionIdentity: beta\ntaskwraithUpdateFeedChannel: latest\n'
+    'appId: com.chrisizatt.taskwraith\nextraMetadata:\n  taskwraithDistributionIdentity: beta\n  taskwraithAppId: com.chrisizatt.taskwraith\n  taskwraithUpdateFeedChannel: latest\n'
   )
   writeFileSync(
     join(root, 'electron-builder.debut.yml'),
-    'appId: com.taskwraith.desktop\nversion: 0.1.0\ntaskwraithDistributionIdentity: release\ntaskwraithUpdateFeedChannel: release\ngenerateUpdatesFilesForAllChannels: false\nchannel: release\n'
+    'appId: com.taskwraith.desktop\nextraMetadata:\n  version: 0.1.0\n  taskwraithDistributionIdentity: release\n  taskwraithAppId: com.taskwraith.desktop\n  taskwraithUpdateFeedChannel: release\ngenerateUpdatesFilesForAllChannels: false\npublish:\n  provider: generic\n  url: https://taskwraith.dev/updates/release/\n  channel: release\n  useMultipleRangeRequest: false\n'
   )
   mkdirSync(join(root, 'src', 'main'), { recursive: true })
   writeFileSync(
