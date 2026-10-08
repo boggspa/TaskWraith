@@ -16,7 +16,8 @@ import {
 } from 'node:fs'
 import { open as openFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { launchIdentityHandoffInstaller } from './IdentityHandoffInstaller'
+export { launchIdentityHandoffInstaller } from './IdentityHandoffInstaller'
 import {
   BETA_DESKTOP_APP_ID,
   type AppDistributionIdentity,
@@ -189,7 +190,7 @@ export interface IdentityHandoffServiceOptions {
   launchInstaller?: (
     filePath: string,
     artifact: IdentityHandoffArtifact
-  ) => IdentityHandoffLaunchResult
+  ) => IdentityHandoffLaunchResult | Promise<IdentityHandoffLaunchResult>
   quit?: () => void
   now?: () => Date
   log?: (line: string) => void
@@ -211,7 +212,7 @@ export class IdentityHandoffService {
   private readonly launchInstaller: (
     filePath: string,
     artifact: IdentityHandoffArtifact
-  ) => IdentityHandoffLaunchResult
+  ) => IdentityHandoffLaunchResult | Promise<IdentityHandoffLaunchResult>
   private readonly quit: () => void
   private readonly now: () => Date
   private readonly log: (line: string) => void
@@ -344,7 +345,22 @@ export class IdentityHandoffService {
     this.phase = 'awaiting-target'
     this.publish()
 
-    const result = this.launchInstaller(finalPath, this.artifact)
+    try {
+      const result = this.launchInstaller(finalPath, this.artifact)
+      if ('then' in result) {
+        void result.then(
+          (outcome) => this.finishInstallerLaunch(outcome),
+          (error) => this.finishInstallerLaunch({ ok: false, error: boundedError(error) })
+        )
+        return true
+      }
+      return this.finishInstallerLaunch(result)
+    } catch (error) {
+      return this.finishInstallerLaunch({ ok: false, error: boundedError(error) })
+    }
+  }
+
+  private finishInstallerLaunch(result: IdentityHandoffLaunchResult): boolean {
     if (!result.ok) {
       this.fail('installer-launch-failed', result.error || 'The Release installer could not open.')
       return false
@@ -877,27 +893,6 @@ export function selectIdentityHandoffArtifact(
   ) as IdentityHandoffArtifactKey
   const artifact = manifest.artifacts[key]
   return artifact ? { key, artifact } : undefined
-}
-
-export function launchIdentityHandoffInstaller(
-  filePath: string,
-  artifact: IdentityHandoffArtifact
-): IdentityHandoffLaunchResult {
-  try {
-    if (artifact.launchKind === 'appimage') chmodSync(filePath, 0o700)
-    const command = artifact.launchKind === 'dmg' ? '/usr/bin/open' : filePath
-    const args = artifact.launchKind === 'dmg' ? [filePath] : []
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: 'ignore',
-      shell: false
-    })
-    child.on('error', () => undefined)
-    child.unref()
-    return { ok: true }
-  } catch (error) {
-    return { ok: false, error: boundedError(error) }
-  }
 }
 
 function validateArtifact(

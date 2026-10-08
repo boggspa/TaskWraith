@@ -1,4 +1,9 @@
 import { readFileSync } from 'node:fs'
+import type { InstanceLaunchPosture } from './InstanceLaunchPosture'
+import {
+  launchIdentityHandoffInstaller,
+  type IdentityHandoffRelaunch
+} from './IdentityHandoffInstaller'
 import {
   readAppDistributionIdentity,
   type AppDistributionIdentity
@@ -16,6 +21,8 @@ export interface IdentityHandoffBootstrapOptions {
   userDataPath: string
   fetcher: IdentityHandoffFetcher
   quit: () => void
+  relaunch?: IdentityHandoffRelaunch
+  launchPosture?: InstanceLaunchPosture
   envOverride?: string
   platform?: string
   arch?: string
@@ -24,7 +31,7 @@ export interface IdentityHandoffBootstrapOptions {
   launchInstaller?: (
     filePath: string,
     artifact: IdentityHandoffArtifact
-  ) => IdentityHandoffLaunchResult
+  ) => IdentityHandoffLaunchResult | Promise<IdentityHandoffLaunchResult>
   readPackageText?: (filePath: string) => string
   readManifestText?: (filePath: string) => string
   log?: (line: string) => void
@@ -56,7 +63,16 @@ export function createIdentityHandoffBootstrap(
           quit: options.quit,
           platform: options.platform,
           arch: options.arch,
-          launchInstaller: options.launchInstaller,
+          launchInstaller:
+            options.launchInstaller ||
+            ((filePath, artifact) =>
+              launchIdentityHandoffInstaller(filePath, artifact, {
+                relaunch: options.relaunch,
+                isolatedInstanceId:
+                  options.launchPosture?.kind === 'packaged-isolated'
+                    ? options.launchPosture.instanceId
+                    : undefined
+              })),
           log: options.log
         })
   return { distribution, service }

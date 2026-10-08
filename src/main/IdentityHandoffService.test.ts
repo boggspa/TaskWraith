@@ -271,6 +271,52 @@ describe('IdentityHandoffService', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
+  it('does not quit beta before asynchronous installer acknowledgement, or on failure', async () => {
+    vi.useFakeTimers()
+    const root = tempRoot()
+    let acknowledge!: (result: { ok: boolean; error?: string }) => void
+    const quit = vi.fn()
+    const launchInstaller = vi.fn(
+      () =>
+        new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          acknowledge = resolve
+        })
+    )
+    const handoff = service(root, { launchInstaller, quit })
+    await handoff.download()
+    expect(handoff.launch()).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(quit).not.toHaveBeenCalled()
+    acknowledge({ ok: false, error: 'OS refused installer' })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(quit).not.toHaveBeenCalled()
+    expect(handoff.snapshot()).toMatchObject({
+      phase: 'error',
+      errorCode: 'installer-launch-failed'
+    })
+  })
+
+  it('quits only after an asynchronous installer launch is acknowledged', async () => {
+    vi.useFakeTimers()
+    const root = tempRoot()
+    let acknowledge!: (result: { ok: boolean }) => void
+    const quit = vi.fn()
+    const handoff = service(root, {
+      quit,
+      launchInstaller: () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          acknowledge = resolve
+        })
+    })
+    await handoff.download()
+    expect(handoff.launch()).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(quit).not.toHaveBeenCalled()
+    acknowledge({ ok: true })
+    await vi.advanceTimersByTimeAsync(250)
+    expect(quit).toHaveBeenCalledOnce()
+  })
+
   it('marks the durable receipt complete when the Release identity launches', async () => {
     const root = tempRoot()
     const source = service(root)

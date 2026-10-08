@@ -12,6 +12,7 @@ import {
   IDENTITY_HANDOFF_STATE_DIR,
   type IdentityHandoffManifest
 } from './IdentityHandoffService'
+import { resolveInstanceLaunchPosture } from './InstanceLaunchPosture'
 
 const roots: string[] = []
 const bytes = Buffer.from('synthetic installer fixture; never executable or signed')
@@ -73,6 +74,91 @@ function inventory(root: string, prefix = ''): Record<string, string> {
 }
 
 describe('identity handoff opaque profile preservation', () => {
+  it.each([32, 64])('retains an isolated Linux profile (%i)', async (length) => {
+    vi.useFakeTimers()
+    const appDataPath = mkdtempSync(join(tmpdir(), 'handoff-isolated-profile-'))
+    roots.push(appDataPath)
+    const selector = `--taskwraith-isolated-instance=${'a'.repeat(length)}`
+    const launchPosture = resolveInstanceLaunchPosture({
+      isPackaged: true,
+      argv: ['TaskWraith', selector, '--remote-debugging-port=9222'],
+      appDataPath
+    })
+    if (launchPosture.kind !== 'packaged-isolated') throw new Error('Invalid test posture')
+    const userDataPath = launchPosture.userDataPath
+    mkdirSync(userDataPath, { recursive: true })
+    writeFileSync(join(userDataPath, 'chats.json'), 'opaque isolated chat fixture')
+    const relaunch = vi.fn()
+    const quit = vi.fn()
+    const beta = createIdentityHandoffBootstrap({
+      appPath: '/synthetic/app.asar',
+      currentVersion: '1.9.9',
+      userDataPath,
+      manifest,
+      platform: 'linux',
+      arch: 'x64',
+      launchPosture,
+      relaunch,
+      quit,
+      fetcher: async () => {
+        let sent = false
+        return {
+          ok: true,
+          status: 200,
+          url: 'https://objects.githubusercontent.com/synthetic',
+          headers: { get: () => null },
+          body: {
+            getReader: () => ({
+              read: async () =>
+                sent ? { done: true } : ((sent = true), { done: false, value: bytes })
+            })
+          }
+        }
+      },
+      readPackageText: () =>
+        JSON.stringify({
+          taskwraithDistributionIdentity: 'beta',
+          taskwraithAppId: 'com.chrisizatt.taskwraith',
+          taskwraithUpdateFeedChannel: 'latest'
+        })
+    })
+    await expect(beta.service?.download()).resolves.toMatchObject({ phase: 'downloaded' })
+    expect(beta.service?.launch()).toBe(true)
+    expect(relaunch).toHaveBeenCalledExactlyOnceWith({
+      execPath: expect.stringContaining('TaskWraith-0.1.0.AppImage'),
+      args: [selector]
+    })
+    const targetPosture = resolveInstanceLaunchPosture({
+      isPackaged: true,
+      argv: relaunch.mock.calls[0][0].args,
+      appDataPath
+    })
+    expect(targetPosture).toEqual(launchPosture)
+    expect(quit).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(quit).toHaveBeenCalledOnce()
+    const release = createIdentityHandoffBootstrap({
+      appPath: '/synthetic/release/app.asar',
+      currentVersion: '0.1.0',
+      userDataPath,
+      manifest,
+      platform: 'linux',
+      arch: 'x64',
+      fetcher: vi.fn(),
+      quit: vi.fn(),
+      readPackageText: () =>
+        JSON.stringify({
+          taskwraithDistributionIdentity: 'release',
+          taskwraithAppId: 'com.taskwraith.desktop',
+          taskwraithUpdateFeedChannel: 'release'
+        })
+    })
+    expect(release.service?.snapshot()).toMatchObject({ phase: 'complete' })
+    expect(readFileSync(join(userDataPath, 'chats.json'), 'utf8')).toBe(
+      'opaque isolated chat fixture'
+    )
+  })
+
   it.each([false, true])(
     'preserves the profile through installer failure/retry=%s and target relaunch',
     async (failFirst) => {

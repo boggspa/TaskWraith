@@ -44,7 +44,13 @@ distributed Linux arm64 package.
    with a validated HTTP range response after interruption or relaunch.
 4. TaskWraith hashes the complete artifact, atomically records `downloaded`,
    waits for active work through the existing update-restart coordinator, then
-   records `awaiting-target`, opens the installer and exits the beta app.
+   records `awaiting-target`, and asks the OS to open the installer. Beta quits
+   only after process creation is acknowledged (or macOS accepts the disk image).
+   Linux schedules the retained AppImage through Electron's relaunch helper,
+   which starts it after beta exits and releases the shared-profile lock.
+   An isolated packaged instance carries its validated profile selector into
+   Release; unrelated launch arguments are not forwarded.
+   A launch error keeps beta open with the repair/retry path available.
 5. The first launch of the `com.taskwraith.desktop` identity writes `complete`,
    removes disposable cached installers when possible and maps the historical beta `nightly` setting
    to `stable`/Release. The public identity always clamps that retired beta

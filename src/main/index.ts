@@ -57536,6 +57536,8 @@ if (isGeminiMcpBridgeProcess) {
       envOverride: process.env.TASKWRAITH_IDENTITY_HANDOFF,
       fetcher: (url, init) => net.fetch(url, init),
       quit: () => app.quit(),
+      relaunch: (options) => app.relaunch(options),
+      launchPosture: instanceLaunchPosture,
       log: (line) => console.log(line)
     })
     const updateService = new UpdateService({
