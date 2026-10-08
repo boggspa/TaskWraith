@@ -141,6 +141,51 @@ describe('buildUsageCreditRows', () => {
     expect(rows[1].accountId).toBe('codex-second')
   })
 
+  it('falls back to a spend balance, then a "Credit used" window, and says "spent"', () => {
+    const rows = buildUsageCreditRows(
+      [
+        {
+          ...entry('claude', [
+            balance('API usage', 12.34, 'USD', 'Month to date · Anthropic Console')
+          ]),
+          accountId: 'console-api',
+          accountLabel: 'Console API'
+        },
+        {
+          ...entry('meta', []),
+          windows: [
+            {
+              id: 'meta-credit-used',
+              label: 'Credit used',
+              runs: 0,
+              totalTokens: 0,
+              limitLabel: '€10.99 of €20.00',
+              usedPercent: 54.9,
+              valueText: '€10.99',
+              unit: 'EUR'
+            }
+          ]
+        }
+      ],
+      { locale: 'en-US' }
+    )
+    expect(rows.map((row) => [row.provider, row.kind, row.valueText, row.hasValue])).toEqual([
+      ['claude', 'spend', '$12.34 spent', true],
+      ['meta', 'spend', '€10.99 spent', true]
+    ])
+    expect(rows[0].detail).toBe('API usage · Month to date · Anthropic Console')
+    expect(rows[1].detail).toBe('Credit used · €10.99 of €20.00')
+    expect(rows[1].spendWindow?.id).toBe('meta-credit-used')
+  })
+
+  it('never lets a spend figure outrank a remaining balance on the same entry', () => {
+    const rows = buildUsageCreditRows(
+      [entry('meta', [balance('Credit used', 5, 'USD'), balance('Remaining balance', 10, 'USD')])],
+      { locale: 'en-US' }
+    )
+    expect(rows.map((row) => [row.kind, row.valueText])).toEqual([['balance', '$10.00']])
+  })
+
   it('lets a later entry with a balance replace an earlier placeholder for the same provider', () => {
     const rows = buildUsageCreditRows(
       [entry('claude', []), entry('claude', [balance('Usage Credits', 1.25, 'GBP')])],

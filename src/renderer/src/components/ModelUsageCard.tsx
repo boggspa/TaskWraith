@@ -63,7 +63,11 @@ import {
   type QuotaPeriod
 } from '../lib/quotaPeriods'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
-import { buildUsageCreditRows } from '../lib/usageCredits'
+import {
+  buildUsageCreditRows,
+  isCreditOnlyUsageProvider,
+  selectUsageCreditBalance
+} from '../lib/usageCredits'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
 import { formatTokenCount } from '../lib/UsageHeatmap'
@@ -613,11 +617,13 @@ function compactCellsForEntry(
     return cells
   }
 
+  // Meta is deliberately absent: a credit-only lane (see
+  // CREDIT_ONLY_USAGE_PROVIDERS) lives in the Usage Credits stack, never in
+  // the compact grid.
   if (
     provider === 'deepseek' ||
     provider === 'cerebras' ||
     provider === 'openrouter' ||
-    provider === 'meta' ||
     provider === 'mimo' ||
     provider === 'qwen' ||
     provider === 'devin'
@@ -764,7 +770,6 @@ export function CompactModelUsageGrid({
     ...(mistralCell ? (['mistral'] as const) : []),
     ...(entriesByProvider.has('mimo') ? (['mimo'] as const) : []),
     ...(entriesByProvider.has('qwen') ? (['qwen'] as const) : []),
-    ...(entriesByProvider.has('meta') ? (['meta'] as const) : []),
     ...(entriesByProvider.has('muse') ? (['muse'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
     ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : []),
@@ -967,7 +972,7 @@ export function UsageCreditsSection({
               key={row.accountId ? `${row.provider}#${row.accountId}` : row.provider}
               className={`model-usage-credit-row provider-${row.provider} ${
                 row.hasValue ? 'has-value' : 'is-empty'
-              }`}
+              } is-${row.kind}`}
               style={
                 {
                   '--model-usage-provider-glow': `var(--provider-${row.provider}-color)`
@@ -1662,6 +1667,9 @@ export function ModelUsageCard({
   const quotaEntries = sortByProvider(usageSummary).filter(
     (entry) =>
       entry.model === 'usage limits' &&
+      // A credit-only lane (Meta) is demoted to the Usage Credits stack: its
+      // "Credit used" window never becomes a period meter or compact column.
+      !isCreditOnlyUsageProvider(entry.provider) &&
       ((entry.windows?.length || 0) > 0 ||
         (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
@@ -1669,12 +1677,18 @@ export function ModelUsageCard({
   // sign-in only; secondary accounts live in the expanded period rows.
   const compactQuotaEntries = quotaEntries.filter((entry) => !entry.accountId)
   // Usage Credits stack: every quota entry that carries a balance, in the
-  // expanded provider order. A balance-only entry (no windows) belongs here
-  // and nowhere else — it never earns a "No data" meter row. Claude and Grok
-  // get a "—" placeholder when they report usage but no balance, as Limit
-  // Counter does, so the stack still says where a balance WOULD appear.
+  // expanded provider order, plus every credit-only lane that has anything to
+  // say (a spend window counts). A balance-only entry (no windows) belongs
+  // here and nowhere else — it never earns a "No data" meter row. Claude and
+  // Grok get a "—" placeholder when they report usage but no balance, as
+  // Limit Counter does, so the stack still says where a balance WOULD appear;
+  // a credit-only lane that reported neither gets the same placeholder.
   const balanceEntries = usageSummary.filter(
-    (entry) => entry.model === 'usage limits' && (entry.balances?.length || 0) > 0
+    (entry) =>
+      entry.model === 'usage limits' &&
+      ((entry.balances?.length || 0) > 0 ||
+        (isCreditOnlyUsageProvider(entry.provider) &&
+          ((entry.windows?.length || 0) > 0 || entry.quotaConfigured === true)))
   )
   const creditProviderOrder = orderExpandedUsageProviders(
     balanceEntries.map((entry) => entry.provider)
@@ -1682,9 +1696,17 @@ export function ModelUsageCard({
   const creditEntries = creditProviderOrder.flatMap((provider) =>
     balanceEntries.filter((entry) => entry.provider === provider)
   )
+  const creditOnlyPlaceholders = creditProviderOrder.filter(
+    (provider) =>
+      isCreditOnlyUsageProvider(provider) &&
+      !balanceEntries.some(
+        (entry) => entry.provider === provider && selectUsageCreditBalance(entry.balances) !== null
+      )
+  )
   const creditPlaceholderProviders: ModelUsageProviderId[] = [
     ...(quotaEntries.some((entry) => entry.provider === 'claude') ? (['claude'] as const) : []),
-    ...(grokAvailable ? (['grok'] as const) : [])
+    ...(grokAvailable ? (['grok'] as const) : []),
+    ...creditOnlyPlaceholders
   ]
   const hasCreditRows = creditEntries.length > 0 || creditPlaceholderProviders.length > 0
   // The API-spend view is offered whenever the caller wired it (sidebar).

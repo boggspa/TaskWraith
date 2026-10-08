@@ -10,8 +10,23 @@
 import type {
   ModelUsageAggregate,
   ModelUsageProviderId,
-  UsageBalanceAggregate
+  UsageBalanceAggregate,
+  UsageWindowAggregate
 } from './usageAggregateTypes'
+
+/**
+ * Providers whose quota lane is a credit ledger rather than a resettable
+ * quota: they never earn a period meter or a compact column, and live in the
+ * Usage Credits stack alone. Meta's "Credit used" window used to render as a
+ * Monthly + API meter AND its remaining balance as a credit row — the same
+ * figure twice. Limit Counter files Meta API credits under Usage Credits only.
+ */
+export const CREDIT_ONLY_USAGE_PROVIDERS: ReadonlySet<ModelUsageProviderId> =
+  new Set<ModelUsageProviderId>(['meta'])
+
+export function isCreditOnlyUsageProvider(provider: ModelUsageProviderId): boolean {
+  return CREDIT_ONLY_USAGE_PROVIDERS.has(provider)
+}
 
 /**
  * Which balance leads when a provider reports several. Mirrors Limit
@@ -33,25 +48,40 @@ export const USAGE_CREDIT_LABEL_PRIORITY: readonly string[] = [
   'on-demand spend'
 ]
 
+/**
+ * Balance labels that describe money SPENT rather than money left. They
+ * never outrank a remaining balance, and the row says "spent" so a bill is
+ * not mistaken for a credit. "API usage" is the Console / organisation
+ * month-to-date figure read from the Anthropic and OpenAI admin usage APIs.
+ */
+export const USAGE_SPEND_LABEL_PRIORITY: readonly string[] = ['api usage', 'credit used']
+
+export type UsageCreditRowKind = 'balance' | 'spend' | 'placeholder'
+
 export interface UsageCreditRow {
   provider: ModelUsageProviderId
   /** Set for a secondary provider account; the row reads "Provider · Label". */
   accountId?: string
   accountLabel?: string
-  /** The leading balance, or null for a placeholder row that reads "—". */
+  /** balance = credit remaining · spend = money used · placeholder = "—". */
+  kind: UsageCreditRowKind
+  /** The leading balance, or null for a spend-window or placeholder row. */
   balance: UsageBalanceAggregate | null
-  /** Display value: "$12.34", "0 credits", "1.5K credits", or "—". */
+  /** The "Credit used" window a spend row was derived from, when no balance led. */
+  spendWindow?: UsageWindowAggregate
+  /** Display value: "$12.34", "0 credits", "€10.99 spent", or "—". */
   valueText: string
   /** Tooltip: "<label> · <subtitle>", or the reason there is no value. */
   detail: string
-  /** True when a balance was found — the row takes the provider accent. */
+  /** True when a figure was found — the row takes the provider accent. */
   hasValue: boolean
 }
 
 /** Explains a "—" row for providers that report usage but no balance. */
 export const USAGE_CREDIT_PLACEHOLDER_REASON: Partial<Record<ModelUsageProviderId, string>> = {
   claude: 'Prepaid credit balance is not reported by the Claude usage endpoint.',
-  grok: 'Grok reports subscription credits as a used percentage, not a balance.'
+  grok: 'Grok reports subscription credits as a used percentage, not a balance.',
+  meta: 'Meta has not reported a balance or credit used. Import dev.meta.ai billing or set a remaining-balance anchor on the Meta card.'
 }
 
 const DEFAULT_PLACEHOLDER_REASON = 'Credit balance not reported'
@@ -72,6 +102,40 @@ export function selectUsageCreditBalance(
     if (match) return match
   }
   return null
+}
+
+/** The spend balance that leads when no remaining balance does; null when none. */
+export function selectUsageSpendBalance(
+  balances: readonly UsageBalanceAggregate[] | undefined
+): UsageBalanceAggregate | null {
+  if (!balances || balances.length === 0) return null
+  for (const wanted of USAGE_SPEND_LABEL_PRIORITY) {
+    const match = balances.find(
+      (balance) => normaliseLabel(balance.label) === wanted && Number.isFinite(balance.amount)
+    )
+    if (match) return match
+  }
+  return null
+}
+
+/**
+ * A credit-ledger lane with no balance may still carry a "Credit used"
+ * window (Meta's imported spend, or preload minus remaining). Its display
+ * text is reused verbatim so the credits stack shows the same figure the
+ * retired meter did, without a bar it was never entitled to.
+ */
+export function selectUsageSpendWindow(
+  windows: readonly UsageWindowAggregate[] | undefined
+): UsageWindowAggregate | null {
+  if (!windows || windows.length === 0) return null
+  return (
+    windows.find(
+      (windowEntry) =>
+        USAGE_SPEND_LABEL_PRIORITY.includes(normaliseLabel(windowEntry.label)) &&
+        typeof windowEntry.valueText === 'string' &&
+        windowEntry.valueText.trim().length > 0
+    ) ?? null
+  )
 }
 
 function compactNumber(amount: number): string {
@@ -141,18 +205,47 @@ export function buildUsageCreditRows(
     entry.accountId ? `${entry.provider}#${entry.accountId}` : entry.provider
   const rows = new Map<string, UsageCreditRow>()
   for (const entry of entries) {
-    const balance = selectUsageCreditBalance(entry.balances)
     const existing = rows.get(rowKey(entry))
     if (existing?.hasValue) continue
+    const account = entry.accountId
+      ? { accountId: entry.accountId, accountLabel: entry.accountLabel }
+      : {}
+    const balance = selectUsageCreditBalance(entry.balances)
     if (balance) {
       rows.set(rowKey(entry), {
         provider: entry.provider,
-        ...(entry.accountId
-          ? { accountId: entry.accountId, accountLabel: entry.accountLabel }
-          : {}),
+        ...account,
+        kind: 'balance',
         balance,
         valueText: formatUsageCreditValue(balance.amount, balance.unit, options.locale),
         detail: [balance.label, balance.subtitle].filter(Boolean).join(' · '),
+        hasValue: true
+      })
+      continue
+    }
+    const spend = selectUsageSpendBalance(entry.balances)
+    if (spend) {
+      rows.set(rowKey(entry), {
+        provider: entry.provider,
+        ...account,
+        kind: 'spend',
+        balance: spend,
+        valueText: `${formatUsageCreditValue(spend.amount, spend.unit, options.locale)} spent`,
+        detail: [spend.label, spend.subtitle].filter(Boolean).join(' · '),
+        hasValue: true
+      })
+      continue
+    }
+    const spendWindow = selectUsageSpendWindow(entry.windows)
+    if (spendWindow) {
+      rows.set(rowKey(entry), {
+        provider: entry.provider,
+        ...account,
+        kind: 'spend',
+        balance: null,
+        spendWindow,
+        valueText: `${spendWindow.valueText!.trim()} spent`,
+        detail: [spendWindow.label, spendWindow.limitLabel].filter(Boolean).join(' · '),
         hasValue: true
       })
     }
@@ -161,6 +254,7 @@ export function buildUsageCreditRows(
     if (rows.has(provider)) continue
     rows.set(provider, {
       provider,
+      kind: 'placeholder',
       balance: null,
       valueText: '—',
       detail: USAGE_CREDIT_PLACEHOLDER_REASON[provider] ?? DEFAULT_PLACEHOLDER_REASON,

@@ -281,6 +281,97 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('model-usage-window"')
   })
 
+  it('demotes Meta API credit to the Usage Credits stack: no period meter, no compact column, one credit row', () => {
+    const meta = quotaEntry({
+      provider: 'meta',
+      planName: 'API Credits',
+      quotaError: undefined,
+      quotaStale: false,
+      windows: [
+        {
+          id: 'meta-credit-used',
+          label: 'Credit used',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '€0.05 of €15.00',
+          usedPercent: 0.3,
+          valueText: '€0.05',
+          unit: 'EUR'
+        }
+      ],
+      balances: [
+        { id: 'meta-preload-credit', label: 'Preload credit', amount: 15, unit: 'EUR' },
+        {
+          id: 'meta-remaining-balance',
+          label: 'Remaining balance',
+          amount: 14.95,
+          unit: 'EUR',
+          subtitle: 'Manual billing anchor'
+        }
+      ]
+    })
+    const html = renderToStaticMarkup(
+      <ModelUsageCard variant="sidebar" usageSummary={[meta]} apiSpend={{ locale: 'en-GB' }} />
+    )
+    // The credit row carries the remaining balance (the one figure Limit
+    // Counter files under Usage Credits for Meta), once.
+    expect(html).toContain('model-usage-credit-row provider-meta has-value is-balance')
+    expect(html.split('model-usage-credit-row provider-meta').length - 1).toBe(1)
+    expect(html).toContain('Meta API usage credits: €14.95 · Remaining balance')
+    // Never a meter: no period row, no "Monthly + API" section born for it, and
+    // no compact column.
+    expect(html).not.toContain('model-usage-period-row provider-meta')
+    expect(html).not.toContain('aria-label="Monthly + API usage"')
+    expect(html).not.toContain('class="provider-meta"')
+    expect(html).not.toContain('>Meta</th>')
+  })
+
+  it('shows a Meta lane with only a "Credit used" window as a spent figure in the credits stack', () => {
+    const meta = quotaEntry({
+      provider: 'meta',
+      quotaError: undefined,
+      quotaStale: false,
+      windows: [
+        {
+          id: 'meta-credit-used',
+          label: 'Credit used',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '€10.99 of €20.00 · Imported Meta billing session',
+          usedPercent: 54.9,
+          valueText: '€10.99',
+          unit: 'EUR'
+        }
+      ],
+      balances: []
+    })
+    const html = renderToStaticMarkup(<ModelUsageCard variant="sidebar" usageSummary={[meta]} />)
+    expect(html).toContain('model-usage-credit-row provider-meta has-value is-spend')
+    expect(html).toContain('<span class="model-usage-credit-value">€10.99 spent</span>')
+    expect(html).toContain('Credit used · €10.99 of €20.00')
+    expect(html).not.toContain('model-usage-period-row provider-meta')
+    expect(html).not.toContain('>Meta</th>')
+    // A configured Meta lane that reported neither figure still says where
+    // its balance would appear.
+    const bare = renderToStaticMarkup(
+      <ModelUsageCard
+        variant="sidebar"
+        usageSummary={[
+          quotaEntry({
+            provider: 'meta',
+            quotaConfigured: true,
+            quotaError: 'Meta billing not imported',
+            windows: [],
+            balances: []
+          })
+        ]}
+      />
+    )
+    expect(bare).toContain('model-usage-credit-row provider-meta is-empty is-placeholder')
+    expect(bare).toContain('Meta has not reported a balance or credit used')
+    expect(bare).not.toContain('No data')
+  })
+
   it('labels a secondary account "Provider · Label" in the period rows and credits, but keeps it out of the compact grid', () => {
     const primary = quotaEntry({
       provider: 'claude',
@@ -1045,7 +1136,9 @@ describe('ModelUsageCard', () => {
       quotaEntry({ provider: 'antigravity', windows: [], quotaConfigured: true }),
       quotaEntry({ provider: 'deepseek', windows: [] }),
       quotaEntry({ provider: 'cerebras', windows: [] }),
-      quotaEntry({ provider: 'meta', windows: [] })
+      // Meta is a credit-only lane and never a column (see the demotion test
+      // below), so OpenRouter is the ninth provider here.
+      quotaEntry({ provider: 'openrouter', windows: [] })
     ]
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
@@ -1084,7 +1177,7 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>AGY</th>')
     expect(html).toContain('DeepSeek')
     expect(html).toContain('Cerebras')
-    expect(html).toContain('Meta')
+    expect(html).toContain('OpenRouter')
   })
 
   it('shows the Mistral monthly estimate as a spend figure in the X1 slot, not a band or MO row', () => {
@@ -1394,9 +1487,15 @@ describe('ModelUsageCard', () => {
             ]
           }),
           quotaEntry({
-            provider: 'meta',
+            provider: 'openrouter',
             windows: [
-              financialWindow('meta-credit', 'Credit used', '€10.99', '€10.99 of €20.00', 54.9)
+              financialWindow(
+                'openrouter-credit',
+                'Credit used',
+                '€10.99',
+                '€10.99 of €20.00',
+                54.9
+              )
             ]
           })
         ]}
@@ -1410,7 +1509,7 @@ describe('ModelUsageCard', () => {
     // Titles preserve full precision
     expect(html).toContain('DeepSeek Credit used: $13.51')
     expect(html).toContain('Cerebras Credit used: £13.50')
-    expect(html).toContain('Meta API Credit used: €10.99')
+    expect(html).toContain('OpenRouter Credit used: €10.99')
   })
 
   it('keeps currency values < 10 at full precision in compact window cells', () => {
