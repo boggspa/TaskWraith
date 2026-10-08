@@ -390,6 +390,8 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     // leaves its socket directory in the OS temp dir; every Host here is gone.
     for (const profile of hostProfiles.splice(0)) {
       if (!existsSync(profile)) continue
+      // Windows named pipes have no filesystem socket directory to remove.
+      if (process.platform === 'win32') continue
       rmSync(dirname(taskWraithHostSocketPath(realpathSync(profile))), {
         recursive: true,
         force: true

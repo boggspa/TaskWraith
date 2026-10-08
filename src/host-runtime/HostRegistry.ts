@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import { createConnection } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 import {
   publishPrivateLocalControlArtifact,
@@ -288,14 +288,26 @@ export function decodeHostRegistryEntry(value: unknown): HostRegistryEntryDecode
   }
 }
 
+/** Windows can report ENOENT for a child of an existing non-directory root. */
+function registryRootReadError(root: string): string | undefined {
+  try {
+    return lstatSync(root).isDirectory() ? undefined : 'registry root is not a directory'
+  } catch (error) {
+    return isErrno(error, ['ENOENT']) ? undefined : describe(error)
+  }
+}
+
 function readEntryFile(path: string): HostRegistryEntryRead {
   let raw: string
   try {
     raw = readPrivateLocalControlArtifact(path, HOST_REGISTRY_MAX_ENTRY_BYTES)
   } catch (error) {
-    // Only ENOENT is `missing`, the one read the self-check may stop on. A root
-    // replaced by a file (ENOTDIR) or any other error is `unreadable`.
-    if (isErrno(error, ['ENOENT'])) return { kind: 'missing', path }
+    // A missing entry can stop the Host self-check. An unusable root cannot:
+    // Node may report either ENOTDIR or ENOENT for a root replaced by a file.
+    if (isErrno(error, ['ENOENT'])) {
+      const rootError = registryRootReadError(dirname(path))
+      return rootError ? { kind: 'unreadable', path, error: rootError } : { kind: 'missing', path }
+    }
     return { kind: 'unreadable', path, error: describe(error) }
   }
   let parsed: unknown
@@ -321,7 +333,10 @@ export function readHostRegistry(root: string): HostRegistryListing {
   try {
     names = readdirSync(root)
   } catch (error) {
-    if (isErrno(error, ['ENOENT'])) return { root, entries: [], unreadable: [] }
+    if (isErrno(error, ['ENOENT'])) {
+      const rootError = registryRootReadError(root)
+      return { root, entries: [], unreadable: rootError ? [{ path: root, error: rootError }] : [] }
+    }
     return { root, entries: [], unreadable: [{ path: root, error: describe(error) }] }
   }
   const entries: HostRegistryEntry[] = []

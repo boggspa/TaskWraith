@@ -52,6 +52,7 @@ function recorder(): WorkProvenanceRecorder {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true })
 })
@@ -349,7 +350,7 @@ describe('WorkProvenanceRecorder', () => {
     const realLstat = fs.lstat.bind(fs)
     let held = false
     vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
-      if (!held && String(path).endsWith('/src/a.ts')) {
+      if (!held && String(path).endsWith(join('src', 'a.ts'))) {
         held = true
         entered.resolve()
         await release.promise
@@ -360,12 +361,14 @@ describe('WorkProvenanceRecorder', () => {
       return realLstat(path)
     })
 
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let capture!: Promise<Awaited<ReturnType<NonNullable<typeof operation>['capture']>>>
     const settlement = settleWorkProvenanceWithin(() => {
       capture = operation!.capture('success')
       return capture
     }, 20)
     await entered.promise
+    await vi.advanceTimersByTimeAsync(20)
     expect(await settlement).toBeNull()
     expect(await capture).toBeNull()
     expect(await operation!.capture('retry')).toBeNull()
@@ -430,13 +433,14 @@ describe('WorkProvenanceRecorder', () => {
     const realLstat = fs.lstat.bind(fs)
     let held = false
     const lstat = vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
-      if (!held && String(path).endsWith('/src/a.ts')) {
+      if (!held && String(path).endsWith(join('src', 'a.ts'))) {
         held = true
         entered.resolve()
         await release.promise
       }
       return realLstat(path)
     })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let firstBegin!: ReturnType<WorkProvenanceRecorder['beginObservedNativeRun']>
     const settlement = settleWorkProvenanceWithin(() => {
       firstBegin = provenance.beginObservedNativeRun({
@@ -447,6 +451,7 @@ describe('WorkProvenanceRecorder', () => {
       return firstBegin
     }, 20)
     await entered.promise
+    await vi.advanceTimersByTimeAsync(20)
     expect(await settlement).toBeNull()
     lstat.mockRestore()
 
@@ -486,19 +491,21 @@ describe('WorkProvenanceRecorder', () => {
     const realLstat = fs.lstat.bind(fs)
     let held = false
     const lstat = vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
-      if (!held && String(path).endsWith('/src/a.ts')) {
+      if (!held && String(path).endsWith(join('src', 'a.ts'))) {
         held = true
         entered.resolve()
         await release.promise
       }
       return realLstat(path)
     })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let firstFinish!: ReturnType<WorkProvenanceRecorder['finishObservedNativeRun']>
     const settlement = settleWorkProvenanceWithin(() => {
       firstFinish = provenance.finishObservedNativeRun(finishing!, 'completed')
       return firstFinish
     }, 20)
     await entered.promise
+    await vi.advanceTimersByTimeAsync(20)
     expect(await settlement).toBeNull()
     lstat.mockRestore()
 

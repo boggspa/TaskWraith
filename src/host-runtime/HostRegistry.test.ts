@@ -615,13 +615,13 @@ describe('HostRegistryPublisher', () => {
     registry.publish(input(profile, 4242))
     rmSync(root, { recursive: true })
     writeFileSync(root, 'a file where the root was\n')
-    // ENOTDIR: the self-check may stop a Host on `missing` only.
+    // Windows can return ENOENT here; only a genuinely missing entry may stop the self-check.
     expect(registry.check()).toBe('unreadable')
     expect(readHostRegistryEntry(root, profile)).toMatchObject({ kind: 'unreadable' })
     expect(readHostRegistry(root)).toEqual({
       root,
       entries: [],
-      unreadable: [{ path: root, error: expect.stringMatching(/ENOTDIR/) }]
+      unreadable: [{ path: root, error: expect.stringMatching(/ENOTDIR|not a directory/) }]
     })
   })
 
