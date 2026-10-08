@@ -28,7 +28,9 @@
 //   no subscription meters, never a throw.
 
 export const MUSE_SUBSCRIPTION_USAGE_COMMAND = '/usage\r'
-export const MUSE_SUBSCRIPTION_TUI_ARGS = [] as const
+// `--no-session-log`: the probe's TUI persists no session.jsonl, so the token
+// meter in MuseUsage.ts never counts the probe as a session.
+export const MUSE_SUBSCRIPTION_TUI_ARGS = ['--no-session-log'] as const
 export const MUSE_SUBSCRIPTION_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
 const MAX_CAPTURED_OUTPUT = 80_000

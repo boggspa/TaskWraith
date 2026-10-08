@@ -2207,6 +2207,15 @@ import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { createTaskWraithQuotaSnapshotHook } from './usage/TaskWraithQuotaSnapshotHook'
+import {
+  MUSE_SUBSCRIPTION_CLI_SNAPSHOT_FILENAME,
+  createMuseSubscriptionCliLane
+} from './muse/MuseSubscriptionCliLane'
+import {
+  MUSE_SUBSCRIPTION_TUI_ARGS,
+  probeMuseSubscriptionUsage,
+  type MuseSubscriptionPtyLike
+} from './muse/MuseSubscriptionUsage'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
 import { registerRunQueueHandlers, type RendererRunQueueMutation } from './ipc/runQueueHandlers'
@@ -59908,6 +59917,77 @@ if (isGeminiMcpBridgeProcess) {
         return { kind: 'chat', chatId: chat.appChatId }
       }
     }).dispose
+    // Muse Code subscription meters via the local CLI's `/usage` panel. The
+    // lane owns the probe cadence (10-minute TTL, single-flight, backoff) so
+    // the quota hook below only ever reads its last observed reading; the TUI
+    // runs with --no-session-log from a throwaway cwd and is killed on parse.
+    // Eligibility mirrors Muse's configured-provider rule: binary + credential.
+    const museSubscriptionCliLane = createMuseSubscriptionCliLane({
+      isEligible: async () => {
+        const status = await getMuseProviderStatus().catch(() => null)
+        return Boolean(status?.available) && status?.credentialPresent === true
+      },
+      persistence: {
+        read: () =>
+          fs
+            .readFile(join(app.getPath('userData'), MUSE_SUBSCRIPTION_CLI_SNAPSHOT_FILENAME), 'utf8')
+            .catch(() => null),
+        write: (text) =>
+          fs.writeFile(
+            join(app.getPath('userData'), MUSE_SUBSCRIPTION_CLI_SNAPSHOT_FILENAME),
+            text,
+            'utf8'
+          )
+      },
+      log: (line) => {
+        console.log(line)
+      },
+      probe: async () => {
+        const resolved = await resolveCliProviderBinary('muse')
+        const binaryPath = resolved.binaryPath
+        if (!binaryPath) throw new Error('muse binary not resolved')
+        let probeCwd = os.tmpdir()
+        try {
+          probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'muse-usage-'))
+        } catch {
+          probeCwd = os.tmpdir()
+        }
+        const isTempDir = probeCwd !== os.tmpdir()
+        try {
+          return await probeMuseSubscriptionUsage({
+            spawnPty: (): MuseSubscriptionPtyLike => {
+              const term = pty.spawn(binaryPath, [...MUSE_SUBSCRIPTION_TUI_ARGS], {
+                name: 'xterm-256color',
+                cols: 100,
+                rows: 30,
+                cwd: probeCwd,
+                env: { ...process.env, TERM: 'xterm-256color', NO_COLOR: '1' } as Record<
+                  string,
+                  string
+                >
+              })
+              return {
+                onData: (listener) => term.onData(listener),
+                onExit: (listener) => term.onExit((e) => listener({ exitCode: e.exitCode })),
+                write: (data) => term.write(data),
+                kill: () => {
+                  try {
+                    term.kill()
+                  } catch {
+                    // already gone
+                  }
+                }
+              }
+            }
+          })
+        } finally {
+          if (isTempDir) {
+            await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})
+          }
+        }
+      }
+    })
+    void museSubscriptionCliLane.hydrate()
     registerUsageRatesHandlers({
       assertMainRendererSender,
       globalUsageWorkspaceId: '__taskwraith_global_chats__',
@@ -59975,6 +60055,9 @@ if (isGeminiMcpBridgeProcess) {
             .statusSnapshot(settingsService.getSettings())
             .configuredProviders.has('muse'),
         getMuseMonthlySpendCapUsd: () => settingsService.getSettings().museMonthlySpendCapUsd,
+        // Muse Code subscription meters from the CLI lane above: a synchronous
+        // last-observed read that schedules its own TTL-gated re-probe.
+        readMuseSubscriptionCli: () => museSubscriptionCliLane.read(),
         // Secondary Claude / Codex accounts ride the same credential-free hook
         // lane, each read with its own folder's credential (never written).
         readProviderAccountSnapshots: createProviderAccountUsageReader({

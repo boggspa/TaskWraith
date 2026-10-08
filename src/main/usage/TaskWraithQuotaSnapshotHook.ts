@@ -47,13 +47,15 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
     provider: UsageWebSessionProviderId
   ) => Promise<UsageWebSessionReading | null>
   /**
-   * Explicit/opt-in CLI-sourced Muse subscription reading (e.g. a cached
-   * `parseMuseSubscriptionUsagePanel` result refreshed by a user action).
-   * NEVER the live `probeMuseSubscriptionUsage` on the automatic snapshot
-   * path: the probe spawns a real `muse` TUI session, and Muse meters itself
-   * from session.jsonl — the instrument may perturb the thing it measures.
-   * The browser import stays the automatic source; this only takes
-   * precedence when a reading is supplied.
+   * CLI-sourced Muse subscription reading — the Muse Code plan's Current /
+   * Weekly meters as `muse /usage` shows them. Supplied by
+   * `muse/MuseSubscriptionCliLane.ts`, which owns the probe cadence (10-minute
+   * TTL, single-flight, failure backoff) and answers synchronously from its
+   * last observed reading, so this hook never spawns anything itself. The
+   * probe runs the TUI with `--no-session-log`, which is what makes a
+   * background probe acceptable: no session.jsonl is written, so the token
+   * meter in MuseUsage.ts cannot count the instrument as usage. A CLI reading
+   * takes precedence per meter over the browser import when both exist.
    */
   readMuseSubscriptionCli?: () =>
     | MuseSubscriptionUsageReading
