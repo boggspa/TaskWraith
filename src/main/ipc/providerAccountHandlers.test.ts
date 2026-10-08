@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { join, resolve } from 'node:path'
 import type { AppSettings } from '../store/types'
 import { createProviderAccountRegistry } from '../providers/ProviderAccounts'
 import {
@@ -29,6 +30,9 @@ vi.mock('electron', () => ({
   }
 }))
 
+const HOME = resolve('/Users/tester')
+const WORK_CONFIG = join(HOME, '.claude-work')
+
 const MAIN_EVENT = { sender: { id: 1 } }
 const POPOUT_EVENT = { sender: { id: 2 } }
 
@@ -47,9 +51,9 @@ function harness() {
     updateSettings: (patch) => {
       settings = { ...settings, ...patch }
     },
-    getUserDataPath: () => '/Users/tester/Library/Application Support/taskwraith',
+    getUserDataPath: () => join(HOME, 'Library', 'Application Support', 'taskwraith'),
     randomSuffix: () => `r${(counter += 1)}`.padEnd(6, '0'),
-    homeDir: () => '/Users/tester'
+    homeDir: () => HOME
   })
   const deps: ProviderAccountHandlersDeps = {
     registry,
@@ -58,7 +62,7 @@ function harness() {
     getMainWindow: vi.fn(() => ({}) as never),
     showOpenDialog: vi.fn(async () => ({
       canceled: false,
-      filePaths: ['/Users/tester/.claude-work']
+      filePaths: [WORK_CONFIG]
     })),
     isMainRendererSender: vi.fn(
       (event: unknown) => (event as { sender: { id: number } }).sender.id === 1
@@ -187,7 +191,7 @@ describe('registerProviderAccountHandlers', () => {
   it('picks a config folder through the main window’s native chooser', async () => {
     const { deps } = harness()
     await expect(handlerFor(PROVIDER_ACCOUNTS_PICK_CONFIG_DIR_CHANNEL)(MAIN_EVENT)).resolves.toBe(
-      '/Users/tester/.claude-work'
+      WORK_CONFIG
     )
     expect(deps.showOpenDialog).toHaveBeenCalledWith(
       expect.anything(),

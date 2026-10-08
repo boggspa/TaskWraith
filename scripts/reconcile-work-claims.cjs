@@ -71,7 +71,12 @@ function evidence(root, journal, worktreeId, claim, refs) {
 
 function reconcile(root, { apply = false, now = Date.now(), beforeRetire } = {}) {
   root = fs.realpathSync(root)
-  if (fs.realpathSync(git(root, ['rev-parse', '--show-toplevel'])) !== root)
+  const worktreeRoot = fs.realpathSync(git(root, ['rev-parse', '--show-toplevel']))
+  const supplied = fs.statSync(root, { bigint: true })
+  const actual = fs.statSync(worktreeRoot, { bigint: true })
+  // Git and Node can spell the same Windows directory with different case or
+  // short-path aliases. Keep the journal key unchanged; compare directory identity.
+  if (!supplied.isDirectory() || supplied.dev !== actual.dev || supplied.ino !== actual.ino)
     throw new Error('Select a Git worktree root')
   const common = fs.realpathSync(
     git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])

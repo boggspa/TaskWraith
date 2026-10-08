@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'path'
 import { AppStore, HistoryDeletionIncompleteError, type CatalogueErasureFence } from './store'
 import type { ChatRecord } from './store/types'
@@ -243,8 +244,8 @@ describe('history deletion catalogue fence partial-begin commit', () => {
   })
 
   it('a fence the intent cannot record yet still lets begin join, fails the step, and is recorded later', async () => {
-    // The profile folder is read-only only while the fence rises, so the
-    // per-fence intent write fails there and nowhere else.
+    // Deny only the per-fence intent write. chmod does not make a Windows
+    // directory read-only, so inject the same filesystem failure on every OS.
     let joinedAfterFence = false
     const begin = vi.fn(
       async (
@@ -252,11 +253,19 @@ describe('history deletion catalogue fence partial-begin commit', () => {
         _recorded: readonly CatalogueErasureFence[],
         onFenceRaised?: (fence: CatalogueErasureFence) => void
       ) => {
-        fs.chmodSync(userDataPath, 0o500)
+        const open = fs.openSync
+        const denied = vi.spyOn(fs, 'openSync').mockImplementation((file, flags, mode) => {
+          if (String(file).includes('history-deletion-intent')) {
+            throw Object.assign(new Error('Intent write denied by the fixture'), { code: 'EACCES' })
+          }
+          return open(file, flags, mode)
+        })
+        syncBuiltinESMExports()
         try {
           onFenceRaised?.({ chatId: 'chat-a', generation: 'gw' })
         } finally {
-          fs.chmodSync(userDataPath, 0o700)
+          denied.mockRestore()
+          syncBuiltinESMExports()
         }
         joinedAfterFence = true
         return [{ chatId: 'chat-a', generation: 'gw' }]

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { promises as fs } from 'node:fs'
+import { basename } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -98,7 +99,9 @@ describe('Mistral native credential isolation', () => {
     mocks.hasSwitch.mockImplementation((name: string) => name === 'use-mock-keychain')
     mocks.stdout = '2.24.3\n'
     const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
-      if (String(candidate).endsWith('/vibe-acp')) {
+      if (
+        basename(String(candidate)) === (process.platform === 'win32' ? 'vibe-acp.exe' : 'vibe-acp')
+      ) {
         return { isFile: () => true, isSymbolicLink: () => false } as Awaited<
           ReturnType<typeof fs.stat>
         >
@@ -133,7 +136,7 @@ describe('Mistral native credential isolation', () => {
       expect(probeMistralAuthStatus).not.toHaveBeenCalled()
       expect(mocks.spawn).toHaveBeenCalledOnce()
       expect(mocks.spawn).toHaveBeenCalledWith(
-        expect.stringMatching(/\/vibe-acp$/),
+        expect.stringMatching(/[\\/]vibe-acp(?:\.exe)?$/),
         ['--version'],
         expect.any(Object)
       )

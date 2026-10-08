@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { join, resolve, sep } from 'node:path'
 import { resolvePackagedBridgeDaemonPath } from './BridgeDaemonBinaryPath'
 
 describe('resolvePackagedBridgeDaemonPath', () => {
@@ -6,9 +7,14 @@ describe('resolvePackagedBridgeDaemonPath', () => {
     const pathExists = vi.fn(() => true)
 
     expect(
-      resolvePackagedBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources', pathExists)
+      resolvePackagedBridgeDaemonPath(
+        resolve('/Applications/TaskWraith.app/Contents/Resources'),
+        pathExists
+      )
     ).toBe(
-      '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      resolve(
+        '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      )
     )
     expect(pathExists).toHaveBeenCalledTimes(1)
   })
@@ -16,27 +22,36 @@ describe('resolvePackagedBridgeDaemonPath', () => {
   it('retains the bare helper path for packages built before the TCC bundle fix', () => {
     const pathExists = vi.fn(
       (candidate: string) =>
-        candidate === '/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon'
+        candidate ===
+        resolve('/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon')
     )
 
     expect(
-      resolvePackagedBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources', pathExists)
-    ).toBe('/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon')
+      resolvePackagedBridgeDaemonPath(
+        resolve('/Applications/TaskWraith.app/Contents/Resources'),
+        pathExists
+      )
+    ).toBe(resolve('/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon'))
   })
 
   it('retains the resource path only as an older-package fallback', () => {
-    const pathExists = vi.fn((candidate: string) => candidate.includes('/Resources/bridge/'))
+    const pathExists = vi.fn((candidate: string) =>
+      candidate.includes(join('Resources', 'bridge') + sep)
+    )
 
     expect(
-      resolvePackagedBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources', pathExists)
-    ).toBe('/Applications/TaskWraith.app/Contents/Resources/bridge/TaskWraithBridgeDaemon')
+      resolvePackagedBridgeDaemonPath(
+        resolve('/Applications/TaskWraith.app/Contents/Resources'),
+        pathExists
+      )
+    ).toBe(resolve('/Applications/TaskWraith.app/Contents/Resources/bridge/TaskWraithBridgeDaemon'))
   })
 
   it('returns null when no packaged daemon exists', () => {
     expect(resolvePackagedBridgeDaemonPath(undefined)).toBeNull()
     expect(
       resolvePackagedBridgeDaemonPath(
-        '/Applications/TaskWraith.app/Contents/Resources',
+        resolve('/Applications/TaskWraith.app/Contents/Resources'),
         () => false
       )
     ).toBeNull()

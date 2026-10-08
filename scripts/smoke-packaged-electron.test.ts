@@ -172,11 +172,19 @@ describe('packaged Electron to TUI smoke handoff', () => {
   })
 
   it('validates the native daemon from the macOS helper location', () => {
-    expect(resolveMacBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources')).toBe(
-      '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+    expect(
+      resolveMacBridgeDaemonPath(path.resolve('/Applications/TaskWraith.app/Contents/Resources'))
+    ).toBe(
+      path.resolve(
+        '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      )
     )
-    expect(resolveMacBridgeInfoPath('/Applications/TaskWraith.app/Contents/Resources')).toBe(
-      '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist'
+    expect(
+      resolveMacBridgeInfoPath(path.resolve('/Applications/TaskWraith.app/Contents/Resources'))
+    ).toBe(
+      path.resolve(
+        '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist'
+      )
     )
   })
 

@@ -22,16 +22,29 @@ const MAX_SETTINGS_JSON_BYTES = 4 * 1024 * 1024
 function readBoundedJson(path: string): unknown {
   let descriptor: number | null = null
   try {
-    const before = lstatSync(path)
+    const before = lstatSync(path, { bigint: true })
     if (!before.isFile() || before.isSymbolicLink() || before.size < 2) return null
     if (before.size > MAX_SETTINGS_JSON_BYTES) return null
     descriptor = openSync(
       path,
       constants.O_RDONLY | ((constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0)
     )
-    const opened = fstatSync(descriptor)
+    const opened = fstatSync(descriptor, { bigint: true })
     if (!opened.isFile() || opened.size < 2 || opened.size > MAX_SETTINGS_JSON_BYTES) return null
-    return JSON.parse(readFileSync(descriptor, 'utf8')) as unknown
+    // O_NOFOLLOW is unavailable on Windows. Bind the opened descriptor to the
+    // inspected file, then ensure its name has not become a symlink or replacement.
+    if (opened.dev !== before.dev || opened.ino !== before.ino) return null
+    const text = readFileSync(descriptor, 'utf8')
+    const named = lstatSync(path, { bigint: true })
+    if (
+      !named.isFile() ||
+      named.isSymbolicLink() ||
+      named.dev !== opened.dev ||
+      named.ino !== opened.ino
+    ) {
+      return null
+    }
+    return JSON.parse(text) as unknown
   } catch {
     return null
   } finally {

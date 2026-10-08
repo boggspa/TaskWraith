@@ -105,7 +105,7 @@ class HeldPort {
     target: string,
     options?: ThreadDurabilitySyncOptions
   ): Promise<ThreadDurabilitySyncOutcome> {
-    const name = `${kind}:${path.relative(this.root, target) || '.'}`
+    const name = `${kind}:${path.relative(this.root, target).split(path.sep).join('/') || '.'}`
     this.asked.push(name)
     this.classes.push(options?.urgent ? 'urgent' : options?.background ? 'background' : 'normal')
     return new Promise((resolve, reject) => this.waiting.push({ name, resolve, reject }))

@@ -143,6 +143,14 @@ function holding(
   }
 }
 
+async function answerSync(held: ReturnType<typeof holding>, index: number): Promise<void> {
+  await vi.waitFor(() => expect(held.calls.length).toBeGreaterThan(index), {
+    timeout: 2_000,
+    interval: 5
+  })
+  await held.calls[index].answer()
+}
+
 /** Long enough for a write's file work on the thread pool and every promise after it. */
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 10; turn += 1) await new Promise((resolve) => setTimeout(resolve, 2))
@@ -257,11 +265,11 @@ describe('the run queue through the store, under barrier durability', () => {
     const dispatched = provider.dispatch()
     await settle()
     expect(provider.start).not.toHaveBeenCalled()
-    await held.calls[0].answer()
+    await answerSync(held, 0)
     await settle()
     expect(provider.start).not.toHaveBeenCalled()
     expect(held.calls[1].level).toBe('normal')
-    await held.calls[1].answer()
+    await answerSync(held, 1)
     expect((await dispatched).dispatched).toBe(true)
     expect(provider.start).toHaveBeenCalledOnce()
     expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.startWaits).toMatchObject({
@@ -289,9 +297,9 @@ describe('the run queue through the store, under barrier durability', () => {
     const dispatched = provider.dispatch(abort.signal)
     await settle()
     expect(admitted).not.toHaveBeenCalled()
-    await held.calls[0].answer()
+    await answerSync(held, 0)
     await settle()
-    await held.calls[1].answer()
+    await answerSync(held, 1)
     await settle()
     expect(admitted).toHaveBeenCalledOnce()
     expect(provider.start).not.toHaveBeenCalled()
@@ -373,9 +381,9 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(provider.start).not.toHaveBeenCalled()
     abort.abort()
     AppStore.updateRunQueueJob('run-a', { status: 'cancelled' })
-    await held.calls[0].answer()
+    await answerSync(held, 0)
     await settle()
-    await held.calls[1].answer()
+    await answerSync(held, 1)
     expect((await dispatched).dispatched).toBe(false)
     expect(provider.start).not.toHaveBeenCalled()
   })
@@ -431,7 +439,7 @@ describe('the run queue through the store, under barrier durability', () => {
     ])
     expect(replied).toBeNull()
 
-    await held.calls[0].answer()
+    await answerSync(held, 0)
     await settle()
     expect(held.calls.map((call) => `${call.name}:${call.level}`)).toEqual([
       'file:run-queue.json.tmp:urgent',
@@ -439,7 +447,7 @@ describe('the run queue through the store, under barrier durability', () => {
     ])
     expect(replied).toBeNull()
 
-    await held.calls[1].answer()
+    await answerSync(held, 1)
     await reply
     expect(replied).toBe('queued')
     expect(statuses(queueFile(profilePath))).toEqual([['run-a', 'queued']])
@@ -493,7 +501,7 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(statuses(AppStore.getRunQueueJobs())).toEqual([['run-b', 'queued']])
     expect(temps(profilePath)).toEqual([])
 
-    await held.calls[0].answer()
+    await answerSync(held, 0)
     await settle()
     expect(statuses(queueFile(profilePath))).toEqual([['run-b', 'queued']])
     expect(temps(profilePath)).toEqual([])

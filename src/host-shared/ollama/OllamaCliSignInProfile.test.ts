@@ -16,6 +16,7 @@ import {
 // pins every layer of each pair on its own.
 const fsHooks = vi.hoisted(() => ({
   opened: [] as string[],
+  withoutNoFollow: false,
   afterCheck: null as ((path: string) => void) | null
 }))
 
@@ -32,6 +33,12 @@ vi.mock('node:fs', async (importOriginal) => {
     }
   return {
     ...fs,
+    constants: {
+      ...fs.constants,
+      get O_NOFOLLOW() {
+        return fsHooks.withoutNoFollow ? 0 : fs.constants.O_NOFOLLOW
+      }
+    },
     lstatSync: thenSwap(fs.lstatSync as (...input: unknown[]) => unknown),
     statSync: thenSwap(fs.statSync as (...input: unknown[]) => unknown),
     openSync: (...args: Parameters<typeof fs.openSync>) => {
@@ -53,6 +60,7 @@ function profile(settings?: string): string {
 }
 
 afterEach(() => {
+  fsHooks.withoutNoFollow = false
   fsHooks.opened.length = 0
   fsHooks.afterCheck = null
   for (const path of profiles.splice(0)) rmSync(path, { recursive: true, force: true })
@@ -127,7 +135,8 @@ describe('readRememberedOllamaCliSignIn', () => {
     expect(fsHooks.opened).toEqual([])
   })
 
-  it('refuses a settings file swapped for a symlink after it was checked', () => {
+  it.each([false, true])('refuses swapped symlinks (%s)', (withoutNoFollow) => {
+    fsHooks.withoutNoFollow = withoutNoFollow
     const path = profile(
       JSON.stringify({ ollamaCliSignIn: { signedIn: false, updatedAt: EARLIER } })
     )

@@ -74,7 +74,9 @@ describe('durability Electron qualification preparation', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-qualification-build-'))
     try {
       const result = await prepare(root)
-      const entries = asar.listPackage(result.archive)
+      const entries = asar
+        .listPackage(result.archive)
+        .map((entry) => entry.split(path.sep).join('/'))
       expect(entries).toContain('/out/worker.cjs')
       expect(entries).toContain('/out/adapter.cjs')
       expect(entries).toContain('/out/flusher.cjs')

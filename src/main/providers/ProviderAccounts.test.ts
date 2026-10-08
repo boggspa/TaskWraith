@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { AppSettings, ProviderCliAccount } from '../store/types'
 import {
   MAX_PROVIDER_ACCOUNTS_PER_PROVIDER,
@@ -14,15 +14,15 @@ import {
   sanitizeProviderAccounts
 } from './ProviderAccounts'
 
-const HOME = '/Users/tester'
-const USER_DATA = '/Users/tester/Library/Application Support/taskwraith'
+const HOME = resolve('/Users/tester')
+const USER_DATA = join(HOME, 'Library', 'Application Support', 'taskwraith')
 
 function account(overrides: Partial<ProviderCliAccount> = {}): ProviderCliAccount {
   return {
     id: 'claude-work-abc123',
     provider: 'claude',
     label: 'Work',
-    configDir: '/Users/tester/.claude-work',
+    configDir: join(HOME, '.claude-work'),
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
     ...overrides
@@ -51,7 +51,7 @@ function harness(initial: Partial<AppSettings> = {}) {
 
 describe('normalizeAccountConfigDir', () => {
   it('expands ~ against the given home and strips a trailing slash', () => {
-    expect(normalizeAccountConfigDir('~/.claude-work/', HOME)).toBe('/Users/tester/.claude-work')
+    expect(normalizeAccountConfigDir('~/.claude-work/', HOME)).toBe(join(HOME, '.claude-work'))
     expect(normalizeAccountConfigDir('~', HOME)).toBe(HOME)
   })
 
@@ -65,11 +65,11 @@ describe('normalizeAccountConfigDir', () => {
 describe('claudeAccountKeychainService', () => {
   it('derives Claude Code’s per-folder Keychain item name from the sha256 of the path', () => {
     // sha256("/Users/tester/.claude-work") = 1e0a9e8b… — the first 8 hex chars.
-    expect(claudeAccountKeychainService('/Users/tester/.claude-work', HOME)).toMatch(
+    expect(claudeAccountKeychainService(join(HOME, '.claude-work'), HOME)).toMatch(
       /^Claude Code-credentials-[0-9a-f]{8}$/
     )
     expect(claudeAccountKeychainService('~/.claude-work', HOME)).toBe(
-      claudeAccountKeychainService('/Users/tester/.claude-work/', HOME)
+      claudeAccountKeychainService(join(HOME, '.claude-work') + '/', HOME)
     )
   })
 
@@ -104,7 +104,7 @@ describe('sanitizeProviderAccounts', () => {
 
   it('caps each provider at the slot limit and backfills a blank label', () => {
     const many = Array.from({ length: MAX_PROVIDER_ACCOUNTS_PER_PROVIDER + 2 }, (_, index) =>
-      account({ id: `claude-${index}`, label: '', configDir: `/Users/tester/.claude-${index}` })
+      account({ id: `claude-${index}`, label: '', configDir: join(HOME, `.claude-${index}`) })
     )
     const accounts = sanitizeProviderAccounts(many)
     expect(accounts).toHaveLength(MAX_PROVIDER_ACCOUNTS_PER_PROVIDER)
@@ -135,14 +135,14 @@ describe('createProviderAccountRegistry', () => {
       id: 'claude-work-s10000',
       provider: 'claude',
       label: 'Work',
-      configDir: '/Users/tester/.claude-work',
+      configDir: join(HOME, '.claude-work'),
       active: false,
       envKey: 'CLAUDE_CONFIG_DIR'
     })
     expect(settings().providerAccounts).toHaveLength(1)
     expect(resolveActiveProviderAccount(settings(), 'claude')).toBeNull()
     expect(providerAccountEnvironment(added)).toEqual({
-      CLAUDE_CONFIG_DIR: '/Users/tester/.claude-work'
+      CLAUDE_CONFIG_DIR: join(HOME, '.claude-work')
     })
   })
 
