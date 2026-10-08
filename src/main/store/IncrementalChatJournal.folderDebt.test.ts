@@ -3,11 +3,12 @@
  * folder: the folder's name is in its parent, so the parent is owed too, by
  * the first chat the journal notes a debt for once the folder is made.
  */
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import fs, { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import type { ThreadDurabilityDebtNote } from './ThreadDurabilityDebt'
@@ -25,6 +26,8 @@ function removeTemporary(directory: string): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
+  syncBuiltinESMExports()
   while (made.length > 0) removeTemporary(made.pop()!)
 })
 
@@ -114,5 +117,25 @@ describe('the name of a folder the journal makes, under the debt option', () => 
     journal.initialize('chat-1', record('chat-1'))
 
     expect(directories).toEqual([['chat-1', baseDir]])
+  })
+
+  it('stops at the first created folder even when mkdir returns another spelling of it', () => {
+    const root = temporary()
+    const actual = join(root, 'actual')
+    const alias = join(root, 'alias')
+    mkdirSync(actual)
+    fs.symlinkSync(actual, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const baseDir = join(alias, 'chat-journal-v2')
+    mkdirSync(baseDir)
+    // Windows can resolve short names while returning the first created path.
+    // A directory alias reproduces the differing spelling on every platform.
+    vi.spyOn(fs, 'mkdirSync').mockReturnValueOnce(fs.realpathSync(baseDir))
+    syncBuiltinESMExports()
+    const { journal, directories } = journalIn(baseDir)
+    journal.initialize('chat-1', record('chat-1'))
+    expect(directories).toEqual([
+      ['chat-1', alias],
+      ['chat-1', baseDir]
+    ])
   })
 })

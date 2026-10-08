@@ -9,22 +9,14 @@
  */
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  NODE_THREAD_AUTHORITY_FS,
   ThreadAuthorityFiles,
-  threadAuthorityDirectory,
   threadAuthorityFilePath
 } from '../host-shared/thread-log/ThreadAuthorityFile'
 import {
@@ -685,12 +677,20 @@ describe('HostNodeProductionServer: its own writes to a thread', () => {
   it('on, never writes over a file it cannot take away, and counts it', async () => {
     const h = harness(ON)
     await h.server.start()
-    const directory = threadAuthorityDirectory(h.profile)
     try {
       const threadId = await museThread(h)
       await owned(h, threadId, endedPid())
       const before = h.store().getThread(threadId)
-      chmodSync(directory, 0o500)
+      const unlink = NODE_THREAD_AUTHORITY_FS.unlink
+      const file = threadAuthorityFilePath(h.profile, threadId)
+      // chmod cannot deny directory writes on Windows. Fail the same unlink
+      // seam on every platform, leaving unrelated teardown writes available.
+      vi.spyOn(NODE_THREAD_AUTHORITY_FS, 'unlink').mockImplementation(async (target) => {
+        if (target === file) {
+          throw Object.assign(new Error('EACCES: authority removal denied'), { code: 'EACCES' })
+        }
+        return unlink(target)
+      })
 
       expect(await h.send(command('composer.send', { threadId }, { text: 'Run it' }))).toEqual(busy)
       expect(h.store().getThread(threadId)).toEqual(before)
@@ -699,7 +699,7 @@ describe('HostNodeProductionServer: its own writes to a thread', () => {
         lastRemoveError: expect.stringContaining('EACCES')
       })
     } finally {
-      chmodSync(directory, 0o700)
+      vi.restoreAllMocks()
       await h.stop()
     }
   })

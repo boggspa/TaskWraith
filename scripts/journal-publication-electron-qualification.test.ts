@@ -17,7 +17,9 @@ it('builds the exact source snapshot as standalone ASAR entries without native l
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-publication-prepare-'))
   try {
     const prepared = await prepare(root)
-    expect(asar.listPackage(prepared.archive)).toContain('/out/worker.cjs')
+    expect(
+      asar.listPackage(prepared.archive).map((entry: string) => entry.split(path.sep).join('/'))
+    ).toContain('/out/worker.cjs')
     expect(prepared.archiveSha256).toBe(
       createHash('sha256').update(fs.readFileSync(prepared.archive)).digest('hex')
     )
@@ -49,7 +51,8 @@ it('records immutable relative import snapshots and never hashes later live muta
     fs.writeFileSync(path.join(root, 'a.ts'), "import {b} from './b'\nexport const a=b\n")
     fs.writeFileSync(path.join(root, 'b.ts'), 'export const b=1\n')
     const copies = path.join(root, 'copies')
-    const hashes = snapshotSources(root, copies, { a: 'a.ts' })
+    const hashes = snapshotSources(root, copies, { a: 'a.ts', alias: './a.ts' })
+    expect(Object.keys(hashes).sort()).toEqual(['a.ts', 'b.ts'])
     fs.writeFileSync(path.join(root, 'b.ts'), 'export const b=2\n')
     expect(fs.readFileSync(path.join(copies, 'b.ts'), 'utf8')).toContain('b=1')
     expect(hashes['b.ts']).toBe(

@@ -584,8 +584,11 @@ describe('HostCommandReceiptStore transactional receipts (M4 slice 9)', () => {
       writeFileSync(join(checkpointPath(), 'occupied'), 'x')
       logs.length = 0
 
+      const directoryRenameError = process.platform === 'win32' ? /EPERM|EACCES/ : /EISDIR/
       expect(() => scheduled[0]!()).not.toThrow()
-      expect(logs.some((line) => /compaction/i.test(line) && /EISDIR/.test(line))).toBe(true)
+      expect(logs.some((line) => /compaction/i.test(line) && directoryRenameError.test(line))).toBe(
+        true
+      )
       // The witness is untouched: journal intact, receipt terminal, writes still allowed.
       expect(readText(journalPath())).toBe(journalBefore)
       expect(byId(store, 'cmd-a')).toMatchObject({ status: 'succeeded', commandClass: TXN })
@@ -594,7 +597,7 @@ describe('HostCommandReceiptStore transactional receipts (M4 slice 9)', () => {
       created(store.begin(persistInput('cmd-b')))
 
       // An explicit compact() still throws to its caller.
-      expect(() => store.compact()).toThrow(/EISDIR/)
+      expect(() => store.compact()).toThrow(directoryRenameError)
 
       // A fresh reopen sees the durable journal, not a half-written checkpoint.
       rmSync(checkpointPath(), { recursive: true, force: true })

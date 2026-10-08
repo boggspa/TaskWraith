@@ -81,6 +81,7 @@ main().then(result=>{fs.writeFileSync(path.join(state,'result.json'),JSON.string
 function snapshotSources(repo, destination, entries) {
   const hashes = {}
   const visit = (relative) => {
+    relative = path.normalize(relative).split(path.sep).join('/')
     if (hashes[relative]) return
     const bytes = fs.readFileSync(path.join(repo, relative))
     hashes[relative] = createHash('sha256').update(bytes).digest('hex')

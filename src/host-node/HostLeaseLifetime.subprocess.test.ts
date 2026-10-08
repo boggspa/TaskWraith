@@ -316,7 +316,11 @@ function startProcess(label: string, args: readonly string[], options: SpawnOpti
     label,
     pid,
     child,
-    birth: observeBirth(pid),
+    // On Windows Node retains the exact child process handle until exit.
+    // Starting an extra PowerShell birth probe here competes with the very
+    // short startup grace this fixture measures. Adopted processes still
+    // require a separately observed birth identity below.
+    birth: IS_WINDOWS ? Promise.resolve(null) : observeBirth(pid),
     exit: null,
     closed: new Promise<ExitStatus>((resolve) => {
       child.once('exit', (code, signal) => {
@@ -365,9 +369,13 @@ function sendSignal(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-async function signalStarted(entry: Started, signal: NodeJS.Signals): Promise<void> {
+async function signalStarted(entry: Started, signal: NodeJS.Signals): Promise<number> {
   if (!(await isStillRunning(entry))) throw new Error(`${entry.label} is no longer running`)
-  sendSignal(entry.pid, signal)
+  const signalledAt = Date.now()
+  if (IS_WINDOWS && entry.child) {
+    if (!entry.child.kill(signal)) throw new Error(`${entry.label} could not be signalled`)
+  } else sendSignal(entry.pid, signal)
+  return signalledAt
 }
 
 async function waitForExit(entry: Started, timeoutMs = 15_000): Promise<ExitStatus> {
@@ -818,8 +826,7 @@ describe('1. grace exit', () => {
       entry: { pid: host.pid, profilePath: profile, leaseMode: 'lease' }
     })
 
-    const killedAt = Date.now()
-    await signalStarted(holder, 'SIGKILL')
+    const killedAt = await signalStarted(holder, 'SIGKILL')
     const exit = await waitForExit(host)
 
     expect(exit.code, host.stderr()).toBe(0)
@@ -864,8 +871,7 @@ describe('1. grace exit', () => {
     probe.close()
     await delay(GRACE_MS / 2)
     expect(host.exit, 'a declined probe leaving changes nothing').toBeNull()
-    const killedAt = Date.now()
-    await signalStarted(second, 'SIGKILL')
+    const killedAt = await signalStarted(second, 'SIGKILL')
     const exit = await waitForExit(host)
     expect(exit.code, host.stderr()).toBe(0)
     expect(exit.at - killedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)

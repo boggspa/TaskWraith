@@ -852,9 +852,8 @@ describe('HostLocalServer', () => {
     client.close()
   })
 
-  // A production Host's lifetime-stop deadline is summed from this bound
-  // (HOST_LIFETIME_STOP_DEADLINE_MS), so the drain must wait the exported one.
-  it('waits HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS by default for a client that never finishes closing', async () => {
+  // A production Host's lifetime-stop deadline includes this upper bound.
+  it('bounds shutdown of a paused client by the default drain timeout', async () => {
     server = new HostLocalServer({
       userDataPath,
       hostId: 'test-host',
@@ -873,9 +872,13 @@ describe('HostLocalServer', () => {
     const startedAt = Date.now()
     await server.stop()
     const elapsed = Date.now() - startedAt
-    // One full drain, then it is dropped: well short of a second one.
-    expect(elapsed).toBeGreaterThanOrEqual(HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS - 50)
+    // Unix sockets wait the full drain. A Windows named pipe may report its
+    // close promptly even while the other end is paused; both obey the bound.
+    if (process.platform !== 'win32') {
+      expect(elapsed).toBeGreaterThanOrEqual(HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS - 50)
+    }
     expect(elapsed).toBeLessThan(2 * HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS)
+    expect(server.isStarted).toBe(false)
     client.close()
   })
 

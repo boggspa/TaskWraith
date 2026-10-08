@@ -170,7 +170,12 @@ describe('production transaction subprocess crash rows', () => {
           ? readFileSync(join(profilePath, 'writer-failed'), 'utf8')
           : null
       ).toBeNull()
-      expect(child.signal).toBe('SIGKILL')
+      expect(child.error).toBeUndefined()
+      if (process.platform === 'win32') {
+        // TerminateProcess reports an exit status, not a POSIX signal.
+        expect(child.signal).toBeNull()
+        expect(child.status).toBe(1)
+      } else expect(child.signal).toBe('SIGKILL')
       expect(readFileSync(join(profilePath, 'cut-reached'), 'utf8')).toBe(cut)
       const witnesses = JSON.parse(readFileSync(join(profilePath, 'identities.json'), 'utf8'))
       const chat = join(profilePath, 'chats', THREAD + '.json')

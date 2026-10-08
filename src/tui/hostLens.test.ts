@@ -1,3 +1,4 @@
+import { parse, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { HostTerminationOutcome } from '../host-client/HostProcessTermination'
@@ -18,7 +19,7 @@ import {
 import type { TuiHostStopAllPlan, TuiHostStopAllRequest } from './hostProcessManager'
 
 const PAYLOAD = `sha256:${'0123456789abcdef'.repeat(4)}`
-const OWN = '/Users/a/Library/Application Support/TaskWraith'
+const OWN = resolve('/Users/a/Library/Application Support/TaskWraith')
 
 function status(overrides: Partial<HostStatusProjection> = {}): HostStatusProjection {
   return {
@@ -139,7 +140,7 @@ describe('/host arguments', () => {
       'stop-all --all',
       'stop-all --all --scan-argv',
       `stop-all --profile ${OWN}`,
-      'stop-all --scan-argv --payload-root /opt/TaskWraith/out/host'
+      `stop-all --scan-argv --payload-root ${resolve('/opt/TaskWraith/out/host')}`
     ]) {
       const tokens = tokenizeTuiHostArguments(text)
       const cli = parseHostProductionCli(tokens)
@@ -158,13 +159,13 @@ describe('/host arguments', () => {
       expect(command.message).not.toContain('Usage:')
       return command.message
     }
-    expect(refused('stop-all --all --profile /x')).toBe(
+    expect(refused(`stop-all --all --profile ${resolve('/x')}`)).toBe(
       '--all, --profile and --payload-root are mutually exclusive.'
     )
     expect(refused('stop-all --profile relative/path')).toBe(
       '--profile must be an absolute canonical path.'
     )
-    expect(refused('stop-all --profile /')).toBe(
+    expect(refused(`stop-all --profile ${parse(OWN).root}`)).toBe(
       '--profile must be an absolute canonical non-root path.'
     )
     expect(refused('stop-all --profile')).toBe('--profile requires one value.')

@@ -968,7 +968,7 @@ describe('host-stop-all build hook', () => {
           "const fs = require('node:fs')",
           "const profile = process.argv[process.argv.indexOf('--profile') + 1]",
           'fs.writeFileSync(process.env.FAKE_CLI_RECORD, JSON.stringify({ argv: process.argv.slice(2), registryRoot: process.env.TASKWRAITH_HOST_REGISTRY_ROOT }))',
-          `process.stdout.write(${JSON.stringify(cliReport(registryRoot, '@PROFILE@', 'stopped', own.pid))}.split('@PROFILE@').join(profile))`,
+          `process.stdout.write(${JSON.stringify(cliReport(registryRoot, '@PROFILE@', 'stopped', own.pid))}.split('@PROFILE@').join(JSON.stringify(profile).slice(1, -1)))`,
           "process.stderr.write('[host-termination] stopped after socket:stopping\\n')"
         ].join('\n')
       )

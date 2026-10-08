@@ -622,10 +622,13 @@ export function createIncrementalChatJournal(
     const made = fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     // Without the debt option no one would read the names.
     if (made === undefined || !options.noteDurabilityDebt) return
-    const top = path.dirname(path.resolve(made))
+    // mkdir may return a resolved spelling (including Windows short names).
+    // Compare canonical directories while keeping the caller's debt paths.
+    const top = path.dirname(fs.realpathSync(made))
     for (let parent = path.dirname(path.resolve(baseDir)); ; parent = path.dirname(parent)) {
       madeFolderParents.push(parent)
-      if (parent === top || parent === path.dirname(parent)) break
+      if (path.relative(fs.realpathSync(parent), top) === '' || parent === path.dirname(parent))
+        break
     }
   }
   const owe = options.noteDurabilityDebt

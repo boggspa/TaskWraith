@@ -383,8 +383,10 @@ describe('production Host CLI subprocess: lease lifetime', () => {
           await waitForExit(child)
         }
       }
-      // Reaped: the pid no longer names a process this test started.
-      expect(() => process.kill(child.pid!, 0)).toThrow()
+      // The native child handle has reported its exit. On Windows a numeric
+      // PID can remain queryable while another process still holds a handle.
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+      if (process.platform !== 'win32') expect(() => process.kill(child.pid!, 0)).toThrow()
     }
     // A Host that died without cleaning up (a regression these tests catch)
     // leaves its socket directory in the OS temp dir; every Host here is gone.

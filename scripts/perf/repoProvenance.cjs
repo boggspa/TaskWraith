@@ -125,7 +125,7 @@ function detectIsolatedWorktree(repoRoot) {
     // were it kept in such a folder. Linked worktrees, the app's and the
     // fan-out's, are caught by the git check above. Kept as it was and pinned
     // by repoProvenance.test.ts until someone decides to drop it.
-    const resolved = path.resolve(repoRoot)
+    const resolved = path.resolve(repoRoot).split(path.sep).join('/')
     if (resolved.includes('.taskwraith-worktrees') || resolved.includes('/worktrees/')) {
       return true
     }
