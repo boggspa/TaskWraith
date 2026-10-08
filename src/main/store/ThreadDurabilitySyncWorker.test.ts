@@ -17,6 +17,7 @@ import {
 } from './ThreadDurabilitySyncWorker'
 
 const PREFIX = 'thread-durability-sync-worker-'
+const FILE_SYNC_FLAGS = process.platform === 'win32' ? fs.constants.O_RDWR : fs.constants.O_RDONLY
 const directories: string[] = []
 
 function directory(): string {
@@ -63,21 +64,22 @@ describe('the thread durability sync worker', () => {
     writeFileSync(file, 'line\n')
     const worker = createThreadDurabilitySyncWorker()
     try {
-      expect(await syncOnce(worker.syncPath, file, fs.constants.O_RDONLY)).toEqual({
+      expect(await syncOnce(worker.syncPath, file, FILE_SYNC_FLAGS)).toEqual({
         openError: null,
         syncError: null,
         closeError: null
       })
-      expect(await syncOnce(worker.syncPath, dir, fs.constants.O_RDONLY)).toEqual({
-        openError: null,
-        syncError: null,
-        closeError: null
-      })
-      const missing = await syncOnce(
-        worker.syncPath,
-        path.join(dir, 'gone.jsonl'),
-        fs.constants.O_RDONLY
-      )
+      const directoryResult = await syncOnce(worker.syncPath, dir, fs.constants.O_RDONLY)
+      if (process.platform === 'win32') {
+        // The raw worker reports the unsupported directory operation; the
+        // platform-aware barrier avoids submitting it in production.
+        expect(['EPERM', 'EACCES', 'EINVAL', 'EISDIR']).toContain(
+          (directoryResult.openError || directoryResult.syncError)?.code
+        )
+      } else {
+        expect(directoryResult).toEqual({ openError: null, syncError: null, closeError: null })
+      }
+      const missing = await syncOnce(worker.syncPath, path.join(dir, 'gone.jsonl'), FILE_SYNC_FLAGS)
       expect(missing.openError?.code).toBe('ENOENT')
       expect(worker.snapshot()).toMatchObject({ workerSyncs: 3, inlineSyncs: 0, lost: false })
     } finally {
@@ -91,13 +93,13 @@ describe('the thread durability sync worker', () => {
     writeFileSync(file, 'line\n')
     const fake = fakeWorker()
     const worker = createThreadDurabilitySyncWorker({ createWorker: () => fake.handle })
-    const owed = syncOnce(worker.syncPath, file, fs.constants.O_RDONLY)
+    const owed = syncOnce(worker.syncPath, file, FILE_SYNC_FLAGS)
     expect(fake.posted).toHaveLength(1)
     fake.emit('error', new Error('worker died'))
     const lost = await owed
     // Never reported done: the sync it owed fails, so its debt is owed again.
     expect(lost.syncError?.message).toMatch(/sync worker failed/)
-    expect(await syncOnce(worker.syncPath, file, fs.constants.O_RDONLY)).toEqual({
+    expect(await syncOnce(worker.syncPath, file, FILE_SYNC_FLAGS)).toEqual({
       openError: null,
       syncError: null,
       closeError: null
@@ -121,7 +123,7 @@ describe('the thread durability sync worker', () => {
     const missing = path.join(directory(), 'gone.jsonl')
     const worker = createThreadDurabilitySyncWorker()
     try {
-      const { openError } = await syncOnce(worker.syncPath, missing, fs.constants.O_RDONLY)
+      const { openError } = await syncOnce(worker.syncPath, missing, FILE_SYNC_FLAGS)
       expect(openError).toMatchObject({ code: 'ENOENT', syscall: 'open', path: missing })
       expect(typeof openError?.errno).toBe('number')
       expect(worker.snapshot()).toMatchObject({ workerSyncs: 1, lost: false })
@@ -141,7 +143,7 @@ describe('the thread durability sync worker', () => {
     const worker = createThreadDurabilitySyncWorker({ createWorker: () => handle })
     const file = path.join(directory(), 'a.jsonl')
     writeFileSync(file, 'line\n')
-    expect(await syncOnce(worker.syncPath, file, fs.constants.O_RDONLY)).toEqual({
+    expect(await syncOnce(worker.syncPath, file, FILE_SYNC_FLAGS)).toEqual({
       openError: null,
       syncError: null,
       closeError: null

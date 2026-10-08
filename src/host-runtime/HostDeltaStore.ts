@@ -2514,7 +2514,8 @@ async function writeAndFsyncFile(path: string, data: string): Promise<void> {
 }
 
 async function fsyncPath(path: string): Promise<void> {
-  const handle = await openAsync(path, 'r')
+  // Windows FlushFileBuffers needs write access; directory callers are POSIX-only.
+  const handle = await openAsync(path, process.platform === 'win32' ? 'r+' : 'r')
   try {
     await handle.sync()
   } finally {

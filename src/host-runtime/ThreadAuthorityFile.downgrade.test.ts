@@ -14,7 +14,7 @@ import { HostThreadOwnerRegistry } from './HostThreadOwnerRegistry'
 
 const THREAD = 'thread-1'
 /** Never touched on disk: the in-memory filesystem below stands for it. */
-const PROFILE = path.join(path.sep, 'profile')
+const PROFILE = path.resolve(path.sep, 'profile')
 const MARK = threadAuthorityFilePath(PROFILE, THREAD)
 
 /**

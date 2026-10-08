@@ -87,6 +87,7 @@ async function joins() {
         state.failSync -= 1
         throw new Error('directory sync failed')
       }
+      if (process.platform === 'win32') return
       const handle = await fs.open(directory, 'r')
       try {
         await handle.sync()

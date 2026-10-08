@@ -92,7 +92,10 @@ describe('the barrier durability layer', () => {
       const layer = createThreadBarrierDurability()
 
       await expect(layer.journal.syncDirectory(directory)).resolves.toBe('synced')
-      expect(layer.snapshot().port).toMatchObject({ started: 1, inFlight: 0 })
+      expect(layer.snapshot().port).toMatchObject({
+        started: process.platform === 'win32' ? 0 : 1,
+        inFlight: 0
+      })
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

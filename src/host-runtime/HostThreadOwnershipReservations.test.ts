@@ -62,6 +62,7 @@ async function fixture() {
         state.failSync = false
         throw new Error('directory sync failed')
       }
+      if (process.platform === 'win32') return
       const handle = await fs.open(directory, 'r')
       try {
         await handle.sync()
