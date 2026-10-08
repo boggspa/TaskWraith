@@ -101,10 +101,11 @@ describe('inert thread publication permits', () => {
     await expect(guard.publish(guard.capture('thread', binding), dishonest)).rejects.toThrow(
       'must be synchronous'
     )
-    if (false) {
+    const _typeOnly = () => {
       // @ts-expect-error A concrete adoption callback must not be asynchronous.
       void guard.publish(guard.capture('thread', binding), async () => 1)
     }
+    void _typeOnly
   })
 })
 
@@ -112,16 +113,17 @@ describe('authority metadata witness', () => {
   const prefix = 'host-publication-witness-'
   function fixture(run: (profile: string, file: string) => void): void {
     const profile = mkdtempSync(path.join(os.tmpdir(), prefix))
+    if (
+      path.dirname(profile) !== os.tmpdir() ||
+      !path.basename(profile).startsWith(prefix) ||
+      path.basename(profile).length <= prefix.length
+    ) {
+      throw new Error('Not a fixture folder')
+    }
     try {
       mkdirSync(path.join(profile, 'thread-authority'))
       run(profile, path.join(profile, 'thread-authority', 'thread.json'))
     } finally {
-      if (
-        path.dirname(profile) !== os.tmpdir() ||
-        !path.basename(profile).startsWith(prefix) ||
-        path.basename(profile).length <= prefix.length
-      )
-        throw new Error('Not a fixture folder')
       rmSync(profile, { recursive: true, force: true })
     }
   }

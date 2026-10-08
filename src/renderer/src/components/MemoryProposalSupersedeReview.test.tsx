@@ -264,14 +264,16 @@ describe('reviewed supersede UI contract', () => {
       }
       expect(find('BUTTON')).toBeUndefined()
       await act(async () =>
-        (reactProps(find('SELECT')!).onChange as Function)({ target: { value: 'old' } })
+        (reactProps(find('SELECT')!).onChange as (event: { target: { value: string } }) => void)({
+          target: { value: 'old' }
+        })
       )
       expect(container.textContent).toContain('Pack: p')
       expect(container.textContent).toContain('old — approved')
-      await act(async () => (reactProps(find('BUTTON')!).onClick as Function)())
+      await act(async () => (reactProps(find('BUTTON')!).onClick as () => void)())
       expect(onSupersede).toHaveBeenCalledWith('p', 'new', 'old')
       expect(find('BUTTON')!.disabled).toBe(true)
-      await act(async () => (reactProps(find('BUTTON')!).onClick as Function)())
+      await act(async () => (reactProps(find('BUTTON')!).onClick as () => void)())
       expect(onSupersede).toHaveBeenCalledTimes(1)
       expect(onCommitted).not.toHaveBeenCalled()
       const updated = {

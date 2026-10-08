@@ -711,7 +711,9 @@ describe('checkpoint preparation diagnostics', () => {
         onError(listener) {
           error = listener
         },
-        kill() {}
+        kill() {
+          /* This stand-in has no child process. */
+        }
       }
       const worker = new CheckpointPreparationWorker({
         deadlineMs: 5,

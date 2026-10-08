@@ -65,7 +65,6 @@ export class HostThreadOwnershipReservations {
         writer: Object.freeze({ ...read.record.writer }),
         epoch: Object.freeze({ ...read.record.epoch })
       })
-      let custody!: Custody
       const handle: ThreadOwnershipReservation = Object.freeze({
         threadId,
         epoch: record.epoch,
@@ -75,7 +74,14 @@ export class HostThreadOwnershipReservations {
           custody.phase === 'marked' ? this.validate(custody) : this.validateUnlinked(custody),
         erasing: () => this.ports.erasing(threadId)
       })
-      custody = { handle, record, generation, witness, phase: 'marked', removing: false }
+      const custody: Custody = {
+        handle,
+        record,
+        generation,
+        witness,
+        phase: 'marked',
+        removing: false
+      }
       this.byThread.set(threadId, custody)
       this.byHandle.set(handle, custody)
       return handle

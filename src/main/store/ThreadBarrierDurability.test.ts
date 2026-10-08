@@ -83,15 +83,17 @@ describe('the barrier durability layer', () => {
   it("counts the journal's directory syncs with the barriers', on the port it built", async () => {
     const own = tmpdir() + sep + 'owner-barrier-layer-'
     const directory = mkdtempSync(own)
+    // Validate the immutable path before running the body; cleanup must not
+    // replace a failed assertion with a throw from finally.
+    if (dirname(directory) !== tmpdir() || !directory.startsWith(own)) {
+      throw new Error(`Refusing to remove ${directory}`)
+    }
     try {
       const layer = createThreadBarrierDurability()
 
       await expect(layer.journal.syncDirectory(directory)).resolves.toBe('synced')
       expect(layer.snapshot().port).toMatchObject({ started: 1, inFlight: 0 })
     } finally {
-      // Only the folder made above, and nothing else.
-      if (dirname(directory) !== tmpdir() || !directory.startsWith(own))
-        throw new Error(`Refusing to remove ${directory}`)
       rmSync(directory, { recursive: true, force: true })
     }
   })

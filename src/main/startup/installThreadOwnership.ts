@@ -281,7 +281,9 @@ export function installThreadOwnership(
         forget(chatId) {
           void chatId
         },
-        close() {}
+        close() {
+          /* The desktop owns no followers to close. */
+        }
       },
       receiptStore: {
         async forgetChat(chatId) {

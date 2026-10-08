@@ -89,7 +89,11 @@ describe('HostProfileRecordCommandExecutor', () => {
     const profilePath = profile()
     const store = new HostProfileDomainStore({
       profilePath,
-      authority: { assertProfileAuthority() {} },
+      authority: {
+        assertProfileAuthority() {
+          /* Fixture owns this temporary profile. */
+        }
+      },
       now: () => 200
     })
     const original = store.createThread({ scope: 'global', title: 'Original' })
