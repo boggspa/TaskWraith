@@ -32,64 +32,72 @@ const {
 } = require('./guard-no-bundled-secrets.cjs')
 
 describe('guard-no-bundled-secrets: release artifact targets', () => {
-  it('scans packaged app.asar and extra resources but excludes the standalone Node binary', () => {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-artifacts-'))
-    const resources = path.join(repoRoot, 'dist', 'linux-unpacked', 'resources')
-    fs.mkdirSync(path.join(resources, 'tui'), { recursive: true })
-    fs.mkdirSync(path.join(resources, 'tui-runtime', 'linux-x64'), { recursive: true })
-    fs.mkdirSync(path.join(resources, 'app.asar.unpacked', 'node_modules', 'example'), {
-      recursive: true
-    })
-    fs.writeFileSync(path.join(resources, 'app.asar'), 'bundle')
-    fs.writeFileSync(path.join(resources, 'tui', 'cli.js'), 'cli')
-    fs.writeFileSync(path.join(resources, 'tui-runtime', 'RUNTIME.json'), '{}')
-    fs.writeFileSync(path.join(resources, 'tui-runtime', 'linux-x64', 'node'), 'runtime')
-    fs.writeFileSync(
-      path.join(resources, 'app.asar.unpacked', 'node_modules', 'example', 'payload.js'),
-      'unpacked payload'
-    )
-
-    try {
-      const targets = bundleScanTargets(repoRoot).map((target) =>
-        path.relative(repoRoot, target).replace(/\\/g, '/')
+  it.each(['dist', 'dist-debug', 'dist-debut'])(
+    'scans %s app.asar and resources but excludes the standalone Node binary',
+    (outputDir) => {
+      const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-artifacts-'))
+      const resources = path.join(repoRoot, outputDir, 'linux-unpacked', 'resources')
+      fs.mkdirSync(path.join(resources, 'tui'), { recursive: true })
+      fs.mkdirSync(path.join(resources, 'tui-runtime', 'linux-x64'), { recursive: true })
+      fs.mkdirSync(path.join(resources, 'app.asar.unpacked', 'node_modules', 'example'), {
+        recursive: true
+      })
+      fs.writeFileSync(path.join(resources, 'app.asar'), 'bundle')
+      fs.writeFileSync(path.join(resources, 'tui', 'cli.js'), 'cli')
+      fs.writeFileSync(path.join(resources, 'tui-runtime', 'RUNTIME.json'), '{}')
+      fs.writeFileSync(path.join(resources, 'tui-runtime', 'linux-x64', 'node'), 'runtime')
+      fs.writeFileSync(
+        path.join(resources, 'app.asar.unpacked', 'node_modules', 'example', 'payload.js'),
+        'unpacked payload'
       )
-      expect(targets).toEqual(
-        expect.arrayContaining([
-          'dist/linux-unpacked/resources/app.asar',
-          'dist/linux-unpacked/resources/tui/cli.js',
-          'dist/linux-unpacked/resources/tui-runtime/RUNTIME.json',
-          'dist/linux-unpacked/resources/app.asar.unpacked/node_modules/example/payload.js'
+
+      try {
+        const targets = bundleScanTargets(repoRoot).map((target) =>
+          path.relative(repoRoot, target).replace(/\\/g, '/')
+        )
+        expect(targets).toEqual(
+          expect.arrayContaining([
+            `${outputDir}/linux-unpacked/resources/app.asar`,
+            `${outputDir}/linux-unpacked/resources/tui/cli.js`,
+            `${outputDir}/linux-unpacked/resources/tui-runtime/RUNTIME.json`,
+            `${outputDir}/linux-unpacked/resources/app.asar.unpacked/node_modules/example/payload.js`
+          ])
+        )
+        expect(targets).not.toContain(
+          `${outputDir}/linux-unpacked/resources/tui-runtime/linux-x64/node`
+        )
+      } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['dist', 'dist-debug', 'dist-debut'])(
+    'requires Node license metadata in %s',
+    (outputDir) => {
+      const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-license-'))
+      const runtime = path.join(
+        repoRoot,
+        outputDir,
+        'linux-unpacked',
+        'resources',
+        'tui-runtime',
+        'linux-x64'
+      )
+      fs.mkdirSync(runtime, { recursive: true })
+      fs.writeFileSync(
+        path.join(repoRoot, outputDir, 'linux-unpacked', 'resources', 'app.asar'),
+        'bundle'
+      )
+      try {
+        expect(packagedRuntimeLicenseViolations(repoRoot)).toEqual([
+          expect.stringContaining('missing Node distribution LICENSE')
         ])
-      )
-      expect(targets).not.toContain('dist/linux-unpacked/resources/tui-runtime/linux-x64/node')
-    } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true })
+      } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true })
+      }
     }
-  })
-
-  it('requires archive-bound Node license metadata in every packaged runtime', () => {
-    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-license-'))
-    const runtime = path.join(
-      repoRoot,
-      'dist',
-      'linux-unpacked',
-      'resources',
-      'tui-runtime',
-      'linux-x64'
-    )
-    fs.mkdirSync(runtime, { recursive: true })
-    fs.writeFileSync(
-      path.join(repoRoot, 'dist', 'linux-unpacked', 'resources', 'app.asar'),
-      'bundle'
-    )
-    try {
-      expect(packagedRuntimeLicenseViolations(repoRoot)).toEqual([
-        expect.stringContaining('missing Node distribution LICENSE')
-      ])
-    } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true })
-    }
-  })
+  )
 })
 
 describe('guard-no-bundled-secrets: PEM body detection', () => {

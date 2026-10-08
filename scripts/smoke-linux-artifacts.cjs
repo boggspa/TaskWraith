@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
+const { resolveReleaseDistribution } = require('./release-distribution.cjs')
 
 function findPackagedRoot(root) {
   const stack = [root]
@@ -101,9 +102,17 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
   if (process.platform !== 'linux') {
     throw new Error('Linux artifact smoke must run on Linux')
   }
-  const distDir = path.resolve(repoRoot, argv[0] || 'dist')
+  const distributionArg = argv.find((arg) => arg.startsWith('--distribution='))
+  const targets = argv.filter((arg) => !arg.startsWith('--distribution='))
+  const distDir = path.resolve(repoRoot, targets[0] || 'dist')
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
-  const { appImage, deb } = resolveLinuxArtifacts(distDir, packageJson.version)
+  const version = distributionArg
+    ? resolveReleaseDistribution({
+        repoRoot,
+        distribution: distributionArg.slice('--distribution='.length)
+      }).version
+    : packageJson.version
+  const { appImage, deb } = resolveLinuxArtifacts(distDir, version)
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-linux-artifacts-'))
 
   try {
@@ -124,11 +133,7 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
       { cwd: tempRoot },
       'deb metadata validation'
     )
-    const metadataErrors = validateDebMetadata(
-      metadata.stdout,
-      packageJson.version,
-      debArchitecture
-    )
+    const metadataErrors = validateDebMetadata(metadata.stdout, version, debArchitecture)
     if (metadataErrors.length > 0) {
       throw new Error(metadataErrors.join('\n'))
     }

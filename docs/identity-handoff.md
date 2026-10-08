@@ -36,7 +36,7 @@ distributed Linux arm64 package.
 ## Product journey
 
 1. A pre-1.9.9 beta updates normally to 1.9.9 through `latest`.
-2. The signed 1.9.9 app reads its embedded `identity-handoff.json`. That payload
+2. The 1.9.9 app reads its embedded `identity-handoff.json`. That payload
    pins the exact size and SHA-256 of each 0.1.0 installer; there is no mutable
    remote manifest.
 3. The user explicitly downloads the selected platform/architecture artifact.
@@ -82,12 +82,11 @@ npm run build:debut:win
 npm run build:debut:linux
 ```
 
-The macOS command is the notarized local path. The Windows command requires the
-local Authenticode environment and runs the real silent install → launch →
-uninstall smoke; `build:debut:win:unsigned-rehearsal` exists only for the
-throwaway exercise and cannot supply final manifest bytes—the manifest builder
-rejects a Windows PE without an embedded Authenticode certificate table. Linux remains the
-release-shaped AppImage/deb path.
+The macOS command is the notarized local path. Windows intentionally ships
+unsigned under the maintainer's release policy; its command runs the real silent
+install → launch → uninstall smoke. The manifest accepts unsigned PE installers
+and explicitly discloses that Windows cannot verify their publisher. Their exact
+size and SHA-256 remain pinned by the beta handoff. Linux uses AppImage/deb.
 
 Collect the exact final artifacts from those platform builders under
 `.local-only/identity-handoff/artifacts`, then prepare the external payload:
@@ -101,7 +100,7 @@ TASKWRAITH_REQUIRE_PREPARED_HANDOFF=1 \
   --artifact-dir .local-only/identity-handoff/artifacts
 
 npm run build:handoff:mac:notarized
-npm run build:handoff:win:signed
+npm run build:handoff:win
 npm run build:handoff:linux
 ```
 
@@ -115,7 +114,7 @@ Normal `build` and `ci` still validate the tracked, unprepared contract template
 without needing future release artifacts.
 
 The manifest is deliberately excluded from `app.asar`. The packaging hook
-copies the external prepared payload beside the signed 1.9.9 app resources and removes it
+copies the external prepared payload beside the 1.9.9 app resources and removes it
 from every other identity, including 0.1.0. This prevents the public artifact
 from containing the hash that is supposed to describe that same artifact (an
 impossible self-reference) and lets both packages be built from one source
@@ -154,13 +153,23 @@ payload cannot accidentally become the ship payload.
 
 Publication remains the canonical local/manual release path in
 `.local-only/RELEASING.md`: signing credentials are never uploaded to GitHub.
-Publish the already-approved macOS, signed Windows and Linux bytes plus their
+Publish the already-approved macOS, unsigned Windows and Linux bytes plus their
 `release-*` feeds under `v0.1.0`; then verify the remote asset sizes/hashes
 against the external payload before making the release the public debut route.
 This deliberately does not activate the policy-disabled hosted signing jobs or
 upload signing credentials to GitHub Actions.
 
 ### Separate discovery and publication order
+
+Before final tags or publication, Windows/Linux can build from the frozen source
+SHA with `unsigned_distribution=debut`. Stage the target installers and prepared
+`identity-handoff.json` in a private `v0.1.0-handoff-rc.N` GitHub draft. Dispatch
+`unsigned_distribution=handoff` with `handoff_download_tag` naming that draft and
+the approved `handoff_payload_sha256`. CI verifies all pinned bytes and the
+source commit; the embedded manifest still names the final `v0.1.0` URLs. This
+permits both package identities to finish validation before the draft is promoted
+to the final tag and made public. Do not rebuild or modify the approved bytes
+during promotion.
 
 1. Keep both dated changelog sections in the frozen source: `1.9.9` first and
    `0.1.0` below it. Validate `v1.9.9` normally, and validate `v0.1.0` with
@@ -183,6 +192,7 @@ upload signing credentials to GitHub Actions.
    checks the exact inventory, versions, artifact sizes and SHA-512 digests,
    requires updater blockmaps, and rejects beta feeds and unexpected paths.
    It stages metadata only; it does not publish or overwrite existing output.
+
 4. Copy that verified metadata into the website's `updates/release/` directory
    and publish it in one website deployment. Check each live YAML response and
    its immutable asset URLs. Point new-user download links directly at the
@@ -210,7 +220,7 @@ its cached installer after a successful target launch; its receipt is retained.
 ## Required 1.9.9 rehearsal matrix
 
 Every row uses disposable copies of production-shaped profiles and the exact
-signed/notarized candidate bytes. Record the candidate commit, artifact hashes,
+candidate bytes (notarized macOS, unsigned Windows, Linux). Record the candidate commit, artifact hashes,
 platform/architecture, source profile fixture and final receipt.
 
 | Case                                       | Expected result                                                                               |
@@ -233,7 +243,7 @@ the target version and `release` feed names on every platform.
 
 ## 1.9.9 ship gate
 
-1. Repeat the complete matrix on the exact signed 1.9.9 and 0.1.0 candidates.
+1. Repeat the complete matrix on the exact 1.9.9 and 0.1.0 candidates with their declared signing posture.
 2. Verify the prepared manifest against the final published installer bytes.
 3. Confirm all preservation-surface digests and the target `complete` receipt.
 4. Exercise retry from the retained beta installation and the visible support

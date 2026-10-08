@@ -36,6 +36,22 @@ on:
         required: false
         type: string
         default: ''
+      unsigned_distribution:
+        description: 'Package the source identity, the 0.1.0 debut, or the frozen 1.9.9 handoff.'
+        required: true
+        type: choice
+        options: [source, debut, handoff]
+        default: source
+      handoff_payload_sha256:
+        description: 'Approved identity-handoff.json SHA-256; required only for handoff builds.'
+        required: false
+        type: string
+        default: ''
+      handoff_download_tag:
+        description: 'Source of pinned target bytes: v0.1.0 or a private v0.1.0-handoff-rc.N draft.'
+        required: false
+        type: string
+        default: v0.1.0
 
 jobs:
   test:
@@ -651,6 +667,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_windows == true
     permissions:
       contents: read
+    outputs:
+      source-sha: ${{ steps.unsigned-source.outputs.sha }}
+      artifact-name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -671,9 +690,25 @@ jobs:
       # an older exact release SHA, overlay only the current CI smoke harness
       # after electron-builder has finished creating the installers.
       - run: npm run build:win:compile
+        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
       - run: node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never
+        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
+      - name: Build unsigned Windows public debut
+        if: inputs.unsigned_distribution == 'debut'
+        run: npm run build:debut:win
+      - name: Verify the frozen Windows handoff input
+        if: inputs.unsigned_distribution == 'handoff'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
+          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
+        run: node scripts/prepare-ci-identity-handoff.cjs
+      - name: Build unsigned Windows final beta bridge
+        if: inputs.unsigned_distribution == 'handoff'
+        shell: pwsh
+        run: node scripts/run-identity-handoff-build.cjs --script build:win:handoff-smoke --payload "$env:TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD" --artifact-dir "$env:TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR"
       - name: Check out current Windows smoke harness for exact-ref recovery
-        if: steps.unsigned-source.outputs.sha != github.sha
+        if: steps.unsigned-source.outputs.sha != github.sha && (inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == '')
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.sha }}
@@ -686,7 +721,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Overlay current Windows smoke harness after packaging
-        if: steps.unsigned-source.outputs.sha != github.sha
+        if: steps.unsigned-source.outputs.sha != github.sha && (inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == '')
         shell: pwsh
         run: |
           Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-electron.cjs -Destination scripts\smoke-packaged-electron.cjs -Force
@@ -696,16 +731,45 @@ jobs:
       # The packaged-app launch smoke skips the arm64 executable on this x64
       # runner because it cannot execute it natively.
       - run: npm run build:win:checks
+        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
+      - name: Generate Windows source-identity SBOM
+        if: inputs.unsigned_distribution != 'debut'
+        run: npm run security:sbom
       - name: Upload SHA/run-labelled unsigned Windows test artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
           path: |
-            dist/TaskWraith-*-win-*-setup.exe
-            dist/TaskWraith-*-win-*-setup.exe.blockmap
-            dist/*-win-*.yml
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/TaskWraith-*-win-*-setup.exe
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/TaskWraith-*-win-*-setup.exe.blockmap
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*-win-*.yml
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/sbom.cdx.json
           if-no-files-found: error
           retention-days: 14
+
+  unsigned-windows-arm64-smoke:
+    name: Unsigned Windows arm64 installer smoke
+    runs-on: windows-11-arm
+    needs: [unsigned-windows-build]
+    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_windows == true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.unsigned-windows-build.outputs.source-sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.unsigned-windows-build.outputs.artifact-name }}
+          path: candidate
+      - name: Install, launch and uninstall the native arm64 candidate
+        shell: pwsh
+        env:
+          TASKWRAITH_BUILD_DISTRIBUTION: ${{ inputs.unsigned_distribution || 'source' }}
+        run: |
+          $version = if ($env:TASKWRAITH_BUILD_DISTRIBUTION -eq 'debut') { '0.1.0' } else { (Get-Content package.json | ConvertFrom-Json).version }
+          ./scripts/smoke-win-installer.ps1 -InstallerPath "candidate/TaskWraith-$version-win-arm64-setup.exe"
 
   unsigned-linux-build:
     name: Unsigned Linux Build (testing)
@@ -734,19 +798,47 @@ jobs:
       # runner). `--publish never` keeps this manual testing lane outside the
       # GitHub Release publication surface.
       - name: Build and strictly smoke unsigned Linux artifacts
+        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
         env:
           TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
           TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
           TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
           TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
         run: xvfb-run -a npm run build:linux:nopublish
+      - name: Build and smoke Linux public debut
+        if: inputs.unsigned_distribution == 'debut'
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
+          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
+        run: xvfb-run -a npm run build:debut:linux
+      - name: Verify the frozen Linux handoff input
+        if: inputs.unsigned_distribution == 'handoff'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
+          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
+        run: node scripts/prepare-ci-identity-handoff.cjs
+      - name: Build and smoke Linux final beta bridge
+        if: inputs.unsigned_distribution == 'handoff'
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
+          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
+        run: xvfb-run -a node scripts/run-identity-handoff-build.cjs --script build:linux:nopublish --payload "$TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD" --artifact-dir "$TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR"
+      - name: Generate Linux source-identity SBOM
+        if: inputs.unsigned_distribution != 'debut'
+        run: npm run security:sbom
       - name: Upload SHA/run-labelled unsigned Linux test artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: unsigned-linux-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unsigned-linux-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
           path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/latest-linux*.yml
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*.AppImage
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*.deb
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*-linux*.yml
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/sbom.cdx.json
           if-no-files-found: error
           retention-days: 14

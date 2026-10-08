@@ -29,6 +29,7 @@ describe('real electron-updater Release feed isolation', () => {
       expect(config.extraMetadata.taskwraithAppId).toBe('com.taskwraith.desktop')
       expect(config.extraMetadata.taskwraithUpdateFeedChannel).toBe('release')
       expect(config.extraMetadata.version).toBe(name.includes('debut') ? '0.1.0' : undefined)
+      expect(JSON.stringify(config.files)).toContain('!dist-debut/**')
     }
   })
   it.each([

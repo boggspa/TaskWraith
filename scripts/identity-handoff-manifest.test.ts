@@ -141,11 +141,28 @@ describe('identity-handoff-manifest', () => {
     ).rejects.toThrow(/HTTPS TaskWraith GitHub release path/)
   })
 
-  it('rejects unsigned Windows artifacts before they can enter a final manifest', async () => {
+  it('accepts unsigned Windows installers with explicit disclosure and pinned hashes', async () => {
     const dir = artifactDir()
-    writeFileSync(join(dir, ARTIFACT_CONTRACT['win32-x64'].fileName), 'unsigned PE bytes')
+    const unsigned = signedPeFixture()
+    unsigned.fill(0, 64 + 24 + 112 + 4 * 8, 64 + 24 + 112 + 5 * 8)
+    for (const key of ['win32-x64', 'win32-arm64']) {
+      writeFileSync(join(dir, ARTIFACT_CONTRACT[key].fileName), unsigned)
+    }
+    const manifest = await prepareManifest(dir, undefined, SOURCE_COMMIT)
+    expect(validateManifest(manifest, { requirePrepared: true })).toEqual([])
+    for (const key of ['win32-x64', 'win32-arm64']) {
+      expect(manifest.artifacts[key].instructions).toContain('installer is unsigned')
+      expect(manifest.artifacts[key].instructions).toContain('Windows cannot verify a publisher')
+      expect(manifest.artifacts[key].sha256).toMatch(/^[a-f0-9]{64}$/)
+    }
+    await expect(verifyArtifactDirectory(manifest, dir)).resolves.toEqual([])
+  })
+
+  it('rejects a malformed Windows installer without relying on signing', async () => {
+    const dir = artifactDir()
+    writeFileSync(join(dir, ARTIFACT_CONTRACT['win32-x64'].fileName), 'not a PE executable')
     await expect(prepareManifest(dir, undefined, SOURCE_COMMIT)).rejects.toThrow(
-      /no Authenticode certificate/
+      /valid PE executable/
     )
   })
 

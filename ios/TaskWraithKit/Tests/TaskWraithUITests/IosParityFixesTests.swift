@@ -55,8 +55,8 @@ struct IosParityFixesTests {
         #expect(cursor.first(where: { $0.id == "grok-4.5" }) == nil)
 
         let grok = model.providerModels["grok"] ?? []
-        #expect(grok.map(\.id) == ["grok-4.6", "grok-4.5", "grok-composer-2.5-fast"])
-        #expect(grok.first(where: { $0.isDefault == true })?.id == "grok-4.6")
+        #expect(grok.map(\.id) == ["grok-4.7", "grok-4.7-fast", "grok-4.6", "grok-4.5"])
+        #expect(grok.first(where: { $0.isDefault == true })?.id == "grok-4.7")
         #expect(grok.first(where: { $0.id == "grok-4.6" })?.label == "Grok 4.6 Fast")
         #expect(
             grok.first(where: { $0.id == "grok-4.6" })?

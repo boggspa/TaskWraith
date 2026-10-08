@@ -16,6 +16,7 @@ const DEFAULT_ARTIFACT_DIR = '.local-only/identity-handoff/artifacts'
 const ALLOWED_BUILD_SCRIPTS = new Set([
   'build:mac:notarized',
   'build:win:signed:handoff-smoke',
+  'build:win:handoff-smoke',
   'build:linux:nopublish'
 ])
 

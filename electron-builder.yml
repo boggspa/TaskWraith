@@ -20,6 +20,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!dist/**'
   - '!dist-debug/**'
+  # The final beta is packaged after the public identity from the same source.
+  - '!dist-debut/**'
   # Misc top-level artefacts that have shown up in earlier ships.
   - '!*.zip'
   - '!*.dmg'

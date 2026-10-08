@@ -24,77 +24,95 @@ const {
   generateSbom: (options: {
     repoRoot: string
     outputPath: string
+    artifactVersion?: string
     runNpmSbom: () => { status: number; stdout: string; stderr: string }
   }) => string
 } = require('./generate-sbom.cjs')
 
 describe('release SBOM generation', () => {
-  it('writes npm dependencies plus the verified standalone Node runtime', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-sbom-'))
-    const runtimeDir = path.join(root, 'build', 'tui-runtime')
-    fs.mkdirSync(runtimeDir, { recursive: true })
-    fs.writeFileSync(
-      path.join(root, 'package.json'),
-      JSON.stringify({
-        taskwraithRelease: { tuiNodeRuntime: { version: '22.23.2' } }
-      })
-    )
-    const source = 'https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz'
-    fs.writeFileSync(
-      path.join(runtimeDir, 'RUNTIME.json'),
-      JSON.stringify({
-        nodeVersion: '22.23.2',
-        targets: [
-          {
-            platform: 'linux',
-            arch: 'x64',
-            sha256: 'a'.repeat(64),
-            archiveSha256: 'b'.repeat(64),
-            licenseSha256: 'c'.repeat(64),
-            source,
-            licenseSource: `${source}#LICENSE`
-          }
-        ]
-      })
-    )
-
-    try {
-      const output = generateSbom({
-        repoRoot: root,
-        outputPath: 'dist/sbom-linux.cdx.json',
-        runNpmSbom: () => ({
-          status: 0,
-          stdout: JSON.stringify({
-            bomFormat: 'CycloneDX',
-            metadata: { component: { 'bom-ref': 'taskwraith@1.9.2' } },
-            components: [{ type: 'library', name: 'dependency' }],
-            dependencies: [
-              { ref: 'taskwraith@1.9.2', dependsOn: ['dependency@1.0.0'] },
-              { ref: 'dependency@1.0.0', dependsOn: [] }
-            ]
-          }),
-          stderr: ''
+  it.each([undefined, '0.1.0'])(
+    'writes dependencies and runtime for artifact version %s',
+    (artifactVersion) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-sbom-'))
+      const runtimeDir = path.join(root, 'build', 'tui-runtime')
+      fs.mkdirSync(runtimeDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'taskwraith',
+          version: '1.9.2',
+          taskwraithRelease: { tuiNodeRuntime: { version: '22.23.2' } }
         })
-      })
-      const sbom = JSON.parse(fs.readFileSync(output, 'utf8'))
-      expect(sbom.components.map((component: { name: string }) => component.name)).toEqual([
-        'dependency',
-        'Node.js standalone TUI runtime'
-      ])
-      const runtimeRef = sbom.components[1]['bom-ref']
-      expect(sbom.dependencies).toEqual(
-        expect.arrayContaining([
-          {
-            ref: 'taskwraith@1.9.2',
-            dependsOn: ['dependency@1.0.0', runtimeRef]
-          },
-          { ref: runtimeRef, dependsOn: [] }
-        ])
       )
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true })
+      const source = 'https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz'
+      fs.writeFileSync(
+        path.join(runtimeDir, 'RUNTIME.json'),
+        JSON.stringify({
+          nodeVersion: '22.23.2',
+          targets: [
+            {
+              platform: 'linux',
+              arch: 'x64',
+              sha256: 'a'.repeat(64),
+              archiveSha256: 'b'.repeat(64),
+              licenseSha256: 'c'.repeat(64),
+              source,
+              licenseSource: `${source}#LICENSE`
+            }
+          ]
+        })
+      )
+
+      try {
+        const output = generateSbom({
+          repoRoot: root,
+          outputPath: 'dist/sbom-linux.cdx.json',
+          artifactVersion,
+          runNpmSbom: () => ({
+            status: 0,
+            stdout: JSON.stringify({
+              bomFormat: 'CycloneDX',
+              metadata: { component: { 'bom-ref': 'taskwraith@1.9.2' } },
+              components: [{ type: 'library', name: 'dependency' }],
+              dependencies: [
+                { ref: 'taskwraith@1.9.2', dependsOn: ['dependency@1.0.0'] },
+                { ref: 'dependency@1.0.0', dependsOn: [] }
+              ]
+            }),
+            stderr: ''
+          })
+        })
+        const sbom = JSON.parse(fs.readFileSync(output, 'utf8'))
+        expect(sbom.components.map((component: { name: string }) => component.name)).toEqual([
+          'dependency',
+          'Node.js standalone TUI runtime'
+        ])
+        const runtimeRef = sbom.components[1]['bom-ref']
+        expect(sbom.dependencies).toEqual(
+          expect.arrayContaining([
+            {
+              ref: artifactVersion ? `taskwraith@${artifactVersion}` : 'taskwraith@1.9.2',
+              dependsOn: ['dependency@1.0.0', runtimeRef]
+            },
+            { ref: runtimeRef, dependsOn: [] }
+          ])
+        )
+        if (artifactVersion) {
+          expect(sbom.metadata.component.version).toBe(artifactVersion)
+          expect(sbom.metadata.component.purl).toBe(`pkg:npm/taskwraith@${artifactVersion}`)
+          expect(sbom.metadata.component.properties).toContainEqual({
+            name: 'taskwraith:source-package-version',
+            value: '1.9.2'
+          })
+          expect(
+            sbom.dependencies.some((entry: { ref: string }) => entry.ref === 'taskwraith@1.9.2')
+          ).toBe(false)
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('invokes npm.cmd through fixed ComSpec on Windows', () => {
     let invocation:

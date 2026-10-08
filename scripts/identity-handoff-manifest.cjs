@@ -41,7 +41,7 @@ const ARTIFACT_CONTRACT = Object.freeze({
     fileName: 'TaskWraith-0.1.0-win-x64-setup.exe',
     launchKind: 'nsis',
     instructions:
-      'Complete the signed TaskWraith Release installer, then launch TaskWraith. Windows verifies the publisher and the 1.9.9 payload independently pins the exact installer hash.'
+      'This Windows installer is unsigned. TaskWraith verifies its exact download hash; Windows cannot verify a publisher. Complete the installer, then launch TaskWraith Release.'
   },
   'win32-arm64': {
     platform: 'win32',
@@ -49,7 +49,7 @@ const ARTIFACT_CONTRACT = Object.freeze({
     fileName: 'TaskWraith-0.1.0-win-arm64-setup.exe',
     launchKind: 'nsis',
     instructions:
-      'Complete the signed TaskWraith Release installer, then launch TaskWraith. Windows verifies the publisher and the 1.9.9 payload independently pins the exact installer hash.'
+      'This Windows installer is unsigned. TaskWraith verifies its exact download hash; Windows cannot verify a publisher. Complete the installer, then launch TaskWraith Release.'
   },
   'linux-x64': {
     platform: 'linux',
@@ -101,9 +101,9 @@ async function prepareManifest(artifactDir, baseUrl = DEFAULT_RELEASE_BASE_URL, 
     if (!existsSync(filePath) || !statSync(filePath).isFile()) {
       throw new Error(`Missing frozen identity-handoff artifact: ${contract.fileName}`)
     }
-    if (contract.platform === 'win32' && !hasAuthenticodeCertificate(filePath)) {
+    if (contract.platform === 'win32' && !isWindowsExecutable(filePath)) {
       throw new Error(
-        `Final identity-handoff Windows artifact has no Authenticode certificate: ${contract.fileName}`
+        `Final identity-handoff Windows artifact is not a valid PE executable: ${contract.fileName}`
       )
     }
     const stat = statSync(filePath)
@@ -308,7 +308,7 @@ function normalizeReleaseBaseUrl(value) {
   }
 }
 
-function hasAuthenticodeCertificate(filePath) {
+function isWindowsExecutable(filePath) {
   let fd
   try {
     const fileSize = statSync(filePath).size
@@ -322,31 +322,10 @@ function hasAuthenticodeCertificate(filePath) {
     if (header.toString('ascii', 0, 4) !== 'PE\0\0') return false
     const optionalOffset = 24
     const magic = header.readUInt16LE(optionalOffset)
-    const directoryOffset =
-      magic === 0x10b ? optionalOffset + 96 : magic === 0x20b ? optionalOffset + 112 : 0
-    const countOffset =
-      magic === 0x10b ? optionalOffset + 92 : magic === 0x20b ? optionalOffset + 108 : 0
-    if (!directoryOffset || header.readUInt32LE(countOffset) < 5) return false
-    const securityOffset = directoryOffset + 4 * 8
-    const certificateFileOffset = header.readUInt32LE(securityOffset)
-    const certificateSize = header.readUInt32LE(securityOffset + 4)
-    if (
-      certificateFileOffset <= 0 ||
-      certificateSize < 8 ||
-      certificateFileOffset + certificateSize > fileSize
-    ) {
-      return false
-    }
-    const certificate = readBytes(fd, 8, certificateFileOffset)
-    const certificateLength = certificate.readUInt32LE(0)
-    const revision = certificate.readUInt16LE(4)
-    const certificateType = certificate.readUInt16LE(6)
-    return (
-      certificateLength >= 8 &&
-      certificateLength <= certificateSize &&
-      revision === 0x0200 &&
-      certificateType === 0x0002
-    )
+    // Unsigned Windows distribution is the maintainer-approved release path.
+    // The final beta authenticates these exact bytes with its embedded digest;
+    // PE structure does not assert an Authenticode publisher or signature.
+    return magic === 0x10b || magic === 0x20b
   } catch {
     return false
   } finally {
@@ -449,7 +428,7 @@ module.exports = {
   ARTIFACT_CONTRACT,
   DEFAULT_RELEASE_BASE_URL,
   HANDOFF_ID,
-  hasAuthenticodeCertificate,
+  isWindowsExecutable,
   SOURCE_APP_ID,
   SOURCE_VERSION,
   TARGET_APP_ID,

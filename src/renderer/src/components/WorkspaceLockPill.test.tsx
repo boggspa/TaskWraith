@@ -203,9 +203,7 @@ describe('WorkspaceLockPillView', () => {
     expect(composer).toMatch(
       /currentWorkspace\s*\?\s*\(\s*<div className="composer-thread-timecode-satellites">/
     )
-    expect(composer).toMatch(
-      /\{showWorkspaceGitAboveRows\s*&&\s*\(\s*<GitHubSatelliteRow/
-    )
+    expect(composer).toMatch(/\{showWorkspaceGitAboveRows\s*&&\s*\(\s*<GitHubSatelliteRow/)
     expect(composer).toMatch(
       /composerWorktreeSelection\?\.effectiveWorkspacePath\s*\|\|\s*composerGitActionBasePath\s*\|\|\s*currentWorkspace\.path/
     )

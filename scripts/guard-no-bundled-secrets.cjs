@@ -230,7 +230,7 @@ function bundleScanTargets(repoRoot = REPO_ROOT) {
   const targets = new Set()
   const mainBundle = path.join(repoRoot, 'out/main/index.js')
   if (fs.existsSync(mainBundle)) targets.add(mainBundle)
-  for (const dir of ['dist', 'dist-debug']) {
+  for (const dir of ['dist', 'dist-debug', 'dist-debut']) {
     const root = path.join(repoRoot, dir)
     if (!fs.existsSync(root)) continue
     for (const asar of findFiles(root, (p) => path.basename(p) === 'app.asar')) {
@@ -256,7 +256,7 @@ function bundleScanTargets(repoRoot = REPO_ROOT) {
 
 function packagedRuntimeLicenseViolations(repoRoot = REPO_ROOT) {
   const violations = []
-  for (const dir of ['dist', 'dist-debug']) {
+  for (const dir of ['dist', 'dist-debug', 'dist-debut']) {
     const root = path.join(repoRoot, dir)
     if (!fs.existsSync(root)) continue
     for (const asar of findFiles(root, (p) => path.basename(p) === 'app.asar')) {
@@ -303,7 +303,7 @@ function main() {
     process.env.TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN === '1'
   if (requirePackagedTargets && packagedTargets.length === 0) {
     problems.push(
-      'release artifact scan was required, but no packaged app.asar exists under dist/ or dist-debug/'
+      'release artifact scan was required, but no packaged app.asar exists under dist/, dist-debug/, or dist-debut/'
     )
   }
   if (packagedTargets.length > 0) {

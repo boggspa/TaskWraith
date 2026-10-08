@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url)
 const yaml: { load: (text: string) => unknown } = require('js-yaml')
 
 type Step = {
+  if?: string
   env?: Record<string, string>
   id?: string
   name?: string
@@ -38,12 +39,55 @@ function actionSteps(job: Job) {
 }
 
 describe('release workflow contract', () => {
+  it('builds debut and pinned handoff identities in read-only unsigned lanes', () => {
+    for (const platform of ['windows', 'linux']) {
+      const steps = jobs[`unsigned-${platform}-build`].steps || []
+      const prepare = steps.find(
+        (step) => step.run === 'node scripts/prepare-ci-identity-handoff.cjs'
+      )
+      expect(prepare?.if).toBe("inputs.unsigned_distribution == 'handoff'")
+      expect(prepare?.env?.TASKWRAITH_HANDOFF_PAYLOAD_SHA256).toBe(
+        '${{ inputs.handoff_payload_sha256 }}'
+      )
+      expect(
+        steps.some(
+          (step) =>
+            step.if === "inputs.unsigned_distribution == 'debut'" &&
+            step.run?.includes('build:debut:')
+        )
+      ).toBe(true)
+      const handoff = steps.find((step) => step.run?.includes('run-identity-handoff-build.cjs'))
+      expect(handoff?.if).toBe("inputs.unsigned_distribution == 'handoff'")
+      expect(handoff?.run).toContain('--payload')
+      expect(handoff?.run).toContain('--artifact-dir')
+      expect(JSON.stringify(jobs[`unsigned-${platform}-build`])).toContain("'dist-debut' || 'dist'")
+      expect(jobs[`unsigned-${platform}-build`].permissions?.contents).toBe('read')
+    }
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
+    expect(pkg.scripts['build:debut:win']).not.toContain('require-windows-signing-env')
+    expect(pkg.scripts['build:debut:win']).toContain('smoke-win-installer.ps1')
+    expect(pkg.scripts['build:handoff:win']).toContain('build:win:handoff-smoke')
+    expect(pkg.scripts['postbuild:debut:mac:notarized']).toBe('npm run smoke:debut:mac-artifacts')
+    expect(pkg.scripts['postbuild:debut:linux']).toBe('npm run smoke:debut:linux-artifacts')
+    const nativeArm = jobs['unsigned-windows-arm64-smoke']
+    expect(nativeArm['runs-on']).toBe('windows-11-arm')
+    expect(nativeArm.needs).toEqual(['unsigned-windows-build'])
+    expect(JSON.stringify(nativeArm)).toContain(
+      '${{ needs.unsigned-windows-build.outputs.source-sha }}'
+    )
+    expect(JSON.stringify(nativeArm)).toContain(
+      '${{ needs.unsigned-windows-build.outputs.artifact-name }}'
+    )
+    expect(runText(nativeArm)).toContain('win-arm64-setup.exe')
+  })
+
   it('keeps artifact builders read-only and reserves mutation for the disabled publisher', () => {
     const builders = [
       'notarized-macos-release',
       'signed-windows-release',
       'windows-arm64-release-candidate',
       'unsigned-windows-build',
+      'unsigned-windows-arm64-smoke',
       'unsigned-linux-build'
     ]
     for (const name of builders) {
@@ -86,7 +130,9 @@ describe('release workflow contract', () => {
     const windowsText = JSON.stringify(windows)
     const windowsSteps = windows.steps || []
     const packageIndex = windowsSteps.findIndex((step) =>
-      step.run?.includes('node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never')
+      step.run?.includes(
+        'node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never'
+      )
     )
     const overlayIndex = windowsSteps.findIndex(
       (step) => step.name === 'Overlay current Windows smoke harness after packaging'

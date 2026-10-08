@@ -39,7 +39,9 @@ describe('thread log authority switch', () => {
     const all = (value: string): Record<string, string> =>
       Object.fromEntries(durability.map((name) => [name, value]))
     expect(isThreadLogAuthorityEnabled(all('0'))).toBe(true)
-    expect(isThreadLogAuthorityEnabled({ ...all('1'), [THREAD_LOG_AUTHORITY_ENV]: '0' })).toBe(false)
+    expect(isThreadLogAuthorityEnabled({ ...all('1'), [THREAD_LOG_AUTHORITY_ENV]: '0' })).toBe(
+      false
+    )
   })
 
   it('reads the process environment when it is given none', () => {

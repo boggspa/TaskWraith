@@ -5,6 +5,7 @@ const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { enrichSbom } = require('./enrich-tui-runtime-sbom.cjs')
 const { resolvePlatformCommandInvocation } = require('./windows-cmd-invocation.cjs')
+const { resolveReleaseDistribution } = require('./release-distribution.cjs')
 
 function defaultNpmSbomRunner(
   repoRoot,
@@ -29,6 +30,7 @@ function defaultNpmSbomRunner(
 function generateSbom({
   repoRoot = process.cwd(),
   outputPath = process.env.TASKWRAITH_SBOM_PATH || 'dist/sbom.cdx.json',
+  artifactVersion,
   runNpmSbom = defaultNpmSbomRunner
 } = {}) {
   const result = runNpmSbom(repoRoot)
@@ -53,15 +55,48 @@ function generateSbom({
   )
   const expectedVersion = packageJson.taskwraithRelease?.tuiNodeRuntime?.version
   const enriched = enrichSbom(sbom, runtimeMetadata, expectedVersion)
+  if (artifactVersion && artifactVersion !== packageJson.version) {
+    const component = enriched.metadata?.component
+    if (!component || typeof component['bom-ref'] !== 'string' || !packageJson.name) {
+      throw new Error('The packaged-version SBOM requires the npm application component.')
+    }
+    const previousRef = component['bom-ref']
+    const applicationRef = `${packageJson.name}@${artifactVersion}`
+    component.version = artifactVersion
+    component['bom-ref'] = applicationRef
+    component.purl = `pkg:npm/${packageJson.name}@${artifactVersion}`
+    component.properties = [
+      ...(component.properties || []),
+      { name: 'taskwraith:source-package-version', value: packageJson.version }
+    ]
+    for (const dependency of enriched.dependencies || []) {
+      if (dependency.ref === previousRef) dependency.ref = applicationRef
+      if (Array.isArray(dependency.dependsOn)) {
+        dependency.dependsOn = dependency.dependsOn.map((ref) =>
+          ref === previousRef ? applicationRef : ref
+        )
+      }
+    }
+  }
   const absoluteOutput = path.resolve(repoRoot, outputPath)
   fs.mkdirSync(path.dirname(absoluteOutput), { recursive: true })
   fs.writeFileSync(absoluteOutput, `${JSON.stringify(enriched, null, 2)}\n`)
   return absoluteOutput
 }
 
-function runCli() {
+function runCli(argv = process.argv.slice(2)) {
   try {
-    const outputPath = generateSbom()
+    if (argv.some((arg) => !arg.startsWith('--distribution=')) || argv.length > 1) {
+      throw new Error('Expected only an optional --distribution=<beta|debut|release>.')
+    }
+    const distribution = argv[0]?.slice('--distribution='.length)
+    const identity = distribution ? resolveReleaseDistribution({ distribution }) : undefined
+    const outputPath = generateSbom({
+      ...(identity ? { artifactVersion: identity.version } : {}),
+      ...(identity?.distribution === 'debut' && !process.env.TASKWRAITH_SBOM_PATH
+        ? { outputPath: 'dist-debut/sbom.cdx.json' }
+        : {})
+    })
     console.log(`[generate-sbom] wrote ${path.relative(process.cwd(), outputPath)}`)
     return 0
   } catch (error) {

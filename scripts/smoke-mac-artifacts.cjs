@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
+const { resolveReleaseDistribution } = require('./release-distribution.cjs')
 
 function resolveMacArtifacts(distDir, version) {
   const dmg = path.join(distDir, `TaskWraith-${version}-universal-mac.dmg`)
@@ -102,9 +103,17 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
   if (process.platform !== 'darwin') {
     throw new Error('macOS artifact smoke must run on macOS')
   }
-  const distDir = path.resolve(repoRoot, argv[0] || 'dist')
+  const distributionArg = argv.find((arg) => arg.startsWith('--distribution='))
+  const targets = argv.filter((arg) => !arg.startsWith('--distribution='))
+  const distDir = path.resolve(repoRoot, targets[0] || 'dist')
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
-  const { dmg, zip } = resolveMacArtifacts(distDir, packageJson.version)
+  const version = distributionArg
+    ? resolveReleaseDistribution({
+        repoRoot,
+        distribution: distributionArg.slice('--distribution='.length)
+      }).version
+    : packageJson.version
+  const { dmg, zip } = resolveMacArtifacts(distDir, version)
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-artifacts-'))
   const zipRoot = path.join(tempRoot, 'zip')
   const mountPoint = path.join(tempRoot, 'dmg')
