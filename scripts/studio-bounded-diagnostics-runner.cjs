@@ -185,7 +185,8 @@ function describeFixtureContract() {
  * because pinning only the Apple Silicon one - the original defect - fails on
  * Intel installs, and PATH entries are appended so a non-Homebrew ffmpeg works.
  */
-function mediaToolCandidates(name) {
+function mediaToolCandidates(name, options = {}) {
+  const names = (options.platform || process.platform) === 'win32' ? [`${name}.exe`, name] : [name]
   const prefixes = [
     path.join('/opt', 'homebrew', 'bin'),
     path.join('/usr', 'local', 'bin'),
@@ -198,10 +199,12 @@ function mediaToolCandidates(name) {
   const seen = new Set()
   const candidates = []
   for (const prefix of [...prefixes, ...fromPath]) {
-    const candidate = path.join(prefix, name)
-    if (!seen.has(candidate)) {
-      seen.add(candidate)
-      candidates.push(candidate)
+    for (const file of names) {
+      const candidate = path.join(prefix, file)
+      if (!seen.has(candidate)) {
+        seen.add(candidate)
+        candidates.push(candidate)
+      }
     }
   }
   return candidates
@@ -209,7 +212,7 @@ function mediaToolCandidates(name) {
 
 /** First existing candidate, or a named refusal. Never a silent fallback. */
 function resolveMediaTool(name, options = {}) {
-  const candidates = options.candidates || mediaToolCandidates(name)
+  const candidates = options.candidates || mediaToolCandidates(name, options)
   for (const candidate of candidates) {
     try {
       if (fs.statSync(candidate).isFile()) return candidate

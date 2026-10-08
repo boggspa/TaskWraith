@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 type AsyncThreeArg = (first: unknown, second: unknown, third: unknown) => Promise<unknown>
@@ -791,7 +792,7 @@ describe('bounded deterministic no-audio fixture apparatus', () => {
       receiptPath: path.join(root, 'watchdog.json'),
       studioStateDirectory: state,
       profile: { userDataPath: path.join(root, 'home') },
-      repoRoot: '/Users/chrisizatt/Documents/AGBench-studio-continuation'
+      repoRoot: fileURLToPath(new URL('..', import.meta.url))
     }
     const terminal = {
       status: 'reaped',

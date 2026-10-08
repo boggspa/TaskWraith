@@ -281,6 +281,13 @@ describe('the PTS census parser survives real ffprobe output', () => {
 })
 
 describe('media tools resolve portably and fail closed', () => {
+  it('includes Windows executable names when probing native Windows media tools', () => {
+    const candidates = mediaToolCandidates('ffprobe', { platform: 'win32' })
+    expect(candidates.some((candidate: string) => path.basename(candidate) === 'ffprobe.exe')).toBe(
+      true
+    )
+  })
+
   it('rejects a candidate list containing no existing tool, naming the tool', () => {
     const absentRoot = path.join(path.dirname(process.execPath), 'taskwraith-missing-media-tools')
     expect(() =>

@@ -169,15 +169,18 @@ function runExact(command, args, options = {}) {
   }
 }
 
-function resolveMediaTool(name) {
-  const candidates = [
-    path.join('/opt', 'homebrew', 'bin', name),
-    path.join('/usr', 'local', 'bin', name),
+function resolveMediaTool(name, options = {}) {
+  const names = (options.platform || process.platform) === 'win32' ? [`${name}.exe`, name] : [name]
+  const directories = options.directories || [
+    path.join('/opt', 'homebrew', 'bin'),
+    path.join('/usr', 'local', 'bin'),
     ...String(process.env.PATH || '')
       .split(path.delimiter)
       .filter(Boolean)
-      .map((directory) => path.join(directory, name))
   ]
+  const candidates = directories.flatMap((directory) =>
+    names.map((file) => path.join(directory, file))
+  )
   for (const candidate of [...new Set(candidates)]) {
     try {
       if (fs.statSync(candidate).isFile()) return candidate

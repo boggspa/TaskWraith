@@ -1035,6 +1035,7 @@ describe('the drill', () => {
       options: {
         runner,
         argv: argvFor(w.home),
+        platform: 'darwin',
         drillDir: w.drillDir,
         repoRoot,
         tmpdir: w.temporary,

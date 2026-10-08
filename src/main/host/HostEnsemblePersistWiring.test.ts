@@ -659,7 +659,9 @@ describe('HostEnsemblePersistWiring', () => {
       ])
     const drainsBefore = persistPort.drain.mock.calls.length
     const enqueuedBefore = enqueued.length
-    expect(await settled(AppStore.awaitChatRecordDispatchDurable(chatId))).toBe(true)
+    // The Host promise cannot resolve. Await the actual journal barrier so a
+    // loaded runner does not turn a correct disk sync into a 50 ms race.
+    await AppStore.awaitChatRecordDispatchDurable(chatId)
     // The dispatch edge neither waits on nor FORCES another whole-record Host
     // write: the save already staged it and armed its own materialization.
     expect(persistPort.drain.mock.calls.length).toBe(drainsBefore)

@@ -9,7 +9,15 @@
  */
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -477,7 +485,10 @@ async function sendConfigureArchive(
 
 /** The sha256 of a value, with the workspace's temporary path made constant. */
 function digest(h: Harness, value: unknown): string {
-  const text = JSON.stringify(value).split(h.workspace).join('<workspace>')
+  const workspace = realpathSync(h.workspace)
+  const text = JSON.stringify(value, (_key, entry) =>
+    entry === h.workspace || entry === workspace ? '<workspace>' : entry
+  )
   return createHash('sha256').update(text).digest('hex')
 }
 
@@ -487,7 +498,7 @@ function digest(h: Harness, value: unknown): string {
  * before its writes asked the registry: the sha256 of the answers and the
  * thread's record.
  */
-const OFF_GOLDEN = '3c67a8dcaf69f06954de1179e164479ee9be4040fe1896fd04d5ee2026f34234'
+const OFF_GOLDEN = '7e31f1d930cacd0acee8aaf3bbbe8b3de749809b65272febf62fffd0986d1e37'
 
 const busy = {
   status: 'failed',

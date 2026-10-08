@@ -35,6 +35,7 @@ const {
   waitForPausedMediaReadiness,
   parseCli,
   resolveArtifactRoot,
+  resolveMediaTool,
   treeDigest,
   validateClearedState,
   validateInvalidReplacement,
@@ -44,6 +45,10 @@ const {
   validateTerminalReceipt
 } = require('./studio-lut-acceptance-runner.cjs') as {
   JOURNEY_PHASES: readonly string[]
+  resolveMediaTool: (
+    name: string,
+    options?: { platform?: string; directories?: string[] }
+  ) => string
   LUT_PHASE_TIMEOUT_MS: number
   PHASE_PORTS: readonly Readonly<{
     remoteDebuggingPort: number
@@ -451,6 +456,15 @@ afterEach(async () => {
 })
 
 describe('studio LUT acceptance runner contract', () => {
+  it('finds a Windows media executable in an explicit search directory', async () => {
+    const directory = await temporaryDirectory()
+    const executable = path.join(directory, 'ffmpeg.exe')
+    await fsPromises.writeFile(executable, 'resolver fixture only; never executed')
+    expect(resolveMediaTool('ffmpeg', { platform: 'win32', directories: [directory] })).toBe(
+      executable
+    )
+  })
+
   it('parses transport only from one exact PLAY or PAUSE observation token', () => {
     expect(parseHudObservations([{ text: 'play 2' }]).parsed.state).toBeNull()
     expect(parseHudObservations([{ text: 'PLAY' }, { text: 'PAUSE' }]).parsed.state).toBeNull()
