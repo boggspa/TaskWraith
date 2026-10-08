@@ -55,12 +55,19 @@ const exact = (
 })
 
 let directory: string
+const installed = new Set<ReturnType<typeof installThreadOwnership>>()
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'install-thread-ownership-bridge-'))
 })
 
 afterEach(async () => {
+  for (const wiring of installed) {
+    await wiring.trigger?.idle()
+    await wiring.coordinator.deactivate(CHAT)
+    wiring.dispose()
+  }
+  installed.clear()
   await rm(directory, { recursive: true, force: true })
 })
 
@@ -104,6 +111,7 @@ function install(
     logAuthority,
     ...(seams ? { activation: seams } : {})
   })
+  installed.add(wiring)
   return { wiring, queue, evidenceFile }
 }
 

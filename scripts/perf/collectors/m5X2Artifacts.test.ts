@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const { collectM5X2Artifacts } = require('./m5X2Artifacts.cjs')
@@ -29,7 +30,7 @@ describe('real X2 artifact binding', () => {
     const writes = new Map<string, unknown>()
     const fsApi = { writeFileSync: (name: string, value: unknown) => writes.set(name, value) }
     expect(retainFrozenSourceBinding(binding, expected, '/a', fsApi).qualified).toBe(true)
-    expect(writes.has('/a/x2-frozen-build-receipt.json')).toBe(true)
+    expect(writes.has(join('/a', 'x2-frozen-build-receipt.json'))).toBe(true)
     expect(
       retainFrozenSourceBinding(binding, { ...expected, gitSha: 'c'.repeat(40) }, '/a', fsApi)
         .qualified

@@ -30,6 +30,33 @@ function removeTemporaryDirectory(directory: string): void {
 }
 
 describe('the sync counter', () => {
+  it('records Windows sync requests without pinning files or pretending to model a power cut', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
+    const file = path.join(root, 'old.txt')
+    const replacement = path.join(root, 'replacement.txt')
+    fs.writeFileSync(file, 'old')
+    const disk = watchCrashDisk(root, { platform: 'win32' })
+    try {
+      await expect(disk.port.syncFile(file)).resolves.toBe('synced')
+      fs.writeFileSync(replacement, 'new')
+      fs.renameSync(replacement, file)
+      const fd = fs.openSync(file, 'r+')
+      try {
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
+      expect(disk.paid).toEqual(['file:old.txt'])
+      expect(disk.issued).toEqual(['file:old.txt'])
+      expect(fs.readFileSync(file, 'utf8')).toBe('new')
+      expect(() => disk.powerLoss()).toThrow('POSIX power-loss model is unavailable on Windows')
+      expect(fs.readFileSync(file, 'utf8')).toBe('new')
+    } finally {
+      disk.dispose()
+      removeTemporaryDirectory(root)
+    }
+  })
+
   it('counts every sync issued through node:fs, lets each one happen, and stops when it is done', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), TEMPORARY_PREFIX))
     const syncs = countSyncs()

@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module'
+import { basename, dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -1040,7 +1042,7 @@ describe('the baseline’s figure', () => {
 
 // A capture on a fake disk: a 150 ms profile whose window is 30..130 ms, with
 // 20 ms of syncs and 30 ms idle inside it.
-const BUNDLE_URL = 'file:///build/out/main/index-AbCd1234.js'
+const BUNDLE_URL = pathToFileURL(resolve('/build/out/main/index-AbCd1234.js')).href
 const frame = (functionName: string, url = BUNDLE_URL) => ({
   functionName,
   url,
@@ -1123,22 +1125,22 @@ function captureReport(windowOverrides: Dict = {}) {
   }
 }
 function fakeFs(files: Record<string, string>) {
+  const nativeFiles = Object.fromEntries(
+    Object.entries(files).map(([key, value]) => [resolve(key), value])
+  )
   const reads: string[] = []
   return {
     reads,
     readFileSync(file: string) {
       reads.push(file)
-      if (files[file] === undefined)
+      if (nativeFiles[resolve(file)] === undefined)
         throw Object.assign(new Error(`ENOENT: ${file}`), { code: 'ENOENT' })
-      return files[file]
+      return nativeFiles[resolve(file)]
     },
     readdirSync(directory: string) {
-      const names = Object.keys(files)
-        .filter(
-          (file) =>
-            file.startsWith(`${directory}/`) && !file.slice(directory.length + 1).includes('/')
-        )
-        .map((file) => file.slice(directory.length + 1))
+      const names = Object.keys(nativeFiles)
+        .filter((file) => dirname(file) === resolve(directory))
+        .map((file) => basename(file))
       if (names.length === 0)
         throw Object.assign(new Error(`ENOENT: ${directory}`), { code: 'ENOENT' })
       return names

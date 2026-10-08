@@ -888,7 +888,7 @@ describe('the tickets each save takes', () => {
     expect(layers.built[0].debt.snapshot().owed).toMatchObject({ files: 1, directories: 0 })
   })
 
-  it.each([true, false])(
+  it.skipIf(process.platform === 'win32').each([true, false])(
     'lets a user message be reported done only once the disk has it (barrier paid: %s)',
     async (paid) => {
       vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')

@@ -804,9 +804,9 @@ describe('the stylesheet scan covers every sheet that can win the cascade', () =
     // The directories the old set could not reach, by name rather than by count,
     // so this fails when a sheet moves out of view rather than when one is
     // added.
-    const outsideTheShards = cssFiles().filter((path) => !path.includes('/assets/css/'))
-    expect(outsideTheShards.some((path) => path.includes('/components/'))).toBe(true)
-    expect(outsideTheShards.some((path) => path.includes('/styles/'))).toBe(true)
+    const outsideTheShards = cssFiles().filter((path) => !/[\\/]assets[\\/]css[\\/]/.test(path))
+    expect(outsideTheShards.some((path) => /[\\/]components[\\/]/.test(path))).toBe(true)
+    expect(outsideTheShards.some((path) => /[\\/]styles[\\/]/.test(path))).toBe(true)
     // BASENAMES must stay unique, because that is the label every expectation in
     // this file compares against: two sheets called the same thing would make
     // `'<file> <selector>'` ambiguous and could hide an owner behind a

@@ -247,10 +247,12 @@ class App {
   async compact(): Promise<void> {
     const adopted = this.journal.stats().compactionsAdopted
     this.compactor.fold()
-    for (let turn = 0; turn < 500; turn += 1) {
+    const deadline = Date.now() + 4_000
+    while (Date.now() < deadline) {
       if (this.journal.stats().compactionsAdopted > adopted) return
       if (this.compactor.pendingSyncs > 0) this.compactor.releaseSync()
       await settle()
+      await new Promise((resolve) => setTimeout(resolve, 1))
     }
     throw new Error('the compaction was not adopted')
   }

@@ -12,8 +12,9 @@
  * That is the worst a power loss can do. A real one may also keep some of what
  * was never synced, and `flushedAnyway` says so for one path.
  *
- * POSIX only: Windows has no directory sync to watch, and its file numbers do
- * not fit a JavaScript number exactly. `countSyncs` works everywhere.
+ * The power-loss model is POSIX only. On Windows this double records sync
+ * requests without holding file handles or claiming to simulate a power cut.
+ * Windows file numbers are compared as bigints. `countSyncs` works everywhere.
  */
 import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
@@ -68,7 +69,11 @@ type Tree = Map<string, Tree | Buffer>
  * `root` must be a folder a test made with `mkdtempSync` in the system's
  * temporary folder: a power loss removes everything in it.
  */
-export function watchCrashDisk(root: string): CrashDisk {
+export function watchCrashDisk(
+  root: string,
+  options: { platform?: NodeJS.Platform } = {}
+): CrashDisk {
+  const modelsPowerLoss = (options.platform ?? process.platform) !== 'win32'
   const temporary = os.tmpdir()
   if (
     root === temporary ||
@@ -136,11 +141,11 @@ export function watchCrashDisk(root: string): CrashDisk {
   }
 
   /** Where under the root an inode is to be found now. */
-  const locate = (inode: number, directory = root): string | null => {
-    if (fs.statSync(directory).ino === inode) return directory
+  const locate = (inode: bigint, directory = root): string | null => {
+    if (fs.statSync(directory, { bigint: true }).ino === inode) return directory
     for (const name of fs.readdirSync(directory)) {
       const entry = path.join(directory, name)
-      const stat = fs.lstatSync(entry)
+      const stat = fs.lstatSync(entry, { bigint: true })
       if (stat.ino === inode) return entry
       if (stat.isDirectory()) {
         const found = locate(inode, entry)
@@ -154,13 +159,14 @@ export function watchCrashDisk(root: string): CrashDisk {
     const stat = fs.statSync(target)
     const kind = stat.isDirectory() ? 'directory' : 'file'
     log?.push(`${kind}:${path.relative(root, target) || '.'}`)
+    if (!modelsPowerLoss) return
     if (stat.isDirectory()) keepDirectory(stat.ino, target)
     else keepFile(stat.ino, target)
   }
 
   /** A sync issued on a descriptor. One for a file outside the root is counted and nothing more. */
   const observe = (fd: number): void => {
-    const target = locate(fs.fstatSync(fd).ino)
+    const target = locate(fs.fstatSync(fd, { bigint: true }).ino)
     if (target) keep(target, issued)
     else issued.push('elsewhere')
   }
@@ -182,7 +188,7 @@ export function watchCrashDisk(root: string): CrashDisk {
     vi.spyOn(fs, 'fdatasync').mockImplementation(later as typeof fs.fdatasync)
   ]
   syncBuiltinESMExports()
-  keepEverything(root)
+  if (modelsPowerLoss) keepEverything(root)
 
   const gone = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT'
 
@@ -253,6 +259,7 @@ export function watchCrashDisk(root: string): CrashDisk {
     paid,
     flushedAnyway: (target) => keep(target, null),
     powerLoss: () => {
+      if (!modelsPowerLoss) throw new Error('The POSIX power-loss model is unavailable on Windows.')
       const tree = safeTree(fs.statSync(root).ino)
       release()
       empty(root)

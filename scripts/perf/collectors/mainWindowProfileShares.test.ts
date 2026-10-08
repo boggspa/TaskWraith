@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -16,8 +18,9 @@ type Frame = { name: string; url?: string; line?: number; column?: number }
 /** `atLine` is the line V8 puts the sample on, one-based; a function's first line by default. */
 type Row = { stack: Frame[]; us: number; atLine?: number }
 
-const BUNDLE_URL = 'file:///build/out/main/index-AbCd1234.js'
-const CHUNK_URL = 'file:///build/out/main/chatUpdateTransport-Zz99.js'
+const fixtureUrl = (file: string) => pathToFileURL(resolve(file)).href
+const BUNDLE_URL = fixtureUrl('/build/out/main/index-AbCd1234.js')
+const CHUNK_URL = fixtureUrl('/build/out/main/chatUpdateTransport-Zz99.js')
 // The profile clock starts at 1000 ms; performance.now() is that clock less 1000 ms.
 const PROFILE_START_US = 1_000_000
 
@@ -1467,14 +1470,20 @@ describe('main-thread time per model turn', () => {
 
 describe('reading a capture from disk', () => {
   function fakeFs(files: Record<string, string>, directories: Record<string, string[]>) {
+    const nativeFiles = Object.fromEntries(
+      Object.entries(files).map(([key, value]) => [resolve(key), value])
+    )
+    const nativeDirectories = Object.fromEntries(
+      Object.entries(directories).map(([key, value]) => [resolve(key), value])
+    )
     return {
       readFileSync(file: string) {
-        if (!(file in files)) throw new Error(`ENOENT ${file}`)
-        return files[file]
+        if (!(resolve(file) in nativeFiles)) throw new Error(`ENOENT ${file}`)
+        return nativeFiles[resolve(file)]
       },
       readdirSync(directory: string) {
-        if (!(directory in directories)) throw new Error(`ENOENT ${directory}`)
-        return directories[directory]
+        if (!(resolve(directory) in nativeDirectories)) throw new Error(`ENOENT ${directory}`)
+        return nativeDirectories[resolve(directory)]
       }
     }
   }
@@ -1578,7 +1587,10 @@ describe('reading a capture from disk', () => {
   it('matches the build by path when the profile escapes it in its URLs', () => {
     const profile = buildProfile(windowRows())
     for (const node of profile.nodes as Array<{ callFrame: { url: string } }>) {
-      node.callFrame.url = node.callFrame.url.replace('file:///build/', 'file:///build%20dir/')
+      node.callFrame.url = node.callFrame.url.replace(
+        fixtureUrl('/build'),
+        fixtureUrl('/build dir')
+      )
     }
     const result = mainWindowProfileSharesForCapture('/capture', {
       fs: fakeFs(
@@ -1599,7 +1611,7 @@ describe('reading a capture from disk', () => {
     for (const url of ['file:///elsewhere/lib/index.js', 'file:///a%2Fb/out/main/index.js']) {
       const profile = buildProfile(windowRows())
       for (const node of profile.nodes as Array<{ callFrame: { url: string } }>) {
-        if (node.callFrame.url.startsWith('file:///build/')) node.callFrame.url = url
+        if (node.callFrame.url.startsWith(fixtureUrl('/build'))) node.callFrame.url = url
       }
       const result = mainWindowProfileSharesForCapture('/capture', {
         fs: fakeFs(

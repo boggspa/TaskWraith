@@ -125,6 +125,9 @@ async function settle(): Promise<void> {
 
 const ids = (records: UsageRecord[]): string[] => records.map((record) => record.id).sort()
 
+// Power-cut reconstruction uses the POSIX model; sync accounting runs everywhere.
+const test = it.skipIf(process.platform === 'win32')
+
 describe('the usage log under barrier durability', () => {
   let folders: string[]
   let stores: UsageJournalStore[]
@@ -459,7 +462,7 @@ describe('the usage log under barrier durability', () => {
   })
 
   describe('over a power loss', () => {
-    it('loses only the records appended after the last round, and a torn last line reads as the records before it', async () => {
+    test('loses only the records appended after the last round, and a torn last line reads as the records before it', async () => {
       const { root, paths } = folder()
       const time = manualTime()
       let disk: ReturnType<typeof watchCrashDisk> | null = null
@@ -548,7 +551,7 @@ describe('the usage log under barrier durability', () => {
       return { paths, all }
     }
 
-    it('loses no record when the power fails at any step of a compaction', async () => {
+    test('loses no record when the power fails at any step of a compaction', async () => {
       // A whole compaction of these inputs: the sync of each input, the
       // quarantined copy and its name, the archive and its name, the new
       // checkpoint and its name, the inputs' removal.

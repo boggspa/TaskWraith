@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const RENDERER_SRC = join(__dirname, '..')
@@ -93,7 +93,7 @@ describe('every ActivityStack render site declares its transcript view', () => {
     // scanner still reads it correctly, but say so out loud rather than
     // letting the shape change go unnoticed.
     expect(sites.filter((site) => !site.selfClosing)).toEqual([])
-    expect(sites.map((s) => s.file.split('/').pop()).sort()).toEqual([
+    expect(sites.map((s) => basename(s.file)).sort()).toEqual([
       'EnsembleFanoutResultCard.tsx',
       'SubThreadReturnCard.tsx',
       'TranscriptPanel.tsx',

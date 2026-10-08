@@ -2183,11 +2183,16 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       expect(preparedTwo.kind).toBe('prepared')
       if (preparedTwo.kind !== 'prepared') return
       expect(h.transferListing()).toHaveLength(1)
+      // Allocate the replacement while the original still exists. Unlink then
+      // recreate can immediately reuse its inode on Linux and test the wrong case.
+      const { descriptor: third } = h.publish(stampedRecord(THREAD_ID, 3), 'transfer-3')
       h.records.discard(preparedTwo.artifact)
-      expect(h.transferListing()).toEqual([])
+      expect(h.transferListing()).toHaveLength(1)
       // A substitute at the same path is not the prepared inode: left alone.
-      const { descriptor: third } = h.publish(stampedRecord(THREAD_ID, 3), 'transfer-2')
-      expect(third.transferId).toBe(second.transferId)
+      renameSync(
+        hostThreadRecordTransferPath(h.profilePath, third.transferId),
+        preparedTwo.artifact.path
+      )
       h.records.discard(preparedTwo.artifact)
       expect(h.transferListing()).toHaveLength(1)
     })

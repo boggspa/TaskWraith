@@ -423,7 +423,7 @@ describe('the run queue file under barrier durability', () => {
     expect(port.calls).toHaveLength(1)
   })
 
-  describe('over a power loss', () => {
+  describe.skipIf(process.platform === 'win32')('over a POSIX power loss', () => {
     async function writeCutAt(answered: number) {
       const { root, filePath, options } = setUp()
       fs.writeFileSync(filePath, JSON.stringify([job('old')], null, 2))

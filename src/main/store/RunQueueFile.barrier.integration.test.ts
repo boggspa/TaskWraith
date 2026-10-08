@@ -208,6 +208,9 @@ async function dispatcher(beforeAdapter?: () => Promise<void>) {
   }
 }
 
+// Power-cut reconstruction uses the POSIX model; sync accounting runs everywhere.
+const test = it.skipIf(process.platform === 'win32')
+
 describe('the run queue through the store, under barrier durability', () => {
   it('syncs nothing on the calling thread, reads every change back at once, and writes the file through the port', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
@@ -268,7 +271,7 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.unwrittenChanges).toBe(1)
   })
 
-  it('after a power cut after the lease write and before start, recovers failed without redispatch', async () => {
+  test('after a power cut after the lease write and before start, recovers failed without redispatch', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
@@ -310,7 +313,7 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(provider.start).not.toHaveBeenCalled()
   })
 
-  it('a power cut before the lease write leaves a queued job that starts once after restart', async () => {
+  test('a power cut before the lease write leaves a queued job that starts once after restart', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
@@ -554,7 +557,7 @@ describe('the run queue through the store, under barrier durability', () => {
     })
   })
 
-  it('after a power cut, startup recovers from a file a few transitions behind', async () => {
+  test('after a power cut, startup recovers from a file a few transitions behind', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = listing(disk, profilePath, [])
     AppStore.saveRunQueueJob(job('a'))
