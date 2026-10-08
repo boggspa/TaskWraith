@@ -158,7 +158,7 @@ describe('Store main durability binding', () => {
   })
 
   it('retires exact detail scopes before artifact removal and refuses unlink on retirement failure', () => {
-    const directory = `/tmp/taskwraith-durability-store-${process.pid}/run-artifacts`
+    const directory = path.resolve(`/tmp/taskwraith-durability-store-${process.pid}/run-artifacts`)
     const target = path.join(directory, 'detail-target')
     const sibling = path.join(directory, 'detail-sibling')
     fs.mkdirSync(target, { recursive: true })

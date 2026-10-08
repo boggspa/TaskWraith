@@ -14,12 +14,16 @@
  * take a log it cannot read for one that has nothing above the full copy.
  */
 import { constants } from 'node:fs'
-import { open, type FileHandle } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import * as path from 'node:path'
 
 import { THREAD_LOG_BATCH_FORMAT } from '../host-shared/thread-log/ThreadLogBatch'
 import { THREAD_LOG_SEGMENT_MAX_LINE_BYTES } from '../host-shared/thread-log/ThreadLogSegmentReader'
 import { threadLogFiles } from '../host-shared/thread-log/ThreadLogFiles'
+import {
+  canTreatThreadPathAsMissing,
+  openThreadFile
+} from '../host-shared/thread-log/NodeThreadFileSystem'
 
 /** The format the app's journal writes at the head of each checkpoint. */
 const CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint'
@@ -66,10 +70,11 @@ const READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants
 
 async function openForReading(file: string): Promise<FileHandle | 'absent' | ThreadLogHead> {
   try {
-    return await open(file, READ_FLAGS)
+    return await openThreadFile(file, READ_FLAGS)
   } catch (error) {
     const code = errorCode(error)
-    return code === 'ENOENT'
+    return code === 'ENOENT' &&
+      (process.platform !== 'win32' || (await canTreatThreadPathAsMissing(file)))
       ? 'absent'
       : { kind: 'unreadable', reason: `${path.basename(file)}: ${code}` }
   }

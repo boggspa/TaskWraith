@@ -5,6 +5,7 @@
  * switch off, every row syncs where it is written, as before.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { basename } from 'node:path'
 
 import type { ThreadDurabilityPort, ThreadDurabilitySyncOptions } from './ThreadDurabilityDebt'
 import type { UsageRecord } from './types'
@@ -57,7 +58,7 @@ function usage(runId: string): Omit<UsageRecord, 'id' | 'timestamp'> {
 /** The disk's port, listing each sync it pays with its class. */
 function listing(disk: CrashDisk, paid: string[]): ThreadDurabilityPort {
   const note = (kind: string, target: string, sync?: ThreadDurabilitySyncOptions): void => {
-    const name = target.split('/').pop()
+    const name = basename(target)
     paid.push(
       `${kind}:${name}:${sync?.urgent ? 'urgent' : sync?.background ? 'background' : 'normal'}`
     )

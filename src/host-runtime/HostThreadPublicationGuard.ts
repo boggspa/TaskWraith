@@ -4,6 +4,7 @@
  * at authenticated request ingress, then publish after transfer preparation.
  */
 import { lstatSync } from 'node:fs'
+import { canTreatThreadPathAsMissingSync } from '../host-shared/thread-log/NodeThreadFileSystem'
 import { threadAuthorityFilePath } from '../host-shared/thread-log/ThreadAuthorityFile'
 import type { ThreadOwnerEpoch } from '../host-shared/thread-log/ThreadOwnership'
 
@@ -24,7 +25,10 @@ export function threadPublicationAuthorityWitness(
       if (!stat.isFile()) return null
       return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
     } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : null
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' &&
+        (process.platform !== 'win32' || canTreatThreadPathAsMissingSync(file))
+        ? 'missing'
+        : null
     }
   }
   const before = identity()

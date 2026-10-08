@@ -19,7 +19,8 @@
  * writes and removes these on its main thread, the Host reads and removes them
  * on its only thread, and neither may wait on a disk sync there.
  */
-import { mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readdir, unlink } from 'node:fs/promises'
+import { canTreatThreadPathAsMissing, renameThreadFile } from './NodeThreadFileSystem'
 import * as path from 'node:path'
 
 import { chatPathForId, isSafeChatId } from '../../shared/ChatPath'
@@ -105,7 +106,7 @@ export const NODE_THREAD_AUTHORITY_FS: ThreadAuthorityFs = {
       close: () => handle.close()
     }
   },
-  rename: (from, to) => rename(from, to),
+  rename: (from, to) => renameThreadFile(from, to),
   unlink: (file) => unlink(file),
   async syncDirectory(directory) {
     // Windows cannot open a directory to sync it, and does not need to.
@@ -118,7 +119,18 @@ export const NODE_THREAD_AUTHORITY_FS: ThreadAuthorityFs = {
     }
   },
   async readFile(file, limit) {
-    const handle = await open(file, 'r')
+    const handle = await open(file, 'r').catch(async (error: NodeJS.ErrnoException) => {
+      if (
+        error.code === 'ENOENT' &&
+        process.platform === 'win32' &&
+        !(await canTreatThreadPathAsMissing(file))
+      ) {
+        throw Object.assign(new Error('Authority parent is not a readable directory'), {
+          code: 'ENOTDIR'
+        })
+      }
+      throw error
+    })
     try {
       const buffer = Buffer.alloc(limit)
       let length = 0
@@ -132,7 +144,19 @@ export const NODE_THREAD_AUTHORITY_FS: ThreadAuthorityFs = {
       await handle.close()
     }
   },
-  readdir: (directory) => readdir(directory)
+  readdir: (directory) =>
+    readdir(directory).catch(async (error: NodeJS.ErrnoException) => {
+      if (
+        error.code === 'ENOENT' &&
+        process.platform === 'win32' &&
+        !(await canTreatThreadPathAsMissing(directory))
+      ) {
+        throw Object.assign(new Error('Authority parent is not a readable directory'), {
+          code: 'ENOTDIR'
+        })
+      }
+      throw error
+    })
 }
 
 export function threadAuthorityDirectory(profilePath: string): string {

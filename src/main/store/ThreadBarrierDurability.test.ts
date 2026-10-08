@@ -180,7 +180,7 @@ describe('tool detail staged by the layer', () => {
         options?: ThreadDurabilitySyncOptions
       ): Promise<ThreadDurabilitySyncOutcome> => {
         asked.push(
-          `${kind}:${relative(root, target) || '.'}${options?.background ? '' : ' (not background)'}`
+          `${kind}:${relative(root, target).split(sep).join('/') || '.'}${options?.background ? '' : ' (not background)'}`
         )
         return 'synced'
       }

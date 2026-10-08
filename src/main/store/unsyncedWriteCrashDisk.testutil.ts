@@ -158,7 +158,7 @@ export function watchCrashDisk(
   const keep = (target: string, log: string[] | null): void => {
     const stat = fs.statSync(target)
     const kind = stat.isDirectory() ? 'directory' : 'file'
-    log?.push(`${kind}:${path.relative(root, target) || '.'}`)
+    log?.push(`${kind}:${path.relative(root, target).split(path.sep).join('/') || '.'}`)
     if (!modelsPowerLoss) return
     if (stat.isDirectory()) keepDirectory(stat.ino, target)
     else keepFile(stat.ino, target)

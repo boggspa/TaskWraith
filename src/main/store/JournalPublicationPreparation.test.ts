@@ -496,13 +496,13 @@ describe('publication pinned prefix replay', () => {
             },
             maxOutputBytes: 1024 * 1024
           })
-        if (directoryFailure) expect(prepare).toThrow(failure)
+        if (directoryFailure && process.platform !== 'win32') expect(prepare).toThrow(failure)
         else {
           const artifact = prepare()
           expect(JSON.parse(fs.readFileSync(output, 'utf8')).title).toBe('captured')
           expect(artifact.byteLength).toBe(fs.statSync(output).size)
         }
-        expect(ordering).toEqual(['file', 'directory'])
+        expect(ordering).toEqual(process.platform === 'win32' ? ['file'] : ['file', 'directory'])
         expect(fs.fstatSync(activeFd).isFile()).toBe(true)
         expect(fs.fstatSync(checkpointFd).isFile()).toBe(true)
       } finally {

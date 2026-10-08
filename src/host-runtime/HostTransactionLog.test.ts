@@ -151,7 +151,7 @@ function seams(dataDir: string): Seams {
         await record.beforeFsync(path)
         fsyncs.push(path)
         if (statSync(path).isDirectory()) return
-        const handle = await open(path, 'r')
+        const handle = await open(path, process.platform === 'win32' ? 'r+' : 'r')
         try {
           await handle.sync()
         } finally {
@@ -265,11 +265,15 @@ describe('HostTransactionLog group commit', () => {
     expect(existsSync(logPath(dataDir))).toBe(false)
 
     await log.append(prepare('cmd-1'))
-    expect(io.fsyncs).toEqual([logPath(dataDir), dataDir])
+    expect(io.fsyncs).toEqual(
+      process.platform === 'win32' ? [logPath(dataDir)] : [logPath(dataDir), dataDir]
+    )
 
     await log.append(abort('cmd-1'))
     await log.append(prepare('cmd-2'))
-    expect(io.fsyncs.filter((path) => path === dataDir)).toHaveLength(1)
+    expect(io.fsyncs.filter((path) => path === dataDir)).toHaveLength(
+      process.platform === 'win32' ? 0 : 1
+    )
     expect(io.fsyncs.filter((path) => path === logPath(dataDir))).toHaveLength(3)
 
     // A reopened log of an existing file never creates it.

@@ -544,8 +544,8 @@ describe('Main durability runtime', () => {
           { ...input, chatId: 'chat-1', kind: 'lifecycle', phase: 'control', source: 'main' },
           { durability: 'strict' }
         )
-        // Without a note a strict event that makes its file syncs it and its folder.
-        expect(fsyncSync).toHaveBeenCalledTimes(given ? 0 : 2)
+        // A strict event syncs its file and, where supported, its folder.
+        expect(fsyncSync).toHaveBeenCalledTimes(given ? 0 : process.platform === 'win32' ? 1 : 2)
         expect(notes).toEqual(
           given
             ? [

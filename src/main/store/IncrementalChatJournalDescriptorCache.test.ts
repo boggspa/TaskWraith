@@ -59,7 +59,9 @@ describe('journal descriptor adapter', () => {
     journal.append('chat', path.join(root, 'journal', 'chat.jsonl'), 'journal\n', 'immediate')
     ledger.append('run', path.join(root, 'ledger', 'run.jsonl'), 'ledger\n', 'sync')
     const parent = fs.statSync(root)
-    expect(opened.filter((key) => key === `${parent.dev}:${parent.ino}`)).toHaveLength(1)
+    expect(opened.filter((key) => key === `${parent.dev}:${parent.ino}`)).toHaveLength(
+      process.platform === 'win32' ? 0 : 1
+    )
     journal.retireSync()
     ledger.append('run', path.join(root, 'ledger', 'run.jsonl'), 'later\n', 'sync')
     expect(fs.readFileSync(path.join(root, 'ledger', 'run.jsonl'), 'utf8')).toBe('ledger\nlater\n')

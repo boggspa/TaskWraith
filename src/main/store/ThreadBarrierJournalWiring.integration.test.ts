@@ -228,7 +228,9 @@ describe("the journal's checkpoint pool, as the store builds it", () => {
     const started = AppStore.getThreadBarrierDurabilityPerf().port!.started
 
     await expect(journal.syncDirectory!(profilePath)).resolves.toBe('synced')
-    expect(AppStore.getThreadBarrierDurabilityPerf().port!.started).toBe(started + 1)
+    expect(AppStore.getThreadBarrierDurabilityPerf().port!.started).toBe(
+      started + (process.platform === 'win32' ? 0 : 1)
+    )
   })
 })
 

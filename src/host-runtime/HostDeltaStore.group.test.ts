@@ -82,7 +82,7 @@ async function settledWithin<T>(promise: Promise<T>, ms = 150): Promise<T | 'pen
 function recordingFsync(calls: string[]): NonNullable<HostDeltaStoreOptions['groupFsync']> {
   return async (path) => {
     calls.push(path)
-    const descriptor = openSync(path, 'r')
+    const descriptor = openSync(path, process.platform === 'win32' ? 'r+' : 'r')
     try {
       fsyncSync(descriptor)
     } finally {

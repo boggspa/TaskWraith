@@ -344,6 +344,7 @@ describe('loading a thread from its log', () => {
     }
     const checkpointPath = path.join(directory, CHECKPOINT)
     const replaced: number[] = []
+    let replacementDeferred = false
     let opens = 0
     const seam: ThreadLogSegmentReaderFs = {
       constants: fs.constants,
@@ -353,8 +354,17 @@ describe('loading a thread from its log', () => {
         // follower looked at its header: the app checkpoints as it begins.
         if (filePath === checkpointPath && ++opens === 2) {
           app.change((next) => next.messages.push(message('m-late', 'late')))
-          app.journal.checkpoint(CHAT, 'manual', app.record)
-          replaced.push(revisionOf(app.record))
+          try {
+            app.journal.checkpoint(CHAT, 'manual', app.record)
+            replaced.push(revisionOf(app.record))
+          } catch (error) {
+            if (
+              process.platform !== 'win32' ||
+              !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')
+            )
+              throw error
+            replacementDeferred = true
+          }
         }
         return fd
       },
@@ -365,11 +375,18 @@ describe('loading a thread from its log', () => {
       closeSync: (fd) => fs.closeSync(fd)
     }
     const loaded = await loadThreadLog({ directory, chatId: CHAT }, { fs: seam })
+    if (replacementDeferred) {
+      // Windows can retain the old name while it is open. The journal still
+      // carries the new revision; replacement succeeds once the reader closes.
+      expect(recordOf(loaded)).toEqual(app.record)
+      app.journal.checkpoint(CHAT, 'manual', app.record)
+      replaced.push(revisionOf(app.record))
+    }
     expect(replaced).toEqual([7])
     expect(recordOf(loaded)).toEqual(app.record)
     expect(recordOf(loaded)).toEqual(appLoad(directory))
     // The checkpoint it held, then the one that passed it.
-    if (loaded.kind === 'record') expect(loaded.timings.checkpoints).toBe(2)
+    if (loaded.kind === 'record' && !replacementDeferred) expect(loaded.timings.checkpoints).toBe(2)
   })
 
   it('reads a line too long for the event loop, so a follower it seeds reads on past it', async () => {
