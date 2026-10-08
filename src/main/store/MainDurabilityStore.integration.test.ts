@@ -1,7 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { DEFAULT_AUDIT_RETENTION } from './slices/auditRetentionNormalizers'
+
+// This file proves the main durability binding of the pre-barrier path (its
+// enrolled detail owner and checkpoint ports): the path the store takes with
+// barrier durability off. Barrier durability is on by default and the store
+// reads its switch once, at load, so it is pinned off here with the exact
+// token `0` before the store is imported. Detail under the switch, erasure
+// included, is proven in ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const ports = vi.hoisted(() => ({
   shutdown: vi.fn(async () => {}),

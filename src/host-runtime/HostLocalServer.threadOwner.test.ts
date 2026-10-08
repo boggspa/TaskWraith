@@ -32,6 +32,8 @@ import { HostThreadOwnerService } from './HostThreadOwnerService'
 const TEMPORARY_PREFIX = 'host-thread-owner-server-'
 const INCARNATION = 'b'.repeat(64)
 const ON = { [THREAD_LOG_AUTHORITY_ENV]: '1' }
+// The switch is on by default; only the exact token `0` turns it off.
+const OFF = { [THREAD_LOG_AUTHORITY_ENV]: '0' }
 
 /** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
 function removeTemporaryDirectory(directory: string): void {
@@ -214,7 +216,7 @@ async function settle(): Promise<void> {
 describe('thread.owner over the local server', () => {
   describe('with the thread log authority switch off', () => {
     it('refuses every claim as a Host that takes none, and records nothing', async () => {
-      const { profile, copies, connect } = await host({})
+      const { profile, copies, connect } = await host(OFF)
       copies.set('thread-1', 5)
       const app = await connect()
       expect(resultOf(await app.request(claim('thread-1', 'desk-1', [5, 5])))).toEqual({

@@ -308,7 +308,8 @@ function holdingBackground(port: ThreadDurabilityPort): {
  * then paid.
  */
 async function drive(switchOn: boolean) {
-  if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+  // On by default: off needs the exact token `0`.
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', switchOn ? '1' : '0')
   const { AppStore, profilePath } = await importHostOwnedStore([])
   const disk = watchCrashDisk(profilePath)
   disks.push(disk)
@@ -610,7 +611,7 @@ describe('a torn journal tail', () => {
   it.each([true, false])(
     'with the switch on (%s), is cut before the next append, with the one sync that costs',
     async (switchOn) => {
-      if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+      vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', switchOn ? '1' : '0')
       const first = await importHostOwnedStore([])
       // The barrier the first process raises before it is cut off pays at once.
       layers.port = { syncFile: async () => 'synced', syncDirectory: async () => 'synced' }
@@ -1260,7 +1261,7 @@ describe("the catalogue's heads and tickets", () => {
 
   /** The same saves, with the catalogue's publisher installed as the app installs it. */
   async function driveWithCatalogue(switchOn: boolean) {
-    if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', switchOn ? '1' : '0')
     const { AppStore, profilePath } = await importHostOwnedStore([])
     AppStore.installThreadCataloguePublisher('test-writer', () => {})
     const disk = watchCrashDisk(profilePath)
@@ -1318,7 +1319,7 @@ describe("the catalogue's heads and tickets", () => {
 describe('the dispatch barriers', () => {
   /** A thread with a run, all paid, over a disk the test can hold or make refuse. */
   async function dispatching(switchOn = true) {
-    if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', switchOn ? '1' : '0')
     const { AppStore, profilePath } = await importHostOwnedStore([])
     const gates = await import('../run/DurableMomentGate')
     const disk = watchCrashDisk(profilePath)

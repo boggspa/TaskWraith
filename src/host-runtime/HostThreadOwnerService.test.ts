@@ -22,6 +22,8 @@ import {
 const TEMPORARY_PREFIX = 'host-thread-owner-service-'
 const INCARNATION = 'd'.repeat(64)
 const ON = { [THREAD_LOG_AUTHORITY_ENV]: '1' }
+// The switch is on by default; only the exact token `0` turns it off.
+const OFF = { [THREAD_LOG_AUTHORITY_ENV]: '0' }
 
 /** Remove, with all it holds, a folder made here by `mkdtempSync` with TEMPORARY_PREFIX. */
 function removeTemporaryDirectory(directory: string): void {
@@ -114,12 +116,18 @@ async function writeAuthority(threadId: string, writerId: string, pid: number, a
 }
 
 describe('the Host’s thread owner service', () => {
-  it('reads the switch once, and is on only for the exact token without transactional persists', () => {
-    expect(service({}).mode).toBe('off')
-    expect(service({ [THREAD_LOG_AUTHORITY_ENV]: 'true' }).mode).toBe('off')
-    expect(service({ [THREAD_LOG_AUTHORITY_ENV]: '0' }).mode).toBe('off')
-    expect(service({ [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }).mode).toBe('off')
+  it('reads the switch once, and is off only for the exact token 0, on without transactional persists', () => {
+    expect(service(OFF).mode).toBe('off')
+    expect(service({ ...OFF, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }).mode).toBe('off')
     expect(lines).toEqual([])
+    expect(service({}).mode).toBe('on')
+    expect(service({ [THREAD_LOG_AUTHORITY_ENV]: 'false' }).mode).toBe('on')
+    expect(service({ [THREAD_LOG_AUTHORITY_ENV]: ' 0' }).mode).toBe('on')
+    expect(lines).toEqual([])
+    const offEnvironment: Record<string, string> = { ...OFF }
+    const off = service(offEnvironment)
+    offEnvironment[THREAD_LOG_AUTHORITY_ENV] = '1'
+    expect(off.mode).toBe('off')
     const environment: Record<string, string> = { ...ON }
     const on = service(environment)
     expect(on.mode).toBe('on')
@@ -127,6 +135,12 @@ describe('the Host’s thread owner service', () => {
     expect(on.mode).toBe('on')
     expect(service({ ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }).mode).toBe('off-txn-persist')
     expect(lines).toEqual([expect.stringContaining('takes no thread claims')])
+    // On by default, transactional persists still take it out of service.
+    expect(service({ [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }).mode).toBe('off-txn-persist')
+    expect(lines).toEqual([
+      expect.stringContaining('takes no thread claims'),
+      expect.stringContaining('takes no thread claims')
+    ])
   })
 
   it('off, refuses every message without reading a file', async () => {
@@ -135,7 +149,7 @@ describe('the Host’s thread owner service', () => {
       list: vi.fn(),
       remove: vi.fn()
     }
-    const off = service({}, { files })
+    const off = service(OFF, { files })
     expect(await off.start()).toBeNull()
     copies.set('thread-1', 3)
     expect(await off.answer(1, claim('thread-1', 'desk-1', [3, 3]))).toEqual({
@@ -250,7 +264,7 @@ describe('the Host’s thread owner service', () => {
 
   it('off, reads no authority folder, and its snapshot is as it was', async () => {
     writeFileSync(path.join(profile, 'thread-authority'), 'not a folder')
-    const off = service({})
+    const off = service(OFF)
     expect(await off.start()).toBeNull()
     expect(lines).toEqual([])
     expect(off.snapshot()).toEqual({ mode: 'off', attached: [], table: null })
@@ -443,7 +457,7 @@ describe('the Host’s thread owner service', () => {
       }
     }
     const epoch = { host: INCARNATION, grant: 1 }
-    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+    for (const environment of [OFF, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
       const off = service(environment, { observer })
       await off.answer(1, { action: 'advanced', threadId: 'thread-1', epoch, revision: 4 })
       await off.answer(1, { action: 'release', threadId: 'thread-1', epoch, revision: null })
@@ -463,7 +477,7 @@ describe('the Host’s thread owner service', () => {
 
   it('lets every Host write through, reading no file, while it takes no claims', async () => {
     const files = { read: vi.fn(), list: vi.fn(), remove: vi.fn() }
-    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+    for (const environment of [OFF, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
       expect(await service(environment, { files }).requestHostWrite('thread-1')).toEqual({
         kind: 'write'
       })
@@ -526,7 +540,7 @@ describe('the Host’s thread owner service', () => {
 describe('inert publication through the owning connection', () => {
   it('off, preserves the legacy callback without reading authority files', async () => {
     const files = { read: vi.fn(), list: vi.fn(), remove: vi.fn() }
-    for (const environment of [{}, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
+    for (const environment of [OFF, { ...ON, [TASKWRAITH_HOST_TXN_PERSIST_ENV]: '1' }]) {
       const off = service(environment, { files })
       expect(await off.publish(off.capturePublication(99, 'thread-1'), () => 'saved')).toEqual({
         kind: 'published',

@@ -45,6 +45,8 @@ const AT = Date.UTC(2026, 9, 5, 10, 0, 0)
 const STAMP = '2026-10-05T10:00:00.000Z'
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
 const ON = { [THREAD_LOG_AUTHORITY_ENV]: '1' }
+// The switch is on by default; only the exact token `0` turns it off.
+const OFF = { [THREAD_LOG_AUTHORITY_ENV]: '0' }
 const actor = { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const }
 const context = {
   actor,
@@ -500,7 +502,7 @@ const foldFirst = {
 
 describe('HostNodeProductionServer: its own writes to a thread', () => {
   it('off, writes a thread whatever its authority file says, as before', async () => {
-    const h = harness({})
+    const h = harness(OFF)
     await h.server.start()
     try {
       const written = await sendConfigureArchive(h, process.pid)
@@ -521,7 +523,7 @@ describe('HostNodeProductionServer: its own writes to a thread', () => {
 
   it('on, writes a thread nobody holds exactly as off does', async () => {
     const digests: string[] = []
-    for (const environment of [{}, ON]) {
+    for (const environment of [OFF, ON]) {
       const h = harness(environment)
       await h.server.start()
       try {

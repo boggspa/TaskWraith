@@ -19,7 +19,7 @@
  * parity, fallback, shutdown and deletion rather than assuming the cutover.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
 import { chatUpdateProducerEnvelopeFor } from '../../shared/chatUpdateTransport'
@@ -35,6 +35,20 @@ const userDataPath = vi.hoisted(() => `/tmp/taskwraith-journal-integration-test-
 // default, so a later retune cannot silently make these tests vacuous.
 vi.hoisted(() => {
   process.env.TASKWRAITH_SAVE_COALESCE_MS = '50'
+})
+
+// This file proves the journal's own checkpoints (terminal and shutdown
+// materialization) and synchronous tool-detail externalization: the path the
+// store takes with barrier durability off. Barrier durability is on by default
+// and the store reads its switch once, at load, so it is pinned off here with
+// the exact token `0` before anything imports the store. Under the switch,
+// tool detail is staged and swapped in the background instead; that is proven
+// in ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
 })
 
 vi.mock('electron', () => ({

@@ -28,7 +28,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHAT_UPDATE_PROTOCOL_V2,
@@ -42,6 +42,19 @@ import type {
 } from '../host/HostThreadRecordPersistCommand'
 import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
 import type { ChatMessage, ChatRecord } from './types'
+
+// This file proves Stage 2 incremental persistence on the Host write path (a
+// journal batch beside the whole-record enqueue, materialized at its own
+// checkpoints): the path the store takes with barrier durability off. Barrier
+// durability is on by default and the store reads its switch once, at load,
+// so it is pinned off here with the exact token `0` before anything imports
+// the store. The barrier path is proven in ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const profiles: string[] = []
 

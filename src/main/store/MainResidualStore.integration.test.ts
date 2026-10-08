@@ -1,8 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ChatPreparationLane } from './ChatPreparationLane'
 import type { ResidualObserver } from './MainDurabilityResiduals'
+
+// This file proves the residual counters enrolled for the pre-barrier path
+// (baseline verifies, the checkpoint worker's preparation lane): the path the
+// store takes with barrier durability off. Barrier durability is on by default
+// and the store reads its switch once, at load, so it is pinned off here with
+// the exact token `0` before the store is imported.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const captured = vi.hoisted(() => ({
   observer: undefined as ResidualObserver | undefined,

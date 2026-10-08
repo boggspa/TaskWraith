@@ -26,12 +26,25 @@ import { fsyncSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { HostThreadRecordPersistPort } from '../host/HostThreadRecordPersistCommand'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { IncrementalChatJournalOptions } from '../store/IncrementalChatJournal'
 import type { ChatMessage, ChatRecord, EnsembleParticipant } from '../store/types'
+
+// This file proves D1 saves certified by the journal's own deferred fsyncs:
+// the path the store takes with barrier durability off. Barrier durability is
+// on by default and the store reads its switch once, at load, so it is pinned
+// off here with the exact token `0` before anything imports the store. The
+// barrier path's dispatch barriers are proven in
+// store/ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 type PendingFsync = {
   chatId: string | null

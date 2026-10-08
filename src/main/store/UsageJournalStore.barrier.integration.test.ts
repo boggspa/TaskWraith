@@ -113,6 +113,9 @@ describe('the usage log through the store', () => {
   })
 
   it('with the switch off, syncs every usage row where it is written, and reports no usage log counters', async () => {
+    // On by default: off needs the exact token `0`. Absent, the store would
+    // build the barrier layer at import, over a port this case never sets.
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
     const { AppStore, profilePath } = await importHostOwnedStore([], undefined, { gateOpen: true })
     const disk = watchCrashDisk(profilePath)
     disks.push(disk)

@@ -55,6 +55,7 @@ const BRIEF = 'SEAT-BRIEF-MARKER'
 const profiles: string[] = []
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
 })
 
@@ -64,7 +65,16 @@ interface WiredStore {
   enqueued: HostThreadRecordPersistInput[]
 }
 
-async function importStore(options?: { hostOwnGate?: boolean }): Promise<WiredStore> {
+/**
+ * Barrier durability is on by default and the store reads it once, at import.
+ * The journal semantics pinned here are the pre-barrier path's, so a store is
+ * built with it off (the exact token `0`) unless a case asks for the default.
+ */
+async function importStore(options?: {
+  hostOwnGate?: boolean
+  barrierDurability?: boolean
+}): Promise<WiredStore> {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', options?.barrierDurability ? undefined : '0')
   const profilePath = mkdtempSync(join(tmpdir(), 'taskwraith-summary-save-escalation-'))
   profiles.push(profilePath)
   vi.resetModules()
@@ -249,11 +259,17 @@ function expectFullRecord(record: ChatRecord): void {
 }
 
 describe.each([
-  { path: 'Host-routed', hostOwnGate: true },
-  { path: 'legacy admitted', hostOwnGate: false }
-])('$path save path', ({ hostOwnGate }) => {
+  { path: 'Host-routed', hostOwnGate: true, barrierDurability: false },
+  { path: 'legacy admitted', hostOwnGate: false, barrierDurability: false },
+  // The same escalation contract under the shipped default: barrier durability on.
+  {
+    path: 'Host-routed, barrier durability on by default,',
+    hostOwnGate: true,
+    barrierDurability: true
+  }
+])('$path save path', ({ hostOwnGate, barrierDurability }) => {
   it('escalates a transcriptPaged shell onto the canonical transcript and lands the chrome', async () => {
-    const store = await importStore({ hostOwnGate })
+    const store = await importStore({ hostOwnGate, barrierDurability })
     const chatId = 'chat-paged-shell'
     const canonical = canonicalChat(chatId, { messageCount: 2000 })
     seedDurableChat(store.profilePath, canonical)
@@ -316,15 +332,25 @@ describe.each([
     if (hostOwnGate) {
       expect(store.enqueued).toHaveLength(1)
       expect(store.enqueued[0].expectedRevision).toBe(3)
-      // Host saves now share the incremental path. This terminal chrome save
-      // folds its mutation into a checkpoint before materializing the complete
-      // Host compatibility record.
-      expect(journalV2Files(store.profilePath, chatId)).toEqual([`${chatId}.checkpoint.json`])
+      if (barrierDurability) {
+        // Under barrier durability the save is an append like any other; the
+        // journal compacts by bytes in its worker, not at this save.
+        expect(journalV2Files(store.profilePath, chatId)).toEqual([
+          `${chatId}.checkpoint.json`,
+          `${chatId}.mutations.jsonl`
+        ])
+        expect(readMutationBatches(store.profilePath, chatId).at(-1)?.revision).toBe(4)
+      } else {
+        // Host saves now share the incremental path. This terminal chrome save
+        // folds its mutation into a checkpoint before materializing the complete
+        // Host compatibility record.
+        expect(journalV2Files(store.profilePath, chatId)).toEqual([`${chatId}.checkpoint.json`])
+      }
     }
   })
 
   it('escalates an LRU-demoted summary row (no paged marker) the same way', async () => {
-    const store = await importStore({ hostOwnGate })
+    const store = await importStore({ hostOwnGate, barrierDurability })
     const chatId = 'chat-demoted-row'
     const canonical = canonicalChat(chatId, { messageCount: 300 })
     seedDurableChat(store.profilePath, canonical)
@@ -346,7 +372,7 @@ describe.each([
   })
 
   it('still rejects a summary create: no canonical record to escalate onto', async () => {
-    const store = await importStore({ hostOwnGate })
+    const store = await importStore({ hostOwnGate, barrierDurability })
     const chatId = 'chat-summary-create'
 
     expect(() => store.AppStore.saveChat(pagedShell(canonicalChat(chatId)))).toThrow(/summary-only/)
@@ -356,7 +382,7 @@ describe.each([
   })
 
   it('still rejects an unmarked windowed page: the Stage 1a fence is intact', async () => {
-    const store = await importStore({ hostOwnGate })
+    const store = await importStore({ hostOwnGate, barrierDurability })
     const chatId = 'chat-unmarked-page'
     const canonical = canonicalChat(chatId, { messageCount: 6 })
     seedDurableChat(store.profilePath, canonical)

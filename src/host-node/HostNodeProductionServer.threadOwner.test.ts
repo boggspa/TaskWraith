@@ -186,7 +186,8 @@ const claim = (threadId: string, revision: number, claimId = 1) => ({
 
 describe('HostNodeProductionServer: thread.owner', () => {
   it('hands its listener a service that takes no claims while the switch is off', async () => {
-    const { environment, reads } = counted({})
+    // On by default; only the exact token `0` turns it off.
+    const { environment, reads } = counted({ [THREAD_LOG_AUTHORITY_ENV]: '0' })
     const h = harness(environment)
     await h.server.start()
     try {
@@ -378,7 +379,7 @@ const FULL_COPY_GOLDEN = '107107a07f957d944ade1c194788b7925e320724b1b3386ae5f436
 
 describe('HostNodeProductionServer: thread history', () => {
   it('off, hands history to the full copy untouched, and adds no perf section', async () => {
-    const { environment, reads } = counted({})
+    const { environment, reads } = counted({ [THREAD_LOG_AUTHORITY_ENV]: '0' })
     const h = harness(environment)
     const store = fullCopyStore(h.profile)
     h.domain.threadHistory.mockImplementation((request) => store.threadHistory(request))

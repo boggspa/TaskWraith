@@ -179,11 +179,9 @@ describe('a journal a power cut left with a gap', () => {
 
   beforeEach(() => {
     // Each case turns on only what it names; nothing comes from the outer environment.
-    for (const name of [
-      THREAD_BARRIER_DURABILITY_ENV,
-      ...FLUSHER_DURABILITY_ENVS,
-      CHECKPOINT_PUBLICATION_ENV
-    ]) {
+    // Barrier durability is on by default, so only the exact token `0` turns it off.
+    vi.stubEnv(THREAD_BARRIER_DURABILITY_ENV, '0')
+    for (const name of [...FLUSHER_DURABILITY_ENVS, CHECKPOINT_PUBLICATION_ENV]) {
       vi.stubEnv(name, '')
     }
     profile = fs.mkdtempSync(join(tmpdir(), PREFIX))
@@ -254,6 +252,18 @@ describe('a journal a power cut left with a gap', () => {
     expect(decoded.chat.messages[0].content).toBe('History at 3')
     expect(decoded.sourceComplete).toBe(true)
     // Read-only: the segment past the gap is read past, never set aside here.
+    expect(files()).toEqual(before)
+  })
+
+  it('reads the longest chain with barrier durability on by default, and moves nothing', () => {
+    vi.stubEnv(THREAD_BARRIER_DURABILITY_ENV, undefined)
+    const before = gapped()
+
+    const decoded = reader().read('chat')!
+
+    expect(decoded.chat.persistenceRevision).toBe(3)
+    expect(decoded.chat.messages[0].content).toBe('History at 3')
+    expect(decoded.sourceComplete).toBe(true)
     expect(files()).toEqual(before)
   })
 

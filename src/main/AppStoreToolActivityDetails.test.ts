@@ -1,8 +1,22 @@
 import fs from 'fs'
 import { join } from 'path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppStore } from './store'
 import type { ChatRecord } from './store/types'
+
+// This file proves terminal tool detail checkpointed synchronously before a
+// lightweight row is persisted: the path the store takes with barrier
+// durability off. Barrier durability is on by default and the store reads its
+// switch once, at load, so it is pinned off here with the exact token `0`
+// before the store is imported. Under the switch, detail is staged and synced
+// in the background before any record references it; that is proven in
+// store/ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-tool-detail-store-${process.pid}`)
 

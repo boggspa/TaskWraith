@@ -7,11 +7,19 @@
  * removed after those descriptors are retired: a surviving one keeps the
  * unlinked transcript alive and writable, and holds its slot in the journal's
  * descriptor cache for the rest of the process.
+ *
+ * The journal flusher and barrier durability are never combined: while a
+ * flusher switch is on, barrier durability is ignored. The flusher cases
+ * below attach the flusher without touching the process environment, so they
+ * switch barrier durability off themselves, with the exact token `0`, as the
+ * process would. Under barrier durability, on by default, the journal keeps
+ * no descriptor: its layer syncs every file and directory by path. The last
+ * case proves that over the same clear.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   chatRecord,
@@ -20,7 +28,54 @@ import {
   recordingAdapter
 } from './hostOwnedErasure.testutil'
 
-afterEach(disposeHostOwnedStores)
+const BARRIER = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
+
+/** Each sync the barrier layer asked for: the path, and the inode it led to then. */
+const barrierSyncs = vi.hoisted(
+  () => [] as Array<{ kind: 'file' | 'directory'; path: string; ino: number | null }>
+)
+const layers = vi.hoisted(
+  () => [] as Array<import('./ThreadBarrierDurability').ThreadBarrierDurability>
+)
+
+// The layer as the store builds it, over a port that syncs by path as the
+// built one does, recording what each path led to instead of syncing it.
+vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ThreadBarrierDurability')>()
+  const { statSync: stat } = await import('node:fs')
+  const sync = (kind: 'file' | 'directory', target: string): 'synced' | 'missing' => {
+    const ino = stat(target, { throwIfNoEntry: false })?.ino ?? null
+    barrierSyncs.push({ kind, path: target, ino })
+    return ino === null ? 'missing' : 'synced'
+  }
+  return {
+    ...actual,
+    createThreadBarrierDurability: (
+      options: import('./ThreadBarrierDurability').ThreadBarrierDurabilityOptions = {}
+    ) => {
+      const layer = actual.createThreadBarrierDurability({
+        ...options,
+        port: {
+          syncFile: async (target) => sync('file', target),
+          syncDirectory: async (target) => sync('directory', target)
+        }
+      })
+      layers.push(layer)
+      return layer
+    }
+  }
+})
+
+beforeEach(() => {
+  vi.stubEnv(BARRIER, '0')
+})
+
+afterEach(async () => {
+  barrierSyncs.length = 0
+  layers.length = 0
+  vi.unstubAllEnvs()
+  await disposeHostOwnedStores()
+})
 
 describe('Host-owned global clear of the journal', () => {
   it('retires every cached journal descriptor before it removes the journal directory', async () => {
@@ -113,5 +168,56 @@ describe('Host-owned global clear of the journal', () => {
     expect(adapter.synced.some((entry) => entry.journalDirectory)).toBe(
       process.platform !== 'win32'
     )
+  })
+})
+
+describe('Host-owned global clear of the journal, under barrier durability (the default)', () => {
+  it('holds no journal descriptor, and makes a later segment durable through the new directory', async () => {
+    vi.stubEnv(BARRIER, undefined)
+    const store = await importHostOwnedStore([chatRecord('chat-cleared', 2)])
+    const { AppStore, journalDirectory } = store
+    expect(AppStore.getThreadBarrierDurabilityPerf()).toMatchObject({ enabled: true })
+    expect(layers).toHaveLength(1)
+    const streamInto = async (chatId: string): Promise<void> => {
+      const current = AppStore.getChat(chatId)!
+      AppStore.saveChat({
+        ...current,
+        runs: [{ runId: `${chatId}-run`, startedAt: '2026-10-04T00:00:00.000Z', status: 'running' }]
+      })
+      // Pay what the thread owes now, rather than at its idle barrier.
+      await layers[0].debt.barrier(chatId)
+    }
+    await streamInto('chat-cleared')
+    const clearedSegment = join(journalDirectory, 'chat-cleared.mutations.jsonl')
+    expect(existsSync(clearedSegment)).toBe(true)
+    expect(barrierSyncs.map((entry) => entry.path)).toContain(clearedSegment)
+    expect(
+      AppStore.getMainDurabilitySnapshot().telemetry.poolOwners?.journal.activeFiles ?? 0
+    ).toBe(0)
+
+    await AppStore.clearChatsViaHost()
+    expect(existsSync(journalDirectory)).toBe(false)
+    barrierSyncs.length = 0
+    AppStore.saveChat(chatRecord('chat-later', 0))
+    await AppStore.awaitChatRecordPersisted('chat-later')
+    await streamInto('chat-later')
+
+    const laterSegment = join(journalDirectory, 'chat-later.mutations.jsonl')
+    expect(barrierSyncs).toContainEqual({
+      kind: 'file',
+      path: laterSegment,
+      ino: statSync(laterSegment).ino
+    })
+    // Synced by path, the name lands in the directory that holds it now: there
+    // is no kept descriptor on the removed one to sync instead.
+    expect(barrierSyncs).toContainEqual({
+      kind: 'directory',
+      path: journalDirectory,
+      ino: statSync(journalDirectory).ino
+    })
+    expect(barrierSyncs.some((entry) => entry.path === clearedSegment)).toBe(false)
+    expect(
+      AppStore.getMainDurabilitySnapshot().telemetry.poolOwners?.journal.activeFiles ?? 0
+    ).toBe(0)
   })
 })

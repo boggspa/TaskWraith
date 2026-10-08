@@ -1,6 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+
+// This file proves the host reference connector's cancellation at erasure. The
+// store builds that connector only for the earlier mechanisms' checkpoint
+// worker, with barrier durability off. Barrier durability is on by default and
+// the store reads its switch once, at load, so it is pinned off here with the
+// exact token `0` before the store is imported. Under the switch the journal
+// cancels the folds in the barrier's own pool; that is proven in
+// JournalPreparationErasure.barrier.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const calls = vi.hoisted(() => ({ cancelChat: vi.fn(), cancelAll: vi.fn() }))
 const profile = vi.hoisted(() => `/tmp/taskwraith-connector-erasure-${process.pid}`)

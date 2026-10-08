@@ -60,7 +60,9 @@ vi.mock('./CheckpointPreparationWorker', async (importOriginal) => {
     onExit(listener: () => void): void {
       this.exit = listener
     }
-    onError(): void {}
+    onError(): void {
+      // This stand-in worker never fails, so it keeps no error listener.
+    }
     kill(): void {
       if (this.exited) return
       this.exited = true
@@ -153,8 +155,16 @@ const BARRIER = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
 const WORKER = 'TASKWRAITH_CHECKPOINT_WORKER'
 const PUBLICATION = 'TASKWRAITH_CHECKPOINT_PUBLICATION'
 
+/**
+ * Barrier durability is on by default, and only the exact token `0` turns it
+ * off: a case that does not name it here means it off.
+ */
+function withBarrierOff(env: Record<string, string>): Record<string, string> {
+  return { [BARRIER]: '0', ...env }
+}
+
 async function storeWith(env: Record<string, string>) {
-  for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
+  for (const [name, value] of Object.entries(withBarrierOff(env))) vi.stubEnv(name, value)
   const store = await importHostOwnedStore([])
   expect(built.journals).toHaveLength(1)
   return { ...store, journal: built.journals[0] }
@@ -175,6 +185,16 @@ describe("the journal's checkpoint pool, as the store builds it", () => {
       expect(built.connectors).toEqual([])
     }
   )
+
+  it('with barrier durability on by default: one worker, handed to the journal whole', async () => {
+    vi.stubEnv(BARRIER, undefined)
+    await importHostOwnedStore([])
+
+    expect(built.journals).toHaveLength(1)
+    expect(built.workers).toHaveLength(1)
+    expect(built.journals[0].checkpointPreparation).toBe(built.workers[0])
+    expect(built.connectors).toEqual([])
+  })
 
   it.each([
     ['the worker switch alone', { [WORKER]: '1' }],
@@ -274,7 +294,7 @@ describe("the store's idle sweep, at quit", () => {
   /** A store whose legacy gate is open, so that its idle timer sweeps the journal. */
   async function sweeping(env: Record<string, string>) {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
+    for (const [name, value] of Object.entries(withBarrierOff(env))) vi.stubEnv(name, value)
     const { AppStore } = await importHostOwnedStore([], undefined, { gateOpen: true })
     vi.advanceTimersByTime(5_000)
     expect(built.idleSweeps).toBe(1)

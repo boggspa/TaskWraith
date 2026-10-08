@@ -600,6 +600,8 @@ describe('the run queue through the store, under barrier durability', () => {
 
 describe('the run queue through the store, with the switch off', () => {
   it('syncs every change where it is made, waits for nothing, and reports no run queue counters', async () => {
+    // On by default: off needs the exact token `0`.
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
     const { AppStore, profilePath } = await importHostOwnedStore([], undefined, { gateOpen: true })
     const disk = watchCrashDisk(profilePath)
     disks.push(disk)
@@ -615,7 +617,7 @@ describe('the run queue through the store, with the switch off', () => {
 
   /** Every answer the store gives along one sequence of changes, and the file it leaves. */
   async function transcript(switchOn: boolean): Promise<{ answers: unknown[]; file: string }> {
-    if (switchOn) vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '1')
+    vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', switchOn ? '1' : '0')
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-05T12:00:00.000Z') })
     const { AppStore, profilePath } = await importHostOwnedStore([], undefined, { gateOpen: true })
     const disk = watchCrashDisk(profilePath)

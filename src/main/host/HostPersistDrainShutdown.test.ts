@@ -2,12 +2,25 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   HostThreadRecordPersistInput,
   HostThreadRecordPersistPort
 } from './HostThreadRecordPersistCommand'
+
+// This file proves the D1 checkpoint, Host record materialization and drain
+// at shutdown on the journal's own path: the path the store takes with
+// barrier durability off. Barrier durability is on by default and the store
+// reads its switch once, at load, so it is pinned off here with the exact
+// token `0` before anything imports the store. Quit under the switch is
+// proven in store/ThreadBarrierDurability.integration.test.ts.
+vi.hoisted(() => {
+  vi.stubEnv('TASKWRAITH_THREAD_BARRIER_DURABILITY', '0')
+})
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 const profiles: string[] = []
 

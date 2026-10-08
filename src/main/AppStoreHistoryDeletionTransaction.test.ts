@@ -8,6 +8,7 @@ import {
   HistoryDeletionQuiescenceRequiredError
 } from './store'
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
+import { afterRunQueueUserChange } from './run/RunQueueUserWait'
 import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
 import { museSeatStatePath } from './muse/MuseSeatState'
 import type { ChatRecord, ChatRun } from './store/types'
@@ -333,7 +334,13 @@ describe('AppStore strict history deletion transaction', () => {
     AppStore.commitPreparedHistoryDeletion(prepared.operationId)
   })
 
-  it('refuses a cancel racer resurrecting a queue job for erased history', () => {
+  it('refuses a cancel racer resurrecting a queue job for erased history', async () => {
+    // Under barrier durability, on by default, the queue's file follows its
+    // list a write behind: read it once a finished write holds every change.
+    const writtenRunIds = async (): Promise<unknown[]> => {
+      await afterRunQueueUserChange(null)
+      return readArray(runQueuePath).map((job) => job.runId)
+    }
     saveChat('chat-a', 'workspace-a', [makeRun('run-a')])
     AppStore.saveRunQueueJob({
       id: 'run-a',
@@ -347,8 +354,9 @@ describe('AppStore strict history deletion transaction', () => {
       priority: 0,
       attempt: 1
     })
+    expect(await writtenRunIds()).toContain('run-a')
     AppStore.deleteChat('chat-a')
-    expect(readArray(runQueuePath).map((job) => job.runId)).not.toContain('run-a')
+    expect(await writtenRunIds()).not.toContain('run-a')
 
     // RunRepository.transition routes terminal cancels through saveRunQueueJob
     // as an insert; a user cancel settling after commit must not re-create the
@@ -366,7 +374,7 @@ describe('AppStore strict history deletion transaction', () => {
       attempt: 1
     })
     expect(synthetic.status).toBe('cancelled')
-    expect(readArray(runQueuePath).map((job) => job.runId)).not.toContain('run-a')
+    expect(await writtenRunIds()).not.toContain('run-a')
 
     // A chat legitimately re-created on disk (import/restore path) queues
     // again: the tombstone rule keys on file absence, exactly like saveChat.
@@ -397,7 +405,7 @@ describe('AppStore strict history deletion transaction', () => {
       attempt: 1
     })
     expect(requeued.runId).toBe('run-b')
-    expect(readArray(runQueuePath).map((job) => job.runId)).toContain('run-b')
+    expect(await writtenRunIds()).toContain('run-b')
   })
 
   it('blocks only the prepared workspace while allowing unrelated chat mutations', () => {
