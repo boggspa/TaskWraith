@@ -300,7 +300,10 @@ describe('the usage log under barrier durability', () => {
 
       syncs = countSyncs()
       store.append(usageRecord('r3'))
-      expect(syncs.issued).toEqual(['fsyncSync', 'fsyncSync'])
+      // Windows does not open directories for the best-effort directory sync.
+      expect(syncs.issued).toEqual(
+        process.platform === 'win32' ? ['fsyncSync'] : ['fsyncSync', 'fsyncSync']
+      )
       expect(port.calls).toHaveLength(4)
     })
 
