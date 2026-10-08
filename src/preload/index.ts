@@ -2732,8 +2732,10 @@ const api = {
     ),
   clearChats: (workspaceId?: string) => ipcRenderer.invoke('clear-chats', workspaceId),
   recordUsage: (usage: any) => ipcRenderer.invoke('record-usage', usage),
-  getUsage: (workspaceId?: string, chatId?: string) =>
-    ipcRenderer.invoke('get-usage', workspaceId, chatId),
+  getUsage: (workspaceId?: string, chatId?: string, options?: { ifVersion?: string | null }) =>
+    options
+      ? ipcRenderer.invoke('get-usage', workspaceId, chatId, options)
+      : ipcRenderer.invoke('get-usage', workspaceId, chatId),
   getWorkspaceActivity: (workspacePath: string, dayCount?: number) =>
     ipcRenderer.invoke(
       'get-workspace-activity',

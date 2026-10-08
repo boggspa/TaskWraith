@@ -177,6 +177,10 @@ function usageFileFingerprint(stat: fs.Stats, filePath: string): UsageFileFinger
   }
 }
 
+function usageFileFingerprintKey(fingerprint: UsageFileFingerprint): string {
+  return `${fingerprint.dev}:${fingerprint.ino}:${fingerprint.size}:${fingerprint.mtimeMs}:${fingerprint.ctimeMs}`
+}
+
 function sameUsageFileFingerprint(
   left: UsageFileFingerprint,
   right: UsageFileFingerprint
@@ -481,6 +485,41 @@ export class UsageJournalStore {
           (record) => !usageRecordMatchesHistoryMutation(record, effectiveHistoryMutation)
         )
       : records
+  }
+
+  /**
+   * A name for the history `getRecords()` would return right now, from stats
+   * alone: every source file's fingerprint (checkpoint, live journal, claimed
+   * and spill journals) plus the pending history-mutation intent. Two equal
+   * names mean the same records; any append, compaction, sweep or foreign
+   * rewrite renames it. `null` when a stat fails or the listing is unreadable,
+   * so a caller never trusts a name the store cannot vouch for.
+   */
+  getRecordsVersion(): string | null {
+    try {
+      const parts: string[] = []
+      const checkpoint = assertRegularFileOrMissing(this.checkpointPath)
+      parts.push(
+        checkpoint
+          ? usageFileFingerprintKey(usageFileFingerprint(checkpoint, this.checkpointPath))
+          : 'missing'
+      )
+      const artifacts = this.listJournalArtifacts(true)
+      if (artifacts.status !== 'ok') return null
+      for (const filePath of artifacts.paths) {
+        const stat = assertRegularFileOrMissing(filePath)
+        parts.push(
+          `${path.basename(filePath)}=${
+            stat ? usageFileFingerprintKey(usageFileFingerprint(stat, filePath)) : 'missing'
+          }`
+        )
+      }
+      const intent = this.readHistoryMutationIntent()
+      parts.push(intent ? digestBytes(Buffer.from(JSON.stringify(intent), 'utf8')) : 'no-intent')
+      return parts.join(';')
+    } catch {
+      return null
+    }
   }
 
   append(record: UsageRecord): void {

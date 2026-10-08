@@ -10,6 +10,7 @@ import {
   EnsembleParticipant,
   FanoutWorktreeCandidate,
   PinnedMessageGroup,
+  UsageReadResult,
   UsageRecord,
   TrustStatusResult,
   TrustWriteResult,
@@ -2895,7 +2896,15 @@ declare global {
       truncateChat: (chatId: string) => Promise<ChatRecord | null>
       clearChats: (workspaceId?: string) => Promise<void>
       recordUsage: (usage: Omit<UsageRecord, 'id' | 'timestamp'>) => Promise<void>
-      getUsage: (workspaceId?: string, chatId?: string) => Promise<UsageRecord[]>
+      getUsage: {
+        (workspaceId?: string, chatId?: string): Promise<UsageRecord[]>
+        /** Versioned read: `unchanged` comes back instead of the records when `ifVersion` still names the history. */
+        (
+          workspaceId: string | undefined,
+          chatId: string | undefined,
+          options: { ifVersion?: string | null }
+        ): Promise<UsageReadResult>
+      }
       getWorkspaceActivity: (
         workspacePath: string,
         dayCount?: number

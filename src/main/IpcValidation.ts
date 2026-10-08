@@ -270,7 +270,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],
   'record-usage': ['object'],
-  'get-usage': ['optionalString', 'optionalString'],
+  // Third arg selects the versioned reply ({ ifVersion }); omitted keeps the array.
+  'get-usage': ['optionalString', 'optionalString', 'optionalObject'],
   'get-scheduled-tasks': ['optionalString'],
   'save-scheduled-task': ['object'],
   // Renderer pushes its localStorage roster-preset list up so the bridge can

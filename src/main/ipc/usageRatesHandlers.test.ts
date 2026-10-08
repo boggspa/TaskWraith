@@ -164,6 +164,48 @@ describe('registerUsageRatesHandlers', () => {
     expect(handlerFor('get-usage')({}, 'test-1', 'chat-test-1')).toEqual([{ value: 'owned' }])
   })
 
+  it('answers a versioned usage read and short-circuits an unchanged version', () => {
+    const { deps } = createDeps()
+    deps.getUsage.mockReturnValue([{ value: 'v' }])
+    const getUsageVersion = vi.fn(() => 'fp-1')
+    registerUsageRatesHandlers({ ...deps, getUsageVersion })
+
+    // No version offered: records plus the name main vouches for.
+    expect(handlerFor('get-usage')({}, undefined, undefined, { ifVersion: null })).toEqual({
+      version: 'fp-1',
+      records: [{ value: 'v' }]
+    })
+    expect(deps.getUsage).toHaveBeenCalledTimes(1)
+
+    // The same version offered back: a stat answers, the records never read.
+    expect(handlerFor('get-usage')({}, undefined, undefined, { ifVersion: 'fp-1' })).toEqual({
+      version: 'fp-1',
+      unchanged: true
+    })
+    expect(deps.getUsage).toHaveBeenCalledTimes(1)
+
+    // A history that moved during the read is handed back unversioned, so the
+    // caller cannot pin a name to records it does not match.
+    getUsageVersion.mockReturnValueOnce('fp-2').mockReturnValueOnce('fp-3')
+    expect(handlerFor('get-usage')({}, undefined, undefined, { ifVersion: 'fp-1' })).toEqual({
+      version: null,
+      records: [{ value: 'v' }]
+    })
+
+    // Without the option the legacy bare array is untouched.
+    expect(handlerFor('get-usage')({})).toEqual([{ value: 'v' }])
+
+    // A popout is versioned on the scope it is forced to, not the one it named.
+    deps.resolveSenderUsageScope.mockReturnValue({
+      kind: 'chat',
+      chatId: 'chat-test-1',
+      chatScope: 'workspace',
+      workspaceId: 'test-1'
+    })
+    handlerFor('get-usage')({}, 'test-1', 'chat-test-1', { ifVersion: 'other' })
+    expect(getUsageVersion).toHaveBeenLastCalledWith('test-1', 'chat-test-1')
+  })
+
   it('rejects Test 1 popout usage reads that name Test 3', () => {
     const { deps } = createDeps()
     deps.resolveSenderUsageScope.mockReturnValue({

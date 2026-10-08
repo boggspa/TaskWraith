@@ -5215,6 +5215,18 @@ export interface UsageRecord {
   ollamaMemorySampleCount?: number
 }
 
+/**
+ * A versioned usage read. `version` names the exact usage history behind
+ * `records` (the source files' stat fingerprints plus the scope filter), or
+ * `null` when main could not vouch for one. A caller that passes the version
+ * it already holds gets `unchanged` back instead of the records when nothing
+ * moved — the whole history is ~7.6MB on a real profile, and cloning it over
+ * IPC on every thread select and poll was the cost this avoids.
+ */
+export type UsageReadResult =
+  | { version: string | null; records: UsageRecord[] }
+  | { version: string; unchanged: true }
+
 export type WorkspaceActivityEventKind = 'git_commit' | 'worktree_change' | 'filesystem_change'
 
 export interface WorkspaceActivityEvent {

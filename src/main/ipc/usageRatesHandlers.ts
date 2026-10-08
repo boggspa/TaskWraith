@@ -4,6 +4,7 @@ import type {
   ChatRecord,
   ProviderCapabilityContract,
   ProviderId,
+  UsageReadResult,
   UsageRecord
 } from '../store/types'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
@@ -80,6 +81,12 @@ export interface UsageRatesHandlerDeps {
   globalUsageWorkspaceId: string
   recordUsage: (usage: Omit<UsageRecord, 'id' | 'timestamp'>) => unknown
   getUsage: (workspaceId?: string, chatId?: string) => UsageRecord[]
+  /**
+   * The name of the history `getUsage` would return for the same scope,
+   * from stats alone; `null` when main cannot vouch. Lets a renderer that
+   * already holds that version skip the records clone entirely.
+   */
+  getUsageVersion?: (workspaceId?: string, chatId?: string) => string | null
   getExternalUsageCached: (options?: { maxAgeMs?: number }) => Promise<UsageRecord[]>
   onUsageChanged: () => void
   /** Bounded chat inventory (`AppStore.getChatList`) — never the full-history getter. */
@@ -199,19 +206,62 @@ function assertOwnedUsageChat(
   }
 }
 
+/** The scope a sender may actually read, after its filters are checked. */
+function effectiveUsageScope(
+  scope: UsageRatesSenderScope,
+  workspaceId?: string,
+  chatId?: string
+): { workspaceId?: string; chatId?: string } {
+  if (scope.kind === 'main') return { workspaceId, chatId }
+  assertOwnedUsageWorkspace(scope, workspaceId)
+  assertOwnedUsageChat(scope, chatId)
+  return {
+    workspaceId: scope.chatScope === 'workspace' ? scope.workspaceId : undefined,
+    chatId: scope.chatId
+  }
+}
+
 function scopedUsageRead(
   deps: UsageRatesHandlerDeps,
   scope: UsageRatesSenderScope,
   workspaceId?: string,
   chatId?: string
 ): UsageRecord[] {
-  if (scope.kind === 'main') return deps.getUsage(workspaceId, chatId)
-  assertOwnedUsageWorkspace(scope, workspaceId)
-  assertOwnedUsageChat(scope, chatId)
-  return deps.getUsage(
-    scope.chatScope === 'workspace' ? scope.workspaceId : undefined,
-    scope.chatId
-  )
+  const effective = effectiveUsageScope(scope, workspaceId, chatId)
+  return deps.getUsage(effective.workspaceId, effective.chatId)
+}
+
+/**
+ * The versioned form of `get-usage`. With a version the caller already
+ * holds, an unchanged history answers with a stat instead of the records.
+ * The version returned with records is vouched only when the stats agree
+ * before and after the read; otherwise it is `null` and the next read is a
+ * full one again.
+ */
+function scopedVersionedUsageRead(
+  deps: UsageRatesHandlerDeps,
+  scope: UsageRatesSenderScope,
+  workspaceId: string | undefined,
+  chatId: string | undefined,
+  ifVersion: string | null
+): UsageReadResult {
+  const effective = effectiveUsageScope(scope, workspaceId, chatId)
+  const versionBefore = deps.getUsageVersion?.(effective.workspaceId, effective.chatId) ?? null
+  if (ifVersion !== null && versionBefore !== null && versionBefore === ifVersion) {
+    return { version: versionBefore, unchanged: true }
+  }
+  const records = deps.getUsage(effective.workspaceId, effective.chatId)
+  const versionAfter = deps.getUsageVersion?.(effective.workspaceId, effective.chatId) ?? null
+  return {
+    version: versionAfter !== null && versionAfter === versionBefore ? versionAfter : null,
+    records
+  }
+}
+
+function usageReadIfVersion(options: unknown): string | null {
+  if (!options || typeof options !== 'object') return null
+  const value = (options as { ifVersion?: unknown }).ifVersion
+  return typeof value === 'string' && value ? value : null
 }
 
 function assertOwnedUsageWrite(
@@ -299,10 +349,24 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
     return result
   })
 
-  ipcMain.handle('get-usage', (event, workspaceId?: string, chatId?: string) => {
-    const scope = deps.resolveSenderUsageScope(event)
-    return scopedUsageRead(deps, scope, workspaceId, chatId)
-  })
+  ipcMain.handle(
+    'get-usage',
+    (event, workspaceId?: string, chatId?: string, options?: { ifVersion?: string | null }) => {
+      const scope = deps.resolveSenderUsageScope(event)
+      // The third argument selects the versioned reply shape; callers that
+      // omit it keep receiving the bare records array.
+      if (options && typeof options === 'object') {
+        return scopedVersionedUsageRead(
+          deps,
+          scope,
+          workspaceId,
+          chatId,
+          usageReadIfVersion(options)
+        )
+      }
+      return scopedUsageRead(deps, scope, workspaceId, chatId)
+    }
+  )
 
   ipcMain.handle('get-external-usage', (event, options?: { force?: boolean }) => {
     deps.assertMainRendererSender(event)

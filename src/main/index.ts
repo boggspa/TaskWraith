@@ -59932,6 +59932,7 @@ if (isGeminiMcpBridgeProcess) {
       },
       recordUsage: (usage) => AppStore.recordUsage(usage),
       getUsage: (workspaceId, chatId) => AppStore.getUsage(workspaceId, chatId),
+      getUsageVersion: (workspaceId, chatId) => AppStore.getUsageVersion(workspaceId, chatId),
       getExternalUsageCached: (options) =>
         getExternalUsageCached(options ? { maxAgeMs: options.maxAgeMs } : {}),
       onUsageChanged: () => {

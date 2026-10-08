@@ -675,6 +675,42 @@ describe('UsageJournalStore', () => {
     expect(checkpointReads()).toBeGreaterThan(afterFirst)
   })
 
+  it('names the current history from stats and renames it on any source change', () => {
+    fs.writeFileSync(checkpointPath, JSON.stringify([usageRecord('checkpoint', now - 2)]))
+    fs.writeFileSync(journalPath, `\n${JSON.stringify(usageRecord('journal', now - 1))}`)
+    const reads: string[] = []
+    const store = createStore({
+      readTextFile: (filePath) => {
+        reads.push(path.basename(filePath))
+        return fs.readFileSync(filePath, 'utf8')
+      }
+    })
+
+    const first = store.getRecordsVersion()
+    expect(first).toEqual(expect.any(String))
+    expect(store.getRecordsVersion()).toBe(first)
+    // A name costs stats, never a read of the checkpoint or journal.
+    expect(reads).toEqual([])
+
+    store.append(usageRecord('appended', now))
+    const afterAppend = store.getRecordsVersion()
+    expect(afterAppend).not.toBe(first)
+    expect(store.getRecordsVersion()).toBe(afterAppend)
+
+    fs.writeFileSync(
+      checkpointPath,
+      JSON.stringify([usageRecord('rewritten-a', now - 4), usageRecord('rewritten-b', now - 3)])
+    )
+    const afterRewrite = store.getRecordsVersion()
+    expect(afterRewrite).not.toBe(afterAppend)
+
+    // A missing checkpoint is still a nameable state, distinct from the others.
+    fs.rmSync(checkpointPath)
+    const afterRemoval = store.getRecordsVersion()
+    expect(afterRemoval).toEqual(expect.any(String))
+    expect(afterRemoval).not.toBe(afterRewrite)
+  })
+
   it('retries a transient journal EIO before accepting a stable usage snapshot', () => {
     const checkpoint = usageRecord('checkpoint', now - 1)
     const journal = usageRecord('journal', now)

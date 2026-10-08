@@ -11594,6 +11594,19 @@ export class AppStore {
     })
   }
 
+  /**
+   * A name for the exact usage history `getUsage(workspaceId, chatId)` would
+   * return right now, from stats alone (no read, no parse), or `null` when
+   * the store cannot vouch for one. Equal names mean equal records: the
+   * journal store's version covers every source file's fingerprint and the
+   * pending history-mutation intent; the scope filter is appended so one
+   * scope's name never matches another's.
+   */
+  static getUsageVersion(workspaceId?: string, chatId?: string): string | null {
+    const base = usageJournalStore.getRecordsVersion()
+    return base === null ? null : `${base}|${workspaceId ?? ''}|${chatId ?? ''}`
+  }
+
   static recordUsage(usage: Omit<UsageRecord, 'id' | 'timestamp'>) {
     this.assertHistoryMutationAllowed({
       operation: 'Usage history append',

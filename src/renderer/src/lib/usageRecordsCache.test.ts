@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UsageRecord } from '../../../main/store/types'
 import {
   clearRendererUsageRecordsCache,
+  getCachedRendererUsageVersion,
   loadRendererUsageRecords,
   setCachedRendererUsageRecords
 } from './usageRecordsCache'
@@ -95,6 +96,44 @@ describe('usageRecordsCache', () => {
 
     await expect(loadRendererUsageRecords('external')).resolves.toBe(records)
     expect(getExternalUsage).toHaveBeenCalledWith(undefined)
+  })
+
+  it('offers the held TaskWraith version and keeps the records when main says unchanged', async () => {
+    const held = [usageRecord('held-1')]
+    setCachedRendererUsageRecords('taskwraith', held, Date.now() - 60_000, 'v1')
+    const getUsage = vi.fn(() => Promise.resolve({ version: 'v1', unchanged: true as const }))
+    vi.stubGlobal('window', { api: { getUsage, getExternalUsage: vi.fn() } })
+
+    // Same array identity: nothing downstream re-renders for an unchanged history.
+    await expect(loadRendererUsageRecords('taskwraith')).resolves.toBe(held)
+    expect(getUsage).toHaveBeenCalledWith(undefined, undefined, { ifVersion: 'v1' })
+    expect(getCachedRendererUsageVersion('taskwraith')).toBe('v1')
+
+    // The TTL is re-armed by the unchanged answer.
+    await expect(loadRendererUsageRecords('taskwraith')).resolves.toBe(held)
+    expect(getUsage).toHaveBeenCalledTimes(1)
+  })
+
+  it('stores the version main returns with fresh records and never offers one on a forced load', async () => {
+    const fresh = [usageRecord('fresh-1')]
+    const getUsage = vi.fn(() => Promise.resolve({ version: 'v2', records: fresh }))
+    vi.stubGlobal('window', { api: { getUsage, getExternalUsage: vi.fn() } })
+
+    await expect(loadRendererUsageRecords('taskwraith')).resolves.toBe(fresh)
+    expect(getUsage).toHaveBeenCalledWith(undefined, undefined, { ifVersion: null })
+    expect(getCachedRendererUsageVersion('taskwraith')).toBe('v2')
+
+    await expect(loadRendererUsageRecords('taskwraith', { force: true })).resolves.toBe(fresh)
+    expect(getUsage).toHaveBeenLastCalledWith(undefined, undefined, { ifVersion: null })
+  })
+
+  it('still accepts a bare records array from a main that predates versioned reads', async () => {
+    const records = [usageRecord('bare-1')]
+    const getUsage = vi.fn(() => Promise.resolve(records))
+    vi.stubGlobal('window', { api: { getUsage, getExternalUsage: vi.fn() } })
+
+    await expect(loadRendererUsageRecords('taskwraith')).resolves.toBe(records)
+    expect(getCachedRendererUsageVersion('taskwraith')).toBeNull()
   })
 
   it('releases a stuck IPC load with empty stats so a later request can retry', async () => {
