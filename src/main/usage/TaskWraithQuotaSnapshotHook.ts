@@ -75,6 +75,13 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   /** Injectable platform for the Devin darwin gate (tests). */
   devinPlatform?: NodeJS.Platform
   /**
+   * Console / organisation API-usage reports (usage/ApiUsageReportLane.ts):
+   * `claude` / `codex` snapshots stamped with a fixed account id and one
+   * month-to-date "API usage" balance. Joined like the account snapshots so a
+   * slow vendor report never serialises behind the native lanes.
+   */
+  readApiUsageReports?: () => Promise<QuotaSnapshotHookSnapshot[]>
+  /**
    * Secondary Claude / Codex account meters (usage/ProviderAccountUsage.ts),
    * appended after the native lanes. Each snapshot carries its accountId so
    * the renderer keys it apart from the primary sign-in's first-class meter.
@@ -1184,6 +1191,12 @@ export function createTaskWraithQuotaSnapshotHook(
             .then(() => dependencies.readProviderAccountSnapshots!())
             .catch(() => [])
         : Promise.resolve([])
+    const apiUsageReportsPromise: Promise<QuotaSnapshotHookSnapshot[]> =
+      dependencies.readApiUsageReports
+        ? Promise.resolve()
+            .then(() => dependencies.readApiUsageReports!())
+            .catch(() => [])
+        : Promise.resolve([])
     const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb], devinUsage] =
       await Promise.all([
         deepSeekKey
@@ -1276,7 +1289,8 @@ export function createTaskWraithQuotaSnapshotHook(
         : []),
       ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
       ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : []),
-      ...(await accountSnapshotsPromise)
+      ...(await accountSnapshotsPromise),
+      ...(await apiUsageReportsPromise)
     ]
   }
 }

@@ -170,6 +170,7 @@ import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
 import { ProviderAccountsSection } from './ProviderAccountsSection'
+import { ApiUsageKeyField } from './ApiUsageKeyField'
 import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   useAntigravityGeminiApiSecretRefreshIdentity
@@ -4638,6 +4639,8 @@ export function SettingsPanel({
                     {renderProviderUpgradeFootnote('codex')}
                     <div className="settings-provider-rail-section-label">Accounts</div>
                     <ProviderAccountsSection provider="codex" />
+                    <div className="settings-provider-rail-section-label">Usage reporting</div>
+                    <ApiUsageKeyField provider="openai" />
                     {renderProviderPauseControls('codex')}
                   </SettingsProviderAuthCard>
                   )}
@@ -4790,6 +4793,9 @@ export function SettingsPanel({
                         ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
                         : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
                     </p>
+
+                    <div className="settings-provider-rail-section-label">Usage reporting</div>
+                    <ApiUsageKeyField provider="anthropic" />
 
                     <label className="settings-label">Claude CLI binary</label>
                     <CommittedDraftField

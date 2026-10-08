@@ -2211,6 +2211,9 @@ import {
   MUSE_SUBSCRIPTION_CLI_SNAPSHOT_FILENAME,
   createMuseSubscriptionCliLane
 } from './muse/MuseSubscriptionCliLane'
+import { apiUsageKeyStore, configureApiUsageKeyStores } from './usage/ApiUsageKeyStore'
+import { createApiUsageReportLane } from './usage/ApiUsageReportLane'
+import { registerApiUsageKeyHandlers } from './ipc/apiUsageKeyHandlers'
 import {
   MUSE_SUBSCRIPTION_TUI_ARGS,
   probeMuseSubscriptionUsage,
@@ -48476,6 +48479,10 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       safeStorage
     })
+    // API-usage reporting keys (Anthropic Admin API key, OpenAI admin key) for
+    // the Console / organisation month-to-date figures in Usage Credits. Same
+    // post-app-ready construction; both lanes are optional and read lazily.
+    configureApiUsageKeyStores({ userDataPath: app.getPath('userData'), safeStorage })
     // Import Web Session cookie envelopes (Mistral console + ollama.com + kimi.ai).
     // Same post-app-ready construction so safeStorage has settled.
     configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
@@ -59988,6 +59995,27 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     void museSubscriptionCliLane.hydrate()
+    // Console / organisation API-usage reports (Anthropic cost report, OpenAI
+    // costs) for the Usage Credits stack. Keys are decrypted at read time from
+    // their safeStorage envelopes and never leave this process; a saved or
+    // cleared key drops the lane cache so the next read refetches.
+    const loadApiUsageKey = (provider: 'anthropic' | 'openai'): string | null => {
+      const loaded = apiUsageKeyStore(provider)?.loadApiKey()
+      return loaded?.status === 'ok' ? loaded.value : null
+    }
+    const apiUsageReportLane = createApiUsageReportLane({
+      loadAnthropicKey: () => loadApiUsageKey('anthropic'),
+      loadOpenAiKey: () => loadApiUsageKey('openai'),
+      getOpenAiProjectId: () => settingsService.getSettings().apiUsageBilling?.openai?.projectId
+    })
+    registerApiUsageKeyHandlers({
+      keyStore: (provider) => apiUsageKeyStore(provider),
+      isMainRendererSender,
+      onKeyMutationSuccess: (provider) => {
+        apiUsageReportLane.invalidate(provider)
+        desktopWindows.broadcast('usage-changed')
+      }
+    })
     registerUsageRatesHandlers({
       assertMainRendererSender,
       globalUsageWorkspaceId: '__taskwraith_global_chats__',
@@ -60058,6 +60086,7 @@ if (isGeminiMcpBridgeProcess) {
         // Muse Code subscription meters from the CLI lane above: a synchronous
         // last-observed read that schedules its own TTL-gated re-probe.
         readMuseSubscriptionCli: () => museSubscriptionCliLane.read(),
+        readApiUsageReports: () => apiUsageReportLane.read(),
         // Secondary Claude / Codex accounts ride the same credential-free hook
         // lane, each read with its own folder's credential (never written).
         readProviderAccountSnapshots: createProviderAccountUsageReader({

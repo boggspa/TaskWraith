@@ -184,7 +184,11 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'cursor',
       'grok',
       'ollama',
-      'gemini'
+      'gemini',
+      'admin key',
+      'usage reporting',
+      'api usage',
+      'console'
     ],
     scope: 'provider'
   },

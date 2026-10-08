@@ -975,6 +975,24 @@ declare global {
         declared?: { allowance: number; spent: number; currency: string }
       }) => Promise<MistralQuotaSnapshot | null>
       clearMistralQuotaAnchor: () => Promise<MistralQuotaSnapshot | null>
+      getApiUsageKeyStatus: (provider: 'anthropic' | 'openai') => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      } | null>
+      setApiUsageKey: (
+        provider: 'anthropic' | 'openai',
+        apiKey: string
+      ) => Promise<{
+        ok: boolean
+        error?: string
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
+      clearApiUsageKey: (provider: 'anthropic' | 'openai') => Promise<{
+        ok: boolean
+        error?: string
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
       getMistralAdminKeyStatus: () => Promise<{
         configured: boolean
         encryptionAvailable: boolean

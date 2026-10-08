@@ -190,6 +190,17 @@ describe('SettingsPanel provider accounts', () => {
       )
     )
     expect(codex).toContain('settings-provider-rail-section-label">Accounts<')
+    // Usage reporting: the Console / organisation admin key for the API bill
+    // in Usage Credits sits on the same two panes, after Accounts, and is a
+    // separate field from the seat's own credential.
+    expect(claude).toContain('settings-provider-rail-section-label">Usage reporting<')
+    expect(claude).toContain('settings-api-usage-key" data-provider="anthropic"')
+    expect(claude).toContain('Anthropic Admin API key (usage reporting)')
+    expect(claude.indexOf('>Credential<')).toBeLessThan(claude.indexOf('>Usage reporting<'))
+    expect(codex).toContain('settings-provider-rail-section-label">Usage reporting<')
+    expect(codex).toContain('settings-api-usage-key" data-provider="openai"')
+    expect(codex).toContain('OpenAI admin API key (usage reporting)')
+    expect(codex.indexOf('>Accounts<')).toBeLessThan(codex.indexOf('>Usage reporting<'))
     const kimi = pane(
       renderToStaticMarkup(
         <SettingsPanel
@@ -198,6 +209,7 @@ describe('SettingsPanel provider accounts', () => {
       )
     )
     expect(kimi).not.toContain('>Accounts<')
+    expect(kimi).not.toContain('>Usage reporting<')
   })
 })
 

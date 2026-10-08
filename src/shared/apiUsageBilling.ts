@@ -41,11 +41,30 @@ export interface MetaApiUsageBilling {
   anchorUpdatedAt?: string
 }
 
+/**
+ * Non-secret scope for the OpenAI organisation cost report
+ * (usage/OpenAiAdminUsage.ts). The admin key itself lives in its safeStorage
+ * envelope; only the optional project id — a `proj_…` identifier, not a
+ * credential — is a plain setting.
+ */
+export interface OpenAiApiUsageBilling {
+  projectId?: string
+}
+
 export interface ApiUsageBillingSettings {
   deepseek?: DeepSeekApiUsageBilling
   cerebras?: CerebrasApiUsageBilling
   meta?: MetaApiUsageBilling
   openrouter?: OpenRouterApiUsageBilling
+  openai?: OpenAiApiUsageBilling
+}
+
+const OPENAI_PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+
+export function normalizeOpenAiProjectId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return OPENAI_PROJECT_ID_PATTERN.test(trimmed) ? trimmed : undefined
 }
 
 const MAX_BILLING_AMOUNT = 1_000_000_000_000
@@ -215,11 +234,20 @@ export function normalizeApiUsageBillingSettings(
       })
     : undefined
 
+  const openaiInput = record(input.openai)
+  const openaiProjectId = normalizeOpenAiProjectId(openaiInput?.projectId)
+  const openai = openaiInput
+    ? present<OpenAiApiUsageBilling>({
+        ...(openaiProjectId ? { projectId: openaiProjectId } : {})
+      })
+    : undefined
+
   return present<ApiUsageBillingSettings>({
     ...(deepseek ? { deepseek } : {}),
     ...(cerebras ? { cerebras } : {}),
     ...(meta ? { meta } : {}),
-    ...(openrouter ? { openrouter } : {})
+    ...(openrouter ? { openrouter } : {}),
+    ...(openai ? { openai } : {})
   })
 }
 

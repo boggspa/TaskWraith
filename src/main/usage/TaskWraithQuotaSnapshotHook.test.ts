@@ -368,6 +368,42 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     const survived = await failing()
     expect(survived.some((snapshot) => snapshot.accountId)).toBe(false)
     expect(survived.map((snapshot) => snapshot.provider)).toContain('deepseek')
+
+    // Console / organisation API-usage reports join the same way: appended
+    // after the native lanes, dropped to nothing when the reader throws.
+    const apiUsageSnapshot = {
+      ...accountSnapshot,
+      source: 'anthropic-admin-usage' as const,
+      accountId: 'console-api',
+      accountLabel: 'Console API',
+      windows: [],
+      balances: [
+        {
+          id: 'claude-console-api-usage-mtd',
+          label: 'API usage',
+          amount: 12.34,
+          unit: 'USD'
+        }
+      ]
+    }
+    const withReports = createTaskWraithQuotaSnapshotHook({
+      ...baseDeps,
+      readProviderAccountSnapshots: async () => [accountSnapshot],
+      readApiUsageReports: async () => [apiUsageSnapshot]
+    })
+    const reported = await withReports()
+    expect(reported.slice(-2)).toEqual([accountSnapshot, apiUsageSnapshot])
+    const reportsFailing = createTaskWraithQuotaSnapshotHook({
+      ...baseDeps,
+      readApiUsageReports: async () => {
+        throw new Error('vendor down')
+      }
+    })
+    const withoutReports = await reportsFailing()
+    expect(withoutReports.some((snapshot) => snapshot.source === 'anthropic-admin-usage')).toBe(
+      false
+    )
+    expect(withoutReports.map((snapshot) => snapshot.provider)).toContain('deepseek')
   })
 
   it('combines manual API billing anchors with native balances and post-anchor Muse spend', async () => {

@@ -53,7 +53,19 @@ export interface QuotaSnapshotHookBalance {
  */
 export type QuotaSnapshotHookAccountProviderId = 'claude' | 'codex'
 
-export type QuotaSnapshotHookSource = 'taskwraith-native' | 'claude-oauth-usage' | 'chatgpt-wham'
+/**
+ * `anthropic-admin-usage` / `openai-admin-usage` are the Console / organisation
+ * API-usage report lanes (ApiUsageReportLane.ts): a `claude` or `codex`
+ * snapshot stamped with a fixed account id, carrying one month-to-date spend
+ * balance and no windows, so it files under Usage Credits beside the seat's
+ * own subscription meters.
+ */
+export type QuotaSnapshotHookSource =
+  | 'taskwraith-native'
+  | 'claude-oauth-usage'
+  | 'chatgpt-wham'
+  | 'anthropic-admin-usage'
+  | 'openai-admin-usage'
 
 export interface QuotaSnapshotHookSnapshot {
   provider: QuotaSnapshotHookProviderId | QuotaSnapshotHookAccountProviderId

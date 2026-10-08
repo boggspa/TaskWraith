@@ -189,3 +189,24 @@ describe('nextMonthlyResetAt', () => {
     )
   })
 })
+
+describe('normalizeApiUsageBillingSettings openai scope', () => {
+  it('keeps a well-formed OpenAI project id and nothing else from that block', () => {
+    expect(
+      normalizeApiUsageBillingSettings({
+        openai: { projectId: '  proj_AbC123-_x  ', apiKey: 'must-not-survive', adminKey: 'nope' }
+      })
+    ).toEqual({ openai: { projectId: 'proj_AbC123-_x' } })
+  })
+
+  it('drops a project id with spaces, control bytes or an absurd length', () => {
+    expect(normalizeApiUsageBillingSettings({ openai: { projectId: 'proj 1' } })).toBeUndefined()
+    expect(
+      normalizeApiUsageBillingSettings({ openai: { projectId: 'proj\u00001' } })
+    ).toBeUndefined()
+    expect(
+      normalizeApiUsageBillingSettings({ openai: { projectId: 'p'.repeat(129) } })
+    ).toBeUndefined()
+    expect(normalizeApiUsageBillingSettings({ openai: {} })).toBeUndefined()
+  })
+})

@@ -861,6 +861,14 @@ const api = {
   clearMistralQuotaAnchor: () => ipcRenderer.invoke('mistral-quota:clear-anchor'),
   // Admin API key: write-only from the renderer's side. The status projection
   // carries a configured boolean and a timestamp, never the key or its bytes.
+  // API-usage reporting keys (Anthropic Admin API key / OpenAI admin key):
+  // status projection only — the key never crosses back to the renderer.
+  getApiUsageKeyStatus: (provider: 'anthropic' | 'openai') =>
+    ipcRenderer.invoke('api-usage-key:status', provider),
+  setApiUsageKey: (provider: 'anthropic' | 'openai', apiKey: string) =>
+    ipcRenderer.invoke('api-usage-key:set', provider, apiKey),
+  clearApiUsageKey: (provider: 'anthropic' | 'openai') =>
+    ipcRenderer.invoke('api-usage-key:clear', provider),
   getMistralAdminKeyStatus: () => ipcRenderer.invoke('mistral-admin-key:status'),
   setMistralAdminKey: (apiKey: string) => ipcRenderer.invoke('mistral-admin-key:set', apiKey),
   clearMistralAdminKey: () => ipcRenderer.invoke('mistral-admin-key:clear'),
