@@ -1656,6 +1656,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
             }
             museMonthlySpendCapUsd={settings?.museMonthlySpendCapUsd}
+            claudeAuthMode={settings?.claudeAuthMode}
             userName={settings?.userName ?? ''}
             claudeBinaryPath={claudeBinaryPath}
             kimiBinaryPath={kimiBinaryPath}

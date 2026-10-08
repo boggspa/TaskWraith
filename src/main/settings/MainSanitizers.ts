@@ -12,6 +12,7 @@ import { sanitizeCustomProviderModels } from '../../shared/customProviderModels'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
 import { clampEnsembleIngestOverrideChars } from '../../shared/ensembleSeatIngest'
+import { isClaudeAuthMode } from '../../shared/claudeAuthMode'
 import { ACTIVITY_ARCHETYPES, sanitizeBannerTemplate } from '../../shared/bannerTemplate'
 import type { ActivityArchetype } from '../../shared/bannerTemplate'
 import type {
@@ -170,6 +171,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'providerRunPauses',
   'windowBounds',
   'claudeBinaryPath',
+  'claudeAuthMode',
   'kimiBinaryPath',
   'cliPathDirectories',
   'simulatorControlEnabled',
@@ -2322,6 +2324,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('antigravityUseAcp' in sanitized) {
       const value = sanitized.antigravityUseAcp
       sanitized.antigravityUseAcp = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('claudeAuthMode' in sanitized) {
+      // Only the two lanes persist; anything else drops the key so the
+      // pre-setting behaviour (stored key wins) applies rather than a junk
+      // value that no read site recognises.
+      const value = sanitized.claudeAuthMode
+      if (isClaudeAuthMode(value)) sanitized.claudeAuthMode = value
+      else delete sanitized.claudeAuthMode
     }
     return sanitized as Partial<AppSettings>
   }

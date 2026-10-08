@@ -33,6 +33,8 @@ import {
   extractKimiPlanType
 } from './ProviderPlanMetadata'
 import { AppStore } from '../store'
+import type { AppSettings } from '../store/types'
+import { resolveClaudeRunLane, type ClaudeAuthMode } from '../../shared/claudeAuthMode'
 import { claudeAccountKeychainService } from './ProviderAccounts'
 import { looksLikeTailscaleOAuthClientSecret } from '../../shared/tailscaleAuthKey'
 import {
@@ -284,6 +286,25 @@ export function decryptApiKey(stored?: string | null): string | null {
 
 export function getStoredClaudeApiKey(): string | null {
   return decryptApiKey(AppStore.getSettings().claudeApiKey)
+}
+
+/** The lane new Claude seats launch on, re-read from settings at each decision. */
+export function resolveClaudeRunLaneFromSettings(
+  settings: Pick<AppSettings, 'claudeApiKey' | 'claudeAuthMode'> = AppStore.getSettings()
+): ClaudeAuthMode {
+  return resolveClaudeRunLane({
+    claudeAuthMode: settings.claudeAuthMode,
+    apiKeyConfigured: Boolean(settings.claudeApiKey)
+  })
+}
+
+/**
+ * The API key a Claude RUN may inject — null whenever the subscription lane is
+ * selected, even with a key stored. Usage-metering readers keep using
+ * `getStoredClaudeApiKey` directly; this is for launch environments only.
+ */
+export function getClaudeRunApiKey(): string | null {
+  return resolveClaudeRunLaneFromSettings() === 'api-key' ? getStoredClaudeApiKey() : null
 }
 
 export function getStoredKimiApiKey(): string | null {

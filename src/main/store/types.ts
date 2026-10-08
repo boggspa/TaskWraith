@@ -57,6 +57,7 @@ export type {
 import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import type { ComposerAttachmentKind } from '../../shared/composerAttachment'
 import type { ApiUsageBillingSettings } from '../../shared/apiUsageBilling'
+import type { ClaudeAuthMode } from '../../shared/claudeAuthMode'
 import type { ThreadOwnershipReceiptEvidence } from '../host/ThreadOwnershipReceiptEvidence'
 export type {
   HarnessPassthroughMode,
@@ -2659,6 +2660,12 @@ export interface AppSettings {
   customInstructionsEnabled?: boolean
   claudeBinaryPath?: string
   claudeApiKey?: string
+  /**
+   * Which credential new Claude seats run with: the Claude Code subscription
+   * login (active account) or the stored Anthropic API key. Absent on older
+   * installs, where a stored key wins — see shared/claudeAuthMode.ts.
+   */
+  claudeAuthMode?: ClaudeAuthMode
   kimiBinaryPath?: string
   kimiApiKey?: string
   /**

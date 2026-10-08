@@ -1424,6 +1424,8 @@ import {
   getGeminiAuthStatusSnapshot as getGeminiAuthStatusSnapshotViaProviderAuth,
   getGeminiOAuthLoginStatus,
   getStoredClaudeApiKey,
+  getClaudeRunApiKey,
+  resolveClaudeRunLaneFromSettings,
   getStoredKimiApiKey,
   getStoredOllamaApiKey,
   importCodexUsageCredential,
@@ -18557,7 +18559,10 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
     const resolved = await resolveCliProviderBinary('claude')
     return {
       available: Boolean(resolved.binaryPath),
-      authState: settings.claudeApiKey ? 'api-key' : await readClaudeAuthState(resolved)
+      authState:
+        resolveClaudeRunLaneFromSettings(settings) === 'api-key'
+          ? 'api-key'
+          : await readClaudeAuthState(resolved)
     }
   },
   getKimiConfiguredStatus: getKimiRosterConfigurationStatus,
@@ -23164,7 +23169,10 @@ async function prepareClaudeRunEnvironmentAuthority(
         workspace: payload.workspace,
         runId: route.appRunId,
         chatId: route.appChatId,
-        apiKey: getStoredClaudeApiKey(),
+        // Null on the subscription lane even with a key stored: the user's
+        // explicit Settings → Providers → Claude choice decides the billing
+        // lane, never the mere presence of a key.
+        apiKey: getClaudeRunApiKey(),
         auditRun: prepared.auditRun,
         accountConfigDir:
           resolveActiveProviderAccount(AppStore.getSettings(), 'claude')?.configDir ?? null
@@ -63098,7 +63106,7 @@ if (isGeminiMcpBridgeProcess) {
           configured = Boolean(resolved.binaryPath)
           if (provider === 'claude') {
             authenticated =
-              Boolean(settings.claudeApiKey) ||
+              resolveClaudeRunLaneFromSettings(settings) === 'api-key' ||
               (configured && (await readClaudeAuthState(resolved)) === 'authenticated')
           } else if (provider === 'gemini') {
             const geminiAuth = await getGeminiAuthStatusSnapshot()

@@ -1090,6 +1090,24 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists a valid claudeAuthMode and drops junk values (SETTINGS_PATCH_KEYS guard)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Positive and negative in ONE test: an allowlist that dropped everything
+    // would satisfy a lone "not present" assertion.
+    expect(sanitizeSettingsPatch({ claudeAuthMode: 'subscription' }).claudeAuthMode).toBe(
+      'subscription'
+    )
+    expect(sanitizeSettingsPatch({ claudeAuthMode: 'api-key' }).claudeAuthMode).toBe('api-key')
+    expect(
+      'claudeAuthMode' in
+        sanitizeSettingsPatch({ claudeAuthMode: 'oauth' as unknown as 'api-key' })
+    ).toBe(false)
+    expect(
+      'claudeAuthMode' in sanitizeSettingsPatch({ claudeAuthMode: null as unknown as 'api-key' })
+    ).toBe(false)
+  })
+
   it('persists and clamps maxWaveAgents (SETTINGS_PATCH_KEYS guard)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

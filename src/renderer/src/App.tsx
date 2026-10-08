@@ -7821,6 +7821,9 @@ function App(): React.JSX.Element {
     if (next.museMonthlySpendCapUsd !== undefined) {
       settingsPatch.museMonthlySpendCapUsd = next.museMonthlySpendCapUsd
     }
+    if (next.claudeAuthMode !== undefined) {
+      settingsPatch.claudeAuthMode = next.claudeAuthMode
+    }
 
     if (next.mode !== undefined) {
       settingsPatch.appearanceMode = next.mode

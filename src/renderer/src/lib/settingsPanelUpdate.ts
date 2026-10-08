@@ -83,6 +83,8 @@ export type SettingsPanelUpdate = {
   antigravityGeminiApiMonthlySpendCapUsd?: AppSettings['antigravityGeminiApiMonthlySpendCapUsd']
   museMonthlySpendCapUsd?: AppSettings['museMonthlySpendCapUsd']
   claudeBinaryPath?: string
+  /** Settings → Providers → Claude: run seats on the subscription or the API key. */
+  claudeAuthMode?: AppSettings['claudeAuthMode']
   kimiBinaryPath?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string

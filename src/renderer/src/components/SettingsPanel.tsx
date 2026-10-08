@@ -171,6 +171,7 @@ import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
 import { ProviderAccountsSection } from './ProviderAccountsSection'
 import { ApiUsageKeyField } from './ApiUsageKeyField'
+import { resolveClaudeRunLane, type ClaudeAuthMode } from '../../../shared/claudeAuthMode'
 import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   useAntigravityGeminiApiSecretRefreshIdentity
@@ -434,6 +435,8 @@ interface SettingsPanelProps {
   museMonthlySpendCapUsd?: number | null
   userName?: string
   claudeBinaryPath: string
+  /** Settings → Providers → Claude: which credential new seats run with. */
+  claudeAuthMode?: ClaudeAuthMode
   kimiBinaryPath: string
   /**
    * Extra directories searched first when resolving EVERY external CLI —
@@ -584,6 +587,7 @@ interface SettingsPanelProps {
     museMonthlySpendCapUsd?: number | null
     userName?: string
     claudeBinaryPath?: string
+    claudeAuthMode?: ClaudeAuthMode
     kimiBinaryPath?: string
     cliPathDirectories?: string[]
     ollamaBaseUrl?: string
@@ -1049,6 +1053,7 @@ export function SettingsPanel({
   museMonthlySpendCapUsd,
   userName = '',
   claudeBinaryPath,
+  claudeAuthMode,
   kimiBinaryPath,
   cliPathDirectories,
   ollamaBaseUrl,
@@ -4752,6 +4757,41 @@ export function SettingsPanel({
                         )}
                       </div>
                     )}
+                    {/* The billing lane is an explicit choice, never implied by a
+                        stored key: Subscription keeps the key inert; API key runs
+                        PAYG. The select reads the persisted mode resolved against
+                        key presence so it shows the lane that will actually run. */}
+                    <label className="settings-label" htmlFor="claude-auth-mode-select">
+                      Run Claude seats with
+                    </label>
+                    <select
+                      id="claude-auth-mode-select"
+                      className="settings-select"
+                      data-testid="claude-auth-mode"
+                      value={resolveClaudeRunLane({
+                        claudeAuthMode,
+                        apiKeyConfigured: claudeAuthStatus?.apiKeyConfigured === true
+                      })}
+                      onChange={(e) => onChange({ claudeAuthMode: e.target.value as ClaudeAuthMode })}
+                      style={{ marginBottom: 'var(--space-xs)' }}
+                    >
+                      <option value="subscription">
+                        Subscription — Claude Code login (active account above)
+                      </option>
+                      <option value="api-key" disabled={!claudeAuthStatus?.apiKeyConfigured}>
+                        {claudeAuthStatus?.apiKeyConfigured
+                          ? 'Anthropic API key — Console / pay-as-you-go billing'
+                          : 'Anthropic API key — save a key below first'}
+                      </option>
+                    </select>
+                    <p className="settings-hint">
+                      {resolveClaudeRunLane({
+                        claudeAuthMode,
+                        apiKeyConfigured: claudeAuthStatus?.apiKeyConfigured === true
+                      }) === 'api-key'
+                        ? 'New Claude seats bill the Console organisation through the stored API key. Subscription meters above keep reporting, but runs do not draw on them.'
+                        : 'New Claude seats run on the active Claude Code account’s subscription. A stored API key stays saved but is not used for runs.'}
+                    </p>
                     <label className="settings-label">Anthropic API key</label>
                     <div
                       style={{
@@ -4791,7 +4831,7 @@ export function SettingsPanel({
                     <p className="settings-hint">
                       {claudeApiKeyStorageUnavailable
                         ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                        : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
+                        : 'Stored encrypted on this Mac. Used for runs only while “Run Claude seats with” is set to the API key; it bills the Console organisation (pay-as-you-go), not the subscription.'}
                     </p>
 
                     <div className="settings-provider-rail-section-label">Usage reporting</div>

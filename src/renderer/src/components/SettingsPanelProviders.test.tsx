@@ -528,8 +528,39 @@ describe('SettingsPanel provider cards', () => {
     expect(claudePane).toContain('● Authenticated')
     expect(claudePane).toContain('2.1.0')
     expect(claudePane).toContain('Anthropic API key')
+    // The run lane is an explicit control: with no key stored the subscription
+    // is selected and the API-key option is disabled and says why.
+    expect(claudePane).toContain('data-testid="claude-auth-mode"')
+    expect(claudePane).toMatch(/<option value="subscription" selected=""/)
+    expect(claudePane).toMatch(/<option value="api-key" disabled=""[^>]*>Anthropic API key — save a key below first/)
+    expect(claudePane).toContain('run on the active Claude Code account’s subscription')
+
+    const keyed = (claudeAuthMode?: 'subscription' | 'api-key') =>
+      pane(
+        renderToStaticMarkup(
+          <SettingsPanel
+            {...makeSettingsProps({
+              defaultProviderRailSelection: 'claude',
+              claudeAuthMode,
+              claudeAuthStatus: {
+                available: true,
+                authState: 'api-key',
+                apiKeyConfigured: true,
+                encryptionAvailable: true
+              }
+            })}
+          />
+        )
+      )
+    // No recorded choice + a stored key = the pre-setting behaviour (key wins)…
+    expect(keyed()).toMatch(/<option value="api-key" selected=""/)
+    expect(keyed()).toContain('bill the Console organisation')
+    // …but an explicit Subscription choice keeps the stored key inert.
+    expect(keyed('subscription')).toMatch(/<option value="subscription" selected=""/)
+    expect(keyed('subscription')).toContain('A stored API key stays saved but is not used for runs')
+    expect(keyed('subscription')).not.toMatch(/<option value="api-key" disabled=""/)
     expect(claudePane).toContain('placeholder="sk-ant-..."')
-    expect(claudePane).toContain('API key takes priority over the Claude Code login session')
+    expect(claudePane).toContain('Used for runs only while “Run Claude seats with” is set to the API key')
     expect(claudePane).toContain('Claude CLI binary')
     expect(claudePane).toContain('Optional path override.')
     // No stand-alone "Claude" group remains below the sign-in area.
