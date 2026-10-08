@@ -478,6 +478,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mistral-admin-key:status',
   'mistral-admin-key:set',
   'mistral-admin-key:clear',
+  // Anthropic Admin / OpenAI admin usage-reporting keys: organisation
+  // credentials, same footing — a popout must not read or rotate them.
+  'api-usage-key:status',
+  'api-usage-key:set',
+  'api-usage-key:clear',
   'mistral-api-key:get-status',
   'mistral-api-key:set',
   'mistral-api-key:clear',
@@ -746,6 +751,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // Memory-promotion review/apply and its schedule are Settings-only surfaces.
   'update-memory-proposal',
   'apply-memory-proposal',
+  'supersede-memory-proposal',
   'run-manual-introspection',
   'update-introspection-schedule',
   'get-memory-proposal-packs',

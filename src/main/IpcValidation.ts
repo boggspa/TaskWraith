@@ -735,6 +735,14 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'mistral-admin-key:status': [],
   'mistral-admin-key:set': ['nonEmptyString'],
   'mistral-admin-key:clear': [],
+  // API-usage reporting keys (Anthropic Admin / OpenAI admin): provider id,
+  // then the key for `set`. The handler re-validates the provider id itself.
+  'api-usage-key:status': ['nonEmptyString'],
+  'api-usage-key:set': ['nonEmptyString', 'nonEmptyString'],
+  'api-usage-key:clear': ['nonEmptyString'],
+  // Reviewed supersede for workspace memory packs (introspectionHandlers.ts):
+  // one input object; the handler validates its fields.
+  'supersede-memory-proposal': ['object'],
   'mistral-api-key:get-status': [],
   'mistral-api-key:set': ['nonEmptyString'],
   'mistral-api-key:clear': [],
