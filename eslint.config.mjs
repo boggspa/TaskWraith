@@ -33,7 +33,10 @@ export default defineConfig(
       // so without this eslint grades stale nested checkouts as if they were
       // source — a red that can only ever exist locally. vitest's exclude list
       // keeps the same copies out of the test suite for the same reason.
-      '.taskwraith-worktrees/**'
+      '.taskwraith-worktrees/**',
+      // Local QA snapshots are separate checkouts, just like fan-out worktrees.
+      // Match Vitest's exclusion instead of linting old copies of the app.
+      '.work-guard/**'
     ]
   },
   tseslint.configs.recommended,
