@@ -7,10 +7,12 @@
  * the Host takes no part, so there is nothing for the two to agree on; the
  * history decoder, which reads those files wherever it runs, reads the switch
  * through `ThreadBarrierDurabilityEnv` to read them as the app wrote them.
- * Only the exact token `1` is on; anything else, an absent variable included,
- * is off.
+ * It is on by default: only the exact token `0` turns it off, and anything
+ * else, an absent variable included, is on.
  *
- * Two rules decide what the process honours, each announced by one warning:
+ * Two rules decide what the process honours, each announced by one warning
+ * when the switch it overrules was asked for explicitly, by the token `1`; a
+ * switch that is on only by default yields to them silently:
  * - It is never combined with the earlier mechanisms: while any of the
  *   durability flusher's switches is on, or checkpoint publication's, this one
  *   is ignored.
@@ -72,17 +74,21 @@ export function resolveThreadDurabilitySwitches(
   let barrierDurabilityIgnored: string | null = null
   if (requested && excluding.length > 0) {
     barrierDurabilityIgnored = `${excluding.join(', ')} on`
-    warn(
-      `${THREAD_BARRIER_DURABILITY_ENV} is ignored: ${excluding.join(', ')} ${excluding.length === 1 ? 'is' : 'are'} on, and the two durability mechanisms are never combined.`
-    )
+    if (env[THREAD_BARRIER_DURABILITY_ENV] === '1') {
+      warn(
+        `${THREAD_BARRIER_DURABILITY_ENV} is ignored: ${excluding.join(', ')} ${excluding.length === 1 ? 'is' : 'are'} on, and the two durability mechanisms are never combined.`
+      )
+    }
   }
   const barrierDurability = requested && barrierDurabilityIgnored === null
   let logAuthorityIgnored: string | null = null
   if (isThreadLogAuthorityEnabled(env) && !barrierDurability) {
     logAuthorityIgnored = `${THREAD_BARRIER_DURABILITY_ENV} ${requested ? 'ignored' : 'off'}`
-    warn(
-      `${THREAD_LOG_AUTHORITY_ENV} is ignored: it needs ${THREAD_BARRIER_DURABILITY_ENV}, which is ${requested ? 'ignored' : 'off'}.`
-    )
+    if (env[THREAD_LOG_AUTHORITY_ENV] === '1') {
+      warn(
+        `${THREAD_LOG_AUTHORITY_ENV} is ignored: it needs ${THREAD_BARRIER_DURABILITY_ENV}, which is ${requested ? 'ignored' : 'off'}.`
+      )
+    }
   }
   return {
     barrierDurability,

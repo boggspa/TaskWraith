@@ -11,23 +11,23 @@ describe('thread log authority switch', () => {
     expect(THREAD_LOG_AUTHORITY_ENV).toBe('TASKWRAITH_THREAD_LOG_AUTHORITY')
   })
 
-  it('is off when the environment does not carry it', () => {
-    expect(isThreadLogAuthorityEnabled({})).toBe(false)
-    expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: undefined })).toBe(false)
+  it('is on when the environment does not carry it', () => {
+    expect(isThreadLogAuthorityEnabled({})).toBe(true)
+    expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: undefined })).toBe(true)
   })
 
-  it('is on for the exact token 1', () => {
-    expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: '1' })).toBe(true)
+  it('is off for the exact token 0', () => {
+    expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: '0' })).toBe(false)
   })
 
-  it.each(['', '0', 'true', 'TRUE', 'on', 'yes', ' 1', '1 ', '01', '1.0', '2', '11'])(
-    'stays off for %j',
+  it.each(['', '1', 'false', 'FALSE', 'off', 'no', ' 0', '0 ', '00', '0.0', '2', '10'])(
+    'stays on for %j',
     (value) => {
-      expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: value })).toBe(false)
+      expect(isThreadLogAuthorityEnabled({ [THREAD_LOG_AUTHORITY_ENV]: value })).toBe(true)
     }
   )
 
-  it('needs no durability switch beside it, and none of them turns it on', () => {
+  it('needs no durability switch beside it, and none of them turns it on or off', () => {
     const durability = [
       'TASKWRAITH_JOURNAL_FLUSHER',
       'TASKWRAITH_RUN_EVENT_FLUSHER',
@@ -38,14 +38,14 @@ describe('thread log authority switch', () => {
     ]
     const all = (value: string): Record<string, string> =>
       Object.fromEntries(durability.map((name) => [name, value]))
-    expect(isThreadLogAuthorityEnabled({ ...all('0'), [THREAD_LOG_AUTHORITY_ENV]: '1' })).toBe(true)
-    expect(isThreadLogAuthorityEnabled(all('1'))).toBe(false)
+    expect(isThreadLogAuthorityEnabled(all('0'))).toBe(true)
+    expect(isThreadLogAuthorityEnabled({ ...all('1'), [THREAD_LOG_AUTHORITY_ENV]: '0' })).toBe(false)
   })
 
   it('reads the process environment when it is given none', () => {
-    vi.stubEnv(THREAD_LOG_AUTHORITY_ENV, '1')
-    expect(isThreadLogAuthorityEnabled()).toBe(true)
-    vi.stubEnv(THREAD_LOG_AUTHORITY_ENV, 'true')
+    vi.stubEnv(THREAD_LOG_AUTHORITY_ENV, '0')
     expect(isThreadLogAuthorityEnabled()).toBe(false)
+    vi.stubEnv(THREAD_LOG_AUTHORITY_ENV, 'false')
+    expect(isThreadLogAuthorityEnabled()).toBe(true)
   })
 })

@@ -2,8 +2,9 @@
  * The Host's answers to `thread.owner`: which app process writes a thread.
  *
  * The thread log authority switch is read once, when the service is built,
- * and kept for the life of the Host. Off, the Host takes no claims: a claim is
- * refused `disabled`, and `advanced` and `release` name no grant it holds.
+ * and kept for the life of the Host. It is on unless set to `0`. Off, the Host
+ * takes no claims: a claim is refused `disabled`, and `advanced` and `release`
+ * name no grant it holds.
  * That is also the answer of a Host started with `TASKWRAITH_HOST_TXN_PERSIST=1`,
  * which feeds its public window only from its own writes. On, one
  * `HostThreadOwnerRegistry` answers them, ruled by the profile's authority
@@ -210,7 +211,7 @@ export class HostThreadOwnerService implements HostLocalServerThreadOwners {
     this.now = options.now ?? Date.now
     if (this.mode === 'off-txn-persist') {
       this.log(
-        'taskwraith-host: TASKWRAITH_THREAD_LOG_AUTHORITY=1 ignored: a Host with TASKWRAITH_HOST_TXN_PERSIST=1 takes no thread claims\n'
+        'taskwraith-host: TASKWRAITH_THREAD_LOG_AUTHORITY ignored: a Host with TASKWRAITH_HOST_TXN_PERSIST=1 takes no thread claims\n'
       )
     }
     const directory = threadLogDirectory(options.profilePath)

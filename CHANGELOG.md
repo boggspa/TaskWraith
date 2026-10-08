@@ -10,11 +10,12 @@ context needed to answer.
 
 ### Thread Custody and Orphan Recovery
 
-Phase 1 thread-custody integration remains behind the existing
-`TASKWRAITH_THREAD_LOG_AUTHORITY` and `TASKWRAITH_THREAD_BARRIER_DURABILITY` flags.
-Production defaults stay off pending review; nothing below is enabled. On the latest
-measured build the enabled path meets the 50 ms user-barrier and 250 ms run-final p95
-gates (see the last item).
+Thread custody and barrier durability now default on following installed-build QA.
+The existing `TASKWRAITH_THREAD_LOG_AUTHORITY` and
+`TASKWRAITH_THREAD_BARRIER_DURABILITY` switches each accept the exact token `0`
+to opt out. Other independent-thread programme switches retain their existing
+defaults and compatibility rules. On the recorded performance build, the enabled
+path meets the 50 ms user-barrier and 250 ms run-final p95 gates (see the last item).
 
 - **Orphan reservation custody.** A dead writer's thread is recovered under one registry-held custody handle that spans reservation, fold preparation, durable adoption, conditional mark retirement and directory sync. Claims, Host writes and publications are refused while custody is held. A failed directory sync is repaid by a directory sync alone, never another unlink.
 - **Orphan fold.** The Host folds a dead writer's log above its full copy through `fold-owned-log`, outside command admission, preserving content, head revision and timestamps. A refused or failed adoption discards its fold. Missing canonical sources stay unresolved rather than being recreated. An unrelated live desktop no longer blocks recovery of a dead writer's thread.
@@ -34,14 +35,13 @@ gates (see the last item).
 - The perf harness's main-process CPU profile no longer closes the shared inspector when it stops, which had made the later persistence-stats collection time out.
 - The perf harness's main-thread sync attribution recognises `node:internal/fs/promises` frames and names settings saves (`updateSettings`). Before this, it reported both as unnamed syncs.
 
-### Composition Wiring (Behind Feature Flags)
+### Composition Wiring
 
 Receipt hydration now precedes save-intent consumers and dependent desktop
 startup; committed Host evidence is forwarded into the durable receipt store.
-The coordinator can be constructed from injected Host/journal seams. Production
-suppliers and the takeover flow still require integration and enabled-path
-acceptance. No release candidate, tag, publication or production enablement is
-approved by these source changes.
+The coordinator can be constructed from injected Host/journal seams. The two
+thread-custody defaults above have completed installed-build QA. The release
+candidate and updater handoff still require their separate artifact verification.
 
 ## 1.9.8 - 2026-09-15
 

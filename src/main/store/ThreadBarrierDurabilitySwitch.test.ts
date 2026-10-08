@@ -37,40 +37,45 @@ describe('thread barrier durability switch', () => {
     expect(THREAD_LOG_AUTHORITY_ENV).toBe(AUTHORITY)
   })
 
-  it('is off, and says nothing, when the environment does not carry it', () => {
+  it('is on, with thread log authority beside it, and says nothing, when the environment does not carry it', () => {
     expect(resolve({})).toEqual({
+      switches: {
+        barrierDurability: true,
+        barrierDurabilityIgnored: null,
+        logAuthority: true,
+        logAuthorityIgnored: null,
+        checkpointWorker: false
+      },
+      warnings: []
+    })
+    expect(isThreadBarrierDurabilityRequested({})).toBe(true)
+  })
+
+  it('is on, as by default, for the token 1', () => {
+    expect(isThreadBarrierDurabilityRequested({ [BARRIER]: '1' })).toBe(true)
+    expect(resolve({ [BARRIER]: '1' })).toEqual(resolve({}))
+  })
+
+  it('is off for the exact token 0, and takes authority with it without a warning', () => {
+    expect(isThreadBarrierDurabilityRequested({ [BARRIER]: '0' })).toBe(false)
+    expect(resolve({ [BARRIER]: '0' })).toEqual({
       switches: {
         barrierDurability: false,
         barrierDurabilityIgnored: null,
         logAuthority: false,
-        logAuthorityIgnored: null,
-        checkpointWorker: false
-      },
-      warnings: []
-    })
-    expect(isThreadBarrierDurabilityRequested({})).toBe(false)
-  })
-
-  it('is on for the exact token 1', () => {
-    expect(isThreadBarrierDurabilityRequested({ [BARRIER]: '1' })).toBe(true)
-    expect(resolve({ [BARRIER]: '1' })).toEqual({
-      switches: {
-        barrierDurability: true,
-        barrierDurabilityIgnored: null,
-        logAuthority: false,
-        logAuthorityIgnored: null,
+        logAuthorityIgnored: `${BARRIER} off`,
         checkpointWorker: false
       },
       warnings: []
     })
   })
 
-  it.each(['', '0', 'true', 'TRUE', 'on', 'yes', ' 1', '1 ', '01', '1.0', '2', '11'])(
-    'stays off, and says nothing, for %j',
+  it.each(['', 'false', 'FALSE', 'off', 'no', ' 0', '0 ', '00', '0.0', '2', '10'])(
+    'stays on, and says nothing, for %j',
     (value) => {
-      expect(isThreadBarrierDurabilityRequested({ [BARRIER]: value })).toBe(false)
+      expect(isThreadBarrierDurabilityRequested({ [BARRIER]: value })).toBe(true)
       const { switches, warnings } = resolve({ [BARRIER]: value })
-      expect(switches.barrierDurability).toBe(false)
+      expect(switches.barrierDurability).toBe(true)
       expect(switches.barrierDurabilityIgnored).toBeNull()
       expect(warnings).toEqual([])
     }
@@ -84,6 +89,16 @@ describe('thread barrier durability switch', () => {
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toContain(BARRIER)
     expect(warnings[0]).toContain(flusher)
+  })
+
+  it.each(FLUSHERS)('yields to %s without a warning when it is on only by default', (flusher) => {
+    const { switches, warnings } = resolve({ [flusher]: '1' })
+
+    expect(switches.barrierDurability).toBe(false)
+    expect(switches.barrierDurabilityIgnored).toBe(`${flusher} on`)
+    expect(switches.logAuthority).toBe(false)
+    expect(switches.logAuthorityIgnored).toBe(`${BARRIER} ignored`)
+    expect(warnings).toEqual([])
   })
 
   it('is ignored, with one warning, while checkpoint publication is on', () => {
@@ -127,7 +142,10 @@ describe('thread barrier durability switch', () => {
   })
 
   it('leaves the flusher switches as they are when it is off', () => {
-    const { switches, warnings } = resolve(Object.fromEntries(FLUSHERS.map((name) => [name, '1'])))
+    const { switches, warnings } = resolve({
+      [BARRIER]: '0',
+      ...Object.fromEntries(FLUSHERS.map((name) => [name, '1']))
+    })
 
     expect(switches.barrierDurability).toBe(false)
     expect(switches.barrierDurabilityIgnored).toBeNull()
@@ -149,20 +167,22 @@ describe('thread barrier durability switch', () => {
 
 describe('the checkpoint worker the earlier mechanisms share, as the app honours it', () => {
   it('is built as TASKWRAITH_CHECKPOINT_WORKER asks while barrier durability is off', () => {
-    expect(resolve({ [WORKER]: '1' })).toEqual({
+    expect(resolve({ [BARRIER]: '0', [WORKER]: '1' })).toEqual({
       switches: expect.objectContaining({ barrierDurability: false, checkpointWorker: true }),
       warnings: []
     })
     for (const value of [undefined, '', '0', 'true', ' 1']) {
-      expect(resolve({ [WORKER]: value }).switches.checkpointWorker).toBe(false)
+      expect(resolve({ [BARRIER]: '0', [WORKER]: value }).switches.checkpointWorker).toBe(false)
     }
   })
 
   it('is never built while barrier durability is honoured, which has a pool of its own: the switch no longer matters', () => {
-    for (const value of [undefined, '1', '0']) {
-      const { switches, warnings } = resolve({ [BARRIER]: '1', [WORKER]: value })
-      expect(switches).toMatchObject({ barrierDurability: true, checkpointWorker: false })
-      expect(warnings).toEqual([])
+    for (const barrier of [undefined, '1']) {
+      for (const value of [undefined, '1', '0']) {
+        const { switches, warnings } = resolve({ [BARRIER]: barrier, [WORKER]: value })
+        expect(switches).toMatchObject({ barrierDurability: true, checkpointWorker: false })
+        expect(warnings).toEqual([])
+      }
     }
   })
 
@@ -187,8 +207,8 @@ describe('thread log authority, as the app honours it', () => {
     })
   })
 
-  it('is ignored, with one warning, without barrier durability', () => {
-    const { switches, warnings } = resolve({ [AUTHORITY]: '1' })
+  it('is ignored, with one warning when asked for by 1, without barrier durability', () => {
+    const { switches, warnings } = resolve({ [AUTHORITY]: '1', [BARRIER]: '0' })
 
     expect(switches.logAuthority).toBe(false)
     expect(switches.logAuthorityIgnored).toBe(`${BARRIER} off`)
@@ -212,11 +232,15 @@ describe('thread log authority, as the app honours it', () => {
   })
 
   it('takes its on and off from the shared reader', () => {
-    for (const value of ['', '0', 'true', ' 1']) {
+    for (const value of [undefined, '', '1', 'false', ' 0']) {
       const { switches, warnings } = resolve({ [BARRIER]: '1', [AUTHORITY]: value })
-      expect(switches.logAuthority).toBe(false)
+      expect(switches.logAuthority).toBe(true)
       expect(switches.logAuthorityIgnored).toBeNull()
       expect(warnings).toEqual([])
     }
+    const { switches, warnings } = resolve({ [BARRIER]: '1', [AUTHORITY]: '0' })
+    expect(switches.logAuthority).toBe(false)
+    expect(switches.logAuthorityIgnored).toBeNull()
+    expect(warnings).toEqual([])
   })
 })

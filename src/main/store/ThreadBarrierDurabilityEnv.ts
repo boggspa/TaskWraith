@@ -3,9 +3,9 @@
  * store builds with it: a process that only reads the app's files, the
  * history decoder in the app's catalogue process or in the Host's, tells
  * from it how the app wrote them, without loading the store's modules. The
- * rules are the ones `resolveThreadDurabilitySwitches` announces: only the
- * exact token `1` is on, and the switch is ignored while any of the earlier
- * mechanisms' switches is on.
+ * rules are the ones `resolveThreadDurabilitySwitches` announces: it is on by
+ * default and only the exact token `0` turns it off, and the switch is ignored
+ * while any of the earlier mechanisms' switches is on.
  */
 
 export const THREAD_BARRIER_DURABILITY_ENV = 'TASKWRAITH_THREAD_BARRIER_DURABILITY'
@@ -29,7 +29,7 @@ export type ThreadDurabilityEnvironment = Readonly<Record<string, string | undef
 export function isThreadBarrierDurabilityRequested(
   env: ThreadDurabilityEnvironment = process.env
 ): boolean {
-  return env[THREAD_BARRIER_DURABILITY_ENV] === '1'
+  return env[THREAD_BARRIER_DURABILITY_ENV] !== '0'
 }
 
 /** The switches that are on and make barrier durability ignored, in a fixed order. */
