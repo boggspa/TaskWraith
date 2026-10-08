@@ -45,9 +45,11 @@ function canonicalRealpath(input: string): string {
 const authorities = new Set<WorkspaceLockAuthority>()
 const authorityOperations = new Set<Promise<unknown>>()
 
-function trackAuthorityOperation<T>(work: () => Promise<T>): () => Promise<T> {
-  return () => {
-    const pending = work()
+function trackAuthorityOperation<Args extends unknown[], T>(
+  work: (...args: Args) => Promise<T>
+): (...args: Args) => Promise<T> {
+  return (...args) => {
+    const pending = work(...args)
     authorityOperations.add(pending)
     void pending.then(
       () => authorityOperations.delete(pending),
@@ -138,6 +140,11 @@ function harness(instanceId = 'instance-a') {
     }
   }
   const persistence = new NodeWorkspaceLockPersistence({ userDataRoot: userData })
+  // Reclaim records are intentionally appended after the authority operation
+  // returns. Join that fixture I/O before removing its temporary directory.
+  persistence.appendHolderReclaimAudit = trackAuthorityOperation(
+    persistence.appendHolderReclaimAudit.bind(persistence)
+  )
   return { root, userData, workspace, observations, dependencies, persistence }
 }
 
