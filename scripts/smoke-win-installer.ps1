@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$InstallerPath,
   [string]$InstallDir = (Join-Path $env:TEMP "TaskWraithSmokeInstall"),
+  [switch]$AllowUnsigned,
   [int]$TimeoutSeconds = 180
 )
 
@@ -9,9 +10,13 @@ $ErrorActionPreference = "Stop"
 
 function Assert-ValidSignature([string]$Path, [string]$Label) {
   if (!(Test-Path $Path)) {
-    throw "Missing $Label: $Path"
+    throw "Missing ${Label}: $Path"
   }
   $signature = Get-AuthenticodeSignature -FilePath $Path
+  if ($AllowUnsigned -and $signature.Status -eq "NotSigned") {
+    Write-Host "Unsigned Windows release artifact: $Label ($Path)"
+    return
+  }
   if ($signature.Status -ne "Valid") {
     throw "Invalid Authenticode signature for $Label ($Path): $($signature.Status)"
   }

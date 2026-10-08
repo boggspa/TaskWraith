@@ -66,6 +66,9 @@ describe('release workflow contract', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
     expect(pkg.scripts['build:debut:win']).not.toContain('require-windows-signing-env')
     expect(pkg.scripts['build:debut:win']).toContain('smoke-win-installer.ps1')
+    expect(pkg.scripts['build:debut:win']).toContain('-AllowUnsigned')
+    expect(pkg.scripts['build:win:handoff-smoke']).toContain('-AllowUnsigned')
+    expect(pkg.scripts['build:win:signed:handoff-smoke']).not.toContain('-AllowUnsigned')
     expect(pkg.scripts['build:handoff:win']).toContain('build:win:handoff-smoke')
     expect(pkg.scripts['postbuild:debut:mac:notarized']).toBe('npm run smoke:debut:mac-artifacts')
     expect(pkg.scripts['postbuild:debut:linux']).toBe('npm run smoke:debut:linux-artifacts')
@@ -79,6 +82,7 @@ describe('release workflow contract', () => {
       '${{ needs.unsigned-windows-build.outputs.artifact-name }}'
     )
     expect(runText(nativeArm)).toContain('win-arm64-setup.exe')
+    expect(runText(nativeArm)).toContain('-AllowUnsigned')
   })
 
   it('keeps artifact builders read-only and reserves mutation for the disabled publisher', () => {

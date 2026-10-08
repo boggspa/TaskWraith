@@ -8,6 +8,18 @@ const source = fs.readFileSync(
 )
 
 describe('Windows installer lifecycle smoke contract', () => {
+  it('accepts unsigned artifacts only through the explicit release switch', () => {
+    expect(source).toContain('[switch]$AllowUnsigned')
+    expect(source).toContain('$AllowUnsigned -and $signature.Status -eq "NotSigned"')
+    expect(source).toContain('Unsigned Windows release artifact:')
+    expect(source).toContain('if ($signature.Status -ne "Valid")')
+    expect(source).toContain('throw "Invalid Authenticode signature for $Label')
+    expect(source).toContain('Assert-ValidSignature $resolvedInstaller "installer"')
+    expect(source).toContain('Assert-ValidSignature $appExe "installed app"')
+    expect(source).toContain('Assert-ValidSignature $uninstaller "uninstaller"')
+    expect(source).toContain('Missing ${Label}: $Path')
+  })
+
   it('bounds installer and uninstaller waits and cleans up on failure', () => {
     expect(source).toContain('Wait-CheckedProcess $install "Installer" $TimeoutSeconds')
     expect(source).toContain('Wait-CheckedProcess $uninstall "Uninstaller" $TimeoutSeconds')

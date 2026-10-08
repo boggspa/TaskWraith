@@ -125,28 +125,37 @@ function fixtureRepo({
 
 describe('release-distribution helper', () => {
   describe('resolveReleaseDistribution on the real repository root', () => {
-    it('defaults to the beta epoch and the root builder config', () => {
+    it('uses the declared epoch and the matching builder config', () => {
       const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'))
+      const distribution = packageJson.taskwraithRelease?.distribution || 'beta'
       const resolved = resolveReleaseDistribution({ repoRoot: REPO_ROOT })
-      expect(resolved.distribution).toBe('beta')
+      expect(resolved.distribution).toBe(distribution)
       expect(resolved.version).toBe(packageJson.version)
       expect(resolved.sourceVersion).toBe(packageJson.version)
-      expect(resolved.builderConfig).toBe(ROOT_BUILDER_CONFIG)
-      expect(resolved.updateFeedChannel).toBe('latest')
-      expect(resolved.feedChannel).toBe('latest')
+      expect(resolved.builderConfig).toBe(
+        distribution === 'beta' ? ROOT_BUILDER_CONFIG : RELEASE_BUILDER_CONFIG
+      )
+      expect(resolved.updateFeedChannel).toBe(distribution === 'beta' ? 'latest' : 'release')
+      expect(resolved.feedChannel).toBe(resolved.updateFeedChannel)
       expect(resolved.prerelease).toBe(false)
     })
 
-    it('refuses the debut while the root is ahead of the frozen source version', () => {
-      // The tracked contract pins source 1.9.9; the main checkout is still
-      // pre-bump, so debut metadata readiness must reject it.
+    it('admits the debut only at its frozen source version, including after the release bump', () => {
       const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'))
-      expect(packageJson.version).not.toBe('1.9.9')
-      expect(() =>
-        resolveReleaseDistribution({ repoRoot: REPO_ROOT, distribution: 'debut' })
-      ).toThrow(
-        /debut source drift: package\.json is \S+ but the frozen handoff contract pins source 1\.9\.9/
+      const contract = JSON.parse(
+        fs.readFileSync(path.join(REPO_ROOT, HANDOFF_CONTRACT_FILE), 'utf8')
       )
+      const resolveDebut = () =>
+        resolveReleaseDistribution({ repoRoot: REPO_ROOT, distribution: 'debut' })
+      if (packageJson.version === contract.source.version) {
+        expect(resolveDebut()).toMatchObject({
+          sourceVersion: contract.source.version,
+          version: contract.target.version,
+          distribution: 'debut'
+        })
+      } else {
+        expect(resolveDebut).toThrow(/debut source drift:/)
+      }
     })
   })
 
