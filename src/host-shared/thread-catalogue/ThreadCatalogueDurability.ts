@@ -30,7 +30,10 @@ export class ThreadCatalogueDurability<File> implements ThreadCatalogueDeferredD
   private durableWrites = 0
   private failures = 0
   private failure: unknown
-  constructor(private readonly ports: ThreadCatalogueDurabilityPorts<File>) {}
+  constructor(
+    private readonly ports: ThreadCatalogueDurabilityPorts<File>,
+    private readonly platform: NodeJS.Platform = process.platform
+  ) {}
 
   write(filePath: string, text: string, beforeRename?: () => void, afterRename?: () => void): void {
     if (this.failure) throw this.failure
@@ -44,19 +47,20 @@ export class ThreadCatalogueDurability<File> implements ThreadCatalogueDeferredD
       const file = this.ports.open(stat.dev, stat.ino, fd, 0)
       registered = true
       this.resources.set(file, null)
-      const directory = this.ports.acquire(path.dirname(filePath))
+      const directory =
+        this.platform === 'win32' ? null : this.ports.acquire(path.dirname(filePath))
       this.resources.set(file, directory)
       beforeRename?.()
       fs.renameSync(temporary, filePath)
       this.visibleWrites++
-      const name = directory.noteMutation()
+      const name = directory?.noteMutation()
       this.ports.noteWrite(file, stat.size, 'soft')
       const barrier = Promise.all([
         this.ports.awaitDurable(file, stat.size),
-        this.ports.awaitDurable(name.file, name.offset)
+        ...(name ? [this.ports.awaitDurable(name.file, name.offset)] : [])
       ]).then(async () => {
         await this.ports.forget([file])
-        await directory.release()
+        await directory?.release()
         this.resources.delete(file)
         this.durableWrites++
       })

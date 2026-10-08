@@ -138,7 +138,7 @@ export function prepareJournalPublication(
           throw new Error('Publication directory identity changed')
       }
       validate()
-      publicationFs.fsyncSync(directoryFd)
+      if (process.platform !== 'win32') publicationFs.fsyncSync(directoryFd)
       validate()
     } finally {
       fs.closeSync(directoryFd)

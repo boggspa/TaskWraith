@@ -50,7 +50,11 @@ describe('profile directory leases', () => {
         completions.push(finish)
         return { joinSync: finish }
       },
-      fsyncSync: (fd) => fs.fsyncSync(fd),
+      // This fixture exercises lease accounting; directory flushing is not a
+      // Windows syscall. Production consumers omit directory leases there.
+      fsyncSync: (fd) => {
+        if (process.platform !== 'win32') fs.fsyncSync(fd)
+      },
       close: (fd) => {
         if (failClose) {
           failClose = false

@@ -118,6 +118,14 @@ describe('journal descriptor adapter', () => {
     }
     const cache = new IncrementalChatJournalDescriptorCache(port)
     const file = path.join(root, 'cold', 'nested', 'chat.jsonl')
+    if (process.platform === 'win32') {
+      cache.append('chat', file, 'first\n', 'immediate')
+      expect(strictDependencies).toEqual([0])
+      expect(fs.readFileSync(file, 'utf8')).toBe('first\n')
+      await cache.retire()
+      expect(descriptors.size).toBe(0)
+      return
+    }
     expect(() => cache.append('chat', file, 'first\n', 'immediate')).toThrow(
       'directory registration failed'
     )

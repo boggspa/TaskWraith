@@ -2,7 +2,10 @@ import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ThreadCatalogueDurability } from './ThreadCatalogueDurability'
+import {
+  ThreadCatalogueDurability,
+  type ThreadCatalogueDurabilityPorts
+} from './ThreadCatalogueDurability'
 import { ThreadCatalogue } from './ThreadCatalogue'
 
 describe('catalogue atomic visibility and durability', () => {
@@ -38,7 +41,7 @@ describe('catalogue atomic visibility and durability', () => {
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
-  it('renames visible bytes before barrier completion and retains the exact inode until durable', async () => {
+  it.each(['linux', 'win32'] as const)('holds the inode on %s', async (platform) => {
     const root = fs.mkdtempSync(join(tmpdir(), 'catalogue-durability-'))
     let resolve!: () => void
     const held = new Promise<void>((done) => {
@@ -46,7 +49,7 @@ describe('catalogue atomic visibility and durability', () => {
     })
     const opened: number[] = []
     const events: string[] = []
-    const durability = new ThreadCatalogueDurability<number>({
+    const ports: ThreadCatalogueDurabilityPorts<number> = {
       open: (_dev, _ino, fd) => {
         opened.push(fd)
         return fd
@@ -65,7 +68,8 @@ describe('catalogue atomic visibility and durability', () => {
           events.push('directory-released')
         }
       })
-    })
+    }
+    const durability = new ThreadCatalogueDurability<number>(ports, platform)
     try {
       const target = join(root, 'head.json')
       durability.write(
@@ -85,7 +89,9 @@ describe('catalogue atomic visibility and durability', () => {
       expect(durable).toBe(false)
       resolve()
       await wait
-      expect(events.slice(-2)).toEqual(['closed', 'directory-released'])
+      expect(events.slice(platform === 'win32' ? -1 : -2)).toEqual(
+        platform === 'win32' ? ['closed'] : ['closed', 'directory-released']
+      )
       await durability.retire()
     } finally {
       resolve()

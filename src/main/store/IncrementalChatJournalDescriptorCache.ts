@@ -204,7 +204,9 @@ export class IncrementalChatJournalDescriptorCache {
     }
     // Register after rename; failures retain custody and refuse future writes.
     try {
-      entry.dependencies.push(this.directoryWrite(path.dirname(destination)))
+      if (process.platform !== 'win32') {
+        entry.dependencies.push(this.directoryWrite(path.dirname(destination)))
+      }
       this.flusher.noteWrite(entry.file, entry.end, 'soft', { after: entry.dependencies })
     } catch (error) {
       this.rotationFailures.set(chatId, error)
@@ -260,6 +262,8 @@ export class IncrementalChatJournalDescriptorCache {
   }
 
   async awaitDirectoryMutation(directory: string): Promise<void> {
+    // Match creation debt and the thread barrier: Windows has no directory fsync.
+    if (process.platform === 'win32') return
     const dependency = this.directoryWrite(directory)
     await this.flusher.awaitDurable(dependency.file, dependency.offset)
   }

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   GROK_SIGN_IN_CHECK_ARGS,
   classifyGrokSignInOutput,
@@ -53,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   // Remove only the directory mkdtemp returned for this test.
   if (dir && dirname(dir) === tmpdir() && basename(dir).startsWith(DIR_PREFIX)) {
     rmSync(dir, { recursive: true, force: true })
@@ -160,13 +161,22 @@ describe.skipIf(process.platform === 'win32')('readGrokCliSignInState', () => {
     const pidFile = join(dir, 'pid')
     const binaryPath = writeStandIn([`echo $$ > '${pidFile}'`, 'exec sleep 30'])
 
-    const startedAt = Date.now()
-    await expect(
-      readGrokCliSignInState({ binaryPath, env: { PATH: process.env.PATH }, timeoutMs: 300 })
-    ).resolves.toBe('unknown')
-    expect(Date.now() - startedAt).toBeLessThan(3000)
-
+    // Start the real stand-in before advancing the probe's deadline. Under
+    // load a 300 ms wall-clock race can kill the shell before it writes its pid.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const result = readGrokCliSignInState({
+      binaryPath,
+      env: { PATH: process.env.PATH },
+      timeoutMs: 300
+    })
+    const startupDeadline = Date.now() + 5000
+    while (!existsSync(pidFile) && Date.now() < startupDeadline) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
     expect(existsSync(pidFile)).toBe(true)
+    await vi.advanceTimersByTimeAsync(300)
+    await expect(result).resolves.toBe('unknown')
+    vi.useRealTimers()
     const pid = Number(readFileSync(pidFile, 'utf8').trim())
     expect(pid).toBeGreaterThan(0)
     // A killed child answers kill(pid, 0) until it is reaped; allow for that,

@@ -72,9 +72,10 @@ describe('shared catalogue durability participant', () => {
         expect(fs.readFileSync(head, 'utf8')).toBe('{"pending":true}')
         expect(participant.snapshot()).toMatchObject({ visibleWrites: 1, durableWrites: 0 })
         await runtime.shutdown()
-        expect(events.filter((event) => event === 'sync')).toHaveLength(2)
-        expect(events.slice(0, 2)).toEqual(['sync', 'sync'])
-        expect(events.filter((event) => event === 'close')).toHaveLength(2)
+        const syncs = process.platform === 'win32' ? 1 : 2
+        expect(events.filter((event) => event === 'sync')).toHaveLength(syncs)
+        expect(events.slice(0, syncs)).toEqual(Array(syncs).fill('sync'))
+        expect(events.filter((event) => event === 'close')).toHaveLength(syncs)
         expect(participant.snapshot()).toMatchObject({
           durableWrites: 1,
           descriptors: 0,
