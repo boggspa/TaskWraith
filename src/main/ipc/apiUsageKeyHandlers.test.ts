@@ -50,20 +50,24 @@ function fakeStore(initialKey: string | null = null) {
 }
 
 describe('registerApiUsageKeyHandlers', () => {
+  // Stand-in sender events; the handlers only ever hand them to
+  // `isMainRendererSender`, so a marker object is enough.
   const mainEvent = { sender: 'main' }
   const otherEvent = { sender: 'other' }
   let anthropic: ReturnType<typeof fakeStore>
   let openai: ReturnType<typeof fakeStore>
-  let onKeyMutationSuccess: ReturnType<typeof vi.fn>
+  let onKeyMutationSuccess: ReturnType<
+    typeof vi.fn<NonNullable<ApiUsageKeyHandlerDeps['onKeyMutationSuccess']>>
+  >
 
   beforeEach(() => {
     mockedHandle.mockReset()
     anthropic = fakeStore('sk-ant-admin01-existing')
     openai = fakeStore()
-    onKeyMutationSuccess = vi.fn()
+    onKeyMutationSuccess = vi.fn<NonNullable<ApiUsageKeyHandlerDeps['onKeyMutationSuccess']>>()
     const deps: ApiUsageKeyHandlerDeps = {
       keyStore: (provider) => (provider === 'anthropic' ? anthropic : openai),
-      isMainRendererSender: (event) => event === mainEvent,
+      isMainRendererSender: (event) => (event as unknown) === mainEvent,
       onKeyMutationSuccess
     }
     registerApiUsageKeyHandlers(deps)
