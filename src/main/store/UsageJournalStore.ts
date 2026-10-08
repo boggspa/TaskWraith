@@ -152,6 +152,42 @@ interface RegularFileIdentity {
 interface RegularFileSnapshot {
   bytes: Buffer
   identity: RegularFileIdentity
+  /** Present only when the stats before and after the read agree on content shape. */
+  fingerprint?: UsageFileFingerprint
+}
+
+/**
+ * Everything a stat says about a regular file's content: identity plus size
+ * and both timestamps. Equal fingerprints mean the bytes read last time are
+ * the bytes on disk now — an in-place append grows `size`, a compaction's
+ * atomic rename changes `ino`, and any rewrite moves `mtimeMs`/`ctimeMs`.
+ */
+interface UsageFileFingerprint extends RegularFileIdentity {
+  size: number
+  mtimeMs: number
+  ctimeMs: number
+}
+
+function usageFileFingerprint(stat: fs.Stats, filePath: string): UsageFileFingerprint {
+  return {
+    ...regularFileIdentity(stat, filePath),
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs
+  }
+}
+
+function sameUsageFileFingerprint(
+  left: UsageFileFingerprint,
+  right: UsageFileFingerprint
+): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
 }
 
 class UnsafeUsageStorePathError extends Error {
@@ -1464,10 +1500,55 @@ export class UsageJournalStore {
       this.uncheckpointedSinceMs == null ? oldest : Math.min(this.uncheckpointedSinceMs, oldest)
   }
 
-  private readCheckpoint(options: { lockHeld?: boolean } = {}): CheckpointReadResult {
-    let rawBytes: Buffer
+  /**
+   * The checkpoint as parsed last time, keyed on the stat fingerprint of the
+   * bytes it came from. `getRecords()` reads the checkpoint TWICE per stable
+   * attempt (its version brackets the journal reads), and the renderer asks
+   * for usage on every thread select, every `usage-changed` push after a run
+   * records usage, and on a 90s poll — each of which cost a full read, two
+   * digests and a parse of the whole file on the main thread (7.6MB / 11.6k
+   * records ≈ 30ms on the live profile, plus the allocation churn). A stat
+   * is enough to know the file has not changed: the cache serves then, and
+   * any append, compaction, history mutation or foreign rewrite misses it.
+   */
+  private checkpointParseCache: {
+    fingerprint: UsageFileFingerprint
+    records: UsageRecord[]
+    version: string
+  } | null = null
+
+  private readCheckpointFromCache(): CheckpointReadResult | null {
+    const cached = this.checkpointParseCache
+    if (!cached) return null
+    let stat: fs.Stats
     try {
-      rawBytes = this.readSnapshot(this.checkpointPath).bytes
+      stat = assertRegularFile(this.checkpointPath)
+    } catch {
+      // Missing, replaced by a non-file, or unreadable: the full read reports it.
+      return null
+    }
+    let current: UsageFileFingerprint
+    try {
+      current = usageFileFingerprint(stat, this.checkpointPath)
+    } catch {
+      return null
+    }
+    if (!sameUsageFileFingerprint(cached.fingerprint, current)) return null
+    // A fresh array each time: callers spread or filter it, and the cached
+    // one must never become someone's scratch space.
+    return { status: 'ok', records: cached.records.slice(), version: cached.version }
+  }
+
+  private readCheckpoint(options: { lockHeld?: boolean } = {}): CheckpointReadResult {
+    // Compaction and history mutation read under the lock to prove the
+    // checkpoint generation before they commit over it. Those reads are rare
+    // and must stay byte-exact, so they never take the cache; they refresh it.
+    const cached = options.lockHeld ? null : this.readCheckpointFromCache()
+    if (cached) return cached
+    this.checkpointParseCache = null
+    let snapshot: RegularFileSnapshot
+    try {
+      snapshot = this.readSnapshot(this.checkpointPath)
     } catch (error) {
       if (isNodeError(error, 'ENOENT')) {
         return { status: 'missing', records: [], version: 'missing' }
@@ -1475,13 +1556,18 @@ export class UsageJournalStore {
       this.logger.error(`Failed to read usage checkpoint ${this.checkpointPath}`, error)
       return { status: 'error', records: [], version: null, error }
     }
+    const rawBytes = snapshot.bytes
 
     const version = digestBytes(rawBytes)
     try {
       const raw = decodeUtf8Fatal(rawBytes)
       const parsed: unknown = JSON.parse(raw)
       if (!Array.isArray(parsed)) throw new Error('Usage checkpoint root must be an array')
-      return { status: 'ok', records: parsed as UsageRecord[], version }
+      const records = parsed as UsageRecord[]
+      if (snapshot.fingerprint) {
+        this.checkpointParseCache = { fingerprint: snapshot.fingerprint, records, version }
+      }
+      return { status: 'ok', records: records.slice(), version }
     } catch (error) {
       this.logger.error(`Failed to parse usage checkpoint ${this.checkpointPath}`, error)
       if (this.isWritable() && !this.preservedCorruptCheckpointVersions.has(version)) {
@@ -1592,7 +1678,16 @@ export class UsageJournalStore {
     const bytes = this.readFileBytes(filePath)
     const after = assertRegularFile(filePath)
     assertSameRegularFileIdentity(filePath, identity, after)
-    return { bytes, identity }
+    // A fingerprint vouches for the bytes only when nothing moved during the
+    // read; a write landing mid-read leaves the snapshot uncacheable.
+    const fingerprintBefore = usageFileFingerprint(before, filePath)
+    const fingerprint = sameUsageFileFingerprint(
+      fingerprintBefore,
+      usageFileFingerprint(after, filePath)
+    )
+      ? fingerprintBefore
+      : undefined
+    return { bytes, identity, fingerprint }
   }
 
   private assertAppendTargetsSafe(): void {

@@ -624,6 +624,57 @@ describe('UsageJournalStore', () => {
     expect(crossedCompaction).toBe(true)
   })
 
+  it('serves an unchanged checkpoint from its parse cache and re-reads it once it changes', () => {
+    const checkpoint = usageRecord('checkpoint', now - 2)
+    const journal = usageRecord('journal', now - 1)
+    fs.writeFileSync(checkpointPath, JSON.stringify([checkpoint]))
+    fs.writeFileSync(journalPath, `\n${JSON.stringify(journal)}`)
+    const reads: string[] = []
+    const store = createStore({
+      readTextFile: (filePath) => {
+        reads.push(path.basename(filePath))
+        return fs.readFileSync(filePath, 'utf8')
+      }
+    })
+    const checkpointReads = (): number => reads.filter((name) => name === 'usage.json').length
+
+    expect(store.getRecords().map((record) => record.id)).toEqual(['checkpoint', 'journal'])
+    const afterFirst = checkpointReads()
+    expect(afterFirst).toBeGreaterThan(0)
+
+    // Nothing changed: the checkpoint is not read again, and the result is
+    // the same view, as a fresh array.
+    const second = store.getRecords()
+    expect(second.map((record) => record.id)).toEqual(['checkpoint', 'journal'])
+    expect(checkpointReads()).toBe(afterFirst)
+    second.length = 0
+    expect(store.getRecords().map((record) => record.id)).toEqual(['checkpoint', 'journal'])
+
+    // An append changes only the journal: the new record shows up without
+    // re-parsing the checkpoint.
+    store.append(usageRecord('appended', now))
+    expect(store.getRecords().map((record) => record.id)).toEqual([
+      'checkpoint',
+      'journal',
+      'appended'
+    ])
+    expect(checkpointReads()).toBe(afterFirst)
+
+    // A rewrite of the checkpoint — compaction, a history sweep, or another
+    // process — misses the cache and the new content is served.
+    fs.writeFileSync(
+      checkpointPath,
+      JSON.stringify([usageRecord('rewritten-a', now - 4), usageRecord('rewritten-b', now - 3)])
+    )
+    expect(store.getRecords().map((record) => record.id)).toEqual([
+      'rewritten-a',
+      'rewritten-b',
+      'journal',
+      'appended'
+    ])
+    expect(checkpointReads()).toBeGreaterThan(afterFirst)
+  })
+
   it('retries a transient journal EIO before accepting a stable usage snapshot', () => {
     const checkpoint = usageRecord('checkpoint', now - 1)
     const journal = usageRecord('journal', now)
