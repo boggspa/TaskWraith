@@ -56457,6 +56457,7 @@ if (isGeminiMcpBridgeProcess) {
     void startStudioProductionLifecycle({
       userDataPath: app.getPath('userData'),
       resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
       settingEnabled: AppStore.getSettings().studioCompanionEnabled,
       envValue: process.env.TASKWRAITH_STUDIO_COMPANION
     })

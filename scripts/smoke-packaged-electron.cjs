@@ -75,10 +75,15 @@ async function main() {
   }
 
   if (packageTarget.platform === 'darwin') {
-    validateMacPackageBinaries(packageRoot, resourcesDir, expectedMacArchs)
+    validateMacPackageBinaries(
+      packageRoot,
+      resourcesDir,
+      expectedMacArchs,
+      distributionMetadata.studioIncluded
+    )
     validateMacElectronFrameworkSignature(packageRoot, resourcesDir)
     validateMacAppPermissionMetadata(packageRoot, distributionMetadata)
-    validateMacAppSignature(packageRoot)
+    validateMacAppSignature(packageRoot, distributionMetadata.studioIncluded)
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
   }
@@ -681,7 +686,20 @@ function isCompatibleNodePtyBinding(normalizedPath, platform, arch) {
   return normalizedPath.endsWith(prebuildNeedle) || normalizedPath.endsWith(rebuiltNeedle)
 }
 
-function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
+function resolvePackagedStudioPath(resourcesDir, included) {
+  const studioApp = path.join(resourcesDir, 'studio', 'TaskWraith Studio.app')
+  if (included) return studioApp
+  if (fs.existsSync(studioApp))
+    throw new Error('Studio is excluded but its bundle is present in this artifact.')
+  return null
+}
+
+function validateMacPackageBinaries(
+  packageRoot,
+  resourcesDir,
+  expectedArchs,
+  studioIncluded = true
+) {
   if (expectedArchs.length === 0 || process.platform !== 'darwin') return
   verifyMachOArchitectures(resolveMacExecutablePath(packageRoot), expectedArchs, 'app executable')
   const contentsDir = path.dirname(resourcesDir)
@@ -740,7 +758,8 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
   }
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
 
-  const studioApp = path.join(resourcesDir, 'studio', 'TaskWraith Studio.app')
+  const studioApp = resolvePackagedStudioPath(resourcesDir, studioIncluded)
+  if (!studioApp) return
   const studioInfoPath = path.join(studioApp, 'Contents', 'Info.plist')
   const studioExecutable = path.join(studioApp, 'Contents', 'MacOS', 'TaskWraithStudioCompanion')
   assertDir(studioApp, 'TaskWraith Studio.app')
@@ -861,7 +880,13 @@ function readPackagedDistributionMetadata(appAsarPath, asarApi = require('@elect
   }
   if (!version) fail('Packaged app distribution metadata is missing its version.')
   console.log(`validated packaged ${series} distribution identity (${appId}, ${feed} feed)`)
-  return { series, appId, stableUpdateChannel: feed, version }
+  return {
+    series,
+    appId,
+    stableUpdateChannel: feed,
+    version,
+    studioIncluded: metadata.taskwraithStudioCompanionIncluded !== false
+  }
 }
 
 function validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetadata) {
@@ -893,7 +918,7 @@ function validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetada
   console.log('validated packaged final-beta identity handoff payload')
 }
 
-function validateMacAppSignature(packageRoot) {
+function validateMacAppSignature(packageRoot, studioIncluded = true) {
   if (process.platform !== 'darwin') return
   const verification = spawnSync(
     '/usr/bin/codesign',
@@ -924,41 +949,39 @@ function validateMacAppSignature(packageRoot) {
   const bridgeEntitlements = readSignedEntitlements(bridgeDaemon, true)
   assertAppleEventsEntitlement(bridgeEntitlements, 'TaskWraithBridgeDaemon signature')
 
-  const studioApp = path.join(
-    packageRoot,
-    'Contents',
-    'Resources',
-    'studio',
-    'TaskWraith Studio.app'
+  const studioApp = resolvePackagedStudioPath(
+    path.join(packageRoot, 'Contents', 'Resources'),
+    studioIncluded
   )
-  assertDir(studioApp, 'TaskWraith Studio.app')
-  // --deep matches the outer app's verification depth. Without it a broken
-  // seal on code nested inside Studio.app could not be observed here.
-  const studioVerification = spawnSync(
-    '/usr/bin/codesign',
-    ['--verify', '--deep', '--strict', '--verbose=2', studioApp],
-    { encoding: 'utf8' }
-  )
-  if (studioVerification.status !== 0) {
-    const detail = [studioVerification.stdout, studioVerification.stderr]
-      .filter(Boolean)
-      .join('\n')
-      .trim()
-    fail(
-      `TaskWraith Studio code signature is invalid in ${path.relative(repoRoot, packageRoot)}.${
-        detail ? `\n${detail}` : ''
-      }`
+  if (studioApp) {
+    assertDir(studioApp, 'TaskWraith Studio.app')
+    // Standalone Studio builds retain the same nested-signature verification.
+    const studioVerification = spawnSync(
+      '/usr/bin/codesign',
+      ['--verify', '--deep', '--strict', '--verbose=2', studioApp],
+      { encoding: 'utf8' }
     )
+    if (studioVerification.status !== 0) {
+      const detail = [studioVerification.stdout, studioVerification.stderr]
+        .filter(Boolean)
+        .join('\n')
+        .trim()
+      fail(
+        `TaskWraith Studio code signature is invalid in ${path.relative(repoRoot, packageRoot)}.${
+          detail ? `\n${detail}` : ''
+        }`
+      )
+    }
   }
 
   // Studio.app is signed by the parent inside-out pass and inherits
   // build/entitlements.mac.plist, so it is the third bundle whose signed
   // entitlements must actually exist rather than being assumed.
-  const studioEntitlements = readSignedEntitlements(studioApp, false)
+  const studioEntitlements = studioApp ? readSignedEntitlements(studioApp, false) : null
   const requiredEntitlementsByPath = new Map([
     [packageRoot, entitlements],
     [bridgeDaemon, bridgeEntitlements],
-    [studioApp, studioEntitlements]
+    ...(studioApp ? [[studioApp, studioEntitlements]] : [])
   ])
   for (const [codePath, requiredEntitlements] of requiredEntitlementsByPath) {
     if (!requiredEntitlements) {
@@ -990,7 +1013,7 @@ function validateMacAppSignature(packageRoot) {
   for (const [codePath, label] of [
     [packageRoot, 'Packaged app'],
     [bridgeDaemon, 'TaskWraithBridgeDaemon'],
-    [studioApp, 'TaskWraith Studio.app']
+    ...(studioApp ? [[studioApp, 'TaskWraith Studio.app']] : [])
   ]) {
     const identity = readMacSigningIdentity(codePath)
     postureFailures.push(
@@ -1488,5 +1511,6 @@ module.exports = {
   describeMacSigningPosture,
   readMacSigningIdentity,
   readPackagedDistributionMetadata,
+  resolvePackagedStudioPath,
   validatePackagedIdentityHandoffPayload
 }

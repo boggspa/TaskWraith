@@ -1,6 +1,8 @@
 extends: electron-builder.yml
 appId: com.chrisizatt.taskwraith
 productName: TaskWraith Debug
+extraMetadata:
+  taskwraithStudioCompanionIncluded: true
 directories:
   output: dist-debug
 win:
@@ -12,6 +14,9 @@ win:
 nsis:
   artifactName: TaskWraith-Debug-${version}-win-${arch}-setup.${ext}
 mac:
+  extraResources:
+    - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
+      to: studio/TaskWraith Studio.app
   category: public.app-category.developer-tools
   notarize: false
   # extendInfo must be a flat dict — see comment in electron-builder.yml.

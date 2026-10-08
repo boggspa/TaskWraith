@@ -51,6 +51,7 @@ export interface StudioProductionPaths {
 export interface StudioProductionLifecycleOptions {
   userDataPath: string
   resourcesPath?: string | undefined
+  packaged?: boolean | undefined
   /** Repo root override for tests. Defaults to the main bundle's repo-relative root. */
   developmentRoot?: string | undefined
   binaryPath?: string | undefined
@@ -88,6 +89,7 @@ function defaultDevelopmentRoot(): string {
 
 export function resolveStudioCompanionBinaryPath(options: {
   resourcesPath?: string | undefined
+  packaged?: boolean | undefined
   developmentRoot?: string | undefined
   binaryPath?: string | undefined
   pathExists?: ((path: string) => boolean) | undefined
@@ -103,7 +105,7 @@ export function resolveStudioCompanionBinaryPath(options: {
       'MacOS',
       STUDIO_COMPANION_EXECUTABLE
     )
-    if (pathExists(bundled)) return bundled
+    if (options.packaged || pathExists(bundled)) return bundled
   }
 
   const developmentRoot = options.developmentRoot ?? defaultDevelopmentRoot()
@@ -129,7 +131,7 @@ export function resolveStudioCompanionBinaryPath(options: {
 export function resolveStudioProductionPaths(
   options: Pick<
     StudioProductionLifecycleOptions,
-    'userDataPath' | 'resourcesPath' | 'developmentRoot' | 'binaryPath' | 'pathExists'
+    'userDataPath' | 'resourcesPath' | 'packaged' | 'developmentRoot' | 'binaryPath' | 'pathExists'
   >
 ): StudioProductionPaths {
   return {
@@ -268,6 +270,13 @@ export async function startStudioProductionLifecycle(
 
   const pathExists = options.pathExists ?? existsSync
   if (!pathExists(paths.binaryPath)) {
+    if (options.packaged) {
+      return {
+        resolution: { ...resolution, shouldRun: false, supported: false, source: 'distribution' },
+        paths,
+        lifecycle: null
+      }
+    }
     throw new StudioProductionError('binary_missing', paths.binaryPath)
   }
 

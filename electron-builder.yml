@@ -4,6 +4,7 @@ extraMetadata:
   taskwraithDistributionIdentity: beta
   taskwraithAppId: com.chrisizatt.taskwraith
   taskwraithUpdateFeedChannel: latest
+  taskwraithStudioCompanionIncluded: false
 directories:
   buildResources: build
 # TaskWraith's UI strings are app-authored; keep Electron's own Chromium
@@ -272,16 +273,12 @@ mac:
   # compiled by `scripts/build-bridge-daemon.cjs` (run via the
   # `prebuild:bridge-daemon` npm script in all mac build targets).
   # macOS-only: the daemon uses Apple Network framework + Bonjour +
-  # CryptoKit and is not built on other platforms. The separate Studio app is
-  # pre-lipo'd by scripts/build-studio-companion.cjs so both temporary apps in
-  # the universal merge contain the same nested bundle. It stays unsigned here;
-  # the parent macOS signing pass seals nested code in final-inside-out order.
+  # CryptoKit and is not built on other platforms. Studio is deferred from the
+  # final beta/public debut; its standalone development build remains separate.
   extraFiles:
     - from: swift/TaskWraithBridge/.build/bridge/TaskWraith Bridge.app
       to: Helpers/TaskWraith Bridge.app
-  extraResources:
-    - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
-      to: studio/TaskWraith Studio.app
+  extraResources: []
 dmg:
   artifactName: TaskWraith-${version}-universal-mac.${ext}
   # Branded installer window. The visible composition is 660x420 inside a

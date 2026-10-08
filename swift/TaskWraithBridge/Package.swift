@@ -1,5 +1,9 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
+
+// Studio is a separately tested development product for this release.
+let includeStudio = ProcessInfo.processInfo.environment["TASKWRAITH_INCLUDE_STUDIO"] == "1"
 
 /// TaskWraithBridge — Mac-side daemon that bridges the TaskWraith Electron app
 /// to native macOS Screen Watch, creative-app, editor, and stdio JSON-RPC
@@ -20,13 +24,14 @@ let package = Package(
         .executable(
             name: "TaskWraithBridgeDaemon",
             targets: ["TaskWraithBridgeDaemon"]
-        ),
-        // NEW: Companion app bundle target (Mach-O → .app via assembly script)
+        )
+    ] + (includeStudio ? [
+        // Companion app bundle target (Mach-O → .app via assembly script)
         .executable(
             name: "TaskWraithStudioCompanion",
             targets: ["TaskWraithStudioCompanion"]
         )
-    ],
+    ] : []),
     targets: [
         .target(name: "TaskWraithAudioKernel"),
         .executableTarget(
@@ -40,8 +45,9 @@ let package = Package(
             // the daemon, but the test's `import TaskWraithAudioKernel` needs it
             // declared here).
             dependencies: ["TaskWraithBridgeDaemon", "TaskWraithAudioKernel"]
-        ),
-        // NEW: Core library (testable, no AppKit where avoidable)
+        )
+    ] + (includeStudio ? [
+        // Core library (testable, no AppKit where avoidable)
         .target(
             name: "TaskWraithStudioCore",
             dependencies: []
@@ -65,5 +71,5 @@ let package = Package(
             name: "TaskWraithStudioCompanionTests",
             dependencies: ["TaskWraithStudioCompanion", "TaskWraithStudioCore"]
         )
-    ]
+    ] : [])
 )

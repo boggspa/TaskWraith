@@ -24,6 +24,7 @@ const {
   describeMacSigningPosture,
   readMacSigningIdentity,
   readPackagedDistributionMetadata,
+  resolvePackagedStudioPath,
   validatePackagedIdentityHandoffPayload
 }: {
   evaluateMacSigningIdentity: (output: string, exitCode: number | null) => MacSigningIdentity
@@ -41,7 +42,14 @@ const {
   readPackagedDistributionMetadata: (
     appAsarPath: string,
     asarApi: { extractFile: (asarPath: string, filePath: string) => Buffer }
-  ) => { series: string; appId: string; stableUpdateChannel: string; version: string }
+  ) => {
+    series: string
+    appId: string
+    stableUpdateChannel: string
+    version: string
+    studioIncluded: boolean
+  }
+  resolvePackagedStudioPath: (resourcesDir: string, included: boolean) => string | null
   validatePackagedIdentityHandoffPayload: (
     resourcesDir: string,
     metadata: { series: string; version: string }
@@ -295,7 +303,7 @@ describe('packaged Electron to TUI smoke handoff', () => {
   })
 
   it('accepts only coherent beta or Release identity metadata in app.asar', () => {
-    const extract = (metadata: Record<string, string>) => ({
+    const extract = (metadata: Record<string, unknown>) => ({
       extractFile: () => Buffer.from(JSON.stringify(metadata))
     })
     expect(
@@ -312,7 +320,8 @@ describe('packaged Electron to TUI smoke handoff', () => {
       series: 'beta',
       appId: 'com.chrisizatt.taskwraith',
       stableUpdateChannel: 'latest',
-      version: '1.9.8'
+      version: '1.9.8',
+      studioIncluded: true
     })
     expect(
       readPackagedDistributionMetadata(
@@ -321,6 +330,7 @@ describe('packaged Electron to TUI smoke handoff', () => {
           taskwraithDistributionIdentity: 'release',
           taskwraithAppId: 'com.taskwraith.desktop',
           taskwraithUpdateFeedChannel: 'release',
+          taskwraithStudioCompanionIncluded: false,
           version: '0.1.0'
         })
       )
@@ -328,7 +338,8 @@ describe('packaged Electron to TUI smoke handoff', () => {
       series: 'release',
       appId: 'com.taskwraith.desktop',
       stableUpdateChannel: 'release',
-      version: '0.1.0'
+      version: '0.1.0',
+      studioIncluded: false
     })
   })
 
@@ -570,6 +581,19 @@ describe.skipIf(process.platform !== 'darwin')('real signature reads', () => {
 })
 
 describe('packaged macOS signature coverage', () => {
+  it('rejects a leftover Studio bundle when the artifact declares it excluded', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'excluded-studio-'))
+    try {
+      expect(resolvePackagedStudioPath(root, false)).toBeNull()
+      const bundle = path.join(root, 'studio', 'TaskWraith Studio.app')
+      fs.mkdirSync(bundle, { recursive: true })
+      expect(() => resolvePackagedStudioPath(root, false)).toThrow('Studio is excluded')
+      expect(resolvePackagedStudioPath(root, true)).toBe(bundle)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   const source = fs.readFileSync(
     path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
     'utf8'

@@ -2,6 +2,9 @@ import { defineConfig, configDefaults } from 'vitest/config'
 import { availableParallelism } from 'node:os'
 
 const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
+// Studio is deferred from this release. Its native companion and acceptance
+// apparatus run explicitly through npm run test:studio.
+const includeStudio = process.env.TASKWRAITH_INCLUDE_STUDIO === '1'
 
 // Keep vitest's default discovery, but never recurse into ignored local
 // worktrees. The Swift package is exercised by `swift test`; the live
@@ -65,6 +68,7 @@ export default defineConfig({
       // worktrees of an older master; their copies tripled a full run and failed
       // against the live main tree.
       '**/.work-guard/**',
+      ...(includeStudio ? [] : ['scripts/studio-*.test.ts', 'src/main/studio/**/*.test.ts']),
       ...(includeSwiftInterop ? [] : ['ios/**'])
     ]
   }

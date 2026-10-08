@@ -1,6 +1,10 @@
 import { resolveDaemonShouldRun, type BridgeDaemonEnvOverride } from '../BridgeDaemonSettings'
 
-export type StudioCompanionResolutionSource = 'environment' | 'settings' | 'platform'
+export type StudioCompanionResolutionSource =
+  | 'environment'
+  | 'settings'
+  | 'platform'
+  | 'distribution'
 
 export interface StudioCompanionResolution {
   shouldRun: boolean

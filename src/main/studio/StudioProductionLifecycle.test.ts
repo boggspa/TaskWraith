@@ -4,7 +4,7 @@ import * as fsPromises from 'node:fs/promises'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 import { PassThrough } from 'node:stream'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TRANSCRIPT_MEDIA_ASSET_DIR } from '../services/TranscriptMediaAssetStore'
 import type { StudioCompanionChild } from './StudioCompanionSupervisor'
 import { importStudioEffectPreview } from './StudioEffectPreviewSource'
@@ -47,6 +47,27 @@ class FakeStudioChild extends EventEmitter implements StudioCompanionChild {
 }
 
 describe('StudioProductionLifecycle', () => {
+  it('keeps an excluded packaged companion unavailable without falling back to a developer binary', async () => {
+    const root = await temporaryRoot()
+    const spawnProcess = vi.fn(() => new FakeStudioChild())
+    const result = await startStudioProductionLifecycle({
+      userDataPath: root,
+      resourcesPath: nodePath.join(root, 'Resources'),
+      developmentRoot: nodePath.join(root, 'developer-checkout'),
+      packaged: true,
+      settingEnabled: true,
+      envValue: 'on',
+      platform: 'darwin',
+      pathExists: (path) => path.includes('developer-checkout'),
+      spawnProcess
+    })
+    expect(result).toMatchObject({
+      resolution: { shouldRun: false, supported: false, source: 'distribution' },
+      lifecycle: null
+    })
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
   it('prefers the packaged nested app and falls back to the dev build', () => {
     const resourcesPath = nodePath.join('/Applications', 'TaskWraith.app', 'Contents', 'Resources')
     const bundled = nodePath.join(

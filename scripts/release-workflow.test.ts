@@ -39,6 +39,32 @@ function actionSteps(job: Job) {
 }
 
 describe('release workflow contract', () => {
+  it('defers Studio from both release identities while retaining its separate development lane', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
+    const { loadBuilderIdentity } = require('./release-distribution.cjs')
+    expect(pkg.taskwraithRelease.studioCompanion).toBe(false)
+    for (const name of [
+      'build:unpack',
+      'build:mac',
+      'build:mac:notarized',
+      'build:debut:mac',
+      'build:debut:mac:notarized'
+    ]) {
+      expect(pkg.scripts[name]).not.toContain('studio-companion')
+    }
+    for (const file of [
+      'electron-builder.yml',
+      'electron-builder.release.yml',
+      'electron-builder.debut.yml'
+    ]) {
+      const config = loadBuilderIdentity(process.cwd(), file).config
+      expect(config.extraMetadata.taskwraithStudioCompanionIncluded).toBe(false)
+      expect(config.mac.extraResources).toEqual([])
+    }
+    expect(pkg.scripts['test:studio']).toBe('node scripts/run-studio-tests.cjs')
+    expect(pkg.scripts['build:debug:mac']).toContain('studio-companion')
+  })
+
   it('builds debut and pinned handoff identities in read-only unsigned lanes', () => {
     for (const platform of ['windows', 'linux']) {
       const steps = jobs[`unsigned-${platform}-build`].steps || []

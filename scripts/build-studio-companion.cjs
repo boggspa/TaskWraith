@@ -199,6 +199,7 @@ function run(command, args, label, options = { stdio: 'inherit' }) {
     ...options,
     env: {
       ...process.env,
+      TASKWRAITH_INCLUDE_STUDIO: '1',
       MACOSX_DEPLOYMENT_TARGET: DEPLOYMENT_TARGET
     }
   })
