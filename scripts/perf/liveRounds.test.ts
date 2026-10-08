@@ -1218,19 +1218,22 @@ describe('the scripted daemon as the runner child', () => {
     }
   })
 
-  it('starts the real daemon, serves its address, and stops it for a summary', async () => {
-    const daemon = await live.startScriptedDaemonChild({
-      dir: temporaryDirectory(),
-      config: { seed: 3 }
-    })
-    try {
-      expect(daemon.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
-      expect((await fetch(`${daemon.baseUrl}/api/tags`)).status).toBe(200)
-    } finally {
-      const stopped = await daemon.stop()
-      expect(stopped.exit).toEqual({ code: 0, signal: null })
-      expect(stopped.forced).toBe(false)
-      expect(stopped.summary?.requestCounts['GET /api/tags']).toBe(1)
+  it.skipIf(process.platform === 'win32')(
+    'starts the real daemon, serves its address, and stops it for a summary',
+    async () => {
+      const daemon = await live.startScriptedDaemonChild({
+        dir: temporaryDirectory(),
+        config: { seed: 3 }
+      })
+      try {
+        expect(daemon.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+        expect((await fetch(`${daemon.baseUrl}/api/tags`)).status).toBe(200)
+      } finally {
+        const stopped = await daemon.stop()
+        expect(stopped.exit).toEqual({ code: 0, signal: null })
+        expect(stopped.forced).toBe(false)
+        expect(stopped.summary?.requestCounts['GET /api/tags']).toBe(1)
+      }
     }
-  })
+  )
 })

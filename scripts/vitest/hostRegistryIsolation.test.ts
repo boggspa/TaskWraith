@@ -11,7 +11,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -346,7 +346,9 @@ describe('RegistryIsolationGuard', () => {
     const guard = guardFor(root)
     entry(root, '2', 920, { profile: TEMPORARY_PROFILE })
     // The same profile spelled through another directory is judged resolved.
-    entry(root, '5', 920, { profile: `/profiles/..${TEMPORARY_PROFILE}` })
+    entry(root, '5', 920, {
+      profile: `${TEMPORARY_PROFILE}${sep}..${sep}host-registry-isolation-orphan-profile`
+    })
     guard.poll()
     expect(guard.violations()).toEqual(
       ['2', '5'].map((id) =>

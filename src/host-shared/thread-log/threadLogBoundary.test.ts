@@ -5,7 +5,7 @@
  * files, not what those files pull in, so the closure is checked here.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
 
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
@@ -78,7 +78,10 @@ function closureViolations(roots: readonly string[]): { visited: string[]; viola
       else violations.push(edge)
     }
   }
-  return { visited: [...visited].map((file) => relative(REPO_ROOT, file)).sort(), violations }
+  return {
+    visited: [...visited].map((file) => relative(REPO_ROOT, file).split(sep).join('/')).sort(),
+    violations
+  }
 }
 
 describe('thread-log import boundary', () => {

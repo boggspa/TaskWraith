@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { taskWraithHostSocketPath } from '../../src/shared/taskWraithHostPaths.node'
 
@@ -6,7 +7,7 @@ const require = createRequire(import.meta.url)
 const { collectServerInstanceEvidence } = require('./serverInstanceEvidence.cjs')
 
 function fixture(platform = 'linux') {
-  const userDataPath = '/synthetic/profile'
+  const userDataPath = resolve('/synthetic/profile')
   const discovery = {
     pid: 123,
     startedAt: '2026-10-02T13:00:00.000Z',

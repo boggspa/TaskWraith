@@ -311,7 +311,7 @@ function smokeDelta(smoke: boolean, args: string[]) {
     : { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 }
 }
 
-describe('runT2Baseline --live-lanes launch wiring', () => {
+describe.skipIf(process.platform === 'win32')('POSIX live-lanes wiring', () => {
   const daemonRequests: string[] = []
   let daemon: Server | null = null
 

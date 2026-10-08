@@ -298,7 +298,7 @@ async function launch(
 
 const CHATS = ['perf-many_agents_live-chat-01', 'perf-many_agents_live-chat-02']
 
-describe('a relaunch on the profile an earlier launch left', () => {
+describe.skipIf(process.platform === 'win32')('POSIX profile relaunch', () => {
   it('launches it as it is: nothing written, no warm-up or smoke, the caller’s phase alone', async () => {
     const home = makeHome()
     const first = await launch(home, ['--materialize-instance-userdata'])
@@ -426,71 +426,74 @@ describe('what a launch may open', () => {
     }
   )
 
-  it('reports what the stand-in was asked and any browser that started, whether the launch returns or throws', async () => {
-    const home = makeHome()
-    const firefox = '/Applications/Firefox.app/Contents/MacOS/firefox'
-    const listings = () => {
-      const left = [
-        [{ pid: 10, command: '/usr/sbin/cfprefsd' }],
-        [
-          { pid: 10, command: '/usr/sbin/cfprefsd' },
-          { pid: 20, command: firefox }
+  it.skipIf(process.platform === 'win32')(
+    'reports what the stand-in was asked and any browser that started, whether the launch returns or throws',
+    async () => {
+      const home = makeHome()
+      const firefox = '/Applications/Firefox.app/Contents/MacOS/firefox'
+      const listings = () => {
+        const left = [
+          [{ pid: 10, command: '/usr/sbin/cfprefsd' }],
+          [
+            { pid: 10, command: '/usr/sbin/cfprefsd' },
+            { pid: 20, command: firefox }
+          ]
         ]
-      ]
-      return { listProcesses: async () => left.shift() }
-    }
-    // The child asks for a login page, as a provider's CLI would.
-    const asksForALogin = (env: Record<string, string>) => {
-      const asked = spawnSync(env.BROWSER, ['https://accounts.example.test/oauth2/auth?state=s1'])
-      expect(asked.status).toBe(0)
-    }
-    const caught = (artifacts: string) => ({
-      browser: path.join(artifacts, 'browser-stand-in.sh'),
-      requestsFile: path.join(artifacts, 'browser-requests.txt'),
-      requests: ['https://accounts.example.test/oauth2/auth?…'],
-      browsers: 'started',
-      browsersStarted: [{ pid: 20, command: 'firefox', browser: 'firefox' }],
-      processListing: { before: 1, after: 2, error: null }
-    })
-
-    const returned = await launch(home, ['--materialize-instance-userdata'], true, {
-      onSpawn: asksForALogin,
-      browserGuardAdapters: listings()
-    })
-    expect(returned.error).toBeNull()
-    expect(returned.result!.report.browserGuard).toEqual(caught(returned.artifacts))
-    // What a run measured is still judged by its own verdict.
-    expect(returned.result!.ok).toBe(true)
-
-    const told: unknown[] = []
-    const thrown = await launch(home, ['--reuse-instance-userdata'], true, {
-      onSpawn: asksForALogin,
-      browserGuardAdapters: listings(),
-      onBrowserGuard: (record: unknown) => told.push(record),
-      runManyAgents: async () => {
-        throw new Error('the phase took the app down')
+        return { listProcesses: async () => left.shift() }
       }
-    })
-    expect(thrown.error?.message).toBe('the phase took the app down')
-    expect(thrown.error?.browserGuard).toEqual(caught(thrown.artifacts))
-    expect(told).toEqual([caught(thrown.artifacts)])
-    const progress = JSON.parse(
-      readFileSync(path.join(thrown.artifacts, 'perf-t2-progress.json'), 'utf8')
-    )
-    expect(progress.browserGuard).toEqual(caught(thrown.artifacts))
-
-    // A caller whose callback throws loses nothing the launch recorded.
-    const broken = await launch(home, ['--reuse-instance-userdata'], true, {
-      onBrowserGuard: () => {
-        throw new Error('the caller broke')
+      // The child asks for a login page, as a provider's CLI would.
+      const asksForALogin = (env: Record<string, string>) => {
+        const asked = spawnSync(env.BROWSER, ['https://accounts.example.test/oauth2/auth?state=s1'])
+        expect(asked.status).toBe(0)
       }
-    })
-    expect(broken.error).toBeNull()
-    expect(broken.result!.report.browserGuard.browsers).toBe('none_started')
-    expect(broken.result!.report.cleanupFailures).toEqual([
-      { phase: 'onBrowserGuard', error: 'the caller broke' }
-    ])
-  })
+      const caught = (artifacts: string) => ({
+        browser: path.join(artifacts, 'browser-stand-in.sh'),
+        requestsFile: path.join(artifacts, 'browser-requests.txt'),
+        requests: ['https://accounts.example.test/oauth2/auth?…'],
+        browsers: 'started',
+        browsersStarted: [{ pid: 20, command: 'firefox', browser: 'firefox' }],
+        processListing: { before: 1, after: 2, error: null }
+      })
+
+      const returned = await launch(home, ['--materialize-instance-userdata'], true, {
+        onSpawn: asksForALogin,
+        browserGuardAdapters: listings()
+      })
+      expect(returned.error).toBeNull()
+      expect(returned.result!.report.browserGuard).toEqual(caught(returned.artifacts))
+      // What a run measured is still judged by its own verdict.
+      expect(returned.result!.ok).toBe(true)
+
+      const told: unknown[] = []
+      const thrown = await launch(home, ['--reuse-instance-userdata'], true, {
+        onSpawn: asksForALogin,
+        browserGuardAdapters: listings(),
+        onBrowserGuard: (record: unknown) => told.push(record),
+        runManyAgents: async () => {
+          throw new Error('the phase took the app down')
+        }
+      })
+      expect(thrown.error?.message).toBe('the phase took the app down')
+      expect(thrown.error?.browserGuard).toEqual(caught(thrown.artifacts))
+      expect(told).toEqual([caught(thrown.artifacts)])
+      const progress = JSON.parse(
+        readFileSync(path.join(thrown.artifacts, 'perf-t2-progress.json'), 'utf8')
+      )
+      expect(progress.browserGuard).toEqual(caught(thrown.artifacts))
+
+      // A caller whose callback throws loses nothing the launch recorded.
+      const broken = await launch(home, ['--reuse-instance-userdata'], true, {
+        onBrowserGuard: () => {
+          throw new Error('the caller broke')
+        }
+      })
+      expect(broken.error).toBeNull()
+      expect(broken.result!.report.browserGuard.browsers).toBe('none_started')
+      expect(broken.result!.report.cleanupFailures).toEqual([
+        { phase: 'onBrowserGuard', error: 'the caller broke' }
+      ])
+    }
+  )
 
   it('reaches the child of every launch through the one spawn, with the guarded plan', () => {
     const source = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')

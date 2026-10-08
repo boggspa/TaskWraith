@@ -195,7 +195,7 @@ function smokeDelta(smoke: boolean | 'deferred' | 'unsynced', args: string[]) {
     : { deferredAppends: 3, unsyncedAppends: 0, normalSaves: 2 }
 }
 
-describe('runT2Baseline --live-agents launch wiring', () => {
+describe.skipIf(process.platform === 'win32')('POSIX live-agents wiring', () => {
   const daemonRequests: string[] = []
   let daemon: Server | null = null
 

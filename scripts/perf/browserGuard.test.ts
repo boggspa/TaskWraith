@@ -48,41 +48,51 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const LOGIN = 'https://accounts.example.test/oauth2/auth?client_id=c1&state=s1#top'
 
 describe('the measured child’s environment', () => {
-  it('empties the Grok usage override and names the stand-in as BROWSER, in the env and the recorded command', () => {
-    const dir = makeDirectory()
-    const { spawnPlan, record } = guard.guardSpawnPlan(
-      { env: { TASKWRAITH_INSTANCE_ID: 'perf' }, shellCommand: 'env A=1 Electron .', argv: ['.'] },
-      dir
-    )
-    const standIn = path.join(dir, 'browser-stand-in.sh')
-    expect(spawnPlan.env).toEqual({
-      TASKWRAITH_INSTANCE_ID: 'perf',
-      TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
-      BROWSER: standIn
-    })
-    expect(spawnPlan.shellCommand).toBe(
-      `env TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE= BROWSER=${standIn} env A=1 Electron .`
-    )
-    expect(spawnPlan.argv).toEqual(['.'])
-    expect(record).toEqual({
-      grokUsageBinaryOverride: '',
-      browser: standIn,
-      requestsFile: path.join(dir, 'browser-requests.txt')
-    })
-  })
+  it.skipIf(process.platform === 'win32')(
+    'empties the Grok usage override and names the stand-in as BROWSER, in the env and the recorded command',
+    () => {
+      const dir = makeDirectory()
+      const { spawnPlan, record } = guard.guardSpawnPlan(
+        {
+          env: { TASKWRAITH_INSTANCE_ID: 'perf' },
+          shellCommand: 'env A=1 Electron .',
+          argv: ['.']
+        },
+        dir
+      )
+      const standIn = path.join(dir, 'browser-stand-in.sh')
+      expect(spawnPlan.env).toEqual({
+        TASKWRAITH_INSTANCE_ID: 'perf',
+        TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE: '',
+        BROWSER: standIn
+      })
+      expect(spawnPlan.shellCommand).toBe(
+        `env TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE= BROWSER=${standIn} env A=1 Electron .`
+      )
+      expect(spawnPlan.argv).toEqual(['.'])
+      expect(record).toEqual({
+        grokUsageBinaryOverride: '',
+        browser: standIn,
+        requestsFile: path.join(dir, 'browser-requests.txt')
+      })
+    }
+  )
 
-  it('is the value the app’s own reader takes as no Grok binary, so its usage probe spawns nothing', async () => {
-    expect(guard.GROK_USAGE_BINARY_OVERRIDE_ENV).toBe(GROK_USAGE_BINARY_OVERRIDE_ENV)
-    const { spawnPlan } = guard.guardSpawnPlan(
-      { env: {}, shellCommand: 'Electron' },
-      makeDirectory()
-    )
-    const resolveDefault = vi.fn(async () => ({ binaryPath: '/usr/local/bin/grok' }))
-    await expect(
-      resolveGrokUsageProbeBinary({ env: spawnPlan.env, resolveDefault })
-    ).resolves.toEqual({ binaryPath: null, source: 'invalid_override' })
-    expect(resolveDefault).not.toHaveBeenCalled()
-  })
+  it.skipIf(process.platform === 'win32')(
+    'is the value the app’s own reader takes as no Grok binary, so its usage probe spawns nothing',
+    async () => {
+      expect(guard.GROK_USAGE_BINARY_OVERRIDE_ENV).toBe(GROK_USAGE_BINARY_OVERRIDE_ENV)
+      const { spawnPlan } = guard.guardSpawnPlan(
+        { env: {}, shellCommand: 'Electron' },
+        makeDirectory()
+      )
+      const resolveDefault = vi.fn(async () => ({ binaryPath: '/usr/local/bin/grok' }))
+      await expect(
+        resolveGrokUsageProbeBinary({ env: spawnPlan.env, resolveDefault })
+      ).resolves.toEqual({ binaryPath: null, source: 'invalid_override' })
+      expect(resolveDefault).not.toHaveBeenCalled()
+    }
+  )
 
   it('refuses a plan that already sets either, and a folder whose path a reader of BROWSER would split', () => {
     const dir = makeDirectory()
@@ -226,7 +236,7 @@ describe('browsers among the processes', () => {
   )
 })
 
-describe('one launch’s guard', () => {
+describe.skipIf(process.platform === 'win32')('one POSIX launch’s guard', () => {
   it('writes the stand-in, lists before and after, and reports what it caught', async () => {
     const dir = makeDirectory()
     const listings = [

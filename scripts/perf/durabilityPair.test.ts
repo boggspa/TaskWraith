@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -61,7 +62,7 @@ describe('the off-against-on plan', () => {
     })
     expect(plan.workload).toBe('light_beside_large_live')
     expect(plan.switch).toBe(DURABILITY_SWITCH)
-    expect(plan.runner).toBe('/repo/scripts/perf/runT2Baseline.cjs')
+    expect(plan.runner).toBe(join('/repo', 'scripts', 'perf', 'runT2Baseline.cjs'))
     expect(plan.captures.map((capture) => `${capture.state}-${capture.repetition}`)).toEqual(ORDER)
     expect(plan.captures.map((capture) => capture.id)).toEqual(
       ORDER.map((name) => `bd-lanes-${name}`)
@@ -100,9 +101,9 @@ describe('the off-against-on plan', () => {
       '--launch',
       '--i-accept-isolated-launch',
       '--materialize-instance-userdata',
-      '--home=/repo/perf-homes/bd/bd-agents-off-0',
-      '--artifact-dir=/artifacts/bd-agents-off-0',
-      '--out-dir=/artifacts/bd-agents-off-0',
+      `--home=${join('/repo/perf-homes/bd', 'bd-agents-off-0')}`,
+      `--artifact-dir=${join('/artifacts', 'bd-agents-off-0')}`,
+      `--out-dir=${join('/artifacts', 'bd-agents-off-0')}`,
       '--instance-id=bd-agents-off-0',
       `--git-sha=${SHA}`,
       `--build-id=${SHA}`,

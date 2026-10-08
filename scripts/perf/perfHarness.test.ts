@@ -24,6 +24,8 @@ import { createWorkSpanRecorder } from '../../src/host-shared/perf/WorkSpanRecor
 /* eslint-disable @typescript-eslint/no-empty-function -- adapter fakes intentionally expose no-op lifecycle methods. */
 
 const require = createRequire(import.meta.url)
+// These execution seams use the POSIX browser stand-in and Unix process ownership.
+const test = it.skipIf(process.platform === 'win32')
 const {
   SCHEMA_VERSION,
   WORKLOADS,
@@ -1394,8 +1396,9 @@ describe('T2 runner (no Electron launch)', () => {
   })
 
   it('launches a packaged executable directly without the unpackaged entry argument', () => {
-    const packagedExecutablePath =
+    const packagedExecutablePath = path.resolve(
       '/virtual/repo/dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+    )
     const plan = buildElectronSpawnPlan({
       instanceId: 'studioPackaged01',
       repoRoot: '/virtual/repo',
@@ -2086,7 +2089,7 @@ describe('T2 runner (no Electron launch)', () => {
     ).toThrow(/npx wrapper/i)
   })
 
-  it('C: launch try/finally terminates owned child on staged attach failure', async () => {
+  test('C: launch try/finally terminates owned child on staged attach failure', async () => {
     const kills = []
     const repoRoot = path.resolve(__dirname, '..', '..')
     const homesRoot = path.join(repoRoot, 'perf-homes')
@@ -2405,7 +2408,7 @@ describe('T2 runner (no Electron launch)', () => {
     }
   )
 
-  it('E: runT2Baseline refuses attach before ownership check passes', async () => {
+  test('E: runT2Baseline refuses attach before ownership check passes', async () => {
     const kills = []
     let cdpCalled = false
     const stdioClosed: Promise<void>[] = []
@@ -2907,7 +2910,7 @@ describe('T2 runner (no Electron launch)', () => {
     ).rejects.toThrow(/protocol failed/i)
   })
 
-  it('F: inspector path mismatch prevents replay and still tears down exact child', async () => {
+  test('F: inspector path mismatch prevents replay and still tears down exact child', async () => {
     const kills = []
     let replayCalled = false
     const repoRoot = path.resolve(__dirname, '..', '..')
@@ -3230,7 +3233,7 @@ describe('T2 runner (no Electron launch)', () => {
     }
   })
 
-  it('G: runtime canonical mismatch prevents replay and still tears down exact child', async () => {
+  test('G: runtime canonical mismatch prevents replay and still tears down exact child', async () => {
     const kills = []
     let replayCalled = false
     const repoRoot = path.resolve(__dirname, '..', '..')
@@ -3452,7 +3455,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
     expect(tracker.snapshot().windowedRateEvtPerSec).toBe(0)
   })
 
-  it('disk headroom preflight prevents launch in T2 runner', async () => {
+  test('disk headroom preflight prevents launch in T2 runner', async () => {
     const repoRoot = path.resolve(__dirname, '..', '..')
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -5066,7 +5069,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(real.checkedFileCount).toBeGreaterThan(0)
   })
 
-  it('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {
+  test('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {
     const repoRoot = path.resolve(__dirname, '..', '..')
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -5290,7 +5293,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(captureChildStdio({}, { write: () => {} }).streams).toEqual([])
   })
 
-  it('P2c: a missing dev Node refuses the launch BEFORE spawning the wrong architecture', async () => {
+  test('P2c: a missing dev Node refuses the launch BEFORE spawning the wrong architecture', async () => {
     const repoRoot = path.resolve(__dirname, '..', '..')
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -5358,7 +5361,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     expect(spawned).toBe(true)
   })
 
-  it('P2d: a launch that cannot fold refuses at preflight, behind the lane refusal', async () => {
+  test('P2d: a launch that cannot fold refuses at preflight, behind the lane refusal', async () => {
     // `--cell` was checked for CANONICALITY when present and never for
     // PRESENCE, so a single-role launch without one spent its whole length,
     // recorded host evidence and reported `metrics.crossThread: null` — a
@@ -5658,7 +5661,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     ).rejects.toThrow(/not the light half of the generated fixture/)
   })
 
-  it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
+  test('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
     // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
     // `{ once: true }` abort listener meant a signal during fixture build or
     // preflight fired the handler while there was no child to kill, consumed

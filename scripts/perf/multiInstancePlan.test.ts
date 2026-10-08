@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -6,9 +7,9 @@ const { buildMultiInstancePlan } = require('./multiInstancePlan.cjs')
 
 function options() {
   return {
-    repoRoot: '/synthetic/repo',
-    home: '/synthetic/repo/perf-homes/shared',
-    realHomedir: '/real/home',
+    repoRoot: resolve('/synthetic/repo'),
+    home: resolve('/synthetic/repo/perf-homes/shared'),
+    realHomedir: resolve('/real/home'),
     platform: 'linux',
     instances: [
       {

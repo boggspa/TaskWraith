@@ -156,11 +156,13 @@ describe('the head of a thread log', () => {
     expect(await readThreadLogHead(directory, CHAT)).toMatchObject({ kind: 'head', revision: 1 })
   })
 
-  it('is unreadable, and does not wait, when a log’s name is a link or a pipe', async () => {
+  it('is unreadable when a log’s name is a link', async () => {
     writeFileSync(path.join(directory, 'elsewhere.jsonl'), line(4))
     symlinkSync(path.join(directory, 'elsewhere.jsonl'), files().active)
     expect(await readThreadLogHead(directory, CHAT)).toMatchObject({ kind: 'unreadable' })
-    rmSync(files().active)
+  })
+
+  it.skipIf(process.platform === 'win32')('is unreadable without waiting on a FIFO', async () => {
     const made = spawnSync('mkfifo', [files().active], { encoding: 'utf8' })
     expect(made.status, made.stderr).toBe(0)
     expect(await readThreadLogHead(directory, CHAT)).toMatchObject({

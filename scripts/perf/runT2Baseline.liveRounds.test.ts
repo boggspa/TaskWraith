@@ -112,7 +112,7 @@ describe('runT2Baseline --live-rounds refusals', () => {
 
 const LIVE_ARGS = ['--workload=light_beside_large_live', '--live-rounds']
 
-describe('runT2Baseline --live-rounds launch', () => {
+describe.skipIf(process.platform === 'win32')('POSIX live-rounds launch', () => {
   const CLEAN_STOP: DaemonStop = {
     exit: { code: 0, signal: null },
     forced: false,

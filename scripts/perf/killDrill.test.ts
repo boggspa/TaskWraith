@@ -1130,7 +1130,9 @@ describe('the drill', () => {
       home: ['Library']
     })
     expect(existsSync(path.join(w.temporary, 'twh2-501-aaaa'))).toBe(true)
-    expect(report.diskKib.drillDir).toEqual(expect.any(Number))
+    // du(1) is a POSIX diagnostic, not a prerequisite for the crash drill.
+    if (process.platform === 'win32') expect(report.diskKib.drillDir).toBeNull()
+    else expect(report.diskKib.drillDir).toEqual(expect.any(Number))
     expect(
       JSON.parse(readFileSync(path.join(w.drillDir, 'kill-drill-report.json'), 'utf8'))
     ).toEqual(JSON.parse(JSON.stringify(report)))

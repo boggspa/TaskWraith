@@ -570,45 +570,53 @@ describe('scripted Ollama daemon against the production adapter', () => {
 })
 
 describe('scripted Ollama daemon as a child process', () => {
-  it('publishes its address when ready and writes its turn record on SIGTERM', async () => {
-    const dir = makeDirectory()
-    const config = join(dir, 'config.json')
-    const ready = join(dir, 'ready.json')
-    const summaryFile = join(dir, 'summary.json')
-    writeFileSync(config, JSON.stringify({ seed: 3, shape: SHAPE }))
-    const child = spawn(
-      process.execPath,
-      [DAEMON_PATH, `--config=${config}`, `--ready-file=${ready}`, `--summary-file=${summaryFile}`],
-      { stdio: ['ignore', 'ignore', 'pipe'] }
-    )
-    let stderr = ''
-    child.stderr.on('data', (part) => {
-      stderr += String(part)
-    })
-    const exited = new Promise<number | null>((resolve) => child.on('exit', resolve))
-    try {
-      const deadline = Date.now() + 10_000
-      while (!existsSync(ready) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
-      const address = JSON.parse(readFileSync(ready, 'utf8'))
-      expect(address).toEqual({
-        pid: child.pid,
-        port: expect.any(Number),
-        baseUrl: `http://127.0.0.1:${address.port}`
+  it.skipIf(process.platform === 'win32')(
+    'publishes its address when ready and writes its turn record on SIGTERM',
+    async () => {
+      const dir = makeDirectory()
+      const config = join(dir, 'config.json')
+      const ready = join(dir, 'ready.json')
+      const summaryFile = join(dir, 'summary.json')
+      writeFileSync(config, JSON.stringify({ seed: 3, shape: SHAPE }))
+      const child = spawn(
+        process.execPath,
+        [
+          DAEMON_PATH,
+          `--config=${config}`,
+          `--ready-file=${ready}`,
+          `--summary-file=${summaryFile}`
+        ],
+        { stdio: ['ignore', 'ignore', 'pipe'] }
+      )
+      let stderr = ''
+      child.stderr.on('data', (part) => {
+        stderr += String(part)
       })
-      expect((await fetch(`${address.baseUrl}/api/tags`)).status).toBe(200)
-    } finally {
-      child.kill('SIGTERM')
+      const exited = new Promise<number | null>((resolve) => child.on('exit', resolve))
+      try {
+        const deadline = Date.now() + 10_000
+        while (!existsSync(ready) && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        }
+        const address = JSON.parse(readFileSync(ready, 'utf8'))
+        expect(address).toEqual({
+          pid: child.pid,
+          port: expect.any(Number),
+          baseUrl: `http://127.0.0.1:${address.port}`
+        })
+        expect((await fetch(`${address.baseUrl}/api/tags`)).status).toBe(200)
+      } finally {
+        child.kill('SIGTERM')
+      }
+      expect(await exited).toBe(0)
+      expect(stderr).toBe('')
+      expect(JSON.parse(readFileSync(summaryFile, 'utf8'))).toMatchObject({
+        schemaVersion: 1,
+        requestCounts: { 'GET /api/tags': 1 },
+        turns: []
+      })
     }
-    expect(await exited).toBe(0)
-    expect(stderr).toBe('')
-    expect(JSON.parse(readFileSync(summaryFile, 'utf8'))).toMatchObject({
-      schemaVersion: 1,
-      requestCounts: { 'GET /api/tags': 1 },
-      turns: []
-    })
-  })
+  )
 
   it('stops for its summary when its stdin closes, as when its runner dies', async () => {
     const dir = makeDirectory()
