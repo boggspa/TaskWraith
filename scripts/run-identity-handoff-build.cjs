@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { execFileSync, spawnSync } = require('node:child_process')
+const { resolvePlatformCommandInvocation } = require('./windows-cmd-invocation.cjs')
 const {
   DEFAULT_RELEASE_BASE_URL,
   SOURCE_VERSION,
@@ -108,15 +109,25 @@ async function runCli(
   argv = process.argv.slice(2),
   repoRoot = process.cwd(),
   run = (command, args, options) => spawnSync(command, args, options),
-  resolveCommit
+  resolveCommit,
+  runtime = {}
 ) {
   const prepared = await prepareHandoffBuild(parseArgs(argv), repoRoot, resolveCommit)
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const result = run(npmCommand, ['run', prepared.script], {
+  const platform = runtime.platform || process.platform
+  const env = { ...(runtime.env || process.env), ...prepared.env }
+  const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm'
+  const invocation = resolvePlatformCommandInvocation(
+    npmCommand,
+    ['run', prepared.script],
+    platform,
+    env
+  )
+  const result = run(invocation.command, invocation.arguments, {
     cwd: repoRoot,
-    env: { ...process.env, ...prepared.env },
+    env,
     encoding: 'utf8',
-    stdio: 'inherit'
+    stdio: 'inherit',
+    ...invocation.spawnOptions
   })
   if (result.error) throw result.error
   if (result.status !== 0) {

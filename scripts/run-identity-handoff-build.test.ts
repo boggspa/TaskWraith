@@ -41,7 +41,8 @@ const {
     argv: string[],
     repoRoot: string,
     run: (command: string, args: string[], options: Record<string, unknown>) => unknown,
-    resolveCommit?: (root: string) => string
+    resolveCommit?: (root: string) => string,
+    runtime?: { platform?: string; env?: Record<string, string> }
   ) => Promise<number>
 } = require('./run-identity-handoff-build.cjs')
 
@@ -152,7 +153,8 @@ describe('run-identity-handoff-build', () => {
         ['--script', 'build:linux:nopublish', '--payload', payload, '--artifact-dir', artifactDir],
         root,
         run,
-        () => 'a'.repeat(40)
+        () => 'a'.repeat(40),
+        { platform: 'linux', env: {} }
       )
     ).resolves.toBe(0)
     expect(run).toHaveBeenCalledWith(
@@ -219,5 +221,42 @@ describe('run-identity-handoff-build', () => {
         () => 'b'.repeat(40)
       )
     ).rejects.toThrow(/does not match current HEAD/)
+  })
+
+  it('runs the unsigned Windows handoff through fixed ComSpec quoting', async () => {
+    const { root, artifactDir, payload } = await fixture()
+    let invocation:
+      | { command: string; args: string[]; options: Record<string, unknown> }
+      | undefined
+    await expect(
+      runCli(
+        [
+          '--script',
+          'build:win:handoff-smoke',
+          '--payload',
+          payload,
+          '--artifact-dir',
+          artifactDir
+        ],
+        root,
+        (command, args, options) => {
+          invocation = { command, args, options }
+          return { status: 0 }
+        },
+        () => 'a'.repeat(40),
+        { platform: 'win32', env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' } }
+      )
+    ).resolves.toBe(0)
+    expect(invocation).toMatchObject({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'call "npm.cmd" "run" "build:win:handoff-smoke"'],
+      options: {
+        windowsVerbatimArguments: true,
+        env: {
+          TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD: payload,
+          TASKWRAITH_IDENTITY_HANDOFF_SOURCE_COMMIT: 'a'.repeat(40)
+        }
+      }
+    })
   })
 })
