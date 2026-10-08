@@ -98,12 +98,10 @@ describe('Codex composer shell glyphs', () => {
 
   it('shows the waveform only while the Codex draft has nothing to send', () => {
     const composer = read('./Composer.tsx')
-    expect(composer).toContain(
-      "appearance.composerStyle === 'codex' &&\n                                !hasSendablePromptContent ? ("
+    const branch = composer.search(
+      /appearance\.composerStyle === 'codex'\s*&&\s*!hasSendablePromptContent\s*\?\s*\(/
     )
-    const branch = composer.indexOf(
-      "appearance.composerStyle === 'codex' &&\n                                !hasSendablePromptContent"
-    )
+    expect(branch).toBeGreaterThan(-1)
     expect(composer.slice(branch, branch + 600)).toContain('<WaveformSymbolIcon />')
     expect(composer.slice(branch, branch + 900)).toContain('<ArrowUpSendIcon />')
   })

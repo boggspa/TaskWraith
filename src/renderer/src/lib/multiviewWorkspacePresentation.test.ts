@@ -213,7 +213,12 @@ describe('Multiview focused workspace presentation', () => {
     expect(source).toContain('const currentChatAttachedWindow =')
     expect(source).toContain('attachedWindow?.chatId === currentChat?.appChatId')
     expect(source).toContain('screenWatchUnavailableReason: nativeScreenWatchUnavailableReason')
-    expect(source).not.toContain('appDriveUnavailableReason')
+    const screenWatchReason = slice(
+      'const screenWatchUnavailableReason =',
+      'const [resumeAppWatchSnapshot, setResumeAppWatchSnapshot]'
+    )
+    expect(screenWatchReason).toContain(': nativeScreenWatchUnavailableReason')
+    expect(screenWatchReason).not.toContain('appDriveUnavailableReason')
 
     const attachmentStatus = slice(
       'useEffect(() => {\n    const chatId = currentChat?.appChatId',

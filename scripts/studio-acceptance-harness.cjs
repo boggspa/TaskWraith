@@ -174,7 +174,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-packaged-runtime-custody.cjs':
     '710f8253daa9883e6650f0e430699493db62721e631e9d157bae38e43d2c59ca',
   'scripts/perf/electronChildSession.cjs':
-    '20f18797a4266f1b09298bb7ab20fef433fd41211b58fa12d8d46412e25103cd',
+    'b0154ed26e68cbaae9a8c5eef1d4951f09f254f5d8987c05a08253865353708d',
   'scripts/perf/isolatedHome.cjs':
     'd8aad8578e7993fbe9bb06ce4c675eb27afd7c0ce6b60c30cd6ea65429852b6c',
   'scripts/perf/isolatedLaunch.cjs':

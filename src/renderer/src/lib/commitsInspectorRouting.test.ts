@@ -27,8 +27,8 @@ describe('Commits Inspector repository routing', () => {
     )
     expect(appSource).toContain("openInspectorTab('commits', targetPath)")
     expect(layoutSource).toContain("rightTab === 'commits'")
-    expect(layoutSource).toContain(
-      'commitsInspectorWorkspacePath ||\n                    currentGitPresentationPath ||'
+    expect(layoutSource).toMatch(
+      /commitsInspectorWorkspacePath\s*\|\|\s*currentGitPresentationPath\s*\|\|/
     )
     expect(layoutSource).toContain('onSelectInspectorTab={(id) => openInspectorTab(id)}')
     expect(layoutSource).toContain(

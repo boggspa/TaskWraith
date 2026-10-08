@@ -485,8 +485,6 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
   it('is plan-only by default and does not require a live adapter', async () => {
     const result = await runner.runReviewRouteAcceptance({
       instanceId: 'o34plan01',
-      artifactRoot:
-        '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34plan01',
       launch: false
     })
     expect(result).toMatchObject({
@@ -497,12 +495,9 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
   })
 
   it('requires all explicit launch interlocks', async () => {
-    const root =
-      '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34live01'
     await expect(
       runner.runReviewRouteAcceptance({
         instanceId: 'o34live01',
-        artifactRoot: root,
         launch: true,
         acceptLaunch: true,
         ownerConfirmsOrphansCleared: false,
@@ -512,8 +507,6 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
     expect(() =>
       runner.normalizeOptions({
         instanceId: 'o34live02',
-        artifactRoot:
-          '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34live02',
         launch: true,
         acceptLaunch: true,
         ownerConfirmsOrphansCleared: true,
@@ -527,8 +520,6 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
       runner.runReviewRouteAcceptance(
         {
           instanceId: 'o34live03',
-          artifactRoot:
-            '/Users/chrisizatt/Documents/AGBench-studio-continuation/.local-only/taskwraith-studio/acceptance/o34live03',
           launch: true,
           acceptLaunch: true,
           ownerConfirmsOrphansCleared: true,

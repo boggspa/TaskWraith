@@ -44,7 +44,7 @@ describe('composer changed-files Diff Studio interaction', () => {
     const secondaryWorkspaceRows = sourceSlice(
       composerSource,
       'const externalWorkspaceAboveRows =',
-      'return (\n                  <>'
+      '{aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}'
     )
 
     expect(secondaryWorkspaceRows).toContain("kind: 'diff-studio'")

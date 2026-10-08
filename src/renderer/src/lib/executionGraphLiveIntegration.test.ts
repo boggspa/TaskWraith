@@ -217,8 +217,10 @@ describe('live execution graph integration', () => {
     expect(focusedPane).toContain('if (executionMapProjection) {')
     expect(focusedPane).toContain('<ExecutionMapView')
     expect(focusedPane).toContain('onBack={handleBackFromExecutionMap}')
+    const transcriptContainer = focusedPane.search(/<div\s+ref=\{appTranscriptRef\}/)
+    expect(transcriptContainer).toBeGreaterThan(-1)
     expect(focusedPane.indexOf('<ExecutionMapView')).toBeLessThan(
-      focusedPane.indexOf('<div\n              ref={appTranscriptRef}')
+      transcriptContainer
     )
     expect(appSource).toContain('run.rootChatId !== currentComposerChatId')
     expect(executionMapSource).toContain('mapRef.current?.focus()')

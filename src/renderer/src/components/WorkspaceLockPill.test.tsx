@@ -200,14 +200,14 @@ describe('WorkspaceLockPillView', () => {
 
     expect(composer).toContain('<WorkspaceLockPill')
     expect(composer).toContain('composer-thread-timecode-satellites')
-    expect(composer).toContain(
-      'currentWorkspace ? (\n                    <div className="composer-thread-timecode-satellites">'
+    expect(composer).toMatch(
+      /currentWorkspace\s*\?\s*\(\s*<div className="composer-thread-timecode-satellites">/
     )
-    expect(composer).toContain(
-      '{showWorkspaceGitAboveRows && (\n                        <GitHubSatelliteRow'
+    expect(composer).toMatch(
+      /\{showWorkspaceGitAboveRows\s*&&\s*\(\s*<GitHubSatelliteRow/
     )
-    expect(composer).toContain(
-      'composerWorktreeSelection?.effectiveWorkspacePath ||\n                          composerGitActionBasePath ||\n                          currentWorkspace.path'
+    expect(composer).toMatch(
+      /composerWorktreeSelection\?\.effectiveWorkspacePath\s*\|\|\s*composerGitActionBasePath\s*\|\|\s*currentWorkspace\.path/
     )
     expect(worktreePopover).not.toContain('<WorkspaceLockPill')
     expect(lockPill).toContain('createPortal')

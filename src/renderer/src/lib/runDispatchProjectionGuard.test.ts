@@ -41,11 +41,18 @@ function executeRunSource(): string {
 }
 
 describe('run dispatch survives a record with no transcript', () => {
-  it('hydrates on a DROPPED transcript, not only on the summaryOnly flag', () => {
+  it('uses the shared hydration policy before dispatching a dropped transcript', () => {
     const body = executeRunSource()
-    expect(body).toContain('isChatSummaryRecord(runChat) ||')
-    expect(body).toContain('!Array.isArray(runChat.messages) ||')
-    expect(body).toContain('!Array.isArray(runChat.runs)')
+    expect(body).toContain('needsDispatchHistoryHydration(runChat, request.workflowMode)')
+    const hydration = body.indexOf('await refreshSingleChat(runChat.appChatId)')
+    expect(hydration).toBeGreaterThan(-1)
+    expect(hydration).toBeLessThan(body.indexOf('const chatToUpdate = '))
+    // The extracted policy is behavior-tested in dispatchHistoryHydration.test.ts,
+    // including the complete Ensemble shell that no longer needs transcript I/O.
+    const policy = readFileSync(new URL('./dispatchHistoryHydration.ts', import.meta.url), 'utf8')
+    expect(policy).toContain('isChatSummaryRecord(chat) ||')
+    expect(policy).toContain('!Array.isArray(chat.messages) ||')
+    expect(policy).toContain('!Array.isArray(chat.runs)')
   })
 
   it('normalises messages and runs at the single chatToUpdate construction point', () => {

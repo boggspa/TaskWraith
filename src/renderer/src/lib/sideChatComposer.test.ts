@@ -276,7 +276,7 @@ describe('sideChatComposer', () => {
     )
     expect(appSource).toContain('sideChat && !sideChatIsHydrating')
     expect(layoutSource).toContain('aria-label="Loading linked chat"')
-    expect(layoutSource).toContain('{!sideChatIsHydrating && <TranscriptPanel')
+    expect(layoutSource).toMatch(/\{!sideChatIsHydrating\s*&&\s*\(\s*<TranscriptPanel/)
   })
 
   it('anchors the side-chat type menu to the pane instead of the narrow trigger pill', () => {

@@ -71,17 +71,19 @@ describe('Claude composer shell glyphs', () => {
 
   it('only the Claude shell branches the stop and mic glyphs', () => {
     const composer = read('./Composer.tsx')
-    const stopBranch = composer.indexOf(
-      "appearance.composerStyle === 'claude' ? (\n                                  <StopCircleSymbolIcon />"
+    const stopBranch = composer.search(
+      /appearance\.composerStyle === 'claude'\s*\?\s*\(\s*<StopCircleSymbolIcon \/>/
     )
     expect(stopBranch).toBeGreaterThan(0)
     expect(composer.slice(stopBranch, stopBranch + 400)).toContain('<StopSymbolIcon />')
 
     const voice = read('./ComposerVoiceInput.tsx')
-    expect(voice).toContain(
-      "composerStyle === 'claude' ? (\n            <ClaudeMicrophoneSymbolIcon />"
+    expect(voice).toMatch(/<ComposerVoiceControls\s+composerStyle=\{composerStyle\}/)
+    const voiceControls = read('./ComposerVoiceControls.tsx')
+    expect(voiceControls).toMatch(
+      /composerStyle === 'claude'\s*\?\s*\(\s*<ClaudeMicrophoneSymbolIcon \/>/
     )
-    expect(voice).toContain('<MicrophoneSymbolIcon />')
+    expect(voiceControls).toContain('<MicrophoneSymbolIcon />')
   })
 
   it('sentence-cases the permission label for the Claude shell only', () => {
