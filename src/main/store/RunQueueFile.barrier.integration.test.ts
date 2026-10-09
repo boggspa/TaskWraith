@@ -24,12 +24,18 @@ import type { RunQueueJob } from './types'
 import {
   chatRecord,
   disposeHostOwnedStores,
-  importHostOwnedStore
+  importHostOwnedStore as openHostOwnedStore
 } from './hostOwnedErasure.testutil'
 import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
 
 const layers = vi.hoisted(() => ({
-  port: null as ThreadDurabilityPort | null,
+  fixture: { port: null as ThreadDurabilityPort | null },
+  get port(): ThreadDurabilityPort | null {
+    return this.fixture.port
+  },
+  set port(port: ThreadDurabilityPort | null) {
+    this.fixture.port = port
+  },
   gateClock: null as Pick<DurableMomentGateOptions, 'now' | 'setTimer' | 'clearTimer'> | null
 }))
 
@@ -51,29 +57,62 @@ vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
     ...actual,
     createThreadBarrierDurability: (
       options: import('./ThreadBarrierDurability').ThreadBarrierDurabilityOptions = {}
-    ) =>
-      actual.createThreadBarrierDurability({
+    ) => {
+      // A write from a disposed store must never consult a later test's port.
+      const fixture = layers.fixture
+      return actual.createThreadBarrierDurability({
         ...options,
         port: {
-          syncFile: (target, sync) => layers.port!.syncFile(target, sync),
-          syncDirectory: (target, sync) => layers.port!.syncDirectory(target, sync)
+          syncFile: (target, sync) => fixture.port!.syncFile(target, sync),
+          syncDirectory: (target, sync) => fixture.port!.syncDirectory(target, sync)
         }
       })
+    }
   }
 })
 
 const disks: CrashDisk[] = []
+const stores: Store[] = []
+const abandonSyncs: Array<() => void> = []
 
 afterEach(async () => {
-  while (disks.length > 0) disks.pop()!.dispose()
-  layers.port = null
-  layers.gateClock = null
-  vi.useRealTimers()
-  vi.unstubAllEnvs()
-  await disposeHostOwnedStores()
+  try {
+    const stopped = Promise.all(stores.map((store) => store.shutdownMainDurability()))
+    layers.port = {
+      syncFile: async () => 'missing',
+      syncDirectory: async () => 'missing'
+    }
+    while (abandonSyncs.length > 0) abandonSyncs.pop()!()
+    await stopped
+    // dispose() prevents publication but does not join file work already in
+    // flight. Join it before removing profiles or restoring the disk spies.
+    await vi.waitFor(
+      () => {
+        for (const store of stores) {
+          expect(store.getThreadBarrierDurabilityPerf().runQueue?.writing ?? false).toBe(false)
+        }
+      },
+      { timeout: 2_000, interval: 10 }
+    )
+  } finally {
+    stores.length = 0
+    while (disks.length > 0) disks.pop()!.dispose()
+    layers.fixture = { port: null }
+    layers.gateClock = null
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+    await disposeHostOwnedStores()
+  }
 })
 
-type Store = Awaited<ReturnType<typeof importHostOwnedStore>>['AppStore']
+type Store = Awaited<ReturnType<typeof openHostOwnedStore>>['AppStore']
+
+async function importHostOwnedStore(...args: Parameters<typeof openHostOwnedStore>) {
+  const fixture = await openHostOwnedStore(...args)
+  stores.push(fixture.AppStore)
+  return fixture
+}
 
 function job(
   name: string,
@@ -137,6 +176,7 @@ function holding(
     sync?: ThreadDurabilitySyncOptions
   ): Promise<ThreadDurabilitySyncOutcome> =>
     new Promise<ThreadDurabilitySyncOutcome>((resolve, reject) => {
+      abandonSyncs.push(() => resolve('missing'))
       calls.push({
         name: `${kind}:${named(target, profilePath)}`,
         level: sync?.urgent ? 'urgent' : sync?.background ? 'background' : 'normal',
@@ -160,15 +200,30 @@ function holding(
   }
 }
 
-async function answerSync(held: ReturnType<typeof holding>, index: number): Promise<void> {
+async function waitForSync(held: ReturnType<typeof holding>, index: number): Promise<void> {
   await vi.waitFor(() => expect(held.calls.length).toBeGreaterThan(index), {
     timeout: 2_000,
     interval: 5
   })
+}
+
+async function answerSync(held: ReturnType<typeof holding>, index: number): Promise<void> {
+  await waitForSync(held, index)
   await held.calls[index].answer()
 }
 
-/** Long enough for a write's file work on the thread pool and every promise after it. */
+async function waitForWrite(store: Store): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const queue = store.getThreadBarrierDurabilityPerf().runQueue
+      expect(queue).toMatchObject({ writing: false, unwrittenChanges: 0 })
+      expect(queue?.writes).toBeGreaterThan(0)
+    },
+    { timeout: 2_000, interval: 10 }
+  )
+}
+
+/** Allow pending work a turn for negative assertions; this does not prove a write finished. */
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 10; turn += 1) await new Promise((resolve) => setTimeout(resolve, 2))
 }
@@ -251,11 +306,7 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(queueSyncs(disk.issued)).toEqual([])
     expect(statuses(AppStore.getRunQueueJobs())).toEqual([['run-a', 'active']])
     expect(AppStore.getRunQueueJob('run-a')?.status).toBe('active')
-    await vi.waitFor(
-      () =>
-        expect(queueFile(profilePath)).toEqual(AppStore.getRunQueueJobs({ includeTerminal: true })),
-      { timeout: 2_000, interval: 10 }
-    )
+    await waitForWrite(AppStore)
 
     expect(queueSyncs(disk.issued)).toEqual([])
     expect(paid).toEqual(['file:run-queue.json.tmp:normal', 'directory:profile:normal'])
@@ -289,12 +340,12 @@ describe('the run queue through the store, under barrier durability', () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
-    await settle()
+    await waitForWrite(AppStore)
     const held = holding(disk, profilePath)
     layers.port = held.port
     AppStore.updateRunQueueJob('run-a', { status: 'starting' })
     const provider = await dispatcher()
-    await settle()
+    await waitForSync(held, 0)
     expect(held.calls.map((call) => call.level)).toEqual(['normal'])
     // Even a change made before dispatch must not extend the exact lease wait.
     AppStore.saveRunQueueJob(job('b'))
@@ -302,7 +353,7 @@ describe('the run queue through the store, under barrier durability', () => {
     await settle()
     expect(provider.start).not.toHaveBeenCalled()
     await answerSync(held, 0)
-    await settle()
+    await waitForSync(held, 1)
     expect(provider.start).not.toHaveBeenCalled()
     expect(held.calls[1].level).toBe('normal')
     await answerSync(held, 1)
@@ -320,7 +371,7 @@ describe('the run queue through the store, under barrier durability', () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
-    await settle()
+    await waitForWrite(AppStore)
     const held = holding(disk, profilePath)
     layers.port = held.port
     AppStore.updateRunQueueJob('run-a', { status: 'starting' })
@@ -332,13 +383,11 @@ describe('the run queue through the store, under barrier durability', () => {
     const provider = await dispatcher(admitted)
     const abort = new AbortController()
     const dispatched = provider.dispatch(abort.signal)
-    await settle()
+    await waitForSync(held, 0)
     expect(admitted).not.toHaveBeenCalled()
     await answerSync(held, 0)
-    await settle()
     await answerSync(held, 1)
-    await settle()
-    expect(admitted).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(admitted).toHaveBeenCalledOnce())
     expect(provider.start).not.toHaveBeenCalled()
 
     abort.abort()
@@ -362,13 +411,14 @@ describe('the run queue through the store, under barrier durability', () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
-    await settle()
-    layers.port = holding(disk, profilePath).port
+    await waitForWrite(AppStore)
+    const held = holding(disk, profilePath)
+    layers.port = held.port
     AppStore.updateRunQueueJob('run-a', { status: 'starting' })
     const provider = await dispatcher()
     const abort = new AbortController()
     const abandoned = provider.dispatch(abort.signal)
-    await settle()
+    await waitForSync(held, 0)
     expect(provider.start).not.toHaveBeenCalled()
     abort.abort()
     await AppStore.shutdownMainDurability()
@@ -445,12 +495,19 @@ describe('the run queue through the store, under barrier durability', () => {
   it('makes a handful of writes for a burst of 1,000 transitions, the last holding the latest list', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = listing(disk, profilePath, [])
+    // A loaded runner can spend longer opening the temp file than the old
+    // fixed settle pause. Keep that scheduling case in the burst regression.
+    const open = fs.promises.open
+    vi.spyOn(fs.promises, 'open').mockImplementationOnce(async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      return open(...args)
+    })
     AppStore.saveRunQueueJob(job('a'))
 
     for (let index = 0; index < 1_000; index += 1) {
       AppStore.updateRunQueueJob('run-a', { statusReason: `step ${index}` })
     }
-    await settle()
+    await waitForWrite(AppStore)
 
     const counted = AppStore.getThreadBarrierDurabilityPerf().runQueue!
     expect(counted.changes).toBe(1_001)
@@ -470,14 +527,14 @@ describe('the run queue through the store, under barrier durability', () => {
     const reply = Promise.resolve(afterRunQueueUserChange('queued')).then((value) => {
       replied = value
     })
-    await settle()
+    await waitForSync(held, 0)
     expect(held.calls.map((call) => `${call.name}:${call.level}`)).toEqual([
       'file:run-queue.json.tmp:urgent'
     ])
     expect(replied).toBeNull()
 
     await answerSync(held, 0)
-    await settle()
+    await waitForSync(held, 1)
     expect(held.calls.map((call) => `${call.name}:${call.level}`)).toEqual([
       'file:run-queue.json.tmp:urgent',
       'directory:profile:urgent'
@@ -523,7 +580,7 @@ describe('the run queue through the store, under barrier durability', () => {
     layers.port = held.port
     AppStore.saveRunQueueJob(job('a', 'chat-a'))
     AppStore.saveRunQueueJob(job('b', 'chat-b'))
-    await settle()
+    await waitForSync(held, 0)
     expect(held.calls.map((call) => call.name)).toEqual(['file:run-queue.json.tmp'])
     // The scope takes the queued run from the list, its write still running,
     // and writes nothing to find it.
@@ -539,7 +596,9 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(temps(profilePath)).toEqual([])
 
     await answerSync(held, 0)
-    await settle()
+    await vi.waitFor(() =>
+      expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.writing).toBe(false)
+    )
     expect(statuses(queueFile(profilePath))).toEqual([['run-b', 'queued']])
     expect(temps(profilePath)).toEqual([])
     expect(AppStore.getThreadBarrierDurabilityPerf().runQueue).toMatchObject({
@@ -610,25 +669,19 @@ describe('the run queue through the store, under barrier durability', () => {
     AppStore.updateRunQueueJob('run-a', { status: 'active' })
     AppStore.saveRunQueueJob(job('b'))
     // Establish a fully synced baseline before cutting off later writes.
-    await vi.waitFor(
-      () => {
-        const queue = AppStore.getThreadBarrierDurabilityPerf().runQueue
-        expect(queue).toMatchObject({ writing: false, unwrittenChanges: 0 })
-        expect(queue?.writes).toBeGreaterThan(0)
-      },
-      { timeout: 2_000, interval: 10 }
-    )
+    await waitForWrite(AppStore)
     expect(statuses(queueFile(profilePath))).toEqual([
       ['run-a', 'active'],
       ['run-b', 'queued']
     ])
 
     // Automatic transitions whose write never finishes: a run ends, another starts.
-    layers.port = holding(disk, profilePath).port
+    const held = holding(disk, profilePath)
+    layers.port = held.port
     AppStore.updateRunQueueJob('run-a', { status: 'completed' })
     AppStore.updateRunQueueJob('run-b', { status: 'starting' })
     AppStore.updateRunQueueJob('run-b', { status: 'active' })
-    await settle()
+    await waitForSync(held, 0)
     disk.powerLoss()
     expect(statuses(queueFile(profilePath))).toEqual([
       ['run-a', 'active'],
