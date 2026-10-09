@@ -4294,6 +4294,10 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       () => host.commands.some((command) => command.name === 'workspace.register'),
       'workspace registration command'
     )
+    await waitFor(
+      () => output.lastFrame.includes('Press Enter to choose an available provider.'),
+      'workspace registration ready'
+    )
     feed(input, '\r')
     await waitFor(() => output.lastFrame.includes('Provider One'), 'provider selection')
     feed(input, '\r')

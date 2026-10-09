@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-debug
+/dist-debut/
 out
 
 # A stray main-process bundle copied to the repo ROOT. Seen 2026-09-06: a
