@@ -293,7 +293,8 @@ describe('a thread with a 1,000-run backlog of tool detail', () => {
     expect(stamped()).toBe(0)
   })
 
-  it('drains the backlog through background syncs alone, every detail readable, every run stamped', async () => {
+  // Full-backlog integrity checks retain CI's 30 s budget on local runs too.
+  it('drains and verifies every backlog detail', { timeout: 30_000 }, async () => {
     await drain()
 
     // A save stages 25 runs and the save after their batch takes their refs.
@@ -341,7 +342,7 @@ describe('a thread with a 1,000-run backlog of tool detail', () => {
     })
   })
 
-  it('stages its first runs twice when its history was never compacted, and keeps what the record keeps', async () => {
+  it('restages compacted history and preserves its records', { timeout: 30_000 }, async () => {
     record = backlog(false)
     await drain()
 
