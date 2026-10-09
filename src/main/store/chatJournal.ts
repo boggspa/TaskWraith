@@ -52,6 +52,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import { isDeepStrictEqual } from 'node:util'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -732,21 +733,10 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
   }
 
   /**
-   * Deduplicate journal tail entries against the snapshot using `savedAt`
-   * as the stable identity key.
-   *
-   * WHY SAVEDAT (justified, not assumed):
-   *   ChatJournalEntry has no persistenceRevision field. savedAt is ISO-8601
-   *   with millisecond precision. In the crash-after-compact window the
-   *   duplicated entries are literally the same serialization — identical
-   *   savedAt — so dedup-by-timestamp is exact for the attack vector it
-   *   defends against. At the journal's max append rate (coalesced flushes
-   *   ~3.3 saves per 10 s) a genuine same-ms collision is ~10⁻⁶ per save;
-   *   when one happens the consequence is a single dropped journal entry
-   *   whose data still exists in the snapshot — safe, not corrupting.
-   *
-   *   This is NOT a general-purpose merge — it only closes the compact()
-   *   crash window identified as G3 FAIL by MistralReview + K3Review.
+   * Remove only entries already represented in the snapshot. A timestamp is
+   * a lookup hint, not an entry identity: distinct saves can share the same
+   * millisecond. Compare their full JSON records before dropping a tail row.
+   * The usual distinct-timestamp path needs no record comparison.
    */
   const dedupeTailAgainstSnapshot = (
     snapshot: unknown,
@@ -755,7 +745,7 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
     if (tail.length === 0) return tail
     if (snapshot === null || !Array.isArray(snapshot) || snapshot.length === 0) return tail
 
-    const snapTimestamps = new Set<string>()
+    const snapRecords = new Map<string, unknown[]>()
     for (const entry of snapshot) {
       if (
         entry !== null &&
@@ -763,13 +753,19 @@ export function createChatJournal(baseDir: string, options: ChatJournalOptions =
         'savedAt' in entry &&
         typeof (entry as ChatJournalEntry).savedAt === 'string'
       ) {
-        snapTimestamps.add((entry as ChatJournalEntry).savedAt)
+        const saved = entry as ChatJournalEntry
+        const records = snapRecords.get(saved.savedAt)
+        if (records) records.push(saved.record)
+        else snapRecords.set(saved.savedAt, [saved.record])
       }
     }
 
-    if (snapTimestamps.size === 0) return tail
+    if (snapRecords.size === 0) return tail
 
-    return tail.filter((entry) => !snapTimestamps.has(entry.savedAt))
+    return tail.filter(
+      (entry) =>
+        !snapRecords.get(entry.savedAt)?.some((record) => isDeepStrictEqual(record, entry.record))
+    )
   }
 
   const read = (chatId: string): { snapshot: unknown | null; tail: ChatJournalEntry[] } => {

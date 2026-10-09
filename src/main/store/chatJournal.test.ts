@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -49,6 +49,7 @@ describe('ChatJournal', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     fs.rmSync(baseDir, { recursive: true, force: true })
   })
 
@@ -223,6 +224,8 @@ describe('ChatJournal', () => {
   })
 
   it('read() returns snapshot + any un-compacted journal tail', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(now)
     journal.append('chat-partial', chatRecord('chat-partial', 'pre-snapshot'))
     journal.compact('chat-partial')
     const postRecord = chatRecord('chat-partial', 'post-snapshot')
@@ -466,6 +469,30 @@ describe('ChatJournal', () => {
   // -----------------------------------------------------------------------
   // G3 — Compact-window deduplication (MistralReview + K3Review FAIL)
   // -----------------------------------------------------------------------
+
+  it.each([true, false])(
+    'G3: retains a different same-millisecond record during recovery (writable=%s)',
+    (writable) => {
+      const savedAt = new Date(now).toISOString()
+      const prior = { savedAt, record: chatRecord('same-ms', 'before', now) }
+      const later = { savedAt, record: chatRecord('same-ms', 'after', now) }
+      const snapshotFile = path.join(baseDir, 'same-ms.snapshot.json')
+      const journalFile = path.join(baseDir, 'same-ms.jsonl')
+      fs.writeFileSync(snapshotFile, JSON.stringify([prior]))
+      const originalTail = `${JSON.stringify(prior)}\n${JSON.stringify(later)}\n`
+      fs.writeFileSync(journalFile, originalTail)
+
+      const recovered = createChatJournal(baseDir, { canWrite: () => writable })
+      expect(recovered.read('same-ms')).toEqual({ snapshot: [prior], tail: [later] })
+      expect(journalContent(journalFile)).toBe(
+        writable ? `${JSON.stringify(later)}\n` : originalTail
+      )
+      if (writable) {
+        expect(recovered.compact('same-ms')).toBe(true)
+        expect(recovered.read('same-ms')).toEqual({ snapshot: [later], tail: [] })
+      }
+    }
+  )
 
   /**
    * Simulate the exact crash window:
