@@ -500,9 +500,12 @@ export function HostStatusRow({
       {/* Wave 5f. Same status-row markup again. The value
           carries the word "awaiting" because that is the only subset Host
           holds — the decided history lives in AppStore and is not projected. */}
-      <div className="sidebar-footer-device-row">
+      <div
+        className="sidebar-footer-device-row"
+        title="Only approvals reported by the Host. Pending desktop and provider requests are listed below and may not appear in this count."
+      >
         <span className="sidebar-footer-led" aria-hidden />
-        <span className="sidebar-footer-device-name">Host approvals</span>
+        <span className="sidebar-footer-device-name">Host-reported approvals</span>
         <span className="sidebar-footer-device-status">{approvals.label}</span>
       </div>
     </>

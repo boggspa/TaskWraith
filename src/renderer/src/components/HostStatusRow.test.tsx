@@ -757,7 +757,7 @@ describe('HostStatusRow · Desktop paints awaiting approvals from Host', () => {
     await store.refresh()
 
     const markup = renderRow(store)
-    expect(markup).toContain('Host approvals')
+    expect(markup).toContain('Host-reported approvals')
     expect(markup).toContain('1 awaiting')
   })
 })
