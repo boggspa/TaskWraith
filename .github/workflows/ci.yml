@@ -696,7 +696,43 @@ jobs:
         with:
           node-version: '22.23.3'
           cache: npm
+      # Match the validated local packaging toolchain. npm 10.9.9 emits
+      # duplicate CycloneDX graph refs for repeated installed packages.
+      - name: Pin the packaging SBOM generator
+        run: npm install --global npm@11.12.1
+      - name: Resolve the pinned Windows npm launcher
+        shell: pwsh
+        run: |
+          $nodeExe = (Get-Command node.exe).Source
+          $globalModules = (& npm root --global).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve global npm modules.' }
+          $npmCli = Join-Path $globalModules 'npm/bin/npm-cli.js'
+          if (!(Test-Path -LiteralPath $npmCli)) { throw 'Pinned npm CLI is missing.' }
+          if (($nodeExe + $npmCli) -match '[^\x20-\x7e]|["%!^&|<>]') { throw 'Unsupported characters in the pinned npm tool paths.' }
+          $npmVersion = (& $nodeExe $npmCli --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $npmVersion -ne '11.12.1') { throw 'Unexpected packaging npm version.' }
+          $shimDirectory = Join-Path $env:RUNNER_TEMP 'taskwraith-packaging-npm'
+          New-Item -ItemType Directory -Force -Path $shimDirectory | Out-Null
+          $wrapper = "@echo off`r`n`"$nodeExe`" `"$npmCli`" %*`r`nexit /b %errorlevel%`r`n"
+          [System.IO.File]::WriteAllText((Join-Path $shimDirectory 'npm.cmd'), $wrapper, [System.Text.Encoding]::ASCII)
+          $shimDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - run: npm --version
       - run: npm ci
+      - name: Verify nested Windows npm invocation
+        shell: pwsh
+        run: |
+          $env:Path = "$(Join-Path $PWD 'node_modules/.bin');$env:Path"
+          $probe = @'
+          const { spawnSync } = require('node:child_process');
+          const { resolvePlatformCommandInvocation } = require('./scripts/windows-cmd-invocation.cjs');
+          const invocation = resolvePlatformCommandInvocation('npm.cmd', ['--version']);
+          const result = spawnSync(invocation.command, invocation.arguments, { ...invocation.spawnOptions, encoding: 'utf8' });
+          if (result.error) throw result.error;
+          if (result.status !== 0 || result.stdout.trim() !== '11.12.1') throw new Error('Nested npm launcher failed: ' + result.stdout + result.stderr);
+          console.log('Verified nested npm launcher: 11.12.1');
+          '@
+          node -e $probe
+          if ($LASTEXITCODE -ne 0) { throw 'Nested npm invocation failed.' }
       - run: npm run security:deps
       # Keep packaging sourced entirely from the selected ref. For recovery of
       # an older exact release SHA, overlay only the current CI smoke harness
@@ -839,6 +875,11 @@ jobs:
         with:
           node-version: '22.23.3'
           cache: npm
+      # Keep metadata generation identical to the verified macOS toolchain;
+      # the source checkout remains the explicit unsigned_build_ref.
+      - name: Pin the packaging SBOM generator
+        run: npm install --global npm@11.12.1
+      - run: npm --version
       - run: npm ci
       - run: npm run security:deps
       # AppImage + deb only — snap needs snapcraft (absent on the default
