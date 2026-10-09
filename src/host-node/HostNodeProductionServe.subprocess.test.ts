@@ -357,7 +357,9 @@ describe('production Host CLI subprocess', () => {
     expect(existsSync(taskWraithHostSocketPath(profile))).toBe(false)
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
     expect(existsSync(join(profile, 'host-runtime', 'host-install-identity.json'))).toBe(true)
-  }, 30_000)
+    // Cold compilation, worker startup, protocol checks and graceful cleanup
+    // share this budget, matching the neighbouring end-to-end subprocess cases.
+  }, 90_000)
 })
 
 /**

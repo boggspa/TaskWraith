@@ -13,6 +13,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { RunQueueJobInput } from '../RunQueue'
+import type { DurableMomentGateOptions } from '../run/DurableMomentGate'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type {
   ThreadDurabilityPort,
@@ -27,7 +28,22 @@ import {
 } from './hostOwnedErasure.testutil'
 import { watchCrashDisk, type CrashDisk } from './unsyncedWriteCrashDisk.testutil'
 
-const layers = vi.hoisted(() => ({ port: null as ThreadDurabilityPort | null }))
+const layers = vi.hoisted(() => ({
+  port: null as ThreadDurabilityPort | null,
+  gateClock: null as Pick<DurableMomentGateOptions, 'now' | 'setTimer' | 'clearTimer'> | null
+}))
+
+vi.mock('../run/DurableMomentGate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../run/DurableMomentGate')>()
+  return {
+    ...actual,
+    DurableMomentGate: class extends actual.DurableMomentGate {
+      constructor(options: DurableMomentGateOptions) {
+        super({ ...options, ...layers.gateClock })
+      }
+    }
+  }
+})
 
 vi.mock('./ThreadBarrierDurability', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./ThreadBarrierDurability')>()
@@ -51,6 +67,7 @@ const disks: CrashDisk[] = []
 afterEach(async () => {
   while (disks.length > 0) disks.pop()!.dispose()
   layers.port = null
+  layers.gateClock = null
   vi.useRealTimers()
   vi.unstubAllEnvs()
   await disposeHostOwnedStores()
@@ -255,6 +272,20 @@ describe('the run queue through the store, under barrier durability', () => {
   }, 30_000)
 
   it('starts a provider only after the lease generation is written, at normal class', async () => {
+    // The test holds real filesystem syncs by hand. Scheduling delays must
+    // not spend the gate's clock before those deliberately held syncs return.
+    const gateTimers: Array<{ ms: number; cleared: boolean }> = []
+    layers.gateClock = {
+      now: () => 0,
+      setTimer: (_callback, ms) => {
+        const timer = { ms, cleared: false }
+        gateTimers.push(timer)
+        return timer
+      },
+      clearTimer: (handle) => {
+        ;(handle as { cleared: boolean }).cleared = true
+      }
+    }
     const { AppStore, profilePath, disk } = await barrierStore()
     layers.port = disk.port
     AppStore.saveRunQueueJob(job('a'))
@@ -282,6 +313,7 @@ describe('the run queue through the store, under barrier durability', () => {
       overdue: 0
     })
     expect(AppStore.getThreadBarrierDurabilityPerf().runQueue?.unwrittenChanges).toBe(1)
+    expect(gateTimers).toEqual([{ ms: 1_000, cleared: true }])
   })
 
   test('after a power cut after the lease write and before start, recovers failed without redispatch', async () => {

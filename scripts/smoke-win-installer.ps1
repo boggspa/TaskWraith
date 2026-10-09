@@ -120,6 +120,10 @@ try {
   Assert-ValidSignature $appExe "installed app"
   Assert-ValidSignature $uninstaller "uninstaller"
 
+  $installedProductVersion = (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+  & node (Join-Path $PSScriptRoot 'verify-installed-windows.cjs') $InstallDir $resolvedInstaller $installedProductVersion
+  if ($LASTEXITCODE -ne 0) { throw "Installed application identity verification failed." }
+
   $app = Start-Process -FilePath $appExe -PassThru
   Start-Sleep -Seconds 4
   if ($app.HasExited) {
