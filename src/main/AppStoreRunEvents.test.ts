@@ -263,7 +263,7 @@ describe('AppStore run events', () => {
     ev('rNew', 2002, 'tool') // a kind the query does not ask for must not count toward the bound
     ev('rNew', 2003)
 
-    const readFile = vi.spyOn(fs.promises, 'readFile')
+    const readStream = vi.spyOn(fs, 'createReadStream')
     try {
       const bounded = await AppStore.getRunEventsAsync({
         chatId: 'big',
@@ -276,11 +276,11 @@ describe('AppStore run events', () => {
         )
       )
       expect(bounded.map((e) => e.runId)).toEqual(['rNew', 'rNew', 'rNew'])
-      const fullyRead = readFile.mock.calls.map((call) => String(call[0]))
+      const fullyRead = readStream.mock.calls.map((call) => String(call[0]))
       expect(fullyRead.some((p) => p.includes('rNew'))).toBe(true)
       expect(fullyRead.some((p) => p.includes('rOld'))).toBe(false)
     } finally {
-      readFile.mockRestore()
+      readStream.mockRestore()
     }
 
     // The interleaved-sibling case: rOld's file carries the NEWER events, so its

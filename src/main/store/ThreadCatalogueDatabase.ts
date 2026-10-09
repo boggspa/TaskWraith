@@ -9,7 +9,9 @@ import { copyThreadCatalogueProjection } from './ThreadCatalogueProjection'
 import { THREAD_CATALOGUE_MAX_HEAD_BYTES } from './ThreadCatalogue'
 import type { ThreadCatalogueEpoch, ThreadCatalogueProjection } from './ThreadCatalogue'
 
-export const THREAD_INDEX_SCHEMA_VERSION = 5
+// Version 6 indexes stranded Ensemble lane/transition owners even after their
+// ChatRun rows are terminal. Old derived generations must be rebuilt to find them.
+export const THREAD_INDEX_SCHEMA_VERSION = 6
 export const THREAD_INDEX_CHUNK_BYTES = 48 * 1024
 export const THREAD_INDEX_MAX_REPLY_BYTES = 2 * 1024 * 1024
 export type {

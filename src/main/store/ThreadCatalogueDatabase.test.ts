@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import { encodeThreadJsonChunks } from './ThreadCatalogueJson'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,6 +7,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ThreadCatalogueDatabase,
+  openThreadCatalogueDatabase,
+  THREAD_INDEX_SCHEMA_VERSION,
   THREAD_INDEX_CHUNK_BYTES,
   THREAD_INDEX_MAX_REPLY_BYTES,
   type ThreadIndexedGeneration,
@@ -140,6 +143,26 @@ describe('worker-owned thread query index', () => {
   afterEach(() => {
     database.close()
     fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('rebuilds old recovery projections without modifying canonical history', () => {
+    const generation = begin()
+    publish(generation)
+    const oldId = database.databaseId
+    database.close()
+    const stale = new DatabaseSync(join(directory, 'query.sqlite'))
+    stale.prepare('UPDATE index_format SET version = ?').run(THREAD_INDEX_SCHEMA_VERSION - 1)
+    stale.close()
+    const canonical = join(directory, 'canonical-history.json')
+    fs.writeFileSync(canonical, '{"keep":"transcript"}')
+    database = openThreadCatalogueDatabase(directory, {
+      isPublicationCurrent: () => true,
+      isInventoryCurrent: () => true,
+      hasUnresolvedPublications: () => false
+    })
+    expect(database.databaseId).not.toBe(oldId)
+    expect(database.list().entries).toEqual([])
+    expect(fs.readFileSync(canonical, 'utf8')).toBe('{"keep":"transcript"}')
   })
 
   it('keeps partial and committed-but-unpublished imports invisible', () => {

@@ -29,6 +29,8 @@ export interface OpenRunCandidateSource {
   vouchesForSourceBytes: (chatId: string) => boolean
   /** The vouched row's run summaries, or null when none can be read. */
   readRunsSummary: (chatId: string) => readonly ChatListRunSummary[] | null
+  /** Lean index round evidence. An unreadable value cannot prove quiescence. */
+  hasUnsettledRound?: (chatId: string) => boolean
 }
 
 /**
@@ -55,6 +57,10 @@ export function selectOpenRunCandidateChatIds(
     if (typeof chatId !== 'string' || chatId === '') continue
     let summaries: readonly ChatListRunSummary[] | null
     try {
+      if (source.hasUnsettledRound?.(chatId)) {
+        candidates.push(chatId)
+        continue
+      }
       summaries = source.vouchesForSourceBytes(chatId) ? source.readRunsSummary(chatId) : null
     } catch {
       // An unreadable row is not evidence the chat is settled.

@@ -1,4 +1,5 @@
 import { chatRunIsReconcilable } from '../ChatRunReconciler'
+import { ensembleRoundRecoveryRunIds } from '../EnsembleRoundRunRecovery'
 import { nextBlackboardExpiryAt } from '../blackboard/Blackboard'
 import { bindSubThreadJoinPolicyToRun } from '../SubThreadJoinPolicy'
 import type { ChatRecord, SubThreadJoinPolicy } from './types'
@@ -12,8 +13,9 @@ export interface ThreadCatalogueRecoveryRecord {
 /** Operational records only; no transcript is needed to discover or inspect recovery work. */
 export function collectThreadCatalogueRecovery(chat: ChatRecord): ThreadCatalogueRecoveryRecord[] {
   const records: ThreadCatalogueRecoveryRecord[] = []
+  const roundRuns = ensembleRoundRecoveryRunIds(chat)
   for (const run of chat.runs ?? []) {
-    if (!run?.runId || !chatRunIsReconcilable(run)) continue
+    if (!run?.runId || (!chatRunIsReconcilable(run) && !roundRuns.has(run.runId))) continue
     records.push({
       id: `run:${run.runId}`,
       kind: 'run',

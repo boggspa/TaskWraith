@@ -106,6 +106,11 @@ export function prepareThreadCatalogueMutation(
     settlements = result.settlements
     terminalRecoveries = result.terminalRecoveries
     const changed = new Set([...settlements, ...terminalRecoveries].map((run) => run.runId))
+    // Even if the ChatRuns were already terminal, adopting their round repair
+    // must recheck every requested run's live owner at the commit boundary.
+    if (next.ensemble !== original.ensemble) {
+      for (const run of operation.runs) changed.add(run.runId)
+    }
     checkedRuns = operation.runs.filter((run) => changed.has(run.runId))
   } else if (operation.kind === 'repair-title') {
     at = Date.parse(operation.at)

@@ -57,6 +57,89 @@ describe('real isolated history import', () => {
     fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   )
 
+  it('indexes recovery from the same durable view as its count after an Ensemble crash', async () => {
+    const profilePath = join(directory, 'crashed-ensemble')
+    fs.mkdirSync(join(profilePath, 'chats'), { recursive: true })
+    fs.writeFileSync(
+      join(profilePath, 'chats', 'crashed.json'),
+      JSON.stringify({
+        appChatId: 'crashed',
+        title: 'Crashed review',
+        provider: 'codex',
+        scope: 'workspace',
+        chatKind: 'ensemble',
+        createdAt: 1,
+        updatedAt: 2,
+        persistenceRevision: 1,
+        messages: [],
+        runs: [
+          {
+            runId: 'reviewer',
+            provider: 'codex',
+            status: 'failed',
+            startedAt: '2026-10-09T12:00:00.000Z',
+            endedAt: '2026-10-09T12:59:00.000Z'
+          },
+          {
+            runId: 'serial',
+            provider: 'pi',
+            status: 'failed',
+            startedAt: '2026-10-09T12:00:00.000Z',
+            endedAt: '2026-10-09T12:30:00.000Z'
+          }
+        ],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round',
+            status: 'running',
+            prompt: 'Review',
+            startedAt: '2026-10-09T12:00:00.000Z',
+            participants: [
+              {
+                participantId: 'reviewer',
+                provider: 'codex',
+                order: 0,
+                status: 'running',
+                runId: 'reviewer'
+              },
+              {
+                participantId: 'serial',
+                provider: 'pi',
+                order: 1,
+                status: 'failed',
+                runId: 'serial'
+              }
+            ],
+            turnTransition: {
+              phase: 'settling-provider',
+              runtimeInstanceId: 'dead-main',
+              sourceParticipantId: 'serial',
+              sourceRunId: 'serial',
+              startedAt: '2026-10-09T12:30:00.000Z'
+            }
+          }
+        }
+      })
+    )
+    const service = new ThreadCatalogueWorkerService({
+      reader: { profilePath, runtimeInstanceId: 'new-main', segmented: false },
+      decoderPath,
+      writer: 'desktop',
+      writerId: 'new-main',
+      writerLifecycle: () => 'active'
+    })
+    try {
+      const indexed = await service.ensureIndexed('crashed', 'metadata')
+      expect(indexed?.projection.recovery.unsettledRuns).toBe(2)
+      expect(service.database.readObjects(indexed!, 'recovery')).toHaveLength(2)
+    } finally {
+      await service.dispose()
+    }
+  })
+
   it('imports a cold profile, pages a large thread, and reuses durable metadata after restart', async () => {
     const profilePath = join(directory, 'profile')
     fs.mkdirSync(join(profilePath, 'chats'), { recursive: true })

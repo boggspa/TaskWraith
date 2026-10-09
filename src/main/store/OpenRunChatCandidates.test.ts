@@ -24,6 +24,31 @@ function source(overrides: Partial<OpenRunCandidateSource> = {}): OpenRunCandida
 }
 
 describe('selectOpenRunCandidateChatIds', () => {
+  it('keeps a live-looking Ensemble round even when all run summaries are terminal', () => {
+    expect(
+      selectOpenRunCandidateChatIds(
+        ['a'],
+        source({
+          hasUnsettledRound: () => true,
+          readRunsSummary: () => [summary('r1', '2026-09-07T01:00:00.000Z')]
+        })
+      )
+    ).toEqual(['a'])
+  })
+
+  it('does not treat an unreadable round projection as evidence of quiescence', () => {
+    expect(
+      selectOpenRunCandidateChatIds(
+        ['a'],
+        source({
+          hasUnsettledRound: () => {
+            throw new Error('unreadable')
+          }
+        })
+      )
+    ).toEqual(['a'])
+  })
+
   it('skips a vouched chat whose summarised runs have all ended', () => {
     const candidates = selectOpenRunCandidateChatIds(
       ['a'],

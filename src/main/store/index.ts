@@ -18,7 +18,6 @@ import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
 import { preserveContinuityRunReceipts } from '../../shared/threadContinuity'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
@@ -323,6 +322,7 @@ import {
   parseRunEventLine,
   safeRunEventFileName
 } from '../RunEventStore'
+import { queryRunEventFilesAsync } from './runEventStreamingQuery'
 import {
   getRunEventReplayAsync as getRunEventReplayCachedAsync,
   getRunEventReplaySync as getRunEventReplayCachedSync
@@ -5054,150 +5054,12 @@ async function readRunEventFileAsync(
   }
 }
 
-/** Async twin of `readRunEventFile` over many paths — sequential `await` per file
- * yields the event loop between files. */
-/** Bytes read from a run-event file's tail to learn its newest timestamp. */
-const RUN_EVENT_TAIL_PROBE_BYTES = 64 * 1024
-
-/**
- * The newest event timestamp (ms) in a run-event file, from its tail only, or
- * `null` when it cannot be known — the caller then reads the file in full.
- *
- * Events are appended in sequence order by one process clock, so the newest
- * record is at the end; the max over the tail's complete lines is taken rather
- * than the last line alone so a single odd stamp cannot under-report. The
- * first line of a mid-file chunk may be cut, which `parseRunEventLine` rejects.
- */
-async function newestRunEventTimestampMsAsync(filePath: string): Promise<number | null> {
-  let handle: fs.promises.FileHandle | undefined
+/** The run-event files of a whole-dir query, or [] when the dir cannot be listed. */
+async function listRunEventFilePathsAsync(): Promise<string[]> {
   try {
-    handle = await fs.promises.open(filePath, 'r')
-    const { size } = await handle.stat()
-    if (size <= 0) return null
-    const length = Math.min(size, RUN_EVENT_TAIL_PROBE_BYTES)
-    const buffer = Buffer.alloc(length)
-    await handle.read(buffer, 0, length, size - length)
-    let newest: number | null = null
-    for (const line of buffer.toString('utf-8').split(/\r?\n/)) {
-      const event = parseRunEventLine(line)
-      if (!event) continue
-      const ms = new Date(event.timestamp).getTime()
-      if (!Number.isFinite(ms)) continue
-      if (newest === null || ms > newest) newest = ms
-    }
-    return newest
-  } catch {
-    return null
-  } finally {
-    await handle?.close().catch(() => {})
-  }
-}
-
-/**
- * Newest-N bound for a scoped read. `accepts` is the exact filter the caller
- * will apply downstream, so the count of kept events is never overstated.
- */
-interface RunEventNewestBound {
-  limit: number
-  accepts: (event: RunEventRecord) => boolean
-}
-
-/**
- * Reads the files in the order given — newest run first for a `{chatId}`
- * query. With a bound, a file is skipped once the caller already holds
- * `limit` accepted events AND the file's newest event is strictly older than
- * the oldest of those: nothing in it can rank in the newest `limit`, however
- * the runs interleave. A file whose tail cannot be read is read in full.
- *
- * Measured on a real profile 2026-10-07: the largest thread's 120 run-event
- * files hold 109MB / 71k events, parsed synchronously on main (~1.5s) to hand
- * the renderer 1,000 raw-log lines. Equal timestamps are never skipped.
- */
-async function readRunEventFilesAsync(
-  paths: string[],
-  kinds?: RunEventKind[],
-  bound?: RunEventNewestBound
-): Promise<RunEventRecord[]> {
-  const all: RunEventRecord[] = []
-  const acceptedMs: number[] = []
-  let oldestKeptMs: number | null = null
-  for (const filePath of paths) {
-    if (bound && oldestKeptMs !== null) {
-      const newest = await newestRunEventTimestampMsAsync(filePath)
-      if (newest !== null && newest < oldestKeptMs) continue
-    }
-    for (const event of await readRunEventFileAsync(filePath, kinds)) {
-      all.push(event)
-      if (bound && bound.accepts(event)) {
-        const ms = new Date(event.timestamp).getTime()
-        if (Number.isFinite(ms)) acceptedMs.push(ms)
-      }
-    }
-    if (bound && acceptedMs.length >= bound.limit) {
-      acceptedMs.sort((a, b) => b - a)
-      acceptedMs.length = bound.limit
-      oldestKeptMs = acceptedMs[bound.limit - 1]
-    }
-  }
-  return all
-}
-
-/**
- * The newest-N bound for a filter, or `undefined` when the filter carries any
- * predicate the bound does not model (then every file is read, as before).
- */
-function runEventNewestBoundForFilter(filter: RunEventFilter): RunEventNewestBound | undefined {
-  if (!filter.chatId || !filter.limit || !(filter.limit > 0)) return undefined
-  if (filter.runId || filter.workspaceId || filter.provider || filter.approvalId) return undefined
-  if (filter.phases?.length || Number.isFinite(filter.fromSequence)) return undefined
-  const limit = Math.floor(filter.limit)
-  if (limit < 1) return undefined
-  const kindSet = filter.kinds?.length ? new Set<RunEventKind>(filter.kinds) : null
-  const chatId = filter.chatId
-  return {
-    limit,
-    accepts: (event) => event.chatId === chatId && (!kindSet || kindSet.has(event.kind))
-  }
-}
-
-/** Async twin of `readAllRunEventFiles`.
- *
- * Reads line-by-line rather than `readFile` + `split`: run-event files are
- * unbounded (measured 2026-07-19: one 250MB file in a 5.9GB dir), and
- * materializing one as a string plus an array of every line is a single
- * uninterruptible allocation the per-file `await` cannot break up. Streaming
- * keeps the working set to one line and lets the loop breathe mid-file.
- *
- * `kinds` is pushed down to skip `JSON.parse` on non-matching lines — see
- * {@link runEventLinePrefilter}. Without it this sweep parses every event in
- * the dir just to throw nearly all of them away. */
-async function readAllRunEventFilesAsync(kinds?: RunEventKind[]): Promise<RunEventRecord[]> {
-  const accepts = runEventLinePrefilter(kinds)
-  try {
-    const files = (await fs.promises.readdir(runEventsDir)).filter((file) =>
-      file.endsWith('.jsonl')
-    )
-    const all: RunEventRecord[] = []
-    for (const file of files) {
-      const filePath = path.join(runEventsDir, file)
-      const input = fs.createReadStream(filePath, { encoding: 'utf-8' })
-      const lines = createInterface({ input, crlfDelay: Infinity })
-      try {
-        for await (const line of lines) {
-          if (accepts && !accepts(line)) continue
-          const event = parseRunEventLine(line)
-          if (event) all.push(event)
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-          console.error(`Failed to read ${filePath}`, e)
-        }
-      } finally {
-        lines.close()
-        input.destroy()
-      }
-    }
-    return all
+    return (await fs.promises.readdir(runEventsDir))
+      .filter((file) => file.endsWith('.jsonl'))
+      .map((file) => path.join(runEventsDir, file))
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT')
       console.error(`Failed to read ${runEventsDir}`, e)
@@ -7172,6 +7034,7 @@ export class AppStore {
       stats.map((stat) => stat.chatId),
       {
         vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        hasUnsettledRound: (chatId) => index[chatId]?.ensemble?.activeRound?.status === 'running',
         readRunsSummary: (chatId) => {
           const indexed = index[chatId]
           return Array.isArray(indexed?.runsSummary) ? indexed.runsSummary : null
@@ -14975,7 +14838,7 @@ export class AppStore {
    * Enumerate every workflow-runs ledger file → its folded summary. SYNC: called
    * once at BOOT (before the window shows), and the ledger is low-volume (a handful
    * of short events per occurrence, one file per execution), so a sync sweep is
-   * fine — unlike the run-events dir (see readAllRunEventFilesAsync). The execId is
+   * fine — unlike the run-events dir (see getRunEventsAsync). The execId is
    * taken from the events (authoritative; safeWorkflowRunFileName is lossy), not the
    * filename. Best-effort: a single unreadable file yields [] for that file only.
    */
@@ -15135,12 +14998,11 @@ export class AppStore {
    * the event loop instead of beachballing the MAIN thread. Same result as the sync
    * version for the same filter. */
   static async getRunEventsAsync(filter: RunEventFilter = {}): Promise<RunEventRecord[]> {
-    const paths = this.runEventFilePathsForFilter(filter)
-    const events =
-      paths === null
-        ? await readAllRunEventFilesAsync(filter.kinds)
-        : await readRunEventFilesAsync(paths, filter.kinds, runEventNewestBoundForFilter(filter))
-    return filterRunEvents(events, filter)
+    const paths = this.runEventFilePathsForFilter(filter) ?? (await listRunEventFilePathsAsync())
+    return queryRunEventFilesAsync(paths, filter, {
+      prefilter: runEventLinePrefilter(filter.kinds),
+      onReadError: (filePath, e) => console.error(`Failed to read ${filePath}`, e)
+    })
   }
 
   /** Exact byte-range hydration for virtualized transcript tool rows. */

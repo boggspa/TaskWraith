@@ -30,6 +30,10 @@ import {
 } from './RunFailureNotice'
 import type { StaleRunSettlementEntry } from './RunFailureNotice'
 import { isActiveChatRunStatus } from '../shared/chatRunStatus'
+import {
+  ensembleRoundRecoveryRunIds,
+  recoverEnsembleRoundFromRuns
+} from './EnsembleRoundRunRecovery'
 
 export { isActiveChatRunStatus }
 
@@ -52,11 +56,18 @@ export function chatRunIsReconcilable(run: Pick<ChatRun, 'status' | 'endedAt'>):
 }
 
 /** Whether any of a record's runs is worth reconciling. */
-export function chatHasReconcilableRun(chat: { runs?: readonly ChatRun[] }): boolean {
+export function chatHasReconcilableRun(chat: {
+  runs?: readonly ChatRun[]
+  ensemble?: ChatRecord['ensemble']
+}): boolean {
   const runs = Array.isArray(chat.runs) ? chat.runs : []
+  const roundRuns = ensembleRoundRecoveryRunIds(chat)
   return runs.some(
     (run) =>
-      run && typeof run.runId === 'string' && run.runId.trim() !== '' && chatRunIsReconcilable(run)
+      run &&
+      typeof run.runId === 'string' &&
+      run.runId.trim() !== '' &&
+      (chatRunIsReconcilable(run) || roundRuns.has(run.runId))
   )
 }
 
@@ -381,13 +392,18 @@ export function reconcileStaleChatRuns(
       return settledRun
     })
 
-    if (changed) {
+    const recoveredRound = recoverEnsembleRoundFromRuns(
+      changed ? { ...chat, runs: nextRuns } : chat,
+      isRunLive,
+      nowIso
+    )
+    if (changed || recoveredRound !== chat) {
       const base = Array.isArray(chat.messages) ? chat.messages : []
       // A pass that only RECOVERED a terminal run explains nothing new — the
       // run sealed with its real status, so there is no settlement to narrate.
       const ordered = orderSettlementsByTranscriptPosition(base, settled)
       out.push({
-        ...chat,
+        ...recoveredRound,
         messages:
           ordered.length > 0
             ? withStaleRunSettlementNotice(

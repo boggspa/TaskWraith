@@ -6,7 +6,7 @@ import type {
   RunQueueJobStatus,
   RunRecoveryRecord
 } from '../../../main/store/types'
-import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
+import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 
 type EnsembleRound = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
 type EnsembleRoundStatus = EnsembleRound['status']
@@ -105,7 +105,10 @@ export function applyRecoveryRecordsToEnsembleRounds(
       activeParticipantId: nextActiveParticipantId
     }
 
-    const shouldCloseRound = !isEnsembleActiveRoundDispatchLive(reconciledRound)
+    // A persisted handoff is presentation state, not a surviving process owner.
+    // Recovery has just terminal-stamped the exact provider runs; a transition
+    // left by the dead orchestrator cannot keep their round running forever.
+    const shouldCloseRound = !isEnsembleRoundDispatchLive(reconciledRound)
     if (!roundChanged && !shouldCloseRound) return chat
 
     const closedRound: EnsembleRound = shouldCloseRound
@@ -114,6 +117,7 @@ export function applyRecoveryRecordsToEnsembleRounds(
           status: recoveryRoundStatus(Array.from(recordByRunId.values())),
           endedAt: latestRecoveredAt(Array.from(recordByRunId.values()), activeRound.endedAt),
           activeParticipantId: undefined,
+          turnTransition: undefined,
           pendingWakeupIds: [],
           sleepingParticipantIds: []
         }

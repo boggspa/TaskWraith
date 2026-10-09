@@ -253,17 +253,17 @@ export function verifyRunEventHashChain(events: RunEventRecord[]): boolean {
   return true
 }
 
-export function filterRunEvents(
-  events: RunEventRecord[],
+/** The per-event test of `filterRunEvents`, for readers that filter as they parse. */
+export function runEventFilterPredicate(
   filter: RunEventFilter = {}
-): RunEventRecord[] {
+): (event: RunEventRecord) => boolean {
   const kindSet = filter.kinds?.length ? new Set<RunEventKind>(filter.kinds) : null
   const phaseSet = filter.phases?.length ? new Set(filter.phases) : null
   const fromSequence = Number.isFinite(filter.fromSequence)
     ? Math.max(1, Number(filter.fromSequence))
     : null
 
-  const filtered = events.filter((event) => {
+  return (event) => {
     if (filter.runId && event.runId !== filter.runId) return false
     if (filter.chatId && event.chatId !== filter.chatId) return false
     if (filter.workspaceId && event.workspaceId !== filter.workspaceId) return false
@@ -273,7 +273,20 @@ export function filterRunEvents(
     if (phaseSet && !phaseSet.has(event.phase)) return false
     if (fromSequence !== null && event.sequence < fromSequence) return false
     return true
-  })
+  }
+}
+
+/**
+ * The filtered events in run order, newest `limit` kept. The sort orders one
+ * run's events by sequence and different runs' events by timestamp, which is
+ * not a consistent order when timestamps collide: the result then depends on
+ * input order. `queryRunEventFilesAsync` relies on reproducing it exactly.
+ */
+export function filterRunEvents(
+  events: RunEventRecord[],
+  filter: RunEventFilter = {}
+): RunEventRecord[] {
+  const filtered = events.filter(runEventFilterPredicate(filter))
 
   const sorted = [...filtered].sort((a, b) => {
     if (a.runId === b.runId) return a.sequence - b.sequence

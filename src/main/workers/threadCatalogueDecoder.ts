@@ -261,7 +261,9 @@ async function decode(request: ThreadDecodeRequest): Promise<void> {
       )
     coverage.introspection = evidence.length
   }
-  const recovery = decoded.sourceComplete ? collectThreadCatalogueRecovery(decoded.chat) : []
+  // Coverage above is counted from the durable record. The display view drops
+  // foreign runtime transitions and may therefore omit a recoverable run.
+  const recovery = decoded.sourceComplete ? collectThreadCatalogueRecovery(decoded.persisted) : []
   for (let index = 0; index < recovery.length; index += 1) {
     await object('recovery', index, recordId(recovery[index].id, index), recovery[index].value)
   }

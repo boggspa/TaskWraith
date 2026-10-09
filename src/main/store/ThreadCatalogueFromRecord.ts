@@ -1,6 +1,7 @@
 import { deriveRemoteTaskStatusForChat } from '../RemoteTaskProjection'
 import { isThreadTitleRepairTarget, deriveThreadTitleFromTranscript } from './ThreadTitleRepair'
 import { chatRunIsReconcilable } from '../ChatRunReconciler'
+import { ensembleRoundRecoveryRunIds } from '../EnsembleRoundRunRecovery'
 import { nextBlackboardExpiryAt } from '../blackboard/Blackboard'
 import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import { projectThreadCatalogueChrome, copyThreadCatalogueLastRun } from './ThreadCatalogueChrome'
@@ -11,6 +12,7 @@ import type { ChatRecord } from './types'
 export function projectThreadCatalogueRecord(chat: ChatRecord): ThreadCatalogueProjection {
   const messages = Array.isArray(chat.messages) ? chat.messages : []
   const runs = Array.isArray(chat.runs) ? chat.runs : []
+  const roundRuns = ensembleRoundRecoveryRunIds(chat)
   const last = runs.at(-1)
   let presentationRun: typeof last
   for (const run of runs) {
@@ -74,7 +76,9 @@ export function projectThreadCatalogueRecord(chat: ChatRecord): ThreadCatalogueP
         : {})
     },
     recovery: {
-      unsettledRuns: runs.filter((run) => run?.runId && chatRunIsReconcilable(run)).length,
+      unsettledRuns: runs.filter(
+        (run) => run?.runId && (chatRunIsReconcilable(run) || roundRuns.has(run.runId))
+      ).length,
       ensembleWakeups: Object.values(chat.ensemble?.wakeups ?? {}).filter(
         (wake) => wake.status === 'pending'
       ).length,

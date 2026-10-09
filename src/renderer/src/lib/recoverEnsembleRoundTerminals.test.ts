@@ -81,6 +81,82 @@ function ensembleChat(
 }
 
 describe('applyRecoveryRecordsToEnsembleRounds', () => {
+  it('closes crashed fan-out lanes despite a persisted serial handoff transition', () => {
+    const chats = [
+      ensembleChat({
+        activeParticipantId: undefined,
+        turnTransition: {
+          phase: 'settling-provider',
+          runtimeInstanceId: 'dead-main',
+          sourceParticipantId: 'p3',
+          sourceRunId: 'run-3',
+          startedAt: '2026-06-30T11:59:00.000Z'
+        },
+        participants: [
+          {
+            participantId: 'p1',
+            provider: 'codex',
+            role: 'Captain',
+            order: 0,
+            status: 'running',
+            runId: 'run-1'
+          },
+          {
+            participantId: 'p2',
+            provider: 'claude',
+            role: 'Reviewer',
+            order: 1,
+            status: 'running',
+            runId: 'run-2'
+          },
+          {
+            participantId: 'p3',
+            provider: 'pi',
+            role: 'Reader',
+            order: 2,
+            status: 'failed',
+            runId: 'run-3'
+          }
+        ],
+        lanes: {
+          lane1: {
+            laneId: 'lane1',
+            participantId: 'p1',
+            provider: 'codex',
+            runId: 'run-1',
+            status: 'running',
+            intent: 'read',
+            startedAt: '2026-06-30T11:55:00.000Z',
+            approvalsQueued: 0
+          },
+          lane2: {
+            laneId: 'lane2',
+            participantId: 'p2',
+            provider: 'claude',
+            runId: 'run-2',
+            status: 'running',
+            intent: 'read',
+            startedAt: '2026-06-30T11:56:00.000Z',
+            approvalsQueued: 0
+          }
+        }
+      })
+    ]
+    const recovered = applyRecoveryRecordsToEnsembleRounds(
+      [
+        makeRecord({ runId: 'run-1', chatId: 'chat-1' }),
+        makeRecord({ runId: 'run-2', chatId: 'chat-1' })
+      ],
+      chats
+    )
+    const round = recovered[0].ensemble?.activeRound
+    expect(round?.status).toBe('failed')
+    expect(round?.turnTransition).toBeUndefined()
+    expect(round?.participants.every((p) => p.status === 'failed')).toBe(true)
+    expect(Object.values(round?.lanes ?? {}).every((lane) => lane.status === 'failed')).toBe(true)
+    expect(round?.queuedPrompts).toEqual(['next prompt'])
+  })
+
   it('returns the original chats untouched when there are no recovery records', () => {
     const chats = [ensembleChat()]
     expect(applyRecoveryRecordsToEnsembleRounds([], chats)).toBe(chats)
