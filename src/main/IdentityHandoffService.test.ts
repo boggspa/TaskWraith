@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { FileHandle } from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   IDENTITY_HANDOFF_ID,
@@ -31,9 +32,27 @@ import {
 const roots: string[] = []
 const BODY = Buffer.from('frozen public installer bytes')
 const SHA256 = createHash('sha256').update(BODY).digest('hex')
+const partialHandleFault = vi.hoisted(() => ({
+  prepare: undefined as ((handle: FileHandle, filePath: string) => void) | undefined
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const native = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...native,
+    open: async (...args: Parameters<typeof native.open>) => {
+      const handle = await native.open(...args)
+      const filePath = String(args[0])
+      if (filePath.endsWith('.partial')) partialHandleFault.prepare?.(handle, filePath)
+      return handle
+    }
+  }
+})
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
+  partialHandleFault.prepare = undefined
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -41,6 +60,10 @@ function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'taskwraith-identity-handoff-'))
   roots.push(root)
   return root
+}
+
+function interceptPartialWrite(prepare: (handle: FileHandle, filePath: string) => void): void {
+  partialHandleFault.prepare = prepare
 }
 
 function distribution(series: 'beta' | 'release'): AppDistributionIdentity {
@@ -228,6 +251,91 @@ describe('IdentityHandoffService', () => {
       manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       artifactSha256: SHA256
     })
+  })
+
+  it.each([0, 9])(
+    'persists every byte after short writes with a %i-byte prefix',
+    async (offset) => {
+      const root = tempRoot()
+      const handoff = service(root, {
+        fetcher: vi.fn(async () =>
+          response(
+            [BODY.subarray(offset)],
+            offset > 0
+              ? { status: 206, contentRange: `bytes ${offset}-${BODY.length - 1}/${BODY.length}` }
+              : {}
+          )
+        )
+      })
+      const finalPath = join(root, IDENTITY_HANDOFF_STATE_DIR, 'TaskWraith-0.1.0-universal-mac.dmg')
+      if (offset > 0) {
+        mkdirSync(join(root, IDENTITY_HANDOFF_STATE_DIR), { recursive: true })
+        writeFileSync(`${finalPath}.partial`, BODY.subarray(0, offset))
+      }
+      let writeCalls = 0
+      interceptPartialWrite((handle) => {
+        const nativeWrite = handle.write.bind(handle)
+        handle.write = (async (bytes: Uint8Array) => {
+          writeCalls++
+          return nativeWrite(bytes.subarray(0, Math.max(1, Math.floor(bytes.byteLength / 2))))
+        }) as typeof handle.write
+      })
+
+      await expect(handoff.download()).resolves.toMatchObject({
+        phase: 'downloaded',
+        downloadedBytes: BODY.length
+      })
+      expect(readFileSync(finalPath)).toEqual(BODY)
+      expect(writeCalls).toBeGreaterThan(1)
+    }
+  )
+
+  it('refuses a zero-progress disk write and can retry the download', async () => {
+    const root = tempRoot()
+    const launchInstaller = vi.fn(() => ({ ok: true as const }))
+    const handoff = service(root, { launchInstaller })
+    interceptPartialWrite((handle) => {
+      handle.write = (async (bytes: Uint8Array) => ({
+        bytesWritten: 0,
+        buffer: bytes
+      })) as typeof handle.write
+    })
+
+    await expect(handoff.download()).resolves.toMatchObject({
+      phase: 'error',
+      errorCode: 'download-failed'
+    })
+    expect(handoff.launch()).toBe(false)
+    expect(launchInstaller).not.toHaveBeenCalled()
+    expect(
+      existsSync(join(root, IDENTITY_HANDOFF_STATE_DIR, 'TaskWraith-0.1.0-universal-mac.dmg'))
+    ).toBe(false)
+    partialHandleFault.prepare = undefined
+    await expect(handoff.retry()).resolves.toMatchObject({ phase: 'downloaded' })
+  })
+
+  it('checks the persisted installer bytes before accepting the download', async () => {
+    const root = tempRoot()
+    const launchInstaller = vi.fn(() => ({ ok: true as const }))
+    const handoff = service(root, { launchInstaller })
+    interceptPartialWrite((handle, filePath) => {
+      const nativeSync = handle.sync.bind(handle)
+      vi.spyOn(handle, 'sync').mockImplementation(async () => {
+        await nativeSync()
+        writeFileSync(filePath, Buffer.alloc(BODY.length))
+      })
+    })
+
+    await expect(handoff.download()).resolves.toMatchObject({
+      phase: 'error',
+      errorCode: 'download-failed',
+      errorMessage: 'Release installer integrity check failed.'
+    })
+    expect(handoff.launch()).toBe(false)
+    expect(launchInstaller).not.toHaveBeenCalled()
+    expect(
+      existsSync(join(root, IDENTITY_HANDOFF_STATE_DIR, 'TaskWraith-0.1.0-universal-mac.dmg'))
+    ).toBe(false)
   })
 
   it('keeps partial bytes and resumes an interrupted download after relaunch', async () => {

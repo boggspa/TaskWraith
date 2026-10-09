@@ -193,8 +193,14 @@ export class UpdateService {
     // The final beta's handoff is an explicit, user-triggered product journey,
     // not a background update check. Keep it visible even when automatic
     // checks are disabled; it never downloads or opens anything until the user
-    // acts. Debug builds remain outside the distributed handoff.
-    if (configuredChannel !== 'debug' && identityHandoff?.active) {
+    // acts. An installed Release identity must keep its own updater even if a
+    // manual repair left an incomplete beta receipt. Preserve that receipt for
+    // diagnostics without letting it intercept public updates.
+    if (
+      configuredChannel !== 'debug' &&
+      this.stableUpdateChannel !== 'release' &&
+      identityHandoff?.active
+    ) {
       this.identityHandoffActive = true
       autoUpdater.autoDownload = false
       autoUpdater.autoInstallOnAppQuit = false

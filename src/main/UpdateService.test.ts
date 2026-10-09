@@ -354,6 +354,48 @@ describe('UpdateService', () => {
     expect(mockAutoUpdater.channel).toBe('release-win-arm64')
   })
 
+  it.each(['target-transition-unproven', 'state-unreadable'])(
+    'keeps public Release updates working with a %s beta receipt',
+    async (errorCode) => {
+      vi.useFakeTimers()
+      const identityHandoff = createIdentityHandoffBridge('blocked')
+      identityHandoff.publish({ errorCode, errorMessage: 'Preserve the old receipt for repair.' })
+      const svc = new UpdateService({
+        platform: 'darwin',
+        arch: 'arm64',
+        stableUpdateChannel: 'release',
+        identityHandoff
+      })
+      try {
+        svc.configure({ channel: 'nightly', enabled: true })
+        expect(svc.snapshot()).toMatchObject({ status: 'idle', channel: 'stable', enabled: true })
+        expect(svc.snapshot().identityHandoff).toBeUndefined()
+        expect(mockAutoUpdater.channel).toBe('release')
+        expect(mockAutoUpdater.allowDowngrade).toBe(false)
+        await svc.checkForUpdates()
+        expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+        emitUpdaterEvent('update-not-available', { version: '0.1.0' })
+        await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS)
+        expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
+
+        emitUpdaterEvent('update-available', { version: '0.1.1' })
+        identityHandoff.publish({ phase: 'error' })
+        expect(svc.snapshot()).toMatchObject({ status: 'available', latestVersion: '0.1.1' })
+        await svc.downloadUpdate()
+        expect(mockAutoUpdater.downloadUpdate).toHaveBeenCalledOnce()
+        emitUpdaterEvent('update-downloaded', { version: '0.1.1' })
+        expect(svc.quitAndInstall()).toBe(true)
+        expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledOnce()
+        expect(identityHandoff.download).not.toHaveBeenCalled()
+        expect(identityHandoff.retry).not.toHaveBeenCalled()
+        expect(identityHandoff.launch).not.toHaveBeenCalled()
+      } finally {
+        svc.configure({ channel: 'stable', enabled: false })
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('surfaces the explicit identity handoff even when automatic checks are off', () => {
     const identityHandoff = createIdentityHandoffBridge()
     const svc = new UpdateService({ identityHandoff })

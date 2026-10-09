@@ -572,10 +572,6 @@ export class IdentityHandoffService {
         assertContentRange(response.headers.get('content-range'), offset, this.artifact.size)
       }
 
-      const hash = createHash('sha256')
-      if (offset > 0) {
-        for await (const chunk of createReadStream(partialPath)) hash.update(chunk)
-      }
       const handle = await openFile(partialPath, offset > 0 ? 'a' : 'w')
       let downloaded = offset
       try {
@@ -584,12 +580,23 @@ export class IdentityHandoffService {
           const { done, value } = await reader.read()
           if (done) break
           if (!value || value.byteLength === 0) continue
-          downloaded += value.byteLength
-          if (downloaded > this.artifact.size) {
+          if (downloaded + value.byteLength > this.artifact.size) {
             throw new Error('Release installer exceeded its frozen size.')
           }
-          hash.update(value)
-          await handle.write(value)
+          let written = 0
+          while (written < value.byteLength) {
+            const remaining = value.subarray(written)
+            const { bytesWritten } = await handle.write(remaining)
+            if (
+              !Number.isSafeInteger(bytesWritten) ||
+              bytesWritten <= 0 ||
+              bytesWritten > remaining.byteLength
+            ) {
+              throw new Error('Release installer write did not complete.')
+            }
+            written += bytesWritten
+            downloaded += bytesWritten
+          }
           this.state = {
             ...this.state!,
             downloadedBytes: downloaded,
@@ -607,8 +614,9 @@ export class IdentityHandoffService {
           `Release installer is incomplete (${downloaded}/${this.artifact.size} bytes).`
         )
       }
-      const digest = hash.digest('hex')
-      if (digest !== this.artifact.sha256) {
+      // Bind the frozen size/hash to the synced file, including resumed bytes,
+      // rather than trusting the network stream or a successful write call.
+      if (!(await verifyFile(partialPath, this.artifact))) {
         rmSync(partialPath, { force: true })
         throw new Error('Release installer integrity check failed.')
       }
