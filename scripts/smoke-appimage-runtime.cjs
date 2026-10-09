@@ -70,11 +70,7 @@ async function main(argv = process.argv.slice(2)) {
   fs.mkdirSync(userData, { mode: 0o700 })
   // Exercise the shipped AppRun's user-namespace/sandbox decision, just as
   // the handoff does. Do not mask it with a harness-only --no-sandbox flag.
-  const args = [
-    '--appimage-extract-and-run',
-    '--disable-gpu',
-    ...buildSmokeLaunchArgv(userData)
-  ]
+  const args = ['--appimage-extract-and-run', '--disable-gpu', ...buildSmokeLaunchArgv(userData)]
   let child
   try {
     child = spawn(appImage, args, {
