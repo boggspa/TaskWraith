@@ -9,7 +9,10 @@ import { kimiRunCapabilityCache } from './KimiRunCapabilityStore'
 export function createKimiRuntimeRecovery(input: {
   runId: string
   chatId?: string
-  payload: Pick<AgentRunPayload, 'ensembleRun' | 'workspace' | 'effectivePermissions'>
+  payload: Pick<
+    AgentRunPayload,
+    'ensembleRun' | 'workspace' | 'effectivePermissions' | 'approvalMode'
+  >
   gateway: KimiHttpMcpBridgeHandle
   seatHome: string
   startedAt: number
@@ -29,6 +32,7 @@ export function createKimiRuntimeRecovery(input: {
         laneId,
         workspacePath: input.payload.workspace,
         permissions: input.payload.effectivePermissions,
+        approvalMode: input.payload.approvalMode,
         assignedScope: kimiAssignedRunScope(chat, input.runId, laneId, participantId)
       },
       gateway: input.gateway,

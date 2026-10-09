@@ -164,7 +164,7 @@ export interface KimiLaunchControls {
 export interface GrokLaunchControls {
   readonly transport: 'acp' | 'streaming-json'
   readonly reasoningEffort: string | null
-  readonly permissionMode: 'plan' | 'acceptEdits' | 'host-gated'
+  readonly permissionMode: 'plan' | 'acceptEdits' | 'host-gated' | 'bypassPermissions'
   readonly readOnlySeat: boolean
   readonly taskWraithMcpAttachmentMode: 'acp-session' | 'none'
   readonly persistentSeatMode: 'fresh' | 'read-only-toolless-reuse'
@@ -219,7 +219,7 @@ export interface CursorLaunchControls {
    * retained for strict decode of earlier authority fixtures, while bridged
    * read-only seats use `contained-default` because ask/plan executes no MCP.
    */
-  readonly executionMode: 'ask' | 'plan' | 'contained-default'
+  readonly executionMode: 'ask' | 'plan' | 'contained-default' | 'full-access'
   readonly bridgeMode: 'none' | 'safe-subset' | 'plan-subset' | 'full'
   readonly brokerRegistration: 'none' | 'workspace' | 'global'
   readonly forceMcpTools: boolean
@@ -781,7 +781,7 @@ function normalizeGrokControls(value: unknown): GrokLaunchControls {
     reasoningEffort: nullableText(record.reasoningEffort, 'Grok reasoning effort'),
     permissionMode: oneOf(
       record.permissionMode,
-      ['plan', 'acceptEdits', 'host-gated'],
+      ['plan', 'acceptEdits', 'host-gated', 'bypassPermissions'],
       'Grok permission mode'
     ),
     readOnlySeat: boolean(record.readOnlySeat, 'Grok read-only seat'),
@@ -827,7 +827,7 @@ function normalizeMistralControls(value: unknown): MistralLaunchControls {
     transport: oneOf(record.transport, ['acp'], 'Mistral transport'),
     sessionMode: oneOf(
       record.sessionMode,
-      ['default', 'plan', 'accept-edits', 'auto-approve', 'chat'],
+      ['ask', 'default', 'plan', 'accept-edits', 'auto-approve', 'chat'],
       'Mistral session mode'
     ),
     readOnlySeat: boolean(record.readOnlySeat, 'Mistral read-only seat'),
@@ -858,7 +858,7 @@ function normalizeCursorControls(value: unknown): CursorLaunchControls {
     fastMode: boolean(record.fastMode, 'Cursor fast mode'),
     executionMode: oneOf(
       record.executionMode,
-      ['ask', 'plan', 'contained-default'],
+      ['ask', 'plan', 'contained-default', 'full-access'],
       'Cursor execution mode'
     ),
     bridgeMode: oneOf(
@@ -1006,7 +1006,10 @@ function assertCrossFieldInvariants(
     if (attached !== tools.taskWraithMcpAdvertised) {
       throw new TypeError('Grok TaskWraith MCP advertisement must match its attachment mode.')
     }
-    if ((grok.transport === 'acp') !== (grok.permissionMode === 'host-gated')) {
+    if (
+      grok.permissionMode !== 'bypassPermissions' &&
+      (grok.transport === 'acp') !== (grok.permissionMode === 'host-gated')
+    ) {
       throw new TypeError('Grok ACP transport must use host-gated permission mode.')
     }
     if (grok.taskWraithMcpAttachmentMode === 'acp-session' && grok.transport !== 'acp') {
@@ -1031,10 +1034,14 @@ function assertCrossFieldInvariants(
     if (hasBridge !== tools.taskWraithMcpAdvertised) {
       throw new TypeError('Cursor TaskWraith MCP advertisement must match bridge presence.')
     }
-    if (hasBridge !== cursor.approveMcpServers) {
+    const fullAccess = cursor.executionMode === 'full-access'
+    if (!fullAccess && hasBridge !== cursor.approveMcpServers) {
       throw new TypeError('Cursor MCP approval must exactly match bridge presence.')
     }
-    if (cursor.forceMcpTools && !hasBridge) {
+    if (fullAccess && (!cursor.forceMcpTools || !cursor.approveMcpServers)) {
+      throw new TypeError('Full Access Cursor requires native force and MCP approval controls.')
+    }
+    if (!fullAccess && cursor.forceMcpTools && !hasBridge) {
       throw new TypeError('Cursor cannot force MCP tools without a contained bridge.')
     }
     if ((cursor.brokerRegistration !== 'none') !== hasBridge) {
@@ -1049,6 +1056,7 @@ function launchAuthorityProviderId(value: unknown): LaunchAuthorityProviderId {
     value === 'claude' ||
     value === 'kimi' ||
     value === 'grok' ||
+    value === 'mistral' ||
     value === 'cursor' ||
     value === 'ollama' ||
     value === 'pi' ||

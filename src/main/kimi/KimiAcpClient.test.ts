@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { formatKimiProcessError, runKimiAcpTurn } from './KimiAcpClient'
 import type { AcpChildProcess } from '../acp/AcpTurnClient'
-import type { AcpRunEvent } from '../acp/AcpProtocol'
+import type { AcpPermissionRequest, AcpRunEvent } from '../acp/AcpProtocol'
 import { createKimiGatewayReadiness } from './KimiGatewayReadiness'
 import type { KimiHttpMcpBridgeHandle } from './KimiHttpMcpBridge'
 import type { KimiRunCapabilityReceipt } from './KimiRunCapabilities'
@@ -176,6 +176,163 @@ describe('runKimiAcpTurn', () => {
     expect(text).toContain('Design: retain capacity until provider completion.')
     expect(text).toContain('TaskWraith lane blocked')
     expect(child.sent().filter((frame) => frame.method === 'session/prompt')).toHaveLength(2)
+  })
+
+  it('lets a human-selected native Full Access run reach the mediator for native tools and records no refusal', async () => {
+    const child = new FakeChild()
+    const readiness = createKimiGatewayReadiness()
+    const receipts: KimiRunCapabilityReceipt[] = []
+    const mediator = vi.fn(async (_request: AcpPermissionRequest) => 'allow' as const)
+    const handle = runKimiAcpTurn({
+      prompt: 'Run the native shell',
+      cwdLifetime: 'session',
+      cwd: '/private/runtime',
+      spawnProcess: () => child,
+      onEvent: () => {},
+      onPermissionRequest: mediator,
+      nativeToolPolicy: 'native-full-access',
+      recovery: {
+        context: {
+          runId: 'kimi-full-access',
+          chatId: 'chat',
+          workspacePath: '/workspace',
+          permissions: {
+            presetId: 'full_access',
+            readOnly: false,
+            agenticServices: { shellCommands: 'allow', fileChanges: 'allow' }
+          } as unknown as NonNullable<
+            Parameters<typeof runKimiAcpTurn>[0]['recovery']
+          >['context']['permissions'],
+          assignedScope: { kind: 'workspace', intent: 'write', paths: [] }
+        },
+        gateway: { readiness } as KimiHttpMcpBridgeHandle,
+        onReceipt: (receipt) => receipts.push(receipt),
+        timeoutMs: 1
+      },
+      onRawFrame: (direction, raw) => {
+        const frame = raw as { method?: string }
+        if (direction === 'out' && frame.method === 'session/new') {
+          const generation = readiness.snapshot().generation
+          readiness.responseServed(generation, 'initialize', {
+            result: { protocolVersion: '2025-03-26' }
+          })
+          readiness.responseServed(generation, 'tools/list', {
+            result: {
+              tools: [{ name: 'read_file' }, { name: 'replace' }, { name: 'run_shell_command' }]
+            }
+          })
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session' } })
+    await vi.waitFor(() =>
+      expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(true)
+    )
+    expect(receipts.at(-1)?.nativeTools.intendedDenied).toEqual([])
+    const toolCall = {
+      toolCallId: 'bash-1',
+      title: 'Bash',
+      kind: 'execute',
+      status: 'pending',
+      rawInput: { command: 'ls -la' }
+    }
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: { sessionId: 'session', update: { sessionUpdate: 'tool_call', ...toolCall } }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 101,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'session',
+        toolCall,
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+    await vi.waitFor(() => expect(child.sent().some((frame) => frame.id === 101)).toBe(true))
+    expect(mediator).toHaveBeenCalledTimes(1)
+    expect(mediator.mock.calls[0][0]).toMatchObject({ toolName: 'Bash' })
+    const response = child.sent().find((frame) => frame.id === 101) as {
+      result?: { outcome?: { outcome?: string; optionId?: string } }
+    }
+    expect(response.result?.outcome).toEqual({ outcome: 'selected', optionId: 'allow' })
+    expect(receipts.at(-1)?.refusals).toEqual([])
+    expect(receipts.at(-1)?.outcome).toBe('running')
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await handle.closed
+    expect(receipts.at(-1)?.refusals).toEqual([])
+    expect(receipts.at(-1)?.outcome).not.toBe('blocked')
+  })
+
+  it('keeps the pre-callback native deny for an omitted policy', async () => {
+    const child = new FakeChild()
+    const readiness = createKimiGatewayReadiness()
+    const receipts: KimiRunCapabilityReceipt[] = []
+    const mediator = vi.fn(async () => 'allow' as const)
+    runKimiAcpTurn({
+      prompt: 'Run the native shell',
+      cwdLifetime: 'session',
+      cwd: '/private/runtime',
+      spawnProcess: () => child,
+      onEvent: () => {},
+      onPermissionRequest: mediator,
+      recovery: {
+        context: {
+          runId: 'kimi-contained',
+          chatId: 'chat',
+          workspacePath: '/workspace',
+          assignedScope: { kind: 'workspace', intent: 'write', paths: [] }
+        },
+        gateway: { readiness } as KimiHttpMcpBridgeHandle,
+        onReceipt: (receipt) => receipts.push(receipt),
+        timeoutMs: 1
+      },
+      onRawFrame: (direction, raw) => {
+        const frame = raw as { method?: string }
+        if (direction === 'out' && frame.method === 'session/new') {
+          const generation = readiness.snapshot().generation
+          readiness.responseServed(generation, 'initialize', {
+            result: { protocolVersion: '2025-03-26' }
+          })
+          readiness.responseServed(generation, 'tools/list', {
+            result: { tools: [{ name: 'read_file' }, { name: 'replace' }] }
+          })
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session' } })
+    await vi.waitFor(() =>
+      expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(true)
+    )
+    child.emit({
+      jsonrpc: '2.0',
+      id: 101,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 'session',
+        toolCall: { toolCallId: 'bash-1', title: 'Bash', kind: 'execute', status: 'pending' },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+    await vi.waitFor(() => expect(child.sent().some((frame) => frame.id === 101)).toBe(true))
+    expect(mediator).not.toHaveBeenCalled()
+    const response = child.sent().find((frame) => frame.id === 101) as {
+      result?: { outcome?: { outcome?: string; optionId?: string } }
+    }
+    expect(response.result?.outcome).toEqual({ outcome: 'selected', optionId: 'reject' })
+    expect(receipts.at(-1)?.refusals).toHaveLength(1)
+    expect(receipts.at(-1)?.refusals[0]).toMatchObject({ toolName: 'Bash', userAsked: false })
+    child.kill()
   })
 
   it('holds a deletion join through cancel, exact child close, and async cleanup', async () => {

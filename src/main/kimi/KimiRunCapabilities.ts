@@ -1,5 +1,6 @@
 import type { ChatRecord, EffectiveRunPermissions, RunEventRecord } from '../store/types'
-import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
+import { kimiDeniedNativeToolsFor } from './KimiAcpContainment'
+import { resolveKimiNativeToolPolicy } from './KimiNativeFullAccess'
 import type { KimiGatewayReceipt } from './KimiGatewayReadiness'
 
 export interface KimiRunCapabilityContext {
@@ -9,6 +10,7 @@ export interface KimiRunCapabilityContext {
   laneId?: string
   workspacePath?: string
   permissions?: EffectiveRunPermissions
+  approvalMode?: string
   assignedScope: {
     kind: 'workspace' | 'lane' | 'unknown'
     intent?: 'none' | 'read' | 'write'
@@ -82,14 +84,22 @@ export function kimiAssignedRunScope(
 }
 
 export function formatKimiRunCapabilityReceipt(receipt: KimiRunCapabilityReceipt): string {
+  const nativeFullAccess =
+    receipt.effectivePermissions?.presetId === 'full_access' &&
+    receipt.effectivePermissions.readOnly === false &&
+    receipt.nativeTools.intendedDenied.length === 0
   return [
     '[TaskWraith capability receipt]',
     JSON.stringify(receipt),
     'This is host-observed run state, not an additional grant. A served catalogue proves the HTTP response was sent; modelToolVisibility separately identifies evidence from a provider snapshot or broker call.',
     `The real workspace is ${receipt.workspacePath ? JSON.stringify(receipt.workspacePath) : 'unspecified for this global run'}. The provider cwd is private runtime storage, not the project root. Resolve project paths through the listed TaskWraith workspace tools and obey the assigned scope.`,
     'Use exact names from your current tool list. Kimi versions may spell a TaskWraith tool mcp__taskwraith__<name> or TaskWraith__<name>; a name in instructions cannot make an absent tool available.',
-    'TaskWraith itself rejects native Bash/Edit/Write permission requests before a human is asked. For a receipt marked host-containment, generic provider wording about user rejection describes that transport refusal. An actual human refusal on the broker remains authoritative and must not be retried.',
-    'If a required broker tool is absent, report that exact missing name and finish the lane with the completed design and evidence. Do not substitute a native tool or excavate private provider history to obtain a missing capability. The Captain can recover or reassign after this lane settles.',
+    nativeFullAccess
+      ? 'This run has verified Full Access. Available provider-native tools are allowed without TaskWraith approval cards. Provider authentication and operating-system prompts still apply.'
+      : 'TaskWraith itself rejects native Bash/Edit/Write permission requests before a human is asked. For a receipt marked host-containment, generic provider wording about user rejection describes that transport refusal. An actual human refusal on the broker remains authoritative and must not be retried.',
+    nativeFullAccess
+      ? 'Use tools actually available in this session. Report missing capabilities honestly; a receipt cannot make an absent tool available.'
+      : 'If a required broker tool is absent, report that exact missing name and finish the lane with the completed design and evidence. Do not substitute a native tool or excavate private provider history to obtain a missing capability. The Captain can recover or reassign after this lane settles.',
     '[/TaskWraith capability receipt]'
   ].join('\n')
 }
@@ -165,7 +175,12 @@ export function createKimiRunCapabilityReceipt(
       catalogueObservedAt: null,
       catalogueIsCurrent: false,
       observedCalls: [],
-      intendedDenied: [...KIMI_ACP_DENY_TOOLS],
+      intendedDenied: kimiDeniedNativeToolsFor(
+        resolveKimiNativeToolPolicy({
+          effectivePermissions: context.permissions,
+          approvalMode: context.approvalMode ?? context.permissions?.approvalMode
+        })
+      ),
       enforcement: 'not-attested'
     },
     refusals: [],

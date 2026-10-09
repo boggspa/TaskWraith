@@ -155,8 +155,10 @@ import {
 import { appTranslocationRemedyMessage, pathIsAppTranslocated } from './AppTranslocation'
 import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
 import { museSeatStatePath, museSeatStateRoot } from './muse/MuseSeatState'
+import { museApprovalOutcomeRecord } from './muse/MuseApprovalOutcome'
 import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './kimi/KimiAcpClient'
+import { resolveKimiNativeToolPolicy } from './kimi/KimiNativeFullAccess'
 import { createKimiRuntimeRecovery } from './kimi/KimiRuntimeRecovery'
 import { readKimiRunCapabilityReceipt } from './kimi/KimiRunCapabilityStore'
 import { discoverKimiManagedModelRows } from './kimi/KimiModelCatalog'
@@ -755,6 +757,13 @@ import {
   type RequestAgenticServiceApprovalDeps,
   type RequestMainApprovalDeps
 } from './run/ApprovalOrchestration'
+import {
+  fullAccessNativePreflight,
+  createFullAccessNativePermissionHandler,
+  resolveFullAccessNativeRun
+} from './run/FullAccessNativeDecision'
+import { runFullAccessHostRerun } from './run/FullAccessHostRerun'
+import { createHostHookApproval, type TerminalHostHookAuthority } from './hooks/HostHookApproval'
 import { buildAcpToolApprovalPreview } from './AcpToolApprovalPreview'
 import { redactCanvasFillValueForDurableStorage } from './canvas/CanvasFillAudit'
 import {
@@ -1362,6 +1371,7 @@ import {
   runPostureContextFromPayload,
   signRunPermissionPosture,
   verifyRunPermissionPosture,
+  verifiedFullAccessRunPosture,
   type RunPermissionPostureContext
 } from './RunPermissionPosture'
 import { normalizeAgentRunPayload, type AgentRunNormalizerDeps } from './run/AgentRunNormalizer'
@@ -1754,7 +1764,6 @@ import {
 } from './grokGate'
 import {
   grokWriteCapable,
-  buildGrokAcpCliArgs,
   buildGrokCliArgs,
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
@@ -1804,8 +1813,6 @@ import {
   MISTRAL_BINARY_NAME,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
-  mistralSessionModeFallbacksForSeat,
-  mistralSessionModeForSeat,
   mistralWriteCapable,
   normalizeMistralThinkingLevel
 } from './mistral/MistralCliArgs'
@@ -1931,7 +1938,11 @@ import {
   type NormalizedPiRunEvent
 } from './pi/PiRpc'
 import { PiLiveSteerTracker, parsePiQueueUpdate, piLiveSteerEnabled } from './pi/PiSteerDelivery'
-import { buildPiRpcArgs } from './pi/PiCliArgs'
+import {
+  grokNativeFullAccessArgv,
+  mistralNativeFullAccessSessionMode,
+  piNativeFullAccessArgv
+} from './providers/NativeFullAccessLaunchPolicy'
 import {
   configurePiRunToolReceipt,
   piToolsFromArgs,
@@ -2498,6 +2509,7 @@ import {
 import {
   buildClaudeCliArgs,
   claudeDispatchPrompt,
+  claudeSdkNativeToolOptions,
   normalizeClaudeEffortFlagForModel
 } from './ClaudeCliArgs'
 import { resolveProviderHarnessPosture } from '../shared/providerHarnessPosture'
@@ -3721,8 +3733,8 @@ function resolveTrustedSessionScope(
   if (!chatId) return { ok: false, error: 'Full Access needs a chat id.' }
   const chat = AppStore.getChat(chatId)
   if (!chat) return { ok: false, error: 'Full Access chat was not found.' }
-  if (chat.scope === 'global' || !chat.workspacePath) {
-    return { ok: false, error: 'Full Access is only available for workspace chats.' }
+  if (chat.scope !== 'global' && !chat.workspacePath) {
+    return { ok: false, error: 'Full Access workspace was not found.' }
   }
 
   const requestedParticipantId =
@@ -3784,7 +3796,7 @@ function resolveTrustedSessionScope(
     scope: {
       chatId,
       provider,
-      workspacePath: chat.workspacePath,
+      workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
       ensembleParticipantId: participant ? participant.id : null,
       ensembleLaneId:
         typeof rawScope?.ensembleLaneId === 'string' && rawScope.ensembleLaneId.trim()
@@ -4380,7 +4392,7 @@ let fireStopHooksForWorkspaceRef:
   | ((
       workspacePath: string,
       status?: string,
-      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId }
+      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId; terminal?: TerminalHostHookAuthority }
     ) => void)
   | null = null
 const headlessRunSender = new Proxy(
@@ -9879,7 +9891,8 @@ runManager.onChange((event) => {
       fireStopHooksForWorkspaceRef?.(stopWorkspace, event.session.status, {
         appRunId: event.session.runId,
         appChatId: event.session.appChatId,
-        provider: event.session.provider
+        provider: event.session.provider,
+        terminal: { permissions: event.session.state.effectivePermissions as EffectiveRunPermissions | undefined }
       })
     }
   }
@@ -15594,6 +15607,8 @@ function resolveNativeApprovalPreflight(args: {
    */
   surfaceId?: string
 }): NativeApprovalPreflight {
+  const fullAccess = fullAccessNativePreflight(runManager, args.runId)
+  if (fullAccess) return fullAccess
   if (!args.service) return { kind: 'none' }
   const settings = AppStore.getSettings()
   const session = runManager.get(args.runId)
@@ -16011,6 +16026,7 @@ function buildHostHookCallDeps(input: {
   appChatId?: string
   appRunId?: string
   provider?: ProviderId
+  terminal?: TerminalHostHookAuthority
 }): HostHookIntegrationDeps {
   const settings = AppStore.getSettings()
   const askBeforeHookCommands = settings.askBeforeHookCommands === true
@@ -16028,10 +16044,15 @@ function buildHostHookCallDeps(input: {
   if (askBeforeHookCommands && input.provider) {
     const provider = input.provider
     const workspacePath = input.workspacePath
-    // Omit runId on purpose when the run may already be terminal (Stop): the
-    // approval orchestrator fail-closes claimed-terminal runIds. Pre/Post still
-    // benefit from ledger correlation via emitRunEvent's appRunId.
-    deps.requestApproval = async (command: string) =>
+    deps.requestApproval = createHostHookApproval({
+      runId: input.appRunId,
+      terminal: input.terminal,
+      auditTerminalFullAccess: (command) => auditService.recordAutomaticApprovalDecision(
+        provider, { appRunId: input.appRunId, appChatId: input.appChatId }, 'shellCommands', workspacePath,
+        { method: `${provider}-host-hook/stop`, title: 'Configured Stop hook', body: command },
+        'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access', lifecycleHook: 'Stop' }
+      ),
+      request: (command, runId) =>
       requestAgenticServiceApproval(null, provider, 'shellCommands', workspacePath, {
         method: `${provider}-host-hook/command`,
         title: 'Approve host hook command',
@@ -16041,13 +16062,16 @@ function buildHostHookCallDeps(input: {
           toolName: 'host_shell_hook',
           params: { command }
         },
+        runId,
         forcePrompt: true
       })
+    })
   }
   return deps
 }
 
 const requestMainApprovalDeps: RequestMainApprovalDeps = {
+  auditService,
   getApprovalService: () => approvalService,
   isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
   runManager,
@@ -16077,6 +16101,19 @@ async function ensureWorkspaceTrustForRun(
 
   const route = routeWithRunId('gemini', payload)
   payload.appRunId = route.appRunId
+  const fullAccess = verifiedFullAccessRunPosture({
+    scope: payload.scope,
+    approvalMode: payload.approvalMode,
+    effectivePermissions: payload.effectivePermissions,
+    signature: payload.effectivePermissionsSignature,
+    context: runPostureContextFromPayload(payload)
+  }, verifyRunPosture)
+  if (fullAccess) {
+    auditService.recordAutomaticApprovalDecision('gemini', route, 'mcpTools', payload.workspace,
+      { method: 'workspace/session-trust', title: 'Workspace trust for Full Access', body: payload.workspace || '' },
+      'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access', preAdmission: true })
+    return true
+  }
   if (payload.sessionTrust) {
     const approved = await requestMainApproval(sender, 'gemini', route, {
       method: 'workspace/session-trust',
@@ -22324,6 +22361,14 @@ async function resolveNativeSubAgentToolPreference(
   | null
 > {
   if (!isNativeSubAgentToolName(toolName)) return null
+  if (resolveFullAccessNativeRun(runManager, route.appRunId)) {
+    const allowed = await requestAgenticServiceApproval(sender, provider, 'subThreadDelegation',
+      payload.scope === 'global' ? undefined : payload.workspace, {
+        method: 'nativeSubAgent/full-access', title: 'Native sub-agent', body: toolName,
+        preview: { kind: 'tool', toolName }, runId: route.appRunId
+      })
+    return allowed ? { behavior: 'allow', updatedInput } : { behavior: 'deny', message: 'The run is no longer active.' }
+  }
   const policy = normalizeNativeSubAgentPolicy(AppStore.getSettings().nativeSubAgentRequests)
   if (policy === 'provider') {
     return { behavior: 'allow', updatedInput }
@@ -22353,7 +22398,8 @@ async function resolveNativeSubAgentToolPreference(
           ? 'mcp__TaskWraith__delegate_to_subthread'
           : 'TaskWraith__delegate_to_subthread'
     },
-    resolveAction: (action) => {
+    resolveAction: (action, decisionSource) => {
+      if (decisionSource !== 'user') return
       if (action === 'useProviderNative') {
         AppStore.updateSettings({ nativeSubAgentRequests: 'provider' })
       } else if (action === 'useTaskWraithSubthread') {
@@ -22448,6 +22494,14 @@ async function canUseClaudeSdkTool(
             })
           : null,
       run: async () => {
+        if (resolveFullAccessNativeRun(runManager, route.appRunId)) {
+          const allowed = await requestAgenticServiceApproval(sender, 'claude', 'mcpTools',
+            claudeNativeWorkspace, {
+              method: 'claude/native-full-access', title: 'Claude native tool', body: toolName,
+              preview: { kind: 'tool', toolName }, runId: route.appRunId
+            })
+          return allowed ? { behavior: 'allow', updatedInput } : denyInactiveRun()
+        }
         // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
         // run the shared canonical workspace preflight. Native FS calls whose paths
         // resolve INSIDE the active workspace are allowed again (reads directly;
@@ -22908,7 +22962,7 @@ async function tryRunClaudeSdk(
             : claudePermissionModeForApproval(payload.approvalMode),
           // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
           // MCP servers are configured separately and remain available.
-          tools: [],
+          ...claudeSdkNativeToolOptions(Boolean(resolveFullAccessNativeRun(runManager, route.appRunId))),
           // Prevent implicit workspace/user settings, hooks, plugins, and MCP
           // descendants from creating an unobservable write surface. Reviewed
           // TaskWraith/user MCP servers are supplied explicitly below.
@@ -23349,6 +23403,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // tradeoff. Kimi has no equivalent print fallback; managed Kimi is
       // admitted ACP-only.
       permissionMode: claudePermissionModeForApproval(payload.approvalMode),
+      nativeFullAccess: Boolean(resolveFullAccessNativeRun(runManager, payload.appRunId)),
       model,
       providerSessionId: payload.providerSessionId || null,
       claudeReasoningEffort: payload.claudeReasoningEffort || null,
@@ -24413,7 +24468,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   }
 
   const piThinkingLevel = normalizePiReasoningEffortForModel(model, payload.reasoningEffort)
-  const args = buildPiRpcArgs({
+  const args = piNativeFullAccessArgv({
     upstream: split.upstream,
     modelId: split.modelId,
     writeCapable,
@@ -24434,7 +24489,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       'pi',
       AppStore.getSettings().providerHarnessPosture
     )
-  })
+  }, { manager: runManager, runId: route.appRunId })
 
   // Created here, after every setup gate has passed, so no early return can
   // leave a receipt unsealed. The advertised lists come from the argv this run
@@ -25083,11 +25138,11 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
   // gate stays as defense-in-depth. Reads stay available. NOTE: deliberately NOT
   // --permission-mode plan here — over ACP that can route exit_plan_mode through
   // a permission request our read-only gate would deny, re-triggering the cancel.
-  const grokAcpArgs = buildGrokAcpCliArgs({
+  const grokAcpArgs = grokNativeFullAccessArgv({
     model,
     reasoningEffort: payload.reasoningEffort,
     readOnlySeat: grokReadOnlySeat
-  })
+  }, { manager: runManager, runId: route.appRunId })
 
   const grokSpawnAcpProcess = (): AcpChildProcess => {
     const processSpec = {
@@ -25131,7 +25186,16 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
   // prior session/workspace grant, else prompt) and returns the boolean.
   // The G5a transport seam turns 'deny' into a rejected outcome, so nothing
   // runs without an explicit allow — no silent shell.
-  const grokPermissionHandler = async (request: AcpPermissionRequest) => {
+  const grokPermissionHandler = createFullAccessNativePermissionHandler({
+    manager: runManager,
+    runId: route.appRunId,
+    admissionBlocked: () => state.completed === true || historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId),
+    audit: (request: AcpPermissionRequest) => auditService.recordAutomaticApprovalDecision(
+      'grok', route, 'mcpTools', payload.workspace,
+      { method: 'grok/native-full-access', title: 'Grok native tool', body: request.toolName },
+      'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }
+    ),
+    fallback: async (request: AcpPermissionRequest) => {
     // Grok may qualify this bridge as taskwraith-grok OR taskwraith-broker.
     // Strip either trusted namespace, then require one exact TaskWraith broker
     // contract. This permission only lets the provider invoke the broker; the
@@ -25173,8 +25237,9 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
     // Opaque native mutations cannot join an exact TaskWraith edit
     // transaction, so they stay denied even on a write-capable seat; the argv
     // allowlist keeps them off the seat so this is the defense-in-depth floor.
-    return 'deny'
-  }
+    return 'deny' as const
+    }
+  })
 
   const finishGrokAcpTurn = (
     code: number | null,
@@ -26144,7 +26209,9 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // security decision, then model, then thinking.
   // An API-key model's level is the one its pinned session opens at.
   const mistralThinkingLevel = mistralCredentialLaunch.thinkingLevel
-  const mistralSessionMode = mistralSessionModeForSeat(mistralReadOnlySeat)
+  const mistralSessionMode = mistralNativeFullAccessSessionMode(mistralReadOnlySeat, {
+    manager: runManager, runId: route.appRunId
+  })
   const mistralSessionConfigOptions: AcpSessionConfigSelection[] = [
     // `plan` for a read-only seat, `ask` for a current write seat, with gated
     // `default` accepted from older Vibe versions. Built through the helpers,
@@ -26156,8 +26223,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     // that helper by design.
     {
       configId: 'mode',
-      value: mistralSessionMode,
-      fallbackValues: mistralSessionModeFallbacksForSeat(mistralReadOnlySeat)
+      value: mistralSessionMode.value,
+      fallbackValues: mistralSessionMode.fallbackValues
     },
     // Without this the run silently uses whatever `active_model` sits in the
     // user's global ~/.vibe/config.toml — a different model, a different price,
@@ -26355,7 +26422,16 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     : null
 
   // Preserve the existing native gate and attach its host refusal provenance.
-  const mistralPermissionHandler = createMistralPermissionHandler({
+  const mistralPermissionHandler = createFullAccessNativePermissionHandler({
+    manager: runManager,
+    runId: route.appRunId,
+    admissionBlocked: () => state.completed === true || historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId),
+    audit: (request: AcpPermissionRequest) => auditService.recordAutomaticApprovalDecision(
+      'mistral', route, 'mcpTools', payload.workspace,
+      { method: 'mistral/native-full-access', title: 'Mistral native tool', body: request.toolName },
+      'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }
+    ),
+    fallback: createMistralPermissionHandler({
     isBrokerTool: mistralTaskWraithBrokerToolRequested,
     isNetworkRead: (request) => Boolean(grokAcpNetworkReadRequested('mistral', request)),
     networkAllowed: () => grokNetworkAccessAllowed(state),
@@ -26386,6 +26462,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           })
         }
       : {})
+    })
   })
 
   const finishMistralAcpTurn = (
@@ -26553,6 +26630,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   let mistralWirePromptAttempt = 0
   try {
     mistralAcpHandle = runMistralAcpTurn({
+      nativeFullAccess: Boolean(resolveFullAccessNativeRun(runManager, route.appRunId)),
       prompt: mistralProviderPrompt,
       imagePaths: payload.imagePaths,
       cwd: payload.workspace!,
@@ -27196,7 +27274,16 @@ async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: 
   // live-measured), so like Mistral this handler is the primary gate. The ACP
   // core turns a 'deny' into a rejected outcome, so nothing runs without an
   // explicit allow.
-  const devinPermissionHandler = async (request: AcpPermissionRequest) => {
+  const devinPermissionHandler = createFullAccessNativePermissionHandler({
+    manager: runManager,
+    runId: route.appRunId,
+    admissionBlocked: () => state.completed === true || historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId),
+    audit: (request: AcpPermissionRequest) => auditService.recordAutomaticApprovalDecision(
+      'devin', route, 'mcpTools', payload.workspace,
+      { method: 'devin/native-full-access', title: 'Devin native tool', body: request.toolName },
+      'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }
+    ),
+    fallback: async (request: AcpPermissionRequest) => {
     // TaskWraith broker tools are independently gated by the broker. Allowing
     // the ACP hop here avoids a duplicate provider card; it does not bypass the
     // signed service policy or exact mutation transaction.
@@ -27229,8 +27316,9 @@ async function runDevinAcpProvider(event: Electron.IpcMainInvokeEvent, payload: 
     }
     // A write-capable seat remains useful for brokered exact edits, but its
     // opaque native mutators never bypass the transaction boundary.
-    return 'deny'
-  }
+    return 'deny' as const
+    }
+  })
 
   const finishDevinAcpTurn = (
     code: number | null,
@@ -27635,7 +27723,13 @@ async function runKimiAcpProvider(
     // half-started run.
     const preserveKimiSessionState = !mainOwnedContextIsolated && Boolean(payload.appChatId)
     const kimiHomeDir = kimiAcpSeatHomeDir(payload)
+    const kimiNativeToolPolicy = resolveKimiNativeToolPolicy({
+      effectivePermissions: resolveFullAccessNativeRun(runManager, route.appRunId)
+        ? payload.effectivePermissions : undefined,
+      approvalMode: payload.approvalMode
+    })
     const home = await prepareKimiIsolatedHome({
+      nativeToolPolicy: kimiNativeToolPolicy,
       runId: route.appRunId || 'unknown',
       homeDir: kimiHomeDir,
       boundaryRoot: preserveKimiSessionState
@@ -27839,10 +27933,21 @@ async function runKimiAcpProvider(
       return
     }
 
-    // Per-tool approval policy for the gateway MCP surface. Every native Kimi
-    // fs/exec/egress/fan-out tool is denied statically by the isolated profile;
-    // any mutating gateway request still crosses the signed host ledger.
+    // Restricted Kimi seats keep their static native deny wall. Full Access
+    // native decisions retain live-run checks and audit; gateway mutations
+    // still cross the signed host ledger.
     const kimiWriteCapable = payload.approvalMode !== 'plan'
+    const kimiFullAccessPermission = createFullAccessNativePermissionHandler({
+      manager: runManager,
+      runId: route.appRunId,
+      admissionBlocked: () => state.completed === true || historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId),
+      audit: (request: AcpPermissionRequest) => auditService.recordAutomaticApprovalDecision(
+        'kimi', route, 'mcpTools', payload.workspace,
+        { method: 'kimi/native-full-access', title: 'Kimi native tool', body: request.toolName },
+        'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }
+      ),
+      fallback: () => 'deny' as const
+    })
     const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
       const brokerDeferredMeshTool = kimiBrokerDeferredMeshMcpToolName(request)
       const brokerDeferredMesh = Boolean(brokerDeferredMeshTool)
@@ -27850,12 +27955,14 @@ async function runKimiAcpProvider(
         ? kimiMeshArgumentsFromAcpToolCall(brokerDeferredMeshTool, request.rawToolCall)
         : null
       const decision = classifyKimiToolPermission(request, {
+        nativeToolPolicy: kimiNativeToolPolicy,
         writeCapable: kimiWriteCapable,
         isSafeMcpTool: isKimiSafeMcpTool,
         isBrokerDeferredMcpTool: () => brokerDeferredMesh,
         isReadOnlyShell: grokReadOnlyShellRequestAllowed
       })
-      if (decision === 'allow') return 'allow'
+      if (decision === 'allow') return kimiNativeToolPolicy === 'native-full-access'
+        ? kimiFullAccessPermission(request) : 'allow'
       if (decision === 'deny') return 'deny'
       // The ACP fields are model-controlled, so this is never an outer
       // auto-allow. Exact Mesh identities are admitted only through the signed
@@ -27962,6 +28069,7 @@ async function runKimiAcpProvider(
         },
         snapshot: {
           appVersion: app.getVersion(),
+          nativeToolPolicy: kimiNativeToolPolicy,
           prompt: payload.prompt,
           resumeFallbackPrompt: payload.resumeFallbackPrompt,
           requestedResumeSessionId: preserveKimiSessionState ? payload.providerSessionId : null,
@@ -27993,6 +28101,7 @@ async function runKimiAcpProvider(
               : null
           providerTransportLaunchAttempted = true
           return runKimiAcpTurn({
+            nativeToolPolicy: kimiNativeToolPolicy,
             recovery: recovery?.options,
             prompt: production.session.prompt,
             imagePaths: payload.imagePaths,
@@ -33829,11 +33938,11 @@ async function settleCodexNativeApprovalRequest(
       sendAgentCompatError(state.sender, 'codex', agenticServiceBlockedMessage(gateService), state)
       return 'deny'
     }
-    if (gateService && nativePreflight.kind === 'allow') {
+    if (nativePreflight.kind === 'allow') {
       auditService.recordAutomaticApprovalDecision(
         'codex',
         { appRunId: state.appRunId, appChatId: state.appChatId },
-        gateService,
+        gateService || 'mcpTools',
         workspacePathForCodexApproval,
         {
           method,
@@ -34055,7 +34164,8 @@ function maybeRequestCodexHostRerun(
   if (!failed) return
   if (!isCodexSandboxToolingFailure(output)) return
 
-  const policy = getAgenticServicePolicy('shellCommands', settings)
+  const nativeFullAccess = Boolean(resolveFullAccessNativeRun(runManager, state.appRunId))
+  const policy = nativeFullAccess ? 'allow' : getAgenticServicePolicy('shellCommands', settings)
   if (policy === 'deny') return
 
   const command = item.command || ''
@@ -34066,7 +34176,7 @@ function maybeRequestCodexHostRerun(
   let normalizedCwd: string
   try {
     normalizedCwd =
-      state.scope === 'global'
+      state.scope === 'global' || nativeFullAccess
         ? resolveHostDirectory(state.cwd, cwd)
         : resolveWorkspaceDirectory(state.workspacePath!, cwd)
   } catch {
@@ -34092,7 +34202,7 @@ function maybeRequestCodexHostRerun(
   const reason = swiftPmNestedSandbox
     ? 'SwiftPM attempted to apply its own sandbox from inside the Codex command sandbox.'
     : 'Codex command failed in the command sandbox with a Swift/Xcode-style sandbox/tooling collision.'
-  const registered = approvalService?.registerHostCommand(approvalId, {
+  const hostApproval: HostCommandApproval & { allowedActions: AgentApprovalAction[] } = {
     sender: state.sender,
     provider: 'codex',
     command,
@@ -34107,7 +34217,33 @@ function maybeRequestCodexHostRerun(
     allowedActions: ['accept', 'decline', 'cancel'],
     reason,
     output
-  })
+  }
+  if (nativeFullAccess) {
+    void runFullAccessHostRerun({
+      manager: runManager, runId: state.appRunId,
+      admissionBlocked: () => historyClearAdmissionBlocked(state.appRunId, state.workspacePath, state.appChatId),
+      audit: () => auditService.recordAutomaticApprovalDecision('codex', state, 'shellCommands',
+        hostApproval.workspacePath, { method: 'hostCommand/rerun', title: 'Rerun command outside sandbox',
+          body: commandText, preview: { kind: 'command', command: commandText, cwd: normalizedCwd } },
+        'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }),
+      execute: () => runApprovedHostCommand(approvalId, hostApproval),
+      onOutcome: (outcome) => {
+        if (outcome === 'executed') return
+        state.hostRerunRequestedItemIds.delete(itemId)
+        recordApprovalLedgerDecision({
+          approvalId: `${approvalId}:outcome`, provider: 'codex', service: 'shellCommands',
+          runId: state.appRunId, chatId: state.appChatId,
+          method: 'hostCommand/rerun-outcome', title: 'Host rerun did not complete',
+          actions: [], status: outcome === 'cancelled' ? 'cancelled' : 'denied',
+          decision: outcome === 'cancelled' ? 'cancel' : 'autoDeny', decisionSource: 'system',
+          metadata: { outcome, permissionApprovalId: approvalId, executionCompleted: false },
+          expiration: { mode: 'none', description: 'Automatic Host rerun outcome.' }
+        })
+      }
+    }).catch((error) => sendAgentCompatError(state.sender, 'codex', String(error), state))
+    return
+  }
+  const registered = approvalService?.registerHostCommand(approvalId, hostApproval)
   if (registered !== true) {
     state.hostRerunRequestedItemIds.delete(itemId)
     return
@@ -34360,8 +34496,8 @@ async function continueCodexAfterHostRerun(
   }
 }
 
-async function runApprovedHostCommand(requestId: string): Promise<boolean> {
-  const approval = approvalService?.getHostCommand(requestId)
+async function runApprovedHostCommand(requestId: string, automatic?: HostCommandApproval): Promise<boolean> {
+  const approval = automatic || approvalService?.getHostCommand(requestId)
   if (!approval) return false
   const approvalRunId = approval.appRunId?.trim()
   const approvalChatId = approval.appChatId?.trim()
@@ -37601,7 +37737,16 @@ async function runAntigravityOfficialAcpProvider(
     planSubset: payload.effectivePermissions?.presetId === 'plan',
     reason: antigravityAcpMcpServers.length ? undefined : 'The official AntiGravity ACP run has no attached TaskWraith broker.'
   })
-  const antigravityAcpPermissionHandler = createAntigravityAcpPermissionHandler({
+  const antigravityAcpPermissionHandler = createFullAccessNativePermissionHandler({
+    manager: runManager,
+    runId: route.appRunId,
+    admissionBlocked: () => historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId),
+    audit: (request: AcpPermissionRequest) => auditService.recordAutomaticApprovalDecision(
+      'antigravity', route, 'mcpTools', payload.workspace,
+      { method: 'antigravity/native-full-access', title: 'AntiGravity native tool', body: request.toolName },
+      'autoAllow', 'trusted_session', 'request', { permissionPresetId: 'full_access' }
+    ),
+    fallback: createAntigravityAcpPermissionHandler({
     isBrokerTool: (request) => antigravityAcpMcpServers.length > 0 && antigravityAcpBrokerToolRequested(request),
     preflight: (request) => preflightNativeWorkspaceTool({
       provider: 'antigravity', toolName: request.toolName, toolKind: request.toolKind,
@@ -37610,6 +37755,7 @@ async function runAntigravityOfficialAcpProvider(
       runtimeSandboxed: false
     }),
     isReadOnlyShell: grokReadOnlyShellRequestAllowed
+    })
   })
   // Thin per-run projection modeled on the other ACP seats' compat lines,
   // deliberately minimal: no usage estimation, thinking projection, or
@@ -37861,6 +38007,7 @@ async function runAntigravityAgyProvider(
   let launch: Awaited<ReturnType<typeof prepareAntigravityProviderLaunch>>
   try {
     launch = await prepareAntigravityProviderLaunch({
+      nativeFullAccess: Boolean(resolveFullAccessNativeRun(runManager, route.appRunId)),
       settings: AppStore.getSettings(),
       prompt: payload.prompt,
       model: payload.model,
@@ -38173,13 +38320,16 @@ async function runAntigravityAgyProvider(
       // If the hook bridge failed to stand up, agy's native confirmation MUST
       // not be skipped. The flag might have been provisionally added on the
       // assumption the hook would route those confirmations to TaskWraith.
-      launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')
+      const nativeFullAccess = Boolean(resolveFullAccessNativeRun(runManager, route.appRunId))
+      if (!nativeFullAccess) {
+        launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')
+      }
 
       // Write capability that was earned by the bridge cannot outlive it. With
       // an isolated worktree the run is still contained, so it proceeds on
       // projection rules alone (exactly as before the bridge existed); in a
       // shared checkout it would be an unarbitrated writer, so refuse instead.
-      if (launch.mode === 'accept-edits' && !isolatedMutationWorkspace) {
+      if (launch.mode === 'accept-edits' && !isolatedMutationWorkspace && !nativeFullAccess) {
         settleVisibleProviderSetupFailure({
           sender: event.sender,
           provider: 'antigravity',
@@ -38637,6 +38787,8 @@ const devinAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEven
 const museIpcCancels = new Map<string, () => void>()
 const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   resolveBinary: async () => resolveCliProviderBinary('muse'),
+  isNativeFullAccessGranted: (runId) => Boolean(resolveFullAccessNativeRun(runManager, runId)),
+  onApprovalOutcome: (input) => recordApprovalLedgerDecision(museApprovalOutcomeRecord(input)),
   getTemporaryRoot: () => app.getPath('temp'),
   resolveDeveloperToolsBinPath: resolveMacDeveloperToolsBinPath,
   // Durable MSP wire diagnostics: one JSONL per run beside the run-events
@@ -38664,7 +38816,8 @@ const museIpcBridgeDeps: MuseIpcBridgeDeps = {
           service: ask.service,
           cwd: ask.workspacePath || undefined
         }),
-        runId: ask.appRunId
+        runId: ask.appRunId,
+        signal: ask.signal
       }
     ),
   // Durable per-chat Muse seat, keyed the way Kimi's is: chat plus ensemble
@@ -57780,7 +57933,7 @@ if (isGeminiMcpBridgeProcess) {
     const fireStopHooksForWorkspace = (
       workspacePath: string,
       status?: string,
-      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId }
+      route?: { appRunId?: string; appChatId?: string; provider?: ProviderId; terminal?: TerminalHostHookAuthority }
     ): void => {
       const path = workspacePath.trim()
       if (!path) return
@@ -57792,7 +57945,8 @@ if (isGeminiMcpBridgeProcess) {
           workspacePath: path,
           appChatId: route?.appChatId,
           appRunId: route?.appRunId,
-          provider: route?.provider
+          provider: route?.provider,
+          terminal: route?.terminal
         })
       ).catch((error) => {
         console.warn('[hooks] Stop failed:', error)

@@ -790,6 +790,7 @@ export class ScheduledOccurrenceSealService {
       workspacePath: input.workspaceRealPath,
       writeCapable,
       readOnlySeat: permissions.readOnly === true,
+      effectivePermissions: permissions,
       taskWraithMcpAdvertised: composed.taskWraithMcpAdvertised,
       cursorReasoningEffort: composed.reasoningEffort,
       cursorFastMode: composed.serviceTier === 'fast',

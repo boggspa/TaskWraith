@@ -26,6 +26,17 @@
 // The sole managed allow that is then added covers the isolated, authenticated
 // TaskWraith MCP server. It is transport admission only: every call still
 // crosses Electron main's signed, argument-aware broker and service gate.
+//
+// A human-selected Full Access run (KimiNativeFullAccess) is the one profile
+// without the wall: the user explicitly chose Kimi's native tools, so the
+// profile pins Kimi's documented "Never Ask" mode and appends no deny rules.
+// The profile is regenerated for every turn and removed on cleanup, so a
+// later restricted turn on the same durable seat rebuilds the full wall.
+
+import {
+  KIMI_NATIVE_FULL_ACCESS_PERMISSION_MODE,
+  type KimiNativeToolPolicy
+} from './KimiNativeFullAccess'
 
 /**
  * Historical workspace-relative Kimi project-config entries that auto-execute
@@ -212,6 +223,56 @@ export function forceTelemetryOff(configBody: string): string {
   return lines.join('\n')
 }
 
+/**
+ * Pin the documented top-level `default_permission_mode` key (`manual`, `yolo`
+ * or `auto`). Only the native Full Access profile uses this; the contained
+ * profile never touches the user's mode because its static deny wall is the
+ * control that matters there.
+ */
+export function forcePermissionMode(configBody: string, mode: string): string {
+  if (!/^[a-z][a-z0-9_-]*$/.test(mode)) {
+    throw new Error('Unsupported Kimi permission mode token.')
+  }
+  if (/^\s*(?:"default_permission_mode"|'default_permission_mode')\s*=/m.test(configBody)) {
+    throw new Error(
+      'Quoted default_permission_mode keys are unsupported in a contained Kimi profile.'
+    )
+  }
+  const lines = configBody.split(/\r?\n/)
+  const firstTable = lines.findIndex((l) => /^\s*\[/.test(l.trim()))
+  const topLevelEnd = firstTable === -1 ? lines.length : firstTable
+  const matches = lines
+    .slice(0, topLevelEnd)
+    .map((line, index) => (/^\s*default_permission_mode\s*=/.test(line) ? index : -1))
+    .filter((index) => index >= 0)
+  if (matches.length > 1) {
+    throw new Error(
+      'Duplicate top-level default_permission_mode keys are unsupported in a contained Kimi profile.'
+    )
+  }
+  const assignment = `default_permission_mode = "${mode}"`
+  if (matches.length === 1) {
+    lines[matches[0]] = assignment
+    return lines.join('\n')
+  }
+  if (firstTable === -1) return `${configBody.replace(/\s*$/, '')}\n${assignment}\n`
+  lines.splice(firstTable, 0, assignment, '')
+  return lines.join('\n')
+}
+
+/**
+ * The native tools the isolated profile denies under a policy: the full wall
+ * (plus any extras) when contained, nothing for a human-selected native Full
+ * Access run.
+ */
+export function kimiDeniedNativeToolsFor(
+  policy: KimiNativeToolPolicy | null | undefined,
+  extraDenyTools?: readonly string[]
+): string[] {
+  if (policy === 'native-full-access') return []
+  return [...KIMI_ACP_DENY_TOOLS, ...(extraDenyTools ?? [])]
+}
+
 /** The deny-wall TOML appended to every contained config. */
 export function buildKimiDenyWall(tools: readonly string[] = KIMI_ACP_DENY_TOOLS): string {
   return tools
@@ -290,15 +351,22 @@ export interface KimiIsolatedConfigOptions {
   thinkingEnabled?: boolean
   /** K3 thinking effort. K2.7 Coding omits this because its thinking is binary-on. */
   thinkingEffort?: string
+  /**
+   * Main-derived native policy (resolveKimiNativeToolPolicy on the verified
+   * post-clamp posture). Omitted means `contained`.
+   */
+  nativeToolPolicy?: KimiNativeToolPolicy | null
 }
 
 /**
  * Produce the isolated config.toml: the user's config with allow-rules stripped
  * (B8), telemetry forced off (B7), and the deny wall appended (B1 egress
- * residue). A trailing marker comment records that this is a TaskWraith-managed
- * isolated profile.
+ * residue). A human-selected native Full Access run instead pins Kimi's
+ * "Never Ask" mode and appends no wall. A leading marker comment records that
+ * this is a TaskWraith-managed isolated profile and which policy built it.
  */
 export function buildKimiIsolatedConfig(options: KimiIsolatedConfigOptions): string {
+  const nativeFullAccess = options.nativeToolPolicy === 'native-full-access'
   const stripped = stripAllowPermissionRules(options.baseConfig)
   const telemetryOff = forceTelemetryOff(stripped)
   const withThinking =
@@ -308,15 +376,22 @@ export function buildKimiIsolatedConfig(options: KimiIsolatedConfigOptions): str
   const withThinkingEffort = options.thinkingEffort
     ? forceThinkingEffort(withThinking, options.thinkingEffort)
     : withThinking
-  const denyTools = [...KIMI_ACP_DENY_TOOLS, ...(options.extraDenyTools ?? [])]
+  const withMode = nativeFullAccess
+    ? forcePermissionMode(withThinkingEffort, KIMI_NATIVE_FULL_ACCESS_PERMISSION_MODE)
+    : withThinkingEffort
+  const denyTools = kimiDeniedNativeToolsFor(options.nativeToolPolicy, options.extraDenyTools)
   const brokeredMcpAllow = buildKimiBrokeredMcpAllowRule()
   const deny = buildKimiDenyWall(denyTools)
+  const policyLine = nativeFullAccess
+    ? `# is broker-owned; telemetry is off; native tools ALLOWED (human-selected Full Access, ` +
+      `default_permission_mode "${KIMI_NATIVE_FULL_ACCESS_PERMISSION_MODE}").\n`
+    : `# is broker-owned; telemetry is off; native deny wall: ${denyTools.join(', ')}.\n`
   return (
     `# TaskWraith-managed isolated Kimi Code profile (per-run KIMI_CODE_HOME).\n` +
     `# User allow-rules are stripped; the authenticated TaskWraith MCP transport\n` +
-    `# is broker-owned; telemetry is off; native deny wall: ${denyTools.join(', ')}.\n` +
+    policyLine +
     `# Do not edit by hand.\n` +
-    `${withThinkingEffort.replace(/\s*$/, '')}\n${brokeredMcpAllow}${deny}`
+    `${withMode.replace(/\s*$/, '')}\n${brokeredMcpAllow}${deny}`
   )
 }
 

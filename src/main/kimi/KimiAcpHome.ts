@@ -24,6 +24,7 @@ import {
   buildKimiIsolatedConfig,
   UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
 } from './KimiAcpContainment'
+import type { KimiNativeToolPolicy } from './KimiNativeFullAccess'
 import { effectiveKimiModelContextWindow } from './KimiModelContext'
 import { kimiOAuthCredentialFileName } from '../../shared/kimiOAuthCredentialSlot'
 import {
@@ -91,6 +92,12 @@ export interface PrepareKimiHomeInput {
   /** The real Kimi Code data root to transform config + seed credentials from. */
   sourceHome: string
   extraDenyTools?: readonly string[]
+  /**
+   * Main-derived native policy for this turn's profile. Omitted means
+   * `contained`. The profile is rebuilt every turn, so a restricted turn on
+   * the same durable seat reinstates the full deny wall.
+   */
+  nativeToolPolicy?: KimiNativeToolPolicy | null
   /** Per-run thinking preference; omitted keeps the user config's setting. */
   thinkingEnabled?: boolean
   /** Per-run K3 thinking effort; omitted keeps the user config's setting. */
@@ -541,6 +548,7 @@ export async function prepareKimiIsolatedHome(
     const isolatedConfig = buildKimiIsolatedConfig({
       baseConfig: seatBaseConfig,
       extraDenyTools: input.extraDenyTools,
+      nativeToolPolicy: input.nativeToolPolicy,
       thinkingEnabled: input.thinkingEnabled,
       thinkingEffort: input.thinkingEffort
     })

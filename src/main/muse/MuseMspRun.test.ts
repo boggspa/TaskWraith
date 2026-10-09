@@ -232,6 +232,21 @@ describe('MSP vocabularies', () => {
     await pending
     expect(child.sentMethod('session/start')?.params.approvalMode).toBe('onRequest')
   })
+
+  it('opens the native Full Access host while retaining the audited wire handler', async () => {
+    const child = new FakeMspChild()
+    const pending = run(child, {
+      durableSeat: seat('full-access-native'),
+      approvalMode: 'auto_edit',
+      nativeFullAccess: true,
+      onApprovalRequest: () => 'allow'
+    })
+    await playTurn(child)
+    const outcome = await pending
+    expect(outcome.argv).toContain('--disable-sandbox')
+    expect(outcome.argv).toContain('--trust-workspace')
+    expect(child.sentMethod('session/start')?.params.approvalMode).toBe('onRequest')
+  })
 })
 
 describe('runMuseMspProvider', () => {

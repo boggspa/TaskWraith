@@ -299,7 +299,8 @@ describe('HostNodeCodexProvider', () => {
         }
       }
     })
-    const { instance, child } = open({ configuredThread })
+    const interactions = { register: vi.fn(() => new Promise<never>(() => {})) }
+    const { instance, child, appends } = open({ configuredThread, interactions })
     const sent = frames(child)
     const running = instance.run({
       runId: 'run-full',
@@ -330,6 +331,24 @@ describe('HostNodeCodexProvider', () => {
       approvalPolicy: 'never',
       sandboxPolicy: { type: 'dangerFullAccess' }
     })
+    const approval =
+      JSON.stringify({
+        id: 'unexpected-permission',
+        method: 'approval/request',
+        params: { toolName: 'Native shell' }
+      }) + '\n'
+    child.stdout.write(approval)
+    child.stdout.write(approval)
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"unexpected-permission"'))).toHaveLength(1)
+    )
+    expect(interactions.register).not.toHaveBeenCalled()
+    expect(appends).toContainEqual(
+      expect.objectContaining({
+        role: 'system',
+        text: expect.stringContaining('Full Access automatically accepted Codex permission')
+      })
+    )
     child.stdout.write(JSON.stringify({ id: 3, result: { turn: { id: 'turn-full' } } }) + '\n')
     child.stdout.write(JSON.stringify({ method: 'turn/completed', params: {} }) + '\n')
     await expect(running).resolves.toMatchObject({ status: 'completed' })

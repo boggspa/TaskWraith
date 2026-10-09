@@ -235,11 +235,11 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // request is NOT covered by this — ThreadMessagePermission keeps waking off
       // the grant path entirely.
       threadMessage: 'allow',
-      // Media editing is grantable; Full access auto-allows it (parity with
-      // shell/file). DELIBERATELY no mediaRecording here — modelled on canvasEval:
-      // even Full access must NOT auto-allow capture; it stays at its default-deny
-      // so every (future) mic/camera capture still prompts/denies.
+      // Human-selected Full Access covers every available service. Exact
+      // execution receipts remain separate from permission prompts.
       mediaEditing: 'allow',
+      mediaRecording: 'allow',
+      canvasEval: 'allow',
       // Browser navigation is grantable; Full Access auto-allows it (it
       // already auto-allows the strictly-more-powerful mcpTools surface).
       webBrowsing: 'allow'
@@ -402,9 +402,8 @@ export function isPostureApprovalOnlyService(
  *     presetId is part of the HMAC-signed posture, so a tampered or unsigned
  *     payload that forged it would already have been clamped to read_only by
  *     `clampUntrustedRunPosture` before reaching a spawn site; and
- *   - `agenticServices.shellCommands === 'allow'` — so the GLOBAL shellCommands
- *     kill-switch (`preserveExplicitDeny`) still vetoes it: a user who set global
- *     shell to 'deny' keeps the sandbox even on a full_access run.
+ *   - `agenticServices.shellCommands === 'allow'` — the resolver supplies this
+ *     for explicit Full Access; stored defaults cannot override that selection.
  *
  * A global `shellCommands: 'allow'` on a NON-full_access preset deliberately does
  * NOT qualify (the presetId gate), keeping the sandbox-drop tied to the explicit
@@ -434,9 +433,13 @@ export function resolveEffectiveRunPermissions(
   const presetServices = preset.agenticServices || {}
   const overrideServices = input.overrides?.agenticServices || {}
   const agenticServices: Record<AgenticServiceId, AgenticServicePolicy> = { ...baseServices }
+  // Full Access is the human's explicit run selection, not an ambient grant.
+  // Its signed posture covers all available services even when saved defaults
+  // or preview overlays would otherwise ask/deny. Other tiers keep those rules.
   for (const service of AGENTIC_SERVICE_IDS) {
     const next = overrideServices[service] || presetServices[service] || agenticServices[service]
-    agenticServices[service] = preserveExplicitDeny(baseServices[service], next)
+    agenticServices[service] =
+      presetId === 'full_access' ? 'allow' : preserveExplicitDeny(baseServices[service], next)
     if (
       workspaceGrantServiceIds.includes(service) &&
       agenticServices[service] === 'ask' &&
@@ -446,7 +449,7 @@ export function resolveEffectiveRunPermissions(
     }
   }
 
-  if (previewRiskModel) {
+  if (previewRiskModel && presetId !== 'full_access') {
     const promptServices = new Set(PREVIEW_RISK_PROMPT_SERVICES)
     for (const service of promptServices) {
       if (agenticServices[service] !== 'deny') {
@@ -458,20 +461,25 @@ export function resolveEffectiveRunPermissions(
     )
   }
 
-  const networkAccess = previewRiskModel
-    ? 'deny'
-    : input.settings.agenticServices?.networkAccess === 'deny'
-      ? 'deny'
-      : input.overrides?.networkAccess ||
-        preset.networkAccess ||
-        input.settings.agenticServices?.networkAccess ||
-        'allow'
+  const networkAccess =
+    presetId === 'full_access'
+      ? 'allow'
+      : previewRiskModel
+        ? 'deny'
+        : input.settings.agenticServices?.networkAccess === 'deny'
+          ? 'deny'
+          : input.overrides?.networkAccess ||
+            preset.networkAccess ||
+            input.settings.agenticServices?.networkAccess ||
+            'allow'
 
   let approvalMode =
     input.overrides?.approvalMode ||
     preset.approvalMode ||
     (presetId === 'read_only' ? 'plan' : 'default')
-  if (previewRiskModel && approvalMode !== 'plan') {
+  if (presetId === 'full_access') {
+    approvalMode = 'auto_edit'
+  } else if (previewRiskModel && approvalMode !== 'plan') {
     approvalMode = 'default'
   }
 

@@ -21,6 +21,8 @@ import { museMspTransportEnabled, museMspSessionResumeEnabled } from '../museGat
 import { MUSE_DEFAULT_REASONING_EFFORT, resolveMuseExecSessionId } from './MuseCliArgs'
 import { MUSE_MSP_CLIENT_VERSION } from './MuseMspProtocol'
 import { describeMuseMspApproval } from './MuseMspApproval'
+import { museSeatHomeForPosture } from './MuseSeatState'
+import type { MuseMspApprovalOutcome } from './MuseMspClient'
 import { museMeterSnapshotToProviderStats, unavailableMuseMeterSnapshot } from './MuseUsage'
 import { runMuseMspProvider, type MuseMspSpawnInput } from './MuseMspRun'
 import { createMuseThinkingTranscript } from './MuseThinkingTranscript'
@@ -161,6 +163,14 @@ export interface MuseIpcBridgeDeps {
    * everything.
    */
   requestApproval?: (input: MuseApprovalAsk) => Promise<boolean>
+  /** Reads an admitted, active RunManager posture; never a renderer-supplied flag. */
+  isNativeFullAccessGranted?: (runId: string) => boolean
+  onApprovalOutcome?: (input: {
+    appRunId: string
+    appChatId?: string
+    workspacePath: string
+    outcome: MuseMspApprovalOutcome
+  }) => void
   /** Test seam — defaults to the real lifecycle. */
   runMuseProvider?: typeof runMuseProvider
   /** Test seam — defaults to the real MSP lifecycle. */
@@ -184,6 +194,8 @@ export interface MuseApprovalAsk {
    * run behaves as though it had no permission preset at all.
    */
   readonly appRunId: string
+  /** Withdraw this exact card when Muse resolves, supersedes or ends the request. */
+  readonly signal?: AbortSignal
 }
 
 export type { MuseTaskWraithMcpPreparationInput as MuseIpcMcpPreparationInput } from './MuseTaskWraithMcpBridge'
@@ -610,6 +622,7 @@ export async function runMuseProviderFromIpc(
   const thinking = createMuseThinkingTranscript(runId)
   const ultraTaskDelegationAutoAllow =
     payload.effectivePermissions?.subThreadDelegationAutoAllowSource === 'ultratask'
+  const nativeFullAccess = deps.isNativeFullAccessGranted?.(runId) === true
 
   try {
     deps.sendCompatLine(
@@ -656,10 +669,11 @@ export async function runMuseProviderFromIpc(
       )
     }
 
-    const seat =
+    const seatBase =
       route.appChatId && deps.getSeatHome
         ? deps.getSeatHome(route.appChatId, payload.ensembleRun?.participantId || 'solo')
         : null
+    const seat = seatBase ? museSeatHomeForPosture(seatBase, nativeFullAccess) : null
 
     const developerToolsBinPath = deps.resolveDeveloperToolsBinPath?.()
     const execRun = (): Promise<MuseRunOutcome> =>
@@ -674,6 +688,7 @@ export async function runMuseProviderFromIpc(
         model: payload.model,
         reasoningEffort: payload.reasoningEffort,
         approvalMode: payload.approvalMode,
+        nativeFullAccess,
         ultraTaskDelegationAutoAllow,
         apiKey: credential.apiKey,
         authJsonText: credential.authJsonText,
@@ -702,6 +717,7 @@ export async function runMuseProviderFromIpc(
           model: payload.model,
           reasoningEffort: payload.reasoningEffort,
           approvalMode: payload.approvalMode,
+          nativeFullAccess,
           ultraTaskDelegationAutoAllow,
           ...(payload.imagePaths ? { imagePaths: payload.imagePaths } : {}),
           // MSP has no `--api-key-stdin`; both credential shapes travel as a
@@ -712,6 +728,13 @@ export async function runMuseProviderFromIpc(
           ...(deps.museWireLogDir ? { wireLogDir: deps.museWireLogDir } : {}),
           onEvent: emitMuseEvent,
           onWarning: emitMuseWarning,
+          onApprovalOutcome: (outcome) =>
+            deps.onApprovalOutcome?.({
+              appRunId: runId,
+              appChatId: route.appChatId,
+              workspacePath,
+              outcome
+            }),
           ...(deps.onContextCompaction && route.appChatId
             ? {
                 onContextCompaction: (signal: ContextCompactionSignal) => {
@@ -730,7 +753,7 @@ export async function runMuseProviderFromIpc(
             : {}),
           ...(deps.requestApproval
             ? {
-                onApprovalRequest: async (request) => {
+                onApprovalRequest: async (request, context) => {
                   const ask = describeMuseMspApproval(request)
                   try {
                     const allowed = await deps.requestApproval!({
@@ -742,7 +765,8 @@ export async function runMuseProviderFromIpc(
                       toolName: ask.toolName,
                       rawToolCall: ask.rawToolCall,
                       workspacePath,
-                      appRunId: runId
+                      appRunId: runId,
+                      signal: context.signal
                     })
                     return allowed ? 'allow' : 'deny'
                   } catch {

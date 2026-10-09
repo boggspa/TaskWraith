@@ -17,6 +17,7 @@ import { isAntigravityOptInEnabled } from '../shared/retiredProviders'
 import { liftMainFunctions } from './mainFunctionHarness.testutil'
 import { MainSourceProbe } from './mainSourceProbe.testutil'
 import { settleProviderRunWithoutTransport } from './run/ProviderRunLifecycleOwnership'
+import { createFullAccessNativePermissionHandler } from './run/FullAccessNativeDecision'
 
 const probe = new MainSourceProbe('src/main/index.ts', new URL('./index.ts', import.meta.url))
 
@@ -109,6 +110,7 @@ function acpWorld(options: { broker: boolean }) {
       }),
       recordProviderToolCapability: () => ({}),
       configureRunManagedToolReceipt: () => undefined,
+      createFullAccessNativePermissionHandler,
       createAntigravityAcpPermissionHandler: () => async () => ({ outcome: 'deny' }),
       preflightNativeWorkspaceTool: () => ({ allowed: false }),
       grokReadOnlyShellRequestAllowed: off,

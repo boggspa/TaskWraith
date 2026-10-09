@@ -18,6 +18,43 @@ const OPTED_IN = {
 } as const
 
 describe('prepareAntigravityProviderLaunch', () => {
+  it('uses the installed CLI permission bypass without its sandbox for admitted Full Access', async () => {
+    const launch = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Perform this task.',
+        approvalMode: 'auto_edit',
+        nativeFullAccess: true,
+        effectivePermissions: { presetId: 'full_access', readOnly: false },
+        agenticServices: { shellCommands: 'deny', fileChanges: 'deny' },
+        perToolApprovalBridge: false,
+        isolatedMutationWorkspace: false
+      },
+      { resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'common' }) }
+    )
+    expect(launch.mode).toBe('accept-edits')
+    expect(launch.args).not.toContain('--sandbox')
+    expect(launch.args.filter((arg) => arg === '--dangerously-skip-permissions')).toHaveLength(1)
+  })
+
+  it('does not infer native Full Access from a raw preset or a contradictory plan mode', async () => {
+    for (const nativeFullAccess of [false, true]) {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Inspect only.',
+          approvalMode: nativeFullAccess ? 'plan' : 'auto_edit',
+          nativeFullAccess,
+          effectivePermissions: { presetId: 'full_access', readOnly: false }
+        },
+        { resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'common' }) }
+      )
+      expect(launch.mode).toBe('plan')
+      expect(launch.args).toContain('--sandbox')
+      expect(launch.args).not.toContain('--dangerously-skip-permissions')
+    }
+  })
+
   it('fails closed before resolving a binary when informed opt-in is absent', async () => {
     const resolveBinary = vi.fn()
 

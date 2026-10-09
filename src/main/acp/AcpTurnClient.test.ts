@@ -817,6 +817,24 @@ describe('runAcpTurn — neutral core', () => {
   })
 
   describe('strict session config', () => {
+    it('refuses a required permission mode when no config surface is advertised', async () => {
+      const child = new FakeAcpChild()
+      const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
+      baseOptions(child, {
+        sessionConfigOptions: [{ configId: 'mode', value: 'auto-approve' }],
+        requiredConfigIds: ['mode'],
+        endProcess: (c) => c.stdin?.end?.(),
+        onClose: (_code, turnComplete, terminalStatus) => {
+          closes.push({ turnComplete, terminalStatus })
+        }
+      })
+      child.emit({ jsonrpc: '2.0', id: 1, result: { agentCapabilities: {} } })
+      child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-new' } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(child.sent().some((frame) => frame.method === 'session/prompt')).toBe(false)
+      expect(closes).toEqual([{ turnComplete: false, terminalStatus: 'config_unapplied:mode' }])
+    })
+
     const strictRun = (child: FakeAcpChild) => {
       const closes: Array<{ turnComplete: boolean; terminalStatus?: string }> = []
       const { events } = baseOptions(child, {

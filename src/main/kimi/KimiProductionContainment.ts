@@ -1,7 +1,8 @@
 import type { Dirent, Stats } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
-import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
+import { kimiDeniedNativeToolsFor } from './KimiAcpContainment'
+import type { KimiNativeToolPolicy } from './KimiNativeFullAccess'
 
 export { KIMI_ACP_PRODUCTION_POSTURE_VERSION }
 
@@ -498,6 +499,8 @@ export function buildKimiProductionAcpSnapshot(input: {
   privateCwd: string
   gatewayServer: Record<string, unknown> | null | undefined
   appVersion: string
+  /** Main-derived native policy; omitted means `contained` (full deny wall). */
+  nativeToolPolicy?: KimiNativeToolPolicy | null
   prompt: string
   resumeFallbackPrompt?: string
   requestedResumeSessionId?: string | null
@@ -534,7 +537,7 @@ export function buildKimiProductionAcpSnapshot(input: {
     cwd: input.privateCwd,
     initializeParams: buildKimiProductionInitializeParams(input.appVersion),
     mcpServers: [gateway],
-    deniedNativeTools: KIMI_ACP_DENY_TOOLS,
+    deniedNativeTools: kimiDeniedNativeToolsFor(input.nativeToolPolicy),
     session: buildKimiProductionSessionPlan(input)
   }
 }

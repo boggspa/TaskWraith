@@ -276,7 +276,7 @@ describe('provider dispatch integration', () => {
       'thinkingLevel: payload.reasoningEffort as import(\'./pi/PiCliArgs\').PiThinkingLevel'
     )
     expect(pi.indexOf('normalizePiReasoningEffortForModel(')).toBeLessThan(
-      pi.indexOf('const args = buildPiRpcArgs({')
+      pi.indexOf('const args = piNativeFullAccessArgv({')
     )
   })
 

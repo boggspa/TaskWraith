@@ -1,4 +1,6 @@
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
+import { isFullShellAccessGranted } from '../EffectiveRunPermissions'
+import { buildCursorFullAccessArgv } from '../providers/NativeFullAccessLaunchPolicy'
 import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile
@@ -72,7 +74,7 @@ export interface CursorPathBLaunchPlan {
   readonly taskWraithMcpAdvertised: boolean
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
   readonly controls: Readonly<{
-    executionMode: 'ask' | 'contained-default'
+    executionMode: 'ask' | 'contained-default' | 'full-access'
     bridgeMode: 'none' | 'safe-subset' | 'plan-subset' | 'full'
     brokerRegistration: 'none' | 'global'
     forceMcpTools: boolean
@@ -114,6 +116,10 @@ export function resolveCursorPathBBrokerPolicy(input: {
     gatewaySubset: isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
   }
   if (input.writeCapable) {
+    const nativeFullAccess =
+      !input.planSeat &&
+      input.effectivePermissions?.readOnly === false &&
+      isFullShellAccessGranted(input.effectivePermissions)
     return Object.freeze({
       bridgeMode: 'full',
       allowRules: Object.freeze(
@@ -122,7 +128,9 @@ export function resolveCursorPathBBrokerPolicy(input: {
       // While the broker is active, exact TaskWraith transactions remain the
       // only write path. A degraded launch has already released this transient
       // policy and may retain Cursor-native Shell/Write in its workspace sandbox.
-      denyRules: Object.freeze(input.nativeWriteFallback ? [] : ['Shell(**)', 'Write(**)']),
+      denyRules: Object.freeze(
+        nativeFullAccess || input.nativeWriteFallback ? [] : ['Shell(**)', 'Write(**)']
+      ),
       ...common
     })
   }
@@ -187,6 +195,11 @@ export function buildCursorPathBLaunchPlan(
 ): CursorPathBLaunchPlan {
   assertBrokerOutcome(input)
   const brokerActive = input.brokerOutcome === 'active'
+  const nativeFullAccess =
+    input.writeCapable &&
+    !input.planSeat &&
+    input.effectivePermissions?.readOnly === false &&
+    isFullShellAccessGranted(input.effectivePermissions)
   if (brokerActive) clearCursorMcpBridgeLastFailure()
   const policy = resolveCursorPathBBrokerPolicy({
     ...input,
@@ -207,7 +220,7 @@ export function buildCursorPathBLaunchPlan(
         coreProfile: false
       })
   const prompt =
-    input.writeCapable && !brokerActive
+    input.writeCapable && !brokerActive && !nativeFullAccess
       ? `${basePrompt}\n\nTaskWraith Cursor continuity receipt: the managed broker is unavailable, but the user-approved write posture remains active. Use Cursor-native Shell/Write only inside the enabled workspace sandbox and only within your assigned lane scope. Shell is not a substitute for TaskWraith sub-thread or cross-provider spawn; when the managed broker is unavailable, continue in this seat rather than launching another provider. Keep each command/path visible in your response; if the sandbox refuses an essential action, ask the user with the exact command/path and continue any remaining work instead of cancelling the turn.`
       : basePrompt
   const rawRequestedModel = typeof input.model === 'string' ? input.model.trim() : ''
@@ -234,7 +247,9 @@ export function buildCursorPathBLaunchPlan(
     workspace: input.workspacePath,
     model: wireModel
   }
-  const argv = transactionalWriteSeat
+  const argv = nativeFullAccess
+    ? buildCursorFullAccessArgv(argvInput)
+    : transactionalWriteSeat
     ? buildContainedCursorWriteArgv({
         ...argvInput,
         // `--force` is reserved for the prepared broker catalogue. A degraded
@@ -261,11 +276,13 @@ export function buildCursorPathBLaunchPlan(
     taskWraithMcpAdvertised: brokerActive,
     taskWraithMcpProfileId: brokerActive ? input.taskWraithMcpProfileId : null,
     controls: Object.freeze({
-      executionMode: transactionalWriteSeat || brokerActive ? 'contained-default' : 'ask',
+      executionMode: nativeFullAccess
+        ? 'full-access'
+        : transactionalWriteSeat || brokerActive ? 'contained-default' : 'ask',
       bridgeMode: brokerActive ? policy.bridgeMode : 'none',
       brokerRegistration: brokerActive ? 'global' : 'none',
-      forceMcpTools: brokerActive,
-      approveMcpServers: brokerActive
+      forceMcpTools: nativeFullAccess || brokerActive,
+      approveMcpServers: nativeFullAccess || brokerActive
     }),
     broker: Object.freeze({
       requested: input.brokerRequested,

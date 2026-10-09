@@ -53,6 +53,61 @@ export interface ApprovalPromptReceipt {
   approvalId: string
 }
 
+/** Only authoritative, post-signature-clamp run state may satisfy this predicate. */
+function isFullAccessRun(permissions: EffectiveRunPermissions | undefined): boolean {
+  return permissions?.presetId === 'full_access' && permissions.readOnly === false
+}
+
+function fullAccessAcceptance(actions?: AgentApprovalAction[]): AgentApprovalAction | undefined {
+  if (!actions || actions.includes('accept')) return 'accept'
+  if (actions.includes('useProviderNative')) return 'useProviderNative'
+  return undefined
+}
+
+function approvalSettlement(
+  signal: AbortSignal | undefined,
+  withdraw: () => void,
+  resolve: (allowed: boolean) => void
+) {
+  let settled = false
+  let withdrawn = false
+  let decisionDelivered = false
+  const finish = (allowed: boolean) => {
+    if (settled) return
+    settled = true
+    signal?.removeEventListener('abort', abort)
+    resolve(!decisionDelivered && signal?.aborted ? false : allowed)
+  }
+  const abort = () => {
+    if (settled || withdrawn || decisionDelivered) return
+    withdrawn = true
+    try {
+      withdraw()
+    } finally {
+      finish(false)
+    }
+  }
+  return {
+    resolve: finish,
+    resolveAction:
+      (callback: ((action: AgentApprovalAction, source: 'user' | 'system') => void) | undefined) =>
+      (action: AgentApprovalAction, source: 'user' | 'system') => {
+        if (!settled && !signal?.aborted) {
+          decisionDelivered = true
+          signal?.removeEventListener('abort', abort)
+          callback?.(action, source)
+        }
+      },
+    start: () => {
+      if (settled) return false
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) abort()
+      return !settled
+    },
+    live: () => !settled && !signal?.aborted
+  }
+}
+
 function redactExactCommandRuleOfferForDurableStorage<T>(payload: T): T {
   if (!isRecord(payload) || !isRecord(payload.preview)) return payload
   const offer = payload.preview.exactCommandRuleOffer
@@ -242,6 +297,7 @@ export interface RequestAgenticServiceApprovalDeps {
 
 export type RequestMainApprovalDeps = Pick<
   RequestAgenticServiceApprovalDeps,
+  | 'auditService'
   | 'getApprovalService'
   | 'runManager'
   | 'scheduleApprovalTimeout'
@@ -266,12 +322,13 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
       workspacePath?: string
       actions?: AgentApprovalAction[]
       remoteIncomplete?: boolean
+      signal?: AbortSignal
       resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
     }
   ): Promise<boolean> => {
+    if (request.signal?.aborted) return false
     if (deps.isApprovalAdmissionBlocked?.(route?.appRunId, request.workspacePath, route?.appChatId))
       return false
-    if (!sender || sender.isDestroyed()) return false
     const routed = routeWithRunId(provider, route)
     const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
     const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
@@ -281,6 +338,40 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
     // with no way to tell WHICH Pi seat asked. Derived from the run session,
     // never from caller-supplied text, so a solo approval can't gain a label.
     const mainSession = deps.runManager.get(routed.appRunId)
+    if (routed.appRunId && deps.runManager.getClaimedTerminalStatus?.(routed.appRunId)) return false
+    if (mainSession && mainSession.status !== 'starting' && mainSession.status !== 'running')
+      return false
+    if (isFullAccessRun(mainSession?.state?.effectivePermissions)) {
+      const action = fullAccessAcceptance(request.actions)
+      if (!action) return false
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        routed,
+        'mcpTools',
+        request.workspacePath,
+        request,
+        'autoAllow',
+        'trusted_session',
+        'request',
+        { permissionPresetId: 'full_access', mainAuthority: true, resolvedAction: action }
+      )
+      request.resolveAction?.(action, 'system')
+      deps.appendDurableRunEventForRoute(
+        provider,
+        routed,
+        'approval_response',
+        'control',
+        `Full Access automatically accepted ${request.method}`,
+        {
+          action,
+          decisionSource: 'system',
+          permissionPresetId: 'full_access',
+          workspacePath: request.workspacePath
+        }
+      )
+      return true
+    }
+    if (!sender || sender.isDestroyed()) return false
     const mainEnsembleRun = mainSession?.state?.ensembleRun as EnsembleRunIdentity | undefined
     const mainAttribution =
       mainEnsembleRun &&
@@ -313,6 +404,11 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         resolveApproval(false)
         return
       }
+      const settlement = approvalSettlement(
+        request.signal,
+        () => approvalService.cancelApproval(approvalId, 'provider-request-withdrawn'),
+        resolveApproval
+      )
       const registered = approvalService.registerMain(approvalId, {
         provider,
         workspacePath: request.workspacePath,
@@ -327,13 +423,14 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         body: request.body,
         remoteIncomplete: request.remoteIncomplete,
         allowedActions: actions,
-        resolveAction: request.resolveAction,
-        resolve: resolveApproval
+        resolveAction: settlement.resolveAction(request.resolveAction),
+        resolve: settlement.resolve
       })
       if (registered === false) {
         resolveApproval(false)
         return
       }
+      if (!settlement.start()) return
       deps.runManager.registerApproval(routed.appRunId, approvalId)
       deps.scheduleApprovalTimeout({
         approvalId,
@@ -378,8 +475,11 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         workspacePath: request.workspacePath,
         metadata: { mainAuthority: true }
       })
+      if (!settlement.live()) return
       approvalService.publishRendererApprovalRequest(approvalPayload)
+      if (!settlement.live()) return
       deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+      if (!settlement.live()) return
       deps.notifyPairedDevicesOfApproval({
         approvalId,
         workspaceId: deps.workspaceIdForApprovalPush(request.workspacePath),
@@ -403,6 +503,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       preview?: any
       runId?: string
       forcePrompt?: boolean
+      signal?: AbortSignal
       externalPathDetection?: PendingExternalPathDetection
       resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
       /**
@@ -419,6 +520,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       onWorkspaceInspectionMatch?: () => void
     }
   ): Promise<boolean> => {
+    if (request.signal?.aborted) return false
     const session = deps.runManager.get(request.runId)
     if (deps.isApprovalAdmissionBlocked?.(request.runId, workspacePath, session?.appChatId))
       return false
@@ -426,6 +528,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     if (request.runId && (!session || deps.runManager.getClaimedTerminalStatus?.(request.runId))) {
       return false
     }
+    if (session && session.status !== 'starting' && session.status !== 'running') return false
     const effectivePermissions = session?.state?.effectivePermissions as
       | EffectiveRunPermissions
       | undefined
@@ -447,6 +550,42 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // scope and free.
     const appChatId = session?.state?.appChatId
     const auditRoute = { appRunId: request.runId, ...(appChatId ? { appChatId } : {}) }
+    if (isFullAccessRun(effectivePermissions)) {
+      const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+      if (service === 'canvasEval') {
+        const params =
+          isRecord(request.preview) && isRecord(request.preview.params)
+            ? request.preview.params
+            : null
+        if (typeof params?.script !== 'string' || !request.onApprovalPromptCreated) return false
+        try {
+          assertCanvasEvalApprovalReceipt(
+            params.script,
+            request.onApprovalPromptCreated({ approvalId }) || undefined
+          )
+        } catch {
+          return false
+        }
+      } else request.onApprovalPromptCreated?.({ approvalId })
+      if (request.signal?.aborted) return false
+      request.resolveAction?.('accept', 'system')
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'trusted_session',
+        'request',
+        {
+          permissionPresetId: 'full_access',
+          rationale: 'Human-selected Full Access run.',
+          forcePromptOverridden: Boolean(request.forcePrompt)
+        }
+      )
+      return true
+    }
     const previewToolName =
       request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
         ? request.preview.toolName
@@ -1047,6 +1186,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     if (destructiveShellAskHold) {
       body = `${body}\n\nTaskWraith held this command for review: ${destructiveShellAskHold.reason} Commands in this class always ask, whatever permission tier or standing grant this run carries.`
     }
+    if (request.signal?.aborted) {
+      request.discardCommandRuleOffer?.(approvalId)
+      return false
+    }
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
@@ -1054,6 +1197,14 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         resolveApproval(false)
         return
       }
+      const settlement = approvalSettlement(
+        request.signal,
+        () => {
+          request.discardCommandRuleOffer?.(approvalId)
+          approvalService.cancelApproval(approvalId, 'provider-request-withdrawn')
+        },
+        resolveApproval
+      )
       const registered = approvalService.registerGeminiTool(approvalId, {
         provider,
         service,
@@ -1074,14 +1225,15 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         externalPathDetection,
         requestOnly,
         allowedActions: actions,
-        resolveAction: request.resolveAction,
-        resolve: resolveApproval
+        resolveAction: settlement.resolveAction(request.resolveAction),
+        resolve: settlement.resolve
       })
       if (registered === false) {
         request.discardCommandRuleOffer?.(approvalId)
         resolveApproval(false)
         return
       }
+      if (!settlement.start()) return
       deps.runManager.registerApproval(request.runId, approvalId)
       deps.scheduleApprovalTimeout({
         approvalId,
@@ -1193,10 +1345,13 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           canvasEvalApproval: canvasEvalApproval || undefined
         }
       )
+      if (!settlement.live()) return
       approvalService.publishRendererApprovalRequest(liveApprovalPayload)
+      if (!settlement.live()) return
       deps.safeSendToSender(sender, 'agent-approval-request', liveApprovalPayload)
       // Fan out a wake-push to any paired iOS device so the user can
       // approve the agentic-service request away from the desktop.
+      if (!settlement.live()) return
       deps.notifyPairedDevicesOfApproval({
         approvalId,
         workspaceId: deps.workspaceIdForApprovalPush(workspacePath),

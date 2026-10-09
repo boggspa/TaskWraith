@@ -424,6 +424,54 @@ describe('prepareKimiIsolatedHome', () => {
     expect([...files.keys()].some((key) => key.startsWith('/iso'))).toBe(false)
   })
 
+  it('builds a wall-free Never Ask profile only for native-full-access, then rebuilds the wall on a restricted turn', async () => {
+    const { fs, files, dirs } = makeFakeFs({
+      ...seededSource(),
+      '/iso/sessions/session-1/context.jsonl': '{"role":"user"}',
+      '/iso/session_index.jsonl': '{"id":"session-1"}\n'
+    })
+    dirs.add('/iso')
+    dirs.add('/iso/sessions')
+    dirs.add('/iso/sessions/session-1')
+
+    const native = await prepareKimiIsolatedHome({
+      runId: 'turn-1',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      preserveSessionState: true,
+      nativeToolPolicy: 'native-full-access',
+      fs
+    })
+    expect(native.ok).toBe(true)
+    if (!native.ok) return
+    const nativeConfig = files.get('/iso/config.toml') as string
+    expect(nativeConfig).toContain('default_permission_mode = "auto"')
+    expect(nativeConfig).not.toContain('decision = "deny"')
+    expect(nativeConfig).toContain('telemetry = false')
+    expect(nativeConfig).toContain('pattern = "mcp__taskwraith__*"')
+    await native.cleanup()
+    // The per-turn profile is a runtime secret-bearing file: it never survives
+    // cleanup, so a stale wall-free profile cannot leak into the next turn.
+    expect(files.has('/iso/config.toml')).toBe(false)
+    expect(files.get('/iso/sessions/session-1/context.jsonl')).toBe('{"role":"user"}')
+
+    const contained = await prepareKimiIsolatedHome({
+      runId: 'turn-2',
+      homeDir: '/iso',
+      sourceHome: '/src',
+      preserveSessionState: true,
+      fs
+    })
+    expect(contained.ok).toBe(true)
+    if (!contained.ok) return
+    const containedConfig = files.get('/iso/config.toml') as string
+    expect(containedConfig).not.toContain('default_permission_mode')
+    for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'FetchURL', 'WebSearch']) {
+      expect(containedConfig).toContain(`decision = "deny"\npattern = "${tool}"`)
+    }
+    await contained.cleanup()
+  })
+
   it('creates an empty skills dir by default and skips it for allow-native posture', async () => {
     const suppressed = makeFakeFs({
       '/src/config.toml': `${REAL_CONFIG}\n\n[providers.kimi]\ntype = "kimi"\napi_key = "sk-hosted"\n`

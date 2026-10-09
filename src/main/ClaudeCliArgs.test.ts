@@ -3,6 +3,7 @@ import {
   buildClaudeCliArgs,
   claudeDispatchPrompt,
   claudeFastModeSettingsArg,
+  claudeSdkNativeToolOptions,
   normalizeClaudeEffortFlag,
   normalizeClaudeEffortFlagForModel
 } from './ClaudeCliArgs'
@@ -85,6 +86,25 @@ describe('buildClaudeCliArgs', () => {
     permissionMode: 'default',
     model: 'default'
   }
+
+  it('enables all native CLI tools and bypass only from the explicit Full Access port', () => {
+    const full = buildClaudeCliArgs({ ...base, nativeFullAccess: true })
+    expect(full[full.indexOf('--tools') + 1]).toBe('default')
+    expect(full[full.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    expect(full).toContain('--allow-dangerously-skip-permissions')
+    const restricted = buildClaudeCliArgs({ ...base, permissionMode: 'acceptEdits' })
+    expect(restricted[restricted.indexOf('--tools') + 1]).toBe('')
+    expect(restricted).not.toContain('--allow-dangerously-skip-permissions')
+  })
+
+  it('enables the default SDK tool set only for Full Access', () => {
+    expect(claudeSdkNativeToolOptions(true)).toEqual({
+      tools: { type: 'preset', preset: 'claude_code' },
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true
+    })
+    expect(claudeSdkNativeToolOptions(false)).toEqual({ tools: [] })
+  })
 
   it('emits the baseline argv with required flags', () => {
     const args = buildClaudeCliArgs(base)

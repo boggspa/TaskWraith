@@ -5,7 +5,9 @@ import {
   canonicalRunPermissionPosture,
   clampUntrustedRunPosture,
   coerceApprovalMode,
+  isSignedHumanFullAccessPosture,
   signRunPermissionPosture,
+  verifiedFullAccessRunPosture,
   verifyRunPermissionPosture,
   type ClampRunPostureDeps,
   type RunPostureScope
@@ -114,6 +116,11 @@ function defaultPerms(): EffectiveRunPermissions {
     workspaceGrantServiceIds: [],
     readOnly: false
   }
+}
+
+/** Signed-but-not-Full-Access permissive posture (Accept Edits tier). */
+function workspaceWritePerms(): EffectiveRunPermissions {
+  return { ...fullAccessPerms(), presetId: 'workspace_write' }
 }
 
 /** Verifier + read-only re-derivation bound to the test secret. */
@@ -442,8 +449,8 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     expect(snapshot.subThreadDelegationAutoAllowSource).toBe('ultratask')
   })
 
-  it('caps a signed global permissive posture to a default-derived permission object', () => {
-    const perms = fullAccessPerms()
+  it('caps a signed global Accept Edits posture to a default-derived permission object', () => {
+    const perms = workspaceWritePerms()
     const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms)
     const d = deps()
     const result = clampUntrustedRunPosture(
@@ -457,6 +464,77 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     expect(result.signature).toBeUndefined()
     expect(d.reDeriveReadOnly).not.toHaveBeenCalled()
     expect(d.reDeriveDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes a signed human-selected global Full Access posture through unchanged', () => {
+    const perms = fullAccessPerms()
+    const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms)
+    const d = deps()
+    const result = clampUntrustedRunPosture(
+      { scope: 'global', approvalMode: 'auto_edit', effectivePermissions: perms, signature },
+      d
+    )
+    expect(result).toEqual({
+      approvalMode: 'auto_edit',
+      effectivePermissions: fullAccessPerms(),
+      signature,
+      downgraded: false
+    })
+    expect(d.reDeriveDefault).not.toHaveBeenCalled()
+    expect(d.reDeriveReadOnly).not.toHaveBeenCalled()
+  })
+
+  it('still caps a signed global full_access object that is not write-capable Full Access', () => {
+    const d = deps()
+    const noShell = {
+      ...fullAccessPerms(),
+      agenticServices: { ...fullAccessPerms().agenticServices, shellCommands: 'ask' as const }
+    }
+    const noShellResult = clampUntrustedRunPosture(
+      {
+        scope: 'global',
+        approvalMode: 'auto_edit',
+        effectivePermissions: noShell,
+        signature: signRunPermissionPosture(SECRET, 'auto_edit', noShell)
+      },
+      d
+    )
+    expect(noShellResult.downgraded).toBe(true)
+    expect(noShellResult.reason).toBe('global-effective-permissions-capped')
+    expect(noShellResult.approvalMode).toBe('default')
+    expect(noShellResult.effectivePermissions).toEqual(defaultPerms())
+
+    // A forged global Full Access posture (wrong secret) never reaches the lift.
+    const forged = signRunPermissionPosture(
+      Buffer.from('c'.repeat(64), 'hex'),
+      'auto_edit',
+      fullAccessPerms()
+    )
+    const forgedResult = clampUntrustedRunPosture(
+      {
+        scope: 'global',
+        approvalMode: 'auto_edit',
+        effectivePermissions: fullAccessPerms(),
+        signature: forged
+      },
+      d
+    )
+    expect(forgedResult.downgraded).toBe(true)
+    expect(forgedResult.reason).toBe('invalid-posture-signature')
+    expect(forgedResult.approvalMode).toBe('plan')
+
+    // Unsigned global Full Access content is a renderer-inflated blob.
+    const unsignedResult = clampUntrustedRunPosture(
+      {
+        scope: 'global',
+        approvalMode: 'auto_edit',
+        effectivePermissions: fullAccessPerms(),
+        signature: undefined
+      },
+      d
+    )
+    expect(unsignedResult.downgraded).toBe(true)
+    expect(unsignedResult.reason).toBe('unsigned-effective-permissions')
   })
 
   it('passes a signed global default posture through without discarding its Mesh policy', () => {
@@ -570,6 +648,24 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
 })
 
 describe('clampUntrustedRunPosture — over-permissive payloads are downgraded', () => {
+  it('isSignedHumanFullAccessPosture is a content check for write-capable Full Access only', () => {
+    expect(isSignedHumanFullAccessPosture(fullAccessPerms())).toBe(true)
+    expect(isSignedHumanFullAccessPosture(workspaceWritePerms())).toBe(false)
+    expect(isSignedHumanFullAccessPosture(defaultPerms())).toBe(false)
+    expect(isSignedHumanFullAccessPosture({ ...fullAccessPerms(), readOnly: true })).toBe(false)
+    expect(isSignedHumanFullAccessPosture(readOnlyPerms())).toBe(false)
+    expect(isSignedHumanFullAccessPosture(null)).toBe(false)
+    expect(isSignedHumanFullAccessPosture(undefined)).toBe(false)
+    // Malformed shape fails even when the two Full Access fields are present.
+    expect(
+      isSignedHumanFullAccessPosture({
+        presetId: 'full_access',
+        readOnly: false,
+        agenticServices: { shellCommands: 'allow' }
+      } as unknown as EffectiveRunPermissions)
+    ).toBe(false)
+  })
+
   it('downgrades an UNSIGNED inflated effectivePermissions object to read-only', () => {
     const d = deps()
     const result = clampUntrustedRunPosture(
@@ -618,6 +714,108 @@ describe('clampUntrustedRunPosture — over-permissive payloads are downgraded',
     expect(result.downgraded).toBe(true)
     expect(result.approvalMode).toBe('plan')
     expect(result.effectivePermissions).toEqual(readOnlyPerms())
+  })
+})
+
+describe('verifiedFullAccessRunPosture — pre-admission verified Full Access check', () => {
+  const verify: ClampRunPostureDeps['verify'] = (mode, perms, sig, context) =>
+    verifyRunPermissionPosture(SECRET, mode, perms, sig, context)
+  const context = {
+    provider: 'codex',
+    scope: 'workspace',
+    appRunId: 'run-1',
+    appChatId: 'chat-1',
+    prompt: 'do it',
+    workflowMode: 'normal'
+  }
+
+  it('returns the signed permissions for a verified Full Access posture in either scope', () => {
+    for (const scope of ['workspace', 'global'] as const) {
+      const perms = fullAccessPerms()
+      const scopedContext = { ...context, scope }
+      const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms, scopedContext)
+      expect(
+        verifiedFullAccessRunPosture(
+          {
+            scope,
+            approvalMode: 'auto_edit',
+            effectivePermissions: perms,
+            signature,
+            context: scopedContext
+          },
+          verify
+        )
+      ).toEqual({ approvalMode: 'auto_edit', effectivePermissions: fullAccessPerms() })
+    }
+  })
+
+  it('returns null for unsigned, forged, context-mismatched, or non-Full-Access postures', () => {
+    const perms = fullAccessPerms()
+    const signature = signRunPermissionPosture(SECRET, 'auto_edit', perms, context)
+    const base = {
+      scope: 'workspace' as const,
+      approvalMode: 'auto_edit',
+      effectivePermissions: perms,
+      signature,
+      context
+    }
+    expect(verifiedFullAccessRunPosture({ ...base, signature: undefined }, verify)).toBeNull()
+    expect(verifiedFullAccessRunPosture({ ...base, signature: '' }, verify)).toBeNull()
+    expect(
+      verifiedFullAccessRunPosture(
+        {
+          ...base,
+          signature: signRunPermissionPosture(
+            Buffer.from('c'.repeat(64), 'hex'),
+            'auto_edit',
+            perms,
+            context
+          )
+        },
+        verify
+      )
+    ).toBeNull()
+    // Same bytes replayed against another run's context do not verify.
+    expect(
+      verifiedFullAccessRunPosture({ ...base, context: { ...context, appRunId: 'run-2' } }, verify)
+    ).toBeNull()
+    // Tampered approvalMode after signing.
+    expect(verifiedFullAccessRunPosture({ ...base, approvalMode: 'plan' }, verify)).toBeNull()
+    // Correctly signed but lesser tiers are never Full Access.
+    const ww = workspaceWritePerms()
+    expect(
+      verifiedFullAccessRunPosture(
+        {
+          ...base,
+          effectivePermissions: ww,
+          signature: signRunPermissionPosture(SECRET, 'auto_edit', ww, context)
+        },
+        verify
+      )
+    ).toBeNull()
+    const ro = readOnlyPerms()
+    expect(
+      verifiedFullAccessRunPosture(
+        {
+          ...base,
+          approvalMode: 'plan',
+          effectivePermissions: ro,
+          signature: signRunPermissionPosture(SECRET, 'plan', ro, context)
+        },
+        verify
+      )
+    ).toBeNull()
+    // A signed posture with no permission object cannot prove Full Access.
+    expect(
+      verifiedFullAccessRunPosture(
+        {
+          ...base,
+          effectivePermissions: undefined,
+          signature: signRunPermissionPosture(SECRET, 'auto_edit', undefined, context)
+        },
+        verify
+      )
+    ).toBeNull()
   })
 })
 

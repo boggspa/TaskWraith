@@ -315,6 +315,73 @@ describe('classifyKimiToolPermission', () => {
     expect(classifyKimiToolPermission(req, opts({ isReadOnlyShell: () => true }))).toBe('deny')
   })
 
+  describe('human-selected native Full Access', () => {
+    const native = opts({ nativeToolPolicy: 'native-full-access' })
+
+    it('allows every production native tool without a prompt on a write-capable seat', () => {
+      for (const toolName of [
+        'FetchURL',
+        'WebSearch',
+        'AgentSwarm',
+        'Bash',
+        'Glob',
+        'Grep',
+        'Read',
+        'Write',
+        'Edit'
+      ]) {
+        expect(classifyKimiToolPermission({ toolName, toolKind: 'execute' }, native)).toBe('allow')
+      }
+      // Unknown native tools (no TaskWraith identity) are the provider's own.
+      expect(classifyKimiToolPermission({ toolName: 'Task', toolKind: 'other' }, native)).toBe(
+        'allow'
+      )
+      expect(classifyKimiToolPermission({ toolKind: 'execute' }, native)).toBe('allow')
+    })
+
+    it('keeps TaskWraith MCP tools on their signed broker path', () => {
+      expect(
+        classifyKimiToolPermission(
+          { toolName: 'mcp__taskwraith__run_shell_command', toolKind: 'execute' },
+          native
+        )
+      ).toBe('gate')
+      expect(
+        classifyKimiToolPermission(
+          { toolName: 'mcp__taskwraith__capability_search', toolKind: 'other' },
+          opts({ nativeToolPolicy: 'native-full-access', isSafeMcpTool: () => true })
+        )
+      ).toBe('allow')
+      expect(
+        classifyKimiToolPermission(
+          { toolName: 'mcp__taskwraith__write_file', toolKind: 'edit' },
+          native
+        )
+      ).toBe('allow')
+    })
+
+    it('never widens a read-only / plan seat, whatever the policy says', () => {
+      const readOnly = opts({ nativeToolPolicy: 'native-full-access', writeCapable: false })
+      expect(classifyKimiToolPermission({ toolName: 'Bash', toolKind: 'execute' }, readOnly)).toBe(
+        'deny'
+      )
+      expect(classifyKimiToolPermission({ toolName: 'Write', toolKind: 'edit' }, readOnly)).toBe(
+        'deny'
+      )
+    })
+
+    it('keeps the deny wall for contained, null, or omitted policy', () => {
+      for (const nativeToolPolicy of ['contained', null, undefined] as const) {
+        expect(
+          classifyKimiToolPermission(
+            { toolName: 'Bash', toolKind: 'execute' },
+            opts({ nativeToolPolicy })
+          )
+        ).toBe('deny')
+      }
+    })
+  })
+
   it('denies every exact production native-tool name before callbacks or approval', () => {
     for (const toolName of [
       'FetchURL',

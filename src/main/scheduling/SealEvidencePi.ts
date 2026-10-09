@@ -79,7 +79,9 @@ export interface PiSealEvidenceFacts {
    * Main-verified signed posture. These fields may only remove Pi native tools;
    * they can never make a non-default approval mode write-capable.
    */
-  readonly effectivePermissions?: PiNativeToolEffectivePermissions | null
+  readonly effectivePermissions?:
+    | (PiNativeToolEffectivePermissions & { readonly presetId?: string })
+    | null
   readonly chatId: string
   readonly sessionDir: string
   /** Main-issued mkdtemp lease that dispatch must consume unchanged. */
@@ -142,16 +144,20 @@ export async function resolvePiSealEvidence(
     approvalMode: facts.approvalMode,
     effectivePermissions: facts.effectivePermissions
   })
+  const fullAccess =
+    facts.effectivePermissions?.presetId === 'full_access' &&
+    facts.effectivePermissions.readOnly === false &&
+    facts.effectivePermissions.agenticServices?.shellCommands === 'allow'
   const sessionId = facts.ephemeralSession ? null : `taskwraith-${facts.chatId || 'chat'}`
-  const args = Object.freeze(
-    buildPiRpcArgs({
-      upstream: split.upstream,
-      modelId: split.modelId,
-      writeCapable,
-      sessionDir: facts.sessionDir,
-      ...(facts.ephemeralSession ? { ephemeralSession: true } : { sessionId: sessionId as string })
-    })
-  )
+  const args = buildPiRpcArgs({
+    upstream: split.upstream,
+    modelId: split.modelId,
+    writeCapable,
+    sessionDir: facts.sessionDir,
+    ...(facts.ephemeralSession ? { ephemeralSession: true } : { sessionId: sessionId as string })
+  })
+  if (fullAccess) args[args.indexOf('--tools') + 1] = 'read,bash,edit,write,grep,find,ls'
+  Object.freeze(args)
   const argvTemplate = placeholdPiRouteArgs(args)
 
   const firewalled = buildPiCredentialEnv(facts.baseSpawnEnv, {
@@ -247,7 +253,11 @@ export async function resolvePiSealEvidence(
     })
   }
 
-  const nativeTools = writeCapable ? PI_WRITE_TOOLS : PI_READ_ONLY_TOOLS
+  const nativeTools = fullAccess
+    ? ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']
+    : writeCapable
+      ? PI_WRITE_TOOLS
+      : PI_READ_ONLY_TOOLS
   const tools = buildToolSurfaceAuthority({
     taskWraithMcpAdvertised: false,
     taskWraithMcpProfileId: null,

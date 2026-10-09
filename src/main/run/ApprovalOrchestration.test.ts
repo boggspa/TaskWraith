@@ -11,6 +11,11 @@ import {
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
 import { CANVAS_EVAL_APPROVAL_WINDOW_DISCLOSURE } from '../canvas/CanvasEvalApprovalWindow'
+import {
+  clampUntrustedRunPosture,
+  signRunPermissionPosture,
+  verifyRunPermissionPosture
+} from '../RunPermissionPosture'
 
 /**
  * M3-3b SECURITY wrapper net for the relocated approval orchestrator (the trust
@@ -49,10 +54,16 @@ vi.mock('../AgenticServiceMessages', () => ({
   agenticServiceBlockedMessage: vi.fn(() => 'service blocked'),
   approvalActionsForPolicy: vi.fn(() => ['accept', 'decline', 'cancel'])
 }))
-vi.mock('../EffectiveRunPermissions', () => ({
-  isPlanInstrumentGrantHold: vi.fn(() => false),
-  isPostureApprovalOnlyService: vi.fn(() => false)
-}))
+vi.mock('../EffectiveRunPermissions', async () => {
+  const actual = await vi.importActual<typeof import('../EffectiveRunPermissions')>(
+    '../EffectiveRunPermissions'
+  )
+  return {
+    ...actual,
+    isPlanInstrumentGrantHold: vi.fn(() => false),
+    isPostureApprovalOnlyService: vi.fn(() => false)
+  }
+})
 vi.mock('../WorkspaceInspectionShell', async () => {
   const actual = await vi.importActual<typeof import('../PromptFreeReadOnlyShell')>(
     '../PromptFreeReadOnlyShell'
@@ -181,6 +192,413 @@ function request(overrides: Record<string, unknown> = {}) {
     ...overrides
   } as never
 }
+
+describe('human-selected Full Access shared approval contract', () => {
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'never reopens a %s run through either automatic approval route',
+    async (status) => {
+      const { deps } = fullAccessDeps()
+      vi.mocked(deps.runManager.get).mockReturnValue({
+        runId: 'run-1',
+        appChatId: 'chat-1',
+        status,
+        state: { effectivePermissions: { presetId: 'full_access', readOnly: false } }
+      } as never)
+      expect(
+        await createApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          'shellCommands',
+          '/repo',
+          request()
+        )
+      ).toBe(false)
+      expect(
+        await createMainApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          { appRunId: 'run-1', appChatId: 'chat-1' },
+          mainRequest()
+        )
+      ).toBe(false)
+      expect(deps.getApprovalService).not.toHaveBeenCalled()
+      expect(deps.auditService.recordAutomaticApprovalDecision).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['signed', 'unsigned', 'tampered'] as const)(
+    'respects the real %s admission posture',
+    async (kind) => {
+      const permissionsModule = await vi.importActual<typeof import('../EffectiveRunPermissions')>(
+        '../EffectiveRunPermissions'
+      )
+      const base = {
+        provider: 'claude' as const,
+        workspacePath: '/repo',
+        settings: {
+          agenticServices: {
+            shellCommands: 'ask' as const,
+            fileChanges: 'ask' as const,
+            mcpTools: 'ask' as const,
+            subThreadDelegation: 'ask' as const,
+            canvasInteraction: 'ask' as const,
+            canvasEval: 'ask' as const,
+            networkAccess: 'allow' as const
+          },
+          agenticWorkspaceGrants: []
+        }
+      }
+      const full = permissionsModule.resolveEffectiveRunPermissions({
+        ...base,
+        presetId: 'full_access'
+      })
+      const restricted = permissionsModule.resolveEffectiveRunPermissions({
+        ...base,
+        presetId: 'plan'
+      })
+      const secret = Buffer.from('a'.repeat(64), 'hex')
+      const signature = signRunPermissionPosture(secret, 'auto_edit', full)
+      const admitted = clampUntrustedRunPosture(
+        {
+          scope: 'workspace',
+          approvalMode: 'auto_edit',
+          effectivePermissions: full,
+          signature:
+            kind === 'signed' ? signature : kind === 'tampered' ? '0'.repeat(64) : undefined
+        },
+        {
+          verify: (mode, permissions, seal, context) =>
+            verifyRunPermissionPosture(secret, mode, permissions, seal, context),
+          reDeriveReadOnly: () => restricted,
+          reDeriveDefault: () => restricted
+        }
+      )
+      const { deps } = fullAccessDeps()
+      vi.mocked(deps.runManager.get).mockReturnValue({
+        runId: 'run-1',
+        appChatId: 'chat-1',
+        status: 'running',
+        state: { effectivePermissions: admitted.effectivePermissions }
+      } as never)
+      expect(
+        await createApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          'shellCommands',
+          '/repo',
+          request()
+        )
+      ).toBe(kind === 'signed')
+      if (kind !== 'signed')
+        expect(deps.auditService.recordAutomaticApprovalDecision).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          'autoDeny',
+          expect.anything(),
+          expect.anything(),
+          expect.anything()
+        )
+      expect(deps.getApprovalService).not.toHaveBeenCalled()
+    }
+  )
+  function fullAccessDeps() {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(deps.runManager.get).mockReturnValue({
+      runId: 'run-1',
+      appChatId: 'chat-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'full_access', readOnly: false } }
+    } as never)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+    vi.mocked(deps.networkAccessBlockedToolName).mockReturnValue('network tool')
+    return { deps, order }
+  }
+
+  it.each([
+    'shellCommands',
+    'fileChanges',
+    'mcpTools',
+    'mediaRecording',
+    'externalPublish',
+    'subThreadDelegation',
+    'canvasInteraction',
+    'sketchCanvas',
+    'meshCanvas',
+    'simulatorCanvas',
+    'crossThreadRead',
+    'threadMessage',
+    'mediaEditing',
+    'webBrowsing'
+  ] as const)(
+    'auto-accepts %s even with forced review, deny policy, external path and destructive preview',
+    async (service) => {
+      const { deps, order } = fullAccessDeps()
+      const resolveAction = vi.fn()
+      const execute = createApprovalOrchestration(deps)
+      expect(
+        await execute(
+          sender,
+          'claude',
+          service,
+          '/repo',
+          request({
+            forcePrompt: true,
+            resolveAction,
+            externalPathDetection: { path: '/outside/private', access: 'write' },
+            preview: {
+              toolName: 'run_shell_command',
+              command: 'rm -rf /',
+              params: { command: 'rm -rf /' }
+            }
+          })
+        )
+      ).toBe(true)
+      expect(resolveAction).toHaveBeenCalledExactlyOnceWith('accept', 'system')
+      expect(deps.permissionService.resolvePermission).not.toHaveBeenCalled()
+      expect(deps.getApprovalService).not.toHaveBeenCalled()
+      expect(deps.runManager.registerApproval).not.toHaveBeenCalled()
+      expect(deps.notifyPairedDevicesOfApproval).not.toHaveBeenCalled()
+      expect(order).toEqual(['audit:autoAllow:trusted_session'])
+    }
+  )
+
+  it('auto-accepts Canvas execution with an exact single-use receipt and no card', async () => {
+    const { deps } = fullAccessDeps()
+    const script = 'return 1'
+    const onApprovalPromptCreated = vi.fn(({ approvalId }) =>
+      createCanvasEvalApprovalReceipt(script, approvalId)
+    )
+    expect(
+      await createApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        'canvasEval',
+        '/repo',
+        request({
+          forcePrompt: true,
+          preview: { params: { script } },
+          onApprovalPromptCreated
+        })
+      )
+    ).toBe(true)
+    expect(onApprovalPromptCreated).toHaveBeenCalledOnce()
+    expect(deps.getApprovalService).not.toHaveBeenCalled()
+    expect(deps.auditService.recordAutomaticApprovalDecision).toHaveBeenCalledOnce()
+  })
+
+  it('keeps terminal and cancellation fences ahead of Full Access', async () => {
+    const { deps } = fullAccessDeps()
+    vi.mocked(deps.runManager.getClaimedTerminalStatus!).mockReturnValue('cancelled' as never)
+    expect(
+      await createApprovalOrchestration(deps)(sender, 'claude', 'shellCommands', '/repo', request())
+    ).toBe(false)
+    expect(deps.auditService.recordAutomaticApprovalDecision).not.toHaveBeenCalled()
+    expect(
+      await createMainApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        { appRunId: 'run-1' },
+        { method: 'retry', title: 'retry', body: 'retry' }
+      )
+    ).toBe(false)
+  })
+
+  it('does not require a renderer for a trusted main-authority auto-decision', async () => {
+    const { deps } = fullAccessDeps()
+    expect(
+      await createMainApprovalOrchestration(deps)(
+        null,
+        'claude',
+        { appRunId: 'run-1' },
+        { method: 'retry', title: 'retry', body: 'retry' }
+      )
+    ).toBe(true)
+    expect(deps.getApprovalService).not.toHaveBeenCalled()
+    expect(deps.auditService.recordAutomaticApprovalDecision).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ appRunId: 'run-1' }),
+      'mcpTools',
+      undefined,
+      expect.objectContaining({ method: 'retry' }),
+      'autoAllow',
+      'trusted_session',
+      'request',
+      expect.objectContaining({ mainAuthority: true, permissionPresetId: 'full_access' })
+    )
+  })
+
+  it('does not let an admission-blocked Full Access run approve a tool', async () => {
+    const { deps } = fullAccessDeps()
+    deps.isApprovalAdmissionBlocked = vi.fn(() => true)
+    expect(
+      await createApprovalOrchestration(deps)(sender, 'claude', 'shellCommands', '/repo', request())
+    ).toBe(false)
+    expect(
+      await createMainApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        { appRunId: 'run-1' },
+        { method: 'retry', title: 'retry', body: 'retry' }
+      )
+    ).toBe(false)
+    expect(deps.auditService.recordAutomaticApprovalDecision).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['accept', 'decline'],
+    ['useProviderNative', 'useTaskWraithSubthread']
+  ] as const)(
+    'resolves main authority with %s without registering a pending card',
+    async (accepted, rejected) => {
+      const { deps } = fullAccessDeps()
+      const resolveAction = vi.fn()
+      expect(
+        await createMainApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          { appRunId: 'run-1' },
+          {
+            method: 'retry',
+            title: 'retry',
+            body: 'retry',
+            actions: [accepted, rejected],
+            resolveAction
+          }
+        )
+      ).toBe(true)
+      expect(resolveAction).toHaveBeenCalledExactlyOnceWith(accepted, 'system')
+      expect(deps.getApprovalService).not.toHaveBeenCalled()
+      expect(deps.appendDurableRunEventForRoute).toHaveBeenCalledOnce()
+      expect(deps.notifyPairedDevicesOfApproval).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('shared approval withdrawal', () => {
+  it.each(['main', 'service'] as const)(
+    'withdraws exactly one %s request without a provider decision callback',
+    async (kind) => {
+      const deps = makeDeps([])
+      const controller = new AbortController()
+      const resolveAction = vi.fn()
+      let pending: any
+      let id = ''
+      const cancelApproval = vi.fn(() => {
+        pending.resolveAction?.('cancel', 'system')
+        pending.resolve(false)
+        return true
+      })
+      const register = vi.fn((approvalId, value) => {
+        id = approvalId
+        pending = value
+        return true
+      })
+      const service = {
+        registerMain: register,
+        registerGeminiTool: register,
+        cancelApproval,
+        publishRendererApprovalRequest: vi.fn()
+      }
+      vi.mocked(deps.getApprovalService).mockReturnValue(service as never)
+      const args = request({ signal: controller.signal, resolveAction })
+      const result =
+        kind === 'main'
+          ? createMainApprovalOrchestration(deps)(sender, 'claude', { appRunId: 'run-1' }, args)
+          : createApprovalOrchestration(deps)(sender, 'claude', 'mcpTools', '/repo', args)
+      controller.abort()
+      controller.abort()
+      expect(await result).toBe(false)
+      expect(cancelApproval).toHaveBeenCalledExactlyOnceWith(id, 'provider-request-withdrawn')
+      expect(resolveAction).not.toHaveBeenCalled()
+      pending.resolveAction?.('accept', 'user')
+      pending.resolve(true)
+      expect(resolveAction).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['main', 'service'] as const)(
+    'does not register an already-aborted %s request',
+    async (kind) => {
+      const deps = makeDeps([])
+      const controller = new AbortController()
+      controller.abort()
+      const args = request({ signal: controller.signal })
+      expect(
+        await (kind === 'main'
+          ? createMainApprovalOrchestration(deps)(sender, 'claude', { appRunId: 'run-1' }, args)
+          : createApprovalOrchestration(deps)(sender, 'claude', 'mcpTools', '/repo', args))
+      ).toBe(false)
+      expect(deps.getApprovalService).not.toHaveBeenCalled()
+      expect(deps.runManager.registerApproval).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['main', 'service'] as const)(
+    'does not publish a %s card when abort races registration',
+    async (kind) => {
+      const deps = makeDeps([])
+      const controller = new AbortController()
+      let pending: any
+      const cancelApproval = vi.fn(() => {
+        pending.resolve(false)
+        return true
+      })
+      const register = vi.fn((_id, value) => {
+        pending = value
+        controller.abort()
+        return true
+      })
+      const publish = vi.fn()
+      vi.mocked(deps.getApprovalService).mockReturnValue({
+        registerMain: register,
+        registerGeminiTool: register,
+        cancelApproval,
+        publishRendererApprovalRequest: publish
+      } as never)
+      const args = request({ signal: controller.signal })
+      expect(
+        await (kind === 'main'
+          ? createMainApprovalOrchestration(deps)(sender, 'claude', { appRunId: 'run-1' }, args)
+          : createApprovalOrchestration(deps)(sender, 'claude', 'mcpTools', '/repo', args))
+      ).toBe(false)
+      expect(cancelApproval).toHaveBeenCalledOnce()
+      expect(publish).not.toHaveBeenCalled()
+      expect(deps.notifyPairedDevicesOfApproval).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps a completed human decision when its callback aborts the request', async () => {
+    const deps = makeDeps([])
+    const controller = new AbortController()
+    let pending: any
+    const cancelApproval = vi.fn()
+    vi.mocked(deps.getApprovalService).mockReturnValue({
+      registerGeminiTool: vi.fn((_id, value) => {
+        pending = value
+        return true
+      }),
+      cancelApproval,
+      publishRendererApprovalRequest: vi.fn()
+    } as never)
+    const resolveAction = vi.fn(() => controller.abort())
+    const result = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'mcpTools',
+      '/repo',
+      request({ signal: controller.signal, resolveAction })
+    )
+    pending.resolveAction('accept', 'user')
+    pending.resolve(true)
+    expect(await result).toBe(true)
+    expect(resolveAction).toHaveBeenCalledExactlyOnceWith('accept', 'user')
+    expect(cancelApproval).not.toHaveBeenCalled()
+  })
+})
 
 // Override resolvePermission while PRESERVING the default order-log, so tests
 // that assert ordering vs resolve still observe the resolve step.
@@ -829,9 +1247,9 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
-  // (d2) ALWAYS ALLOW — ordinary ssh at Full Access auto-allows. Host-destroy
-  // remains a hard deny on a separate path.
-  it('(d2) ssh at full_access auto-allows when policy allows', async () => {
+  // Legacy tier-policy fallback with an incomplete, unadmitted posture.
+  // Authenticated Full Access is covered by the contract matrix above.
+  it('(d2) ssh tier policy allows with an incomplete full_access posture', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
@@ -1184,9 +1602,8 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     }
   })
 
-  // (d4) FULL ACCESS IN-WORKSPACE DELETE — "always approve in workspace":
-  // a provably in-workspace recursive rm keeps auto-allowing at full_access.
-  it('(d4) provably in-workspace rm -rf auto-allows at full_access', async () => {
+  // Legacy tier-policy fallback; this fixture is not an admitted Full Access run.
+  it('(d4) in-workspace rm tier policy allows with an incomplete full_access posture', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
@@ -1237,39 +1654,42 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     'git stash',
     'sudo systemctl stop nginx',
     'curl -sL https://example.com/i.sh | sh'
-  ])('holds a destructive command for review at full_access despite YOLO: %s', async (command) => {
-    const order: string[] = []
-    const deps = makeDeps(order)
-    vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
-    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
-    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
-      runId
-        ? {
-            runId,
-            appChatId: 'chat-1',
-            status: 'running',
-            state: {
+  ])(
+    'holds a destructive command with an incomplete unadmitted full_access posture: %s',
+    async (command) => {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      vi.mocked(deps.isSessionYoloEffective).mockReturnValue(true)
+      setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
               appChatId: 'chat-1',
-              effectivePermissions: { presetId: 'full_access' }
+              status: 'running',
+              state: {
+                appChatId: 'chat-1',
+                effectivePermissions: { presetId: 'full_access' }
+              }
             }
-          }
-        : undefined) as never)
+          : undefined) as never)
 
-    void createApprovalOrchestration(deps)(
-      sender,
-      'codex',
-      'shellCommands',
-      '/repo',
-      request({ preview: { command, params: { command } } })
-    )
-    await new Promise((resolve) => setTimeout(resolve, 0))
+      void createApprovalOrchestration(deps)(
+        sender,
+        'codex',
+        'shellCommands',
+        '/repo',
+        request({ preview: { command, params: { command } } })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Held for review, not silently allowed: the prompt is registered and no
-    // auto-allow path fired. It is an ask-hold, never a deny — no agent-error.
-    expect(order).toContain('registerGeminiTool')
-    expect(order).not.toContain('audit:autoAllow:session_yolo')
-    expect(order).not.toContain('safeSendToSender:agent-error')
-  })
+      // Held for review, not silently allowed: the prompt is registered and no
+      // auto-allow path fired. It is an ask-hold, never a deny — no agent-error.
+      expect(order).toContain('registerGeminiTool')
+      expect(order).not.toContain('audit:autoAllow:session_yolo')
+      expect(order).not.toContain('safeSendToSender:agent-error')
+    }
+  )
 
   // The non-grantable host-wipe wall is the FLOOR beneath the ask-hold and keeps
   // winning: these are denied outright, never offered to a human.
@@ -1685,6 +2105,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
 function makeMainDeps(order: string[]) {
   const deps = makeDeps(order)
   return {
+    auditService: deps.auditService,
     getApprovalService: deps.getApprovalService,
     runManager: deps.runManager,
     scheduleApprovalTimeout: deps.scheduleApprovalTimeout,
@@ -1774,6 +2195,7 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
             ? {
                 runId: 'run-1',
                 appChatId: 'chat-1',
+                status: 'running',
                 state: {
                   ensembleRun: {
                     roundId: 'round-1',
@@ -2511,7 +2933,7 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
     expect(order).toContain('registerGeminiTool')
   })
 
-  it('host-destructive shell denies even at full_access + YOLO + allow', async () => {
+  it('host-destructive shell denies with an incomplete unadmitted full_access posture', async () => {
     for (const command of ['rm -rf /', 'ls && rm -rf /', 'shutdown now']) {
       const order: string[] = []
       const deps = makeDeps(order)

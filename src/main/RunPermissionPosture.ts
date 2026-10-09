@@ -14,6 +14,7 @@ import type {
   RunPermissionPostureSnapshot
 } from './store/types'
 import { isRecord, optionalString } from './settings/MainSanitizers'
+import { isFullShellAccessGranted } from './EffectiveRunPermissions'
 
 /**
  * Downgrade-only clamp for a run's permission posture
@@ -447,19 +448,77 @@ function sha256Hex(value: string): string {
  * Global runs can never exceed `'default'` (the long-standing hard rule
  * in `normalizeAgentRunPayload`); workspace runs are coerced to a
  * recognized value.
+ *
+ * `allowGlobalElevation` is set only by the trusted branch of the clamp when
+ * the signed posture itself is a human-selected Full Access posture; it never
+ * derives from an unsigned payload.
  */
 function coerceScopedApprovalMode(
   scope: RunPostureScope,
-  approvalMode: string | null | undefined
+  approvalMode: string | null | undefined,
+  allowGlobalElevation = false
 ): string | undefined {
-  if (scope === 'global') return approvalMode === 'plan' ? 'plan' : 'default'
+  if (scope === 'global' && !allowGlobalElevation) {
+    return approvalMode === 'plan' ? 'plan' : 'default'
+  }
   return coerceApprovalMode(approvalMode)
 }
 
 /**
+ * True for a structurally valid, write-capable Full Access permission object:
+ * the shared `isFullShellAccessGranted` predicate (presetId `full_access`
+ * with shell `allow`) plus the clamped `readOnly === false` flag. This is a
+ * CONTENT check only; callers must have already established provenance
+ * (a verified main-issued signature). A signed `workspace_write`, `custom`,
+ * or read-only object is never a Full Access posture.
+ */
+export function isSignedHumanFullAccessPosture(
+  effectivePermissions: EffectiveRunPermissions | null | undefined
+): effectivePermissions is EffectiveRunPermissions {
+  return (
+    isEffectiveRunPermissions(effectivePermissions) &&
+    effectivePermissions.readOnly === false &&
+    isFullShellAccessGranted(effectivePermissions)
+  )
+}
+
+export interface VerifiedFullAccessRunPosture {
+  approvalMode: string
+  effectivePermissions: EffectiveRunPermissions
+}
+
+/**
+ * Pre-admission check for a run that has not yet reached RunManager (for
+ * example a provider trust prompt issued before `session/new`). Returns the
+ * signed permission object ONLY when the posture signature verifies against
+ * the exact run context AND the object is a write-capable Full Access
+ * posture; everything else (unsigned, forged, tampered, read-only, plan,
+ * workspace_write, malformed) is `null`. The caller passes the same
+ * `verify` dependency the normalize clamp uses; the raw payload content alone
+ * can never satisfy this.
+ */
+export function verifiedFullAccessRunPosture(
+  input: UntrustedRunPosture,
+  verify: ClampRunPostureDeps['verify']
+): VerifiedFullAccessRunPosture | null {
+  const hasSignature = typeof input.signature === 'string' && input.signature.length > 0
+  if (!hasSignature || !input.effectivePermissions) return null
+  if (!verify(input.approvalMode, input.effectivePermissions, input.signature, input.context)) {
+    return null
+  }
+  if (!isSignedHumanFullAccessPosture(input.effectivePermissions)) return null
+  const approvalMode = coerceScopedApprovalMode(input.scope, input.approvalMode, true)
+  if (!approvalMode || approvalMode === 'plan') return null
+  return { approvalMode, effectivePermissions: input.effectivePermissions }
+}
+
+/**
  * Downgrade-only clamp. Trusted (validly-signed) postures pass through
- * byte-for-byte (global scope still capped to ≤ default); everything
- * else is coerced. Unverifiable `effectivePermissions` fail safe to a
+ * byte-for-byte. Global scope is still capped to ≤ default EXCEPT for a
+ * signed human-selected Full Access posture, which the main-side composer
+ * only produces when the user's explicit Full Access grant is active for
+ * that chat; it passes through unchanged. Everything else is coerced.
+ * Unverifiable `effectivePermissions` fail safe to a
  * read-only run. Unsigned payloads without a permission object may still
  * use legacy/default dispatch paths, but they cannot raise themselves to
  * `auto_edit` without a main-issued signature.
@@ -475,18 +534,25 @@ export function clampUntrustedRunPosture(
       deps.verify(input.approvalMode, input.effectivePermissions, input.signature, input.context)
     ) {
       // Trusted main-issued posture. Pass through unchanged, except the
-      // global-scope cap (identity for a legitimate global posture).
-      const approvalMode = coerceScopedApprovalMode(input.scope, input.approvalMode)
+      // global-scope cap (identity for a legitimate global default posture,
+      // and lifted only for a signed human-selected Full Access posture).
       if (input.effectivePermissions && !isEffectiveRunPermissions(input.effectivePermissions)) {
         return forceReadOnly(input.scope, deps, 'invalid-effective-permissions-shape')
       }
+      const signedFullAccess = isSignedHumanFullAccessPosture(input.effectivePermissions)
+      const approvalMode = coerceScopedApprovalMode(
+        input.scope,
+        input.approvalMode,
+        signedFullAccess
+      )
       if (approvalMode === 'plan' && input.effectivePermissions?.readOnly !== true) {
         return forceReadOnly(input.scope, deps, 'missing-readonly-effective-permissions')
       }
       if (
         input.scope === 'global' &&
         input.effectivePermissions?.readOnly === false &&
-        input.effectivePermissions.presetId !== 'default'
+        input.effectivePermissions.presetId !== 'default' &&
+        !signedFullAccess
       ) {
         return forceDefault(deps, 'global-effective-permissions-capped')
       }

@@ -236,6 +236,27 @@ describe('Pi scheduled launch evidence', () => {
     }
   )
 
+  it('binds all native Pi tools to an explicit Full Access scheduled launch', async () => {
+    const result = await resolvePiSealEvidence(
+      deps(),
+      facts({
+        approvalMode: 'auto_edit',
+        effectivePermissions: {
+          presetId: 'full_access',
+          readOnly: false,
+          agenticServices: { shellCommands: 'allow', fileChanges: 'allow' }
+        }
+      })
+    )
+    expect(result.args[result.args.indexOf('--tools') + 1]).toBe(
+      'read,bash,edit,write,grep,find,ls'
+    )
+    expect(result.authority.controls.writeCapable).toBe(true)
+    expect(result.authority.tools.nativeToolPolicySha256).toBe(
+      result.authority.controls.nativeToolPolicySha256
+    )
+  })
+
   it('does not disable exact file posture when only native shell is denied', async () => {
     const result = await resolvePiSealEvidence(
       deps(),

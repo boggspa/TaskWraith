@@ -2,6 +2,7 @@ import { claudeSdkThinkingConfigForEffort } from '../providers/ClaudeThinkingCon
 import { normalizeClaudeEffortFlagForModel } from '../ClaudeCliArgs'
 import { claudePermissionModeForApproval } from '../providers/StaticProviderModels'
 import { isReconRunPosture } from '../ReconPosture'
+import { isFullShellAccessGranted } from '../EffectiveRunPermissions'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import {
@@ -86,13 +87,17 @@ export async function buildClaudeSealEvidence(
   deps: SealEvidenceDeps,
   facts: ClaudeSealEvidenceFacts
 ): Promise<ProviderLaunchAuthorityInputByProvider['claude']> {
-  const permissionMode = isReconRunPosture({
-    approvalMode: facts.approvalMode,
-    workflowMode: facts.workflowMode,
-    effectivePermissions: facts.effectivePermissions
-  })
-    ? 'default'
-    : (claudePermissionModeForApproval(facts.approvalMode) as 'plan' | 'acceptEdits')
+  const fullAccess =
+    !facts.effectivePermissions.readOnly && isFullShellAccessGranted(facts.effectivePermissions)
+  const permissionMode = fullAccess
+    ? 'bypassPermissions'
+    : isReconRunPosture({
+          approvalMode: facts.approvalMode,
+          workflowMode: facts.workflowMode,
+          effectivePermissions: facts.effectivePermissions
+        })
+      ? 'default'
+      : (claudePermissionModeForApproval(facts.approvalMode) as 'plan' | 'acceptEdits')
   const effort = normalizeClaudeEffortFlagForModel(facts.claudeReasoningEffort, facts.model)
   const thinking = claudeSdkThinkingConfigForEffort(effort)
   const attachmentMode = facts.taskWraithMcpAdvertised ? 'sdk-config' : 'none'
@@ -112,7 +117,7 @@ export async function buildClaudeSealEvidence(
     options: {
       model: facts.model === 'default' ? null : facts.model,
       permissionMode,
-      tools: [],
+      ...(fullAccess ? {} : { tools: [] }),
       includePartialMessages: true,
       resume: facts.session.sessionMode === 'fresh' ? null : SEAL_EVIDENCE_ARGV_ROUTE_PLACEHOLDER,
       effort: effort ?? null,
@@ -151,8 +156,8 @@ export async function buildClaudeSealEvidence(
     },
     userMcpConfiguration: facts.userMcpConfiguration,
     nativeToolPolicy: {
-      kind: 'claude-builtins-disabled',
-      tools: [],
+      kind: fullAccess ? 'claude-provider-native' : 'claude-builtins-disabled',
+      tools: fullAccess ? 'provider-default' : [],
       perCallGate: 'canUseTool-signed-posture'
     },
     brokerPolicy: {
@@ -184,7 +189,7 @@ export async function buildClaudeSealEvidence(
       fastMode: facts.claudeFastMode === true,
       permissionMode,
       sdkPackageSha256: (await deps.hasher.digestFile(facts.sdkPackageJsonPath)).sha256,
-      builtinToolMode: 'disabled',
+      builtinToolMode: fullAccess ? 'provider-native' : 'disabled',
       includePartialMessages: true,
       taskWraithMcpAttachmentMode: attachmentMode,
       imageTransport: facts.imageCount > 0 ? 'sdk-images' : 'none',

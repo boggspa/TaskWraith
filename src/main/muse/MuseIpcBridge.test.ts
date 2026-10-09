@@ -1048,7 +1048,7 @@ describe('runMuseProviderFromIpc — transport selection', () => {
     expect(execRun).not.toHaveBeenCalled()
     expect(getSeatHome).toHaveBeenCalledWith('chat-1', 'worker')
     expect(mspRun.mock.calls[0][0]).toMatchObject({
-      durableSeat: { boundaryRoot: '/seats', path: '/seats/a' },
+      durableSeat: { boundaryRoot: '/seats', path: join('/seats/a', 'contained-v2') },
       resumeSessionId: 'sess-stored',
       imagePaths: ['/chat/a.png']
     })
@@ -1097,16 +1097,21 @@ describe('runMuseProviderFromIpc — transport selection', () => {
       })
     )
     const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
-      request: unknown
+      request: unknown,
+      context: { signal: AbortSignal }
     ) => Promise<string>
     expect(handler).toBeTypeOf('function')
 
-    const verdict = await handler({
-      approvalId: 'a1',
-      toolName: 'run_command',
-      rawArgs: '{"command":"rm -rf /"}',
-      subject: { kind: 'shell', command: 'rm -rf /' }
-    })
+    const controller = new AbortController()
+    const verdict = await handler(
+      {
+        approvalId: 'a1',
+        toolName: 'run_command',
+        rawArgs: '{"command":"rm -rf /"}',
+        subject: { kind: 'shell', command: 'rm -rf /' }
+      },
+      { signal: controller.signal }
+    )
     expect(verdict).toBe('allow')
     // Without appRunId the orchestrator resolves no session, so
     // effectivePermissions is undefined and the read-only/plan clamp is gone.
@@ -1116,6 +1121,7 @@ describe('runMuseProviderFromIpc — transport selection', () => {
       workspacePath: '/ws',
       rawToolCall: { command: 'rm -rf /' }
     })
+    expect(asks[0].signal).toBe(controller.signal)
   })
 
   it('denies the tool without cancelling the turn when approval throws', async () => {
@@ -1138,13 +1144,83 @@ describe('runMuseProviderFromIpc — transport selection', () => {
       })
     )
     const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
-      request: unknown
+      request: unknown,
+      context: { signal: AbortSignal }
     ) => Promise<string>
     // Fail closed on the TOOL, not on the turn: an orchestrator fault must not
     // discard work the user is mid-way through.
     await expect(
-      handler({ approvalId: 'a1', toolName: 't', rawArgs: '{}', subject: { kind: 'shell' } })
+      handler(
+        { approvalId: 'a1', toolName: 't', rawArgs: '{}', subject: { kind: 'shell' } },
+        { signal: new AbortController().signal }
+      )
     ).resolves.toBe('deny')
+  })
+
+  it.each(['0', '1'])(
+    'gets native Full Access from admitted host state on transport %s',
+    async (transport) => {
+      process.env[MSP_ENV] = transport
+      for (const admitted of [false, true]) {
+        const work = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+        const isNativeFullAccessGranted = vi.fn(() => admitted)
+        await runMuseProviderFromIpc(
+          ipcEvent() as never,
+          basePayload({
+            approvalMode: 'auto_edit',
+            taskWraithMcpAdvertised: false,
+            effectivePermissions: { presetId: 'full_access', readOnly: false },
+            nativeFullAccess: true
+          }),
+          baseDeps({
+            runMuseProvider: work as never,
+            runMuseMspProvider: work as never,
+            isNativeFullAccessGranted
+          })
+        )
+        expect(isNativeFullAccessGranted).toHaveBeenCalledWith('run-muse-1')
+        expect(work.mock.calls[0][0].nativeFullAccess).toBe(admitted)
+      }
+    }
+  )
+
+  it('forwards provider withdrawal to the pending host approval', async () => {
+    process.env[MSP_ENV] = '1'
+    const controller = new AbortController()
+    let pendingCard = false
+    const work = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      basePayload({ taskWraithMcpAdvertised: false }),
+      baseDeps({
+        runMuseMspProvider: work as never,
+        requestApproval: (ask) =>
+          new Promise((resolve) => {
+            expect(ask.signal).toBe(controller.signal)
+            pendingCard = true
+            ask.signal!.addEventListener(
+              'abort',
+              () => {
+                pendingCard = false
+                resolve(false)
+              },
+              { once: true }
+            )
+          })
+      })
+    )
+    const handler = work.mock.calls[0][0].onApprovalRequest as (
+      request: unknown,
+      context: { signal: AbortSignal }
+    ) => Promise<string>
+    const waiting = handler(
+      { approvalId: 'a1', toolName: 't', subject: { kind: 'shell' } },
+      { signal: controller.signal }
+    )
+    expect(pendingCard).toBe(true)
+    controller.abort({ kind: 'resolved', decision: 'approved', resolvedBy: 'policy' })
+    await waiting
+    expect(pendingCard).toBe(false)
   })
 
   it('keeps sandbox-only parity when no approval plane is wired', async () => {

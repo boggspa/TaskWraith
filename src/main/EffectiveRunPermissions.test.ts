@@ -174,7 +174,9 @@ describe('resolveEffectiveRunPermissions', () => {
           }),
           presetId
         })
-        expect(globallyDenied.agenticServices[service], `${service} global deny`).toBe('deny')
+        expect(globallyDenied.agenticServices[service], `${service} global deny`).toBe(
+          presetId === 'full_access' ? 'allow' : 'deny'
+        )
       }
     }
   })
@@ -209,7 +211,7 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'full_access'
     })
-    expect(globallyDenied.agenticServices.sketchCanvas).toBe('deny')
+    expect(globallyDenied.agenticServices.sketchCanvas).toBe('allow')
   })
 
   it('pins external publishing to the standard permission ladder', () => {
@@ -251,7 +253,7 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'full_access'
     })
-    expect(globallyDenied.agenticServices.externalPublish).toBe('deny')
+    expect(globallyDenied.agenticServices.externalPublish).toBe('allow')
   })
 
   it('pins the file-changes ladder: Accept Edits auto-accepts in-workspace edits', () => {
@@ -321,7 +323,7 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'full_access'
     })
-    expect(globallyDenied.agenticServices.webBrowsing).toBe('deny')
+    expect(globallyDenied.agenticServices.webBrowsing).toBe('allow')
   })
 
   it('webBrowsing stays per-invocation under Ask and Plan, and is allowed by Accept Edits', () => {
@@ -544,7 +546,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(fullAccess.agenticServices.meshCanvas).toBe('allow')
   })
 
-  it('keeps global deny stronger than participant overrides', () => {
+  it('honors human-selected Full Access over stored service and network policies', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
@@ -561,8 +563,8 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'full_access'
     })
-    expect(resolved.agenticServices.shellCommands).toBe('deny')
-    expect(resolved.networkAccess).toBe('deny')
+    expect(resolved.agenticServices.shellCommands).toBe('allow')
+    expect(resolved.networkAccess).toBe('allow')
   })
 
   it('applies participant-scoped tool grant overrides without requiring workspace grants', () => {
@@ -729,7 +731,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
   })
 
-  it('keeps canvasEval gate-managed under Ask and Full Access', () => {
+  it('keeps Canvas eval attended under Ask and automatically allowed under Full Access', () => {
     const readOnly = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
@@ -746,10 +748,9 @@ describe('resolveEffectiveRunPermissions', () => {
       settings: settings(),
       presetId: 'full_access'
     })
-    // Full Access does not become a broad all-Canvas grant. The dedicated
-    // surface window remains the auto-resolution path.
+    // The selected run posture authorizes eval without issuing a standing grant.
     expect(fullAccess.agenticServices.canvasInteraction).toBe('allow')
-    expect(fullAccess.agenticServices.canvasEval).toBe('ask')
+    expect(fullAccess.agenticServices.canvasEval).toBe('allow')
   })
 
   it('does not let a broad workspace grant cover every canvasEval surface', () => {
@@ -961,7 +962,24 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.mediaEditing).toBe('allow')
   })
 
-  it('clamps preview-risk Codex PLACEHOLDER models to explicit approvals and denies network', () => {
+  it.each(['default', 'workspace_write'] as const)(
+    'retains preview-risk prompt and network clamps under %s',
+    (presetId) => {
+      const resolved = resolveEffectiveRunPermissions({
+        provider: 'codex',
+        workspacePath: '/repo',
+        model: 'preview:openai:gpt-5.6:sol',
+        settings: settings(),
+        presetId
+      })
+      expect(resolved.agenticServices.shellCommands).toBe('ask')
+      expect(resolved.agenticServices.fileChanges).toBe('ask')
+      expect(resolved.approvalMode).toBe('default')
+      expect(resolved.networkAccess).toBe('deny')
+    }
+  )
+
+  it('preserves Full Access for preview-risk Codex PLACEHOLDER models', () => {
     // Legacy preview:… placeholder ids stay preview-risk (isPreviewModelPlaceholder)
     // so the clamp machinery is still covered for the next codex preview family.
     const resolved = resolveEffectiveRunPermissions({
@@ -994,19 +1012,20 @@ describe('resolveEffectiveRunPermissions', () => {
       presetId: 'full_access'
     })
 
-    expect(resolved.approvalMode).toBe('default')
-    expect(resolved.networkAccess).toBe('deny')
-    expect(resolved.workspaceGrantServiceIds).toEqual([])
-    expect(resolved.agenticServices.shellCommands).toBe('ask')
-    expect(resolved.agenticServices.fileChanges).toBe('ask')
-    expect(resolved.agenticServices.mcpTools).toBe('ask')
-    expect(resolved.agenticServices.subThreadDelegation).toBe('ask')
-    expect(resolved.agenticServices.canvasInteraction).toBe('ask')
-    expect(resolved.agenticServices.sketchCanvas).toBe('ask')
-    // Mesh Canvas follows the user's explicit five-tier ladder even for a
-    // preview-risk model; the global service deny still remains authoritative.
+    expect(resolved.approvalMode).toBe('auto_edit')
+    expect(resolved.networkAccess).toBe('allow')
+    expect(resolved.readOnly).toBe(false)
+    expect(resolved.agenticServices.shellCommands).toBe('allow')
+    expect(resolved.agenticServices.fileChanges).toBe('allow')
+    expect(resolved.agenticServices.mcpTools).toBe('allow')
+    expect(resolved.agenticServices.subThreadDelegation).toBe('allow')
+    expect(resolved.agenticServices.canvasInteraction).toBe('allow')
+    expect(resolved.agenticServices.sketchCanvas).toBe('allow')
+    // Full Access also keeps the remaining instruments available.
     expect(resolved.agenticServices.meshCanvas).toBe('allow')
-    expect(resolved.agenticServices.mediaEditing).toBe('ask')
+    expect(resolved.agenticServices.mediaEditing).toBe('allow')
+    expect(resolved.agenticServices.mediaRecording).toBe('allow')
+    expect(resolved.agenticServices.canvasEval).toBe('allow')
   })
 
   it('preserves read-only posture for stale Claude preview placeholders', () => {

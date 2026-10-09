@@ -10,6 +10,7 @@
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
+import { kimiNativeToolsAllowed, type KimiNativeToolPolicy } from './KimiNativeFullAccess'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
 import { isUltraTaskDelegationAutoAllowRequest } from '../UltraTaskDelegationConsent'
@@ -247,6 +248,13 @@ export interface KimiToolPolicyOptions {
   isSafeMcpTool: (request: KimiToolPolicyRequest) => boolean
   /** Exact mutator admitted only so TaskWraith's inner signed service gate can decide. */
   isBrokerDeferredMcpTool?: (request: KimiToolPolicyRequest) => boolean
+  /**
+   * Main-derived native policy (resolveKimiNativeToolPolicy on the verified
+   * post-clamp posture). `native-full-access` admits every native Kimi tool
+   * without a prompt on a write-capable seat; TaskWraith MCP tools keep their
+   * signed broker path. Omitted means `contained`.
+   */
+  nativeToolPolicy?: KimiNativeToolPolicy | null
   /** @deprecated Native shell is denied in production; retained for callers compiled against v1. */
   isReadOnlyShell: (request: KimiToolPolicyRequest) => boolean
 }
@@ -285,8 +293,18 @@ export function classifyKimiToolPermission(
   request: KimiToolPolicyRequest,
   options: KimiToolPolicyOptions
 ): KimiToolDecision {
-  if (isKimiDeniedNativeTool(request)) return 'deny'
   const taskWraithToolName = resolveKimiTaskWraithMcpTool(request)
+  // Human-selected Full Access: every native Kimi tool runs without a
+  // TaskWraith prompt. TaskWraith MCP tools keep the path below because the
+  // signed broker (which auto-allows at full_access) remains their audit.
+  if (
+    options.writeCapable &&
+    kimiNativeToolsAllowed(options.nativeToolPolicy) &&
+    !taskWraithToolName
+  ) {
+    return 'allow'
+  }
+  if (isKimiDeniedNativeTool(request)) return 'deny'
   const taskWraithService = taskWraithToolName ? resolveKimiTaskWraithMcpToolService(request) : null
   if (taskWraithToolName === 'run_shell_command') return 'gate'
   if (

@@ -1055,19 +1055,15 @@ function assertProviderPostureControls(
 ): void {
   const readOnly = permissions.readOnly
   const approvalMode = permissions.approvalMode
+  const fullAccess = !readOnly && isFullShellAccessGranted(permissions)
   const recon =
     approvalMode === 'plan' &&
     context.workflowMode === 'normal' &&
     permissions.presetId === 'read_only' &&
     readOnly
 
-  if (
-    permissions.agenticServices.mcpTools === 'deny' &&
-    launch.tools.taskWraithMcpAdvertised
-  ) {
-    throw new TypeError(
-      'A denied MCP posture cannot advertise the TaskWraith MCP tool surface.'
-    )
+  if (permissions.agenticServices.mcpTools === 'deny' && launch.tools.taskWraithMcpAdvertised) {
+    throw new TypeError('A denied MCP posture cannot advertise the TaskWraith MCP tool surface.')
   }
 
   switch (launch.provider) {
@@ -1113,11 +1109,12 @@ function assertProviderPostureControls(
     }
     case 'claude': {
       const controls = launch.controls as ClaudeLaunchControls
-      if (controls.builtinToolMode !== 'disabled') {
+      if (controls.builtinToolMode !== (fullAccess ? 'provider-native' : 'disabled')) {
         throw new TypeError('Scheduled Claude launches must disable provider-native tools.')
       }
-      const expectedMode =
-        controls.transport === 'agent-sdk' && recon
+      const expectedMode = fullAccess
+        ? 'bypassPermissions'
+        : controls.transport === 'agent-sdk' && recon
           ? 'default'
           : approvalMode === 'plan'
             ? 'plan'
@@ -1146,8 +1143,9 @@ function assertProviderPostureControls(
       if (controls.readOnlySeat !== readOnly) {
         throw new TypeError('Grok read-only control does not match the signed posture.')
       }
-      const expectedMode =
-        controls.transport === 'acp'
+      const expectedMode = fullAccess
+        ? 'bypassPermissions'
+        : controls.transport === 'acp'
           ? 'host-gated'
           : readOnly
             ? 'plan'
@@ -1175,11 +1173,13 @@ function assertProviderPostureControls(
       if (isReadOnlyMode !== readOnly) {
         throw new TypeError('Mistral session mode does not match the signed posture.')
       }
-      // `auto-approve` answers every tool request without a gate. An unattended
-      // scheduled occurrence is precisely the context where that must never be
-      // reachable, regardless of posture.
-      if (controls.sessionMode === 'auto-approve') {
+      // Native auto-approval requires the exact human-selected, signed Full
+      // Access posture. Restricted scheduled occurrences keep the gated mode.
+      if (!fullAccess && controls.sessionMode === 'auto-approve') {
         throw new TypeError('Scheduled Mistral launches cannot use the auto-approve session mode.')
+      }
+      if (fullAccess && controls.sessionMode !== 'auto-approve') {
+        throw new TypeError('Mistral session mode does not match signed Full Access.')
       }
       // The seat is a subscription lane. If a scheduled launch were minted on
       // the BYOK key it would bill the user's metered API line instead of their
@@ -1195,12 +1195,15 @@ function assertProviderPostureControls(
     case 'cursor': {
       const controls = launch.controls as CursorLaunchControls
       // This seal lane currently represents ONLY final native-only Path-B
-      // launches. `--sandbox enabled` is pinned for both seat tiers; a
+      // launches. Restricted tiers pin `--sandbox enabled`; a
       // read-only seat uses the exact non-mutating `--mode ask` argv while a
       // write-capable seat uses Cursor's sandboxed default. Broker-intended
       // schedules are reported unsealed before reaching this validator until
       // their dynamic setup outcome is prepared before sealing.
-      if (controls.executionMode !== (readOnly ? 'ask' : 'contained-default')) {
+      if (
+        controls.executionMode !==
+        (fullAccess ? 'full-access' : readOnly ? 'ask' : 'contained-default')
+      ) {
         throw new TypeError('Cursor execution mode does not match the signed posture.')
       }
       if (controls.bridgeMode !== 'none' || launch.tools.taskWraithMcpAdvertised) {

@@ -1022,8 +1022,9 @@ export function FirstLaunchSheet({
               <strong>Permission picker colour-codes the authority.</strong> Plan-authoring mode is
               separate from Ask: Plan drafts for approval, Accept Edits keeps
               actions visible, Full WS Access removes per-action prompts inside the project, and
-              Full Access is lane-scoped host authority. Approval-gated instruments remain
-              explicit. Check the selected posture before you hit Enter.
+              Full Access enables available native tools without TaskWraith approval cards for
+              that lane. Provider sign-in and OS prompts still apply. Check the selected posture
+              before you hit Enter.
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex

@@ -86,6 +86,8 @@ export interface MuseRunInput {
    */
   readonly introductionText?: string | null
   readonly approvalMode?: string | null
+  /** Main-derived Full Access for this run; never inferred from the approval label. */
+  readonly nativeFullAccess?: boolean
   /** Derived only from the main-signed UltraTask delegation consent. */
   readonly ultraTaskDelegationAutoAllow?: boolean
   /** BYOK for `--api-key-stdin` only — never placed on argv. */
@@ -161,8 +163,9 @@ function hashSkillPinSettings(settingsPath: string): string {
   }
 }
 
-function assertSafeMuseArgv(argv: readonly string[]): void {
+function assertSafeMuseArgv(argv: readonly string[], nativeFullAccess = false): void {
   for (const flag of MUSE_FORBIDDEN_ARGV_FLAGS) {
+    if (flag === '--disable-sandbox' && nativeFullAccess) continue
     if (argv.includes(flag)) {
       throw new Error(`MuseRun refused forbidden argv flag: ${flag}`)
     }
@@ -359,10 +362,11 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     model: input.model,
     reasoningEffort: effort,
     readOnlySeat: !writeCapable,
+    nativeFullAccess: input.nativeFullAccess,
     apiKeyStdin,
     ultraTaskDelegationAutoAllow
   })
-  assertSafeMuseArgv(argv)
+  assertSafeMuseArgv(argv, input.nativeFullAccess === true && writeCapable)
 
   const env = stringEnv(lease.env)
   const museDataHome = lease.museDataDir

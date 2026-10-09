@@ -43,6 +43,22 @@ export function museSeatStateRoot(userDataPath: string): string {
   return join(userDataPath, MUSE_SEAT_STATE_DIR)
 }
 
+/**
+ * Provider session grants belong to one permission posture. A restricted turn
+ * must never resume a session that accepted a Full Access session grant, even
+ * after a host restart. Homes live below the existing seat erase boundary.
+ * The versioned contained home also excludes legacy sessions of unknown posture.
+ */
+export function museSeatHomeForPosture(
+  seat: { boundaryRoot: string; path: string },
+  nativeFullAccess: boolean
+): { boundaryRoot: string; path: string } {
+  return {
+    boundaryRoot: seat.boundaryRoot,
+    path: join(seat.path, nativeFullAccess ? 'full-access-v1' : 'contained-v2')
+  }
+}
+
 export function legacyMuseSeatStatePaths(
   userDataPath: string,
   chatId: string,

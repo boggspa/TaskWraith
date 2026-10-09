@@ -687,6 +687,49 @@ describe('selectMuseMspApprovalChoice — select, never create', () => {
     expect(selectMuseMspApprovalChoice('nope' as never, 'deny')).toBeNull()
   })
 
+  it('under native Full Access still prefers a single-use approval', () => {
+    const picked = selectMuseMspApprovalChoice(
+      [choice('s', 'approvedForSession', 'session'), choice('o', 'approved', 'once')],
+      'allow',
+      { nativeFullAccess: true }
+    )
+    expect(picked?.choiceId).toBe('o')
+  })
+
+  it('under native Full Access takes a session approval when no single-use one exists', () => {
+    const picked = selectMuseMspApprovalChoice(
+      [choice('s', 'approvedForSession', 'session'), choice('d', 'denied', 'once')],
+      'allow',
+      { nativeFullAccess: true }
+    )
+    expect(picked?.choiceId).toBe('s')
+  })
+
+  it('never authors a persistent or unknown-scope rule, even under native Full Access', () => {
+    for (const offered of [
+      choice('p', 'approvedPolicyAmendment', 'localPersistent'),
+      choice('ps', 'approvedPolicyAmendment', 'session'),
+      choice('l', 'approved', 'localPersistent'),
+      choice('u', 'approved', 'forever' as MuseMspApprovalChoice['scope'])
+    ]) {
+      const picked = selectMuseMspApprovalChoice(
+        [offered, choice('d', 'denied', 'once')],
+        'allow',
+        { nativeFullAccess: true }
+      )
+      expect(picked?.choiceId, offered.choiceId).toBe('d')
+    }
+  })
+
+  it('keeps a deny a deny under native Full Access', () => {
+    const picked = selectMuseMspApprovalChoice(
+      [choice('s', 'approvedForSession', 'session'), choice('d', 'denied', 'once')],
+      'deny',
+      { nativeFullAccess: true }
+    )
+    expect(picked?.choiceId).toBe('d')
+  })
+
   it('falls back to abort when no denial is offered', () => {
     const picked = selectMuseMspApprovalChoice([choice('a', 'abort', 'once')], 'deny')
     expect(picked?.decision).toBe('abort')
@@ -726,7 +769,8 @@ describe('runMuseMspTurn — approvals', () => {
     child.emit(approvalFrame())
     await flush()
     expect(onApprovalRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'run_shell_command' })
+      expect.objectContaining({ toolName: 'run_shell_command' }),
+      { signal: expect.any(AbortSignal) }
     )
     expect(child.sentMethod('approval/decide')?.params).toMatchObject({
       approvalId: 'ap-1',
@@ -735,23 +779,41 @@ describe('runMuseMspTurn — approvals', () => {
     })
   })
 
-  it('echoes the requirement id an approval/updated moved to', async () => {
-    // A stale requirement id is rejected `approvalRequirementStale`, which
-    // leaves the tool call hanging.
-    const onApprovalRequest = vi.fn().mockResolvedValue('allow')
+  it('never applies an answer to a stage approval/updated moved on to', async () => {
+    // Consent is to the stage TaskWraith was shown. The moved-to stage is a new
+    // question, answered only once Muse presents it, with its own requirement.
+    const answers: Array<(verdict: 'allow' | 'deny') => void> = []
+    const onApprovalRequest = vi.fn(
+      () => new Promise<'allow' | 'deny'>((resolve) => answers.push(resolve))
+    )
     const { child } = start({ onApprovalRequest })
     await driveToTurn(child)
     child.emit(approvalFrame())
+    await flush()
     child.emit({
       jsonrpc: '2.0',
       method: 'approval/updated',
       params: { approvalId: 'ap-1', currentRequirementId: { approvalId: 'ap-1', sourceIndex: 3 } }
     })
+    answers[0]('allow')
     await flush()
-    expect(child.sentMethod('approval/decide')?.params.requirementId).toEqual({
-      approvalId: 'ap-1',
-      sourceIndex: 3
+    expect(child.sentMethod('approval/decide')).toBeUndefined()
+
+    child.emit({
+      ...approvalFrame({ currentRequirementId: { approvalId: 'ap-1', sourceIndex: 3 } }),
+      id: 'srv-3',
+      method: 'approval/request'
     })
+    await flush()
+    expect(onApprovalRequest).toHaveBeenCalledTimes(2)
+    answers[1]('allow')
+    await flush()
+    expect(
+      child
+        .sent()
+        .filter((frame) => frame.method === 'approval/decide')
+        .map((f) => f.params)
+    ).toEqual([expect.objectContaining({ requirementId: { approvalId: 'ap-1', sourceIndex: 3 } })])
   })
 
   it('DENIES when no approval handler is attached, and says so', async () => {
@@ -1201,8 +1263,11 @@ describe('runMuseMspTurn — approvals that arrive malformed or get rejected', (
     }
   })
 
-  it('retries ONCE with the refreshed CAS token when the requirement went stale', async () => {
-    const { child } = start({ onApprovalRequest: vi.fn().mockResolvedValue('deny') })
+  it('never re-sends a stale-stage decision, and asks the new stage afresh', async () => {
+    // A stale CAS proves the decide was not applied AND that the stage moved.
+    // Re-sending the same choice would answer a question TaskWraith never saw.
+    const onApprovalRequest = vi.fn().mockResolvedValue('deny')
+    const { child, warnings } = start({ onApprovalRequest })
     await driveToTurn(child)
     child.emit({
       jsonrpc: '2.0',
@@ -1226,8 +1291,28 @@ describe('runMuseMspTurn — approvals that arrive malformed or get rejected', (
     })
     await flush()
     const decides = child.sent().filter((f) => f.method === 'approval/decide')
-    expect(decides).toHaveLength(2)
-    expect(decides[1].params.requirementId).toEqual({ approvalId: 'ap-2', sourceIndex: 5 })
+    expect(decides).toHaveLength(1)
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    // The update already told us the stage moved; nothing more to say.
+    expect(warnings).toEqual([])
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 'srv-5',
+      method: 'approval/request',
+      params: {
+        ...base,
+        currentRequirementId: { approvalId: 'ap-2', sourceIndex: 5 },
+        availableChoices: [{ choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }]
+      }
+    })
+    await flush()
+    expect(onApprovalRequest).toHaveBeenCalledTimes(2)
+    const after = child.sent().filter((f) => f.method === 'approval/decide')
+    expect(after.map((f) => f.params.requirementId)).toEqual([
+      { approvalId: 'ap-2', sourceIndex: 0 },
+      { approvalId: 'ap-2', sourceIndex: 5 }
+    ])
     expect(child.sentMethod('turn/cancel')).toBeUndefined()
   })
 
@@ -1431,6 +1516,651 @@ describe('runMuseMspTurn — approvals re-issued after resume', () => {
     })
     await flush()
     expect(child.sentMethod('approval/decide')).toBeUndefined()
+  })
+})
+
+describe('runMuseMspTurn — one decision per approval stage, none once Muse settled it', () => {
+  const request = (overrides: Record<string, unknown> = {}) => ({
+    approvalId: 'ap-1',
+    sessionId: 'sess-1',
+    turnId: 'turn-1',
+    toolName: 'bash',
+    rawArgs: '{"command":"curl https://example.com"}',
+    subject: { kind: 'shell', command: 'curl https://example.com' },
+    currentRequirementId: { approvalId: 'ap-1', sourceIndex: 0 },
+    availableChoices: [
+      { choiceId: 'yes', decision: 'approved', label: 'Allow once', scope: 'once' },
+      { choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }
+    ],
+    ...overrides
+  })
+  const announced = (overrides: Record<string, unknown> = {}) => ({
+    jsonrpc: '2.0',
+    method: 'approval/requested',
+    params: request(overrides)
+  })
+  const presented = (id: string, overrides: Record<string, unknown> = {}) => ({
+    jsonrpc: '2.0',
+    id,
+    method: 'approval/request',
+    params: request(overrides)
+  })
+  const resolved = (approvalId = 'ap-1') => ({
+    jsonrpc: '2.0',
+    method: 'approval/resolved',
+    params: { approvalId, sessionId: 'sess-1', decision: 'abort', resolvedBy: 'policy' }
+  })
+  const decides = (child: FakeMspChild) =>
+    child.sent().filter((frame) => frame.method === 'approval/decide')
+  /** A handler the test answers by hand, recording the signal it was given. */
+  const heldHandler = () => {
+    const answers: Array<(verdict: 'allow' | 'deny') => void> = []
+    const signals: AbortSignal[] = []
+    const handler = vi.fn(
+      (_request: unknown, context: { signal: AbortSignal }) =>
+        new Promise<'allow' | 'deny'>((resolve) => {
+          signals.push(context.signal)
+          answers.push(resolve)
+        })
+    )
+    return { handler, answers, signals }
+  }
+
+  it('asks TaskWraith once when Muse both announces and presents the same stage', async () => {
+    const onApprovalRequest = vi.fn().mockResolvedValue('allow')
+    const { child, warnings } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit(announced())
+    child.emit(presented('srv-1'))
+    await flush()
+    // The must-answer request still gets its presentation receipt.
+    expect(child.sent().find((frame) => frame.id === 'srv-1')?.result).toEqual({})
+    expect(onApprovalRequest).toHaveBeenCalledTimes(1)
+    expect(decides(child)).toHaveLength(1)
+    expect(decides(child)[0].params).toMatchObject({ approvalId: 'ap-1', choiceId: 'yes' })
+    expect(warnings).toEqual([])
+  })
+
+  it('asks again for the next stage of a multi-stage approval, with that stage’s requirement', async () => {
+    const onApprovalRequest = vi.fn().mockResolvedValue('allow')
+    const { child } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    const first = decides(child)[0]
+    child.emit({
+      jsonrpc: '2.0',
+      id: first.id,
+      result: { approvalId: 'ap-1', commandId: 'c', status: 'accepted', terminal: false }
+    })
+    child.emit(presented('srv-2', { currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 } }))
+    await flush()
+    expect(onApprovalRequest).toHaveBeenCalledTimes(2)
+    expect(decides(child).map((frame) => frame.params.requirementId)).toEqual([
+      { approvalId: 'ap-1', sourceIndex: 0 },
+      { approvalId: 'ap-1', sourceIndex: 1 }
+    ])
+  })
+
+  it('withdraws a pending answer when Muse settles the approval, and sends nothing for it', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child, warnings } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    expect(signals[0].aborted).toBe(false)
+
+    child.emit(resolved())
+    await flush()
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[0].reason).toEqual({ kind: 'resolved', decision: 'abort', resolvedBy: 'policy' })
+
+    // A human answering the stale card afterwards decides nothing.
+    answers[0]('allow')
+    await flush()
+    expect(decides(child)).toEqual([])
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    expect(child.killed).toEqual([])
+    expect(warnings).toEqual([])
+
+    // A late re-presentation of the settled approval is not asked again.
+    child.emit(presented('srv-late'))
+    await flush()
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves other approvals pending when one approval resolves', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    child.emit(
+      announced({
+        approvalId: 'ap-2',
+        currentRequirementId: { approvalId: 'ap-2', sourceIndex: 0 }
+      })
+    )
+    await flush()
+    child.emit(resolved('ap-1'))
+    await flush()
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, false])
+    answers[1]('allow')
+    await flush()
+    expect(decides(child).map((frame) => frame.params.approvalId)).toEqual(['ap-2'])
+  })
+
+  it('keeps the turn when Muse reports a decided approval as not found after settling it', async () => {
+    const { handler, answers } = heldHandler()
+    const { child, warnings } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    answers[0]('allow')
+    await flush()
+    const decide = decides(child)[0]
+    // Muse settled it between our decide leaving and arriving.
+    child.emit(resolved())
+    child.emit({
+      jsonrpc: '2.0',
+      id: decide.id,
+      error: { code: -32050, message: 'not found', data: { kind: 'approvalNotFound' } }
+    })
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    expect(child.killed).toEqual([])
+    expect(decides(child)).toHaveLength(1)
+    expect(warnings).toEqual([])
+  })
+
+  it('keeps the turn, and says the decision was not applied, on an unexplained not-found', async () => {
+    const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('allow') })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: decides(child)[0].id,
+      error: { code: -32050, message: 'not found', data: { kind: 'approvalNotFound' } }
+    })
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    expect(child.killed).toEqual([])
+    expect(warnings).toEqual([expect.stringContaining('decision was not applied')])
+  })
+
+  it('still cancels the turn when a decision is rejected for any other reason', async () => {
+    const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('allow') })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: decides(child)[0].id,
+      error: { code: -32052, message: 'bad choice', data: { kind: 'approvalChoiceInvalid' } }
+    })
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeDefined()
+    expect(warnings.some((warning) => warning.includes('cancelling the turn'))).toBe(true)
+  })
+
+  it('withdraws pending answers when the turn ends, and sends no decision afterwards', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child, warnings } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.finish(0)
+    await flush()
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[0].reason).toEqual({ kind: 'turnEnded' })
+    const sentBefore = child.writes.length
+    answers[0]('allow')
+    await flush()
+    expect(child.writes).toHaveLength(sentBefore)
+    expect(warnings).toEqual([])
+  })
+
+  const updated = (sourceIndex: number, overrides: Record<string, unknown> = {}) => ({
+    jsonrpc: '2.0',
+    method: 'approval/updated',
+    params: {
+      approvalId: 'ap-1',
+      sessionId: 'sess-1',
+      change: { kind: 'stageSatisfied' },
+      currentRequirementId: { approvalId: 'ap-1', sourceIndex },
+      ...overrides
+    }
+  })
+  const stage1Choices = [
+    { choiceId: 'yes-1', decision: 'approved', label: 'Allow once', scope: 'once' },
+    { choiceId: 'no-1', decision: 'denied', label: 'Deny', scope: 'once' }
+  ]
+
+  it('withdraws a delayed answer when the stage advances, and asks the new stage once', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child, warnings } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+
+    child.emit(
+      updated(1, {
+        availableChoices: stage1Choices,
+        subject: { kind: 'shell', command: 'curl https://example.org' }
+      })
+    )
+    await flush()
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[0].reason).toEqual({
+      kind: 'superseded',
+      requirementId: { approvalId: 'ap-1', sourceIndex: 1 }
+    })
+    // The new stage is its own question, shown with what Muse now asks.
+    expect(handler).toHaveBeenCalledTimes(2)
+    expect(handler.mock.calls[1][0]).toMatchObject({
+      toolName: 'bash',
+      currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 },
+      subject: { command: 'curl https://example.org' }
+    })
+
+    // Muse's re-presentation of that stage asks nothing more.
+    child.emit(presented('srv-1', { currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 } }))
+    // A late copy of the superseded stage asks nothing either.
+    child.emit(presented('srv-0'))
+    await flush()
+    expect(handler).toHaveBeenCalledTimes(2)
+
+    // The stale stage-0 allow is discarded; only the stage-1 answer is sent.
+    answers[0]('allow')
+    await flush()
+    expect(decides(child)).toEqual([])
+    answers[1]('deny')
+    await flush()
+    expect(decides(child).map((frame) => frame.params)).toEqual([
+      expect.objectContaining({
+        choiceId: 'no-1',
+        requirementId: { approvalId: 'ap-1', sourceIndex: 1 }
+      })
+    ])
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    expect(warnings).toEqual([])
+  })
+
+  it('waits for Muse to present an advanced stage when the update cannot show it', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.emit(updated(1))
+    await flush()
+    expect(signals[0].aborted).toBe(true)
+    expect(handler).toHaveBeenCalledTimes(1)
+    answers[0]('allow')
+    await flush()
+    expect(decides(child)).toEqual([])
+
+    child.emit(
+      presented('srv-1', {
+        currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 },
+        availableChoices: stage1Choices
+      })
+    )
+    await flush()
+    expect(handler).toHaveBeenCalledTimes(2)
+    answers[1]('allow')
+    await flush()
+    expect(decides(child).map((frame) => frame.params)).toEqual([
+      expect.objectContaining({
+        choiceId: 'yes-1',
+        requirementId: { approvalId: 'ap-1', sourceIndex: 1 }
+      })
+    ])
+  })
+
+  it('withdraws an earlier stage when Muse presents a later one before any update', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.emit(
+      presented('srv-1', {
+        currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 },
+        availableChoices: stage1Choices
+      })
+    )
+    await flush()
+    expect(signals[0].reason).toMatchObject({ kind: 'superseded' })
+    // The update that follows names the stage already being asked.
+    child.emit(updated(1, { availableChoices: stage1Choices }))
+    await flush()
+    expect(handler).toHaveBeenCalledTimes(2)
+    answers[0]('allow')
+    answers[1]('allow')
+    await flush()
+    expect(decides(child).map((frame) => frame.params.requirementId)).toEqual([
+      { approvalId: 'ap-1', sourceIndex: 1 }
+    ])
+  })
+
+  it('does not re-send a stale decision, and keeps the turn, when no newer stage is known', async () => {
+    const onApprovalRequest = vi.fn().mockResolvedValue('allow')
+    const { child, warnings } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    child.emit({
+      jsonrpc: '2.0',
+      id: decides(child)[0].id,
+      error: { code: -32053, message: 'stale', data: { kind: 'approvalRequirementStale' } }
+    })
+    await flush()
+    expect(decides(child)).toHaveLength(1)
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+    expect(warnings).toEqual([expect.stringContaining('to another stage')])
+  })
+
+  it('does not retry an internal failure once the stage has moved on', async () => {
+    const onApprovalRequest = vi.fn().mockResolvedValue('allow')
+    const { child } = start({ onApprovalRequest })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    const first = decides(child)[0]
+    child.emit(updated(1))
+    child.emit({
+      jsonrpc: '2.0',
+      id: first.id,
+      error: { code: -32603, message: 'internal', data: { kind: 'internal' } }
+    })
+    await flush()
+    expect(decides(child)).toHaveLength(1)
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
+  })
+
+  it('withdraws an advanced stage’s answer when Muse resolves it or the turn ends', async () => {
+    const { handler, answers, signals } = heldHandler()
+    const { child } = start({ onApprovalRequest: handler })
+    await driveToTurn(child)
+    child.emit(announced())
+    child.emit(
+      announced({
+        approvalId: 'ap-2',
+        currentRequirementId: { approvalId: 'ap-2', sourceIndex: 0 }
+      })
+    )
+    await flush()
+    child.emit(updated(1, { availableChoices: stage1Choices }))
+    await flush()
+    expect(handler).toHaveBeenCalledTimes(3)
+
+    child.emit(resolved('ap-1'))
+    await flush()
+    expect(signals[2].reason).toEqual({ kind: 'resolved', decision: 'abort', resolvedBy: 'policy' })
+    expect(signals[1].aborted).toBe(false)
+
+    child.finish(0)
+    await flush()
+    expect(signals[1].reason).toEqual({ kind: 'turnEnded' })
+    for (const answer of answers) answer('allow')
+    await flush()
+    expect(decides(child)).toEqual([])
+  })
+
+  it('never turns an allow into a standing grant, and says so when it must deny instead', async () => {
+    const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue('allow') })
+    await driveToTurn(child)
+    child.emit(
+      announced({
+        availableChoices: [
+          {
+            choiceId: 'session',
+            decision: 'approvedForSession',
+            label: 'Session',
+            scope: 'session'
+          },
+          {
+            choiceId: 'rule',
+            decision: 'approvedPolicyAmendment',
+            label: 'Always',
+            scope: 'localPersistent'
+          },
+          { choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }
+        ]
+      })
+    )
+    await flush()
+    expect(decides(child)).toHaveLength(1)
+    expect(decides(child)[0].params.choiceId).toBe('no')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('TaskWraith allowed "bash"')
+    expect(warnings[0]).toContain('approvedForSession/session')
+    expect(warnings[0]).toContain('approvedPolicyAmendment/localPersistent')
+  })
+
+  it('reports nothing extra for a deny, or for an allow Muse could take once', async () => {
+    for (const verdict of ['deny', 'allow'] as const) {
+      const { child, warnings } = start({ onApprovalRequest: vi.fn().mockResolvedValue(verdict) })
+      await driveToTurn(child)
+      child.emit(announced())
+      await flush()
+      expect(decides(child)[0].params.choiceId).toBe(verdict === 'allow' ? 'yes' : 'no')
+      expect(warnings).toEqual([])
+    }
+  })
+
+  const sessionOnly = [
+    {
+      choiceId: 'ses',
+      decision: 'approvedForSession',
+      label: 'Allow for session',
+      scope: 'session'
+    },
+    { choiceId: 'no', decision: 'denied', label: 'Deny', scope: 'once' }
+  ]
+  const ack = (child: FakeMspChild, frame: Record<string, any>) =>
+    child.emit({
+      jsonrpc: '2.0',
+      id: frame.id,
+      result: { approvalId: 'ap-1', commandId: 'c', status: 'accepted', terminal: true }
+    })
+  const fail = (child: FakeMspChild, frame: Record<string, any>, code: number, kind: string) =>
+    child.emit({ jsonrpc: '2.0', id: frame.id, error: { code, message: kind, data: { kind } } })
+
+  it('reports an applied single-use allow once Muse admits it, as admission and nothing more', async () => {
+    const onApprovalOutcome = vi.fn()
+    const { child } = start({
+      onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+      onApprovalOutcome
+    })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    expect(onApprovalOutcome).not.toHaveBeenCalled()
+    ack(child, decides(child)[0])
+    await flush()
+    expect(onApprovalOutcome.mock.calls).toEqual([
+      [
+        {
+          approvalId: 'ap-1',
+          requirementId: { approvalId: 'ap-1', sourceIndex: 0 },
+          toolName: 'bash',
+          verdict: 'allow',
+          choice: { choiceId: 'yes', decision: 'approved', scope: 'once' },
+          grantScope: 'once',
+          allowApplied: true,
+          kind: 'decided'
+        }
+      ]
+    ])
+  })
+
+  it('applies a session approval under native Full Access when no single-use one is offered', async () => {
+    const onApprovalOutcome = vi.fn()
+    const { child, warnings } = start({
+      onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+      onApprovalOutcome,
+      nativeFullAccess: true
+    })
+    await driveToTurn(child)
+    child.emit(announced({ availableChoices: sessionOnly }))
+    await flush()
+    expect(decides(child)[0].params.choiceId).toBe('ses')
+    ack(child, decides(child)[0])
+    await flush()
+    expect(warnings).toEqual([])
+    expect(onApprovalOutcome.mock.calls[0][0]).toMatchObject({
+      verdict: 'allow',
+      kind: 'decided',
+      allowApplied: true,
+      grantScope: 'session'
+    })
+  })
+
+  it('records a host allow Muse could only hear as a deny as not applied, outside Full Access', async () => {
+    const onApprovalOutcome = vi.fn()
+    const { child, warnings } = start({
+      onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+      onApprovalOutcome
+    })
+    await driveToTurn(child)
+    child.emit(announced({ availableChoices: sessionOnly }))
+    await flush()
+    expect(decides(child)[0].params.choiceId).toBe('no')
+    ack(child, decides(child)[0])
+    await flush()
+    expect(warnings.some((w) => w.includes('offered no single-use approval'))).toBe(true)
+    expect(onApprovalOutcome.mock.calls[0][0]).toMatchObject({
+      verdict: 'allow',
+      choice: { choiceId: 'no', decision: 'denied', scope: 'once' },
+      kind: 'decided',
+      allowApplied: false,
+      grantScope: null
+    })
+  })
+
+  it('records a rejected decision, and the cancelled turn, without claiming the allow applied', async () => {
+    const onApprovalOutcome = vi.fn()
+    const { child } = start({
+      onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+      onApprovalOutcome
+    })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    fail(child, decides(child)[0], -32052, 'approvalChoiceInvalid')
+    await flush()
+    expect(child.sentMethod('turn/cancel')).toBeDefined()
+    expect(onApprovalOutcome.mock.calls).toHaveLength(1)
+    expect(onApprovalOutcome.mock.calls[0][0]).toMatchObject({
+      verdict: 'allow',
+      kind: 'rejected',
+      errorKind: 'approvalChoiceInvalid',
+      turnCancelled: true,
+      allowApplied: false
+    })
+  })
+
+  it('records a decision Muse no longer had pending, or whose stage moved, as withdrawn after sending', async () => {
+    for (const [code, kind, reason] of [
+      [-32050, 'approvalNotFound', { kind: 'notFound' }],
+      [
+        -32053,
+        'approvalRequirementStale',
+        { kind: 'superseded', requirementId: { approvalId: 'ap-1', sourceIndex: 0 } }
+      ]
+    ] as const) {
+      const onApprovalOutcome = vi.fn()
+      const { child } = start({
+        onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+        onApprovalOutcome
+      })
+      await driveToTurn(child)
+      child.emit(announced())
+      await flush()
+      fail(child, decides(child)[0], code, kind)
+      await flush()
+      expect(child.sentMethod('turn/cancel'), kind).toBeUndefined()
+      expect(onApprovalOutcome.mock.calls, kind).toHaveLength(1)
+      expect(onApprovalOutcome.mock.calls[0][0], kind).toMatchObject({
+        verdict: 'allow',
+        choice: { choiceId: 'yes' },
+        kind: 'withdrawn',
+        allowApplied: false,
+        reason
+      })
+    }
+  })
+
+  it('records each withdrawal before an answer, once per stage, with no choice sent', async () => {
+    const cases = [
+      {
+        name: 'resolved',
+        act: (child: FakeMspChild) => child.emit(resolved()),
+        reason: { kind: 'resolved', decision: 'abort', resolvedBy: 'policy' }
+      },
+      {
+        name: 'superseded',
+        act: (child: FakeMspChild) =>
+          child.emit({
+            jsonrpc: '2.0',
+            method: 'approval/updated',
+            params: {
+              approvalId: 'ap-1',
+              sessionId: 'sess-1',
+              currentRequirementId: { approvalId: 'ap-1', sourceIndex: 1 }
+            }
+          }),
+        reason: { kind: 'superseded', requirementId: { approvalId: 'ap-1', sourceIndex: 1 } }
+      },
+      {
+        name: 'turnEnded',
+        act: (child: FakeMspChild) => child.finish(0),
+        reason: { kind: 'turnEnded' }
+      }
+    ]
+    for (const { name, act, reason } of cases) {
+      const { handler, answers } = heldHandler()
+      const onApprovalOutcome = vi.fn()
+      const { child } = start({ onApprovalRequest: handler, onApprovalOutcome })
+      await driveToTurn(child)
+      child.emit(announced())
+      await flush()
+      act(child)
+      await flush()
+      // A human answering the dead card afterwards changes nothing.
+      answers[0]('allow')
+      await flush()
+      expect(decides(child), name).toHaveLength(0)
+      expect(onApprovalOutcome.mock.calls, name).toEqual([
+        [
+          expect.objectContaining({
+            verdict: null,
+            choice: null,
+            kind: 'withdrawn',
+            allowApplied: false,
+            reason
+          })
+        ]
+      ])
+    }
+  })
+
+  it('keeps deciding when the outcome consumer throws', async () => {
+    const { child } = start({
+      onApprovalRequest: vi.fn().mockResolvedValue('allow'),
+      onApprovalOutcome: () => {
+        throw new Error('audit sink down')
+      }
+    })
+    await driveToTurn(child)
+    child.emit(announced())
+    await flush()
+    ack(child, decides(child)[0])
+    await flush()
+    expect(decides(child)).toHaveLength(1)
+    expect(child.sentMethod('turn/cancel')).toBeUndefined()
   })
 })
 

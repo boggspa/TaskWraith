@@ -135,7 +135,8 @@ export interface BuildMuseExecArgvInput {
    * byte-for-byte unchanged.
    */
   ultraTaskDelegationAutoAllow?: boolean
-  // NEVER: yolo, disableSandbox, noSessionLog when metering required
+  /** Main-derived from the admitted Full Access run, never inferred from approvalMode. */
+  nativeFullAccess?: boolean
 }
 
 /**
@@ -148,7 +149,8 @@ export const MUSE_NATIVE_TOOL_POLICY = {
   forbiddenFlags: ['--yolo', '--disable-sandbox', '--no-session-log'],
   readOnlyFlags: ['--disable-write', '--disable-shell'],
   headlessFlags: ['--disable-approval', '--user-input-auto-resolve'],
-  meteringRequiresSessionLog: true
+  meteringRequiresSessionLog: true,
+  fullAccessFlags: ['--disable-sandbox', '--trust-workspace']
 } as const
 
 /**
@@ -187,6 +189,9 @@ export const MUSE_NATIVE_TOOL_POLICY = {
  *   kill) or accept that it is more permissive than exec on both. UNRESOLVED;
  *   do not describe the two lanes as equivalent until it is settled.
  *
+ * Current Muse 1.4.4 also supports `serve --disable-sandbox`; TaskWraith uses
+ * it only for an admitted Full Access run. The ordinary forbiddenFlags below
+ * remain the contract for every restricted tier.
  * Sandbox posture is fixed for the HOST's lifetime — see
  * `museMspHostPostureIsPerHost` in museGate.ts.
  */
@@ -197,7 +202,8 @@ export const MUSE_NATIVE_SERVE_TOOL_POLICY = {
   readOnlyFlags: ['--disable-write', '--disable-shell'],
   /** Empty on purpose: approvals ride `approval/requested` / `approval/decide`. */
   headlessFlags: [],
-  meteringRequiresSessionLog: true
+  meteringRequiresSessionLog: true,
+  fullAccessFlags: ['--disable-sandbox', '--trust-workspace']
 } as const
 
 export interface MuseServeArgvInput {
@@ -206,6 +212,8 @@ export interface MuseServeArgvInput {
   sandboxNetwork?: MuseSandboxNetworkMode
   /** Default false — omit `--trust-workspace`. */
   trustWorkspace?: boolean
+  /** Main-derived Full Access on this run; other tiers keep the native sandbox. */
+  nativeFullAccess?: boolean
 }
 
 /**
@@ -217,11 +225,17 @@ export interface MuseServeArgvInput {
  * host-lifetime posture.
  */
 export function buildMuseServeArgv(input: MuseServeArgvInput = {}): string[] {
-  const args = ['serve', '--sandbox-network', resolveSandboxNetwork(input.sandboxNetwork)]
+  const fullAccess = input.nativeFullAccess === true && museWriteCapable(input.approvalMode)
+  const args = [
+    'serve',
+    '--sandbox-network',
+    fullAccess ? 'enabled' : resolveSandboxNetwork(input.sandboxNetwork)
+  ]
+  if (fullAccess) args.push('--disable-sandbox')
   if (!museWriteCapable(input.approvalMode)) {
     args.push('--disable-write', '--disable-shell')
   }
-  if (input.trustWorkspace === true) args.push('--trust-workspace')
+  if (fullAccess || input.trustWorkspace === true) args.push('--trust-workspace')
   return args
 }
 
@@ -281,6 +295,7 @@ function resolveModelArg(model: string | null | undefined): string | null {
  * `exec --json --provider meta --workspace …`. Never emits forbidden flags.
  */
 export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
+  const fullAccess = input.nativeFullAccess === true && !input.readOnlySeat
   const workspace = typeof input.workspace === 'string' ? input.workspace.trim() : ''
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : ''
   if (!workspace) {
@@ -311,10 +326,11 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
     '--reasoning-effort',
     normalizeMuseReasoningEffort(input.reasoningEffort, input.model),
     '--sandbox-network',
-    resolveSandboxNetwork(input.sandboxNetwork)
+    fullAccess ? 'enabled' : resolveSandboxNetwork(input.sandboxNetwork)
   ]
 
-  if (input.disableWebTools !== false) {
+  if (fullAccess) args.push('--disable-sandbox')
+  if (!fullAccess && input.disableWebTools !== false) {
     args.push('--disable-web-tools')
   }
 
@@ -326,7 +342,7 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
     args.push('--disable-write', '--disable-shell')
   }
 
-  if (input.trustWorkspace === true) {
+  if (fullAccess || input.trustWorkspace === true) {
     args.push('--trust-workspace')
   }
 

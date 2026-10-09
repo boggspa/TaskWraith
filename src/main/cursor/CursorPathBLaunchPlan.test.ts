@@ -12,6 +12,7 @@ import {
   peekCursorMcpBridgeLastFailure
 } from './CursorMcpBridgeWarning'
 import type { EffectiveRunPermissions } from '../store/types'
+import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 
 const WORKSPACE = '/Users/test/repo'
 const PROMPT = 'Review the workspace.'
@@ -34,6 +35,71 @@ function input(overrides: Partial<CursorPathBLaunchPlanInput> = {}): CursorPathB
 }
 
 describe('CursorPathBLaunchPlan', () => {
+  it.each(['active', 'native-only-degraded'] as const)(
+    'opens native tools for verified Full Access with broker outcome %s',
+    (brokerOutcome) => {
+      const permissions = resolveEffectiveRunPermissions({
+        provider: 'cursor',
+        presetId: 'full_access',
+        settings: {
+          agenticServices: {
+            shellCommands: 'ask',
+            fileChanges: 'ask',
+            mcpTools: 'ask',
+            subThreadDelegation: 'ask',
+            canvasInteraction: 'ask',
+            canvasEval: 'ask',
+            networkAccess: 'allow'
+          },
+          agenticWorkspaceGrants: []
+        }
+      })
+      const plan = buildCursorPathBLaunchPlan(
+        input({
+          writeCapable: true,
+          brokerRequested: true,
+          brokerOutcome,
+          taskWraithMcpProfileId: 'taskwraith-full-v1',
+          effectivePermissions: permissions
+        })
+      )
+      expect(plan.argv[plan.argv.indexOf('--sandbox') + 1]).toBe('disabled')
+      expect(plan.argv.filter((arg) => arg === '--force')).toHaveLength(1)
+      expect(plan.argv.filter((arg) => arg === '--approve-mcps')).toHaveLength(1)
+      expect(plan.controls).toMatchObject({
+        executionMode: 'full-access',
+        forceMcpTools: true,
+        approveMcpServers: true
+      })
+      expect(plan.broker.denyRules).toEqual([])
+      expect(plan.prompt).not.toContain('only inside the enabled workspace sandbox')
+    }
+  )
+
+  it('does not lift a plan seat because a contradictory full_access field was supplied', () => {
+    const permissions = resolveEffectiveRunPermissions({
+      provider: 'cursor',
+      presetId: 'full_access',
+      settings: {
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'ask',
+          networkAccess: 'allow'
+        },
+        agenticWorkspaceGrants: []
+      }
+    })
+    const plan = buildCursorPathBLaunchPlan(
+      input({ planSeat: true, effectivePermissions: permissions })
+    )
+    expect(plan.argv[plan.argv.indexOf('--sandbox') + 1]).toBe('enabled')
+    expect(plan.controls.executionMode).toBe('ask')
+  })
+
   beforeEach(() => {
     clearCursorMcpBridgeLastFailure()
   })

@@ -385,6 +385,17 @@ describe('Muse isolated home', () => {
 })
 
 describe('Muse durable per-chat seat home', () => {
+  it('rejects a symlink in the parent of a posture home before writing credentials', () => {
+    const target = seat('posture-parent-link')
+    const elsewhere = mkdtempSync(join(TEMP_ROOT, 'outside-posture-'))
+    mkdirSync(target.boundaryRoot, { recursive: true })
+    symlinkSync(elsewhere, target.path)
+    expect(() => attach({ ...target, path: join(target.path, 'full-access-v1') })).toThrow(
+      /real directory/
+    )
+    expect(existsSync(join(elsewhere, 'full-access-v1'))).toBe(false)
+  })
+
   const seatRoots: string[] = []
 
   function seat(name: string): { boundaryRoot: string; path: string } {

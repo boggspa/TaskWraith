@@ -43,7 +43,7 @@ import { buildMuseSkillPinSettings } from './MuseSkillPin'
 import type { MuseMcpSettings } from './MuseMcpConfig'
 import {
   runMuseMspTurn,
-  type MuseMspApprovalVerdict,
+  type MuseMspTurnOptions,
   type MuseMspContextSnapshot,
   type MuseMspSessionReadyInfo,
   type MuseMspUsageSnapshot
@@ -51,7 +51,6 @@ import {
 import { createMuseMspWireLog, type MuseMspWireLogSink } from './MuseMspWireLog'
 import type {
   MuseMspApprovalMode,
-  MuseMspApprovalRequest,
   MuseMspReasoningEffort,
   MuseMspTurnError,
   MuseMspTurnInputPart
@@ -104,6 +103,8 @@ export interface MuseMspRunInput {
   readonly approvalMode?: string | null
   readonly sandboxNetwork?: MuseSandboxNetworkMode
   readonly trustWorkspace?: boolean
+  /** Main-derived from the admitted Full Access run; fixed for this private host. */
+  readonly nativeFullAccess?: boolean
   readonly ultraTaskDelegationAutoAllow?: boolean
   /** Main-authorized, chat-owned absolute paths. Never renderer-nominated. */
   readonly imagePaths?: readonly string[]
@@ -123,9 +124,8 @@ export interface MuseMspRunInput {
   readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
   /** Compaction ITEM lifecycle from the client — occupancy pressure never arrives here. */
   readonly onContextCompaction?: (signal: ContextCompactionSignal) => void
-  readonly onApprovalRequest?: (
-    request: MuseMspApprovalRequest
-  ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
+  readonly onApprovalRequest?: MuseMspTurnOptions['onApprovalRequest']
+  readonly onApprovalOutcome?: MuseMspTurnOptions['onApprovalOutcome']
   readonly shouldCancel?: () => boolean
   readonly cancelPollIntervalMs?: number
   /**
@@ -297,7 +297,8 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
   const argv = buildMuseServeArgv({
     approvalMode: input.approvalMode,
     sandboxNetwork: input.sandboxNetwork,
-    trustWorkspace: input.trustWorkspace
+    trustWorkspace: input.trustWorkspace,
+    nativeFullAccess: input.nativeFullAccess
   })
 
   const lease = (input.createHome ?? createMuseIsolatedHome)({
@@ -386,6 +387,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       modelId: normalizeCliProviderModel('muse', input.model),
       reasoningEffort: museMspReasoningEffortFor(effort),
       approvalMode: museMspApprovalModeFor(input.approvalMode, Boolean(input.onApprovalRequest)),
+      nativeFullAccess: input.nativeFullAccess === true,
       resumeSessionId: input.resumeSessionId ?? null,
       onEvent: (event) => {
         events.push(event)
@@ -409,6 +411,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       // the provider untouched, so it is never steered mid-turn either.
       announceBeforeTools: museAnnounceSteerAppliesToPrompt(prompt),
       ...(input.onApprovalRequest ? { onApprovalRequest: input.onApprovalRequest } : {}),
+      ...(input.onApprovalOutcome ? { onApprovalOutcome: input.onApprovalOutcome } : {}),
       onClose: (code, closeTerminal, error) => {
         exitCode = code
         terminal = closeTerminal

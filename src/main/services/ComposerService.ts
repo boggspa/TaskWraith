@@ -553,16 +553,34 @@ export class ComposerService {
     const requestedTrustedSession =
       !channelAgentAuthority &&
       !frozenPermissionPosture &&
-      effectiveInput.permissionPresetId === 'full_access' &&
-      scope !== 'global'
+      effectiveInput.permissionPresetId === 'full_access'
     const trustedSessionGranted =
       requestedTrustedSession &&
       this.deps.isTrustedSessionGranted?.({
         chatId,
         provider,
-        workspacePath: effectiveInput.workspace || chat.workspacePath,
+        workspacePath:
+          scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
         runtimeProfileId
       }) === true
+    // Global Full Access is the human's explicit selection confirmed by the
+    // main-owned grant store, never the chat's remembered mode or the raw
+    // request. Only then is the long-standing global `default` cap lifted, and
+    // only through the SAME chat-ceiling cap path every workspace run uses.
+    // Unattended runs never inherit this grant. A preview model does honor a
+    // human's explicit Full Access selection, just like every other model.
+    if (
+      (scope === 'global' || previewRiskModel) &&
+      trustedSessionGranted &&
+      !unattended &&
+      approvalMode === 'default'
+    ) {
+      approvalMode = capRequestedApprovalMode(
+        resolveApprovalMode(scope, undefined, trustedApprovalChat, true),
+        resolveApprovalMode(scope, requestedApprovalMode, trustedApprovalChat, true),
+        appRunId
+      )
+    }
     const interactivePermissionPresetId = unattended
       ? undefined
       : resolveInteractivePermissionPresetId(
@@ -1010,7 +1028,7 @@ export class ComposerService {
                   networkAccess: 'deny'
                 }
               })
-            : previewRiskModel
+            : previewRiskModel && interactivePermissionPresetId !== 'full_access'
               ? resolveEffectiveRunPermissions({
                   provider,
                   workspacePath:
@@ -1026,8 +1044,14 @@ export class ComposerService {
                   model: requestedModel,
                   settings,
                   presetId:
-                    scope === 'global' ? 'default' : interactivePermissionPresetId || 'default',
-                  ...(scope === 'global'
+                    scope === 'global'
+                      ? // Only a grant-confirmed Full Access selection survives
+                        // the global cap; every other global run stays default.
+                        interactivePermissionPresetId === 'full_access'
+                        ? 'full_access'
+                        : 'default'
+                      : interactivePermissionPresetId || 'default',
+                  ...(scope === 'global' && interactivePermissionPresetId !== 'full_access'
                     ? {
                         overrides: {
                           agenticServices: {
@@ -1515,14 +1539,15 @@ function resolveRequestedModel(
 function resolveApprovalMode(
   scope: ChatScope,
   requested: string | undefined,
-  chat: ChatRecord
+  chat: ChatRecord,
+  allowGlobalElevation = false
 ): string {
   const mode =
     requested ||
     metadataString(chat, 'approvalMode') ||
     chat.settingsSnapshot?.approvalMode ||
     'default'
-  return scope === 'global' && mode !== 'plan' ? 'default' : mode
+  return scope === 'global' && mode !== 'plan' && !allowGlobalElevation ? 'default' : mode
 }
 
 function capRequestedApprovalMode(

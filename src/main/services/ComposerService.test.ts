@@ -863,6 +863,181 @@ describe('ComposerService', () => {
     expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
   })
 
+  it('honors a grant-confirmed Full Access selection in a global chat and signs it', async () => {
+    const GLOBAL_SECRET = Buffer.from('e'.repeat(64), 'hex')
+    const chat = makeChat({
+      provider: 'codex',
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined,
+      providerMetadata: { approvalMode: 'auto_edit', permissionPresetId: 'full_access' }
+    })
+    const { deps } = makeDeps(chat)
+    const trusted = vi.fn(() => true)
+    const service = new ComposerService({
+      ...deps,
+      isTrustedSessionGranted: trusted,
+      signRunPermissionPosture: (mode, perms, context) =>
+        signRunPermissionPosture(GLOBAL_SECRET, mode, perms, context)
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'run-global-full-access',
+      provider: 'codex',
+      selectedModelType: 'cli-default',
+      scope: 'global',
+      workspace: undefined,
+      userInput: 'Do the thing',
+      approvalMode: 'auto_edit',
+      permissionPresetId: 'full_access'
+    })
+    expect(trusted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: chat.appChatId,
+        provider: 'codex',
+        workspacePath: undefined
+      })
+    )
+    expect(payload.scope).toBe('global')
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.presetId).toBe('full_access')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
+    expect(payload.effectivePermissions?.networkAccess).toBe('allow')
+    // The signed global Full Access posture survives the normalize-time clamp.
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'global',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: runPostureContextFromPayload(payload)
+      },
+      {
+        verify: (mode, perms, sig, context) =>
+          verifyRunPermissionPosture(GLOBAL_SECRET, mode, perms, sig, context),
+        reDeriveReadOnly: () => {
+          throw new Error('must not re-derive read-only')
+        },
+        reDeriveDefault: () => {
+          throw new Error('must not re-derive default')
+        }
+      }
+    )
+    expect(clamped.downgraded).toBe(false)
+    expect(clamped.approvalMode).toBe('auto_edit')
+    expect(clamped.effectivePermissions?.presetId).toBe('full_access')
+  })
+
+  it('keeps a global full_access request at default when no Full Access grant is active', async () => {
+    const chat = makeChat({
+      provider: 'codex',
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined,
+      providerMetadata: { approvalMode: 'auto_edit', permissionPresetId: 'full_access' }
+    })
+    const { deps } = makeDeps(chat)
+    const notTrusted = vi.fn(() => false)
+    const service = new ComposerService({ ...deps, isTrustedSessionGranted: notTrusted })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'run-global-stale-full-access',
+      provider: 'codex',
+      selectedModelType: 'cli-default',
+      scope: 'global',
+      workspace: undefined,
+      userInput: 'Do the thing',
+      approvalMode: 'auto_edit',
+      permissionPresetId: 'full_access'
+    })
+    expect(notTrusted).toHaveBeenCalledTimes(1)
+    expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions?.presetId).toBe('default')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('ask')
+
+    // A chat that remembers Full Access but whose composer did not ask for it
+    // (and has no grant-store dependency at all) also stays default.
+    const silent = await compose(
+      {
+        provider: 'codex',
+        scope: 'global',
+        workspacePath: undefined,
+        providerMetadata: { approvalMode: 'auto_edit', permissionPresetId: 'full_access' }
+      },
+      {
+        provider: 'codex',
+        selectedModelType: 'cli-default',
+        scope: 'global',
+        workspace: undefined,
+        approvalMode: 'auto_edit',
+        permissionPresetId: 'full_access'
+      }
+    )
+    expect(silent.approvalMode).toBe('default')
+    expect(silent.effectivePermissions?.presetId).toBe('default')
+  })
+
+  it.each(['workspace', 'global'] as const)(
+    'honors explicit Full Access for a preview model in %s scope',
+    async (scope) => {
+      const chat = makeChat({
+        provider: 'claude',
+        scope,
+        ...(scope === 'global' ? { workspaceId: undefined, workspacePath: undefined } : {}),
+        providerMetadata: { approvalMode: 'auto_edit', permissionPresetId: 'full_access' }
+      })
+      const { deps } = makeDeps(chat)
+      for (const granted of [true, false]) {
+        const service = new ComposerService({ ...deps, isTrustedSessionGranted: () => granted })
+        const payload = await service.composeRun({
+          chatId: chat.appChatId,
+          appRunId: `preview-${scope}-${granted}`,
+          provider: 'claude',
+          selectedModelType: 'preview:anthropic:claude-fable-5',
+          scope,
+          workspace: chat.workspacePath,
+          userInput: 'Inspect this project.',
+          approvalMode: 'auto_edit',
+          permissionPresetId: 'full_access'
+        })
+        expect(payload.effectivePermissions?.presetId).toBe(granted ? 'full_access' : 'default')
+        expect(payload.approvalMode).toBe(granted ? 'auto_edit' : 'default')
+        expect(payload.effectivePermissions?.networkAccess).toBe(granted ? 'allow' : 'deny')
+      }
+    }
+  )
+
+  it('never inherits a global Full Access grant into an unattended run', async () => {
+    const chat = makeChat({
+      provider: 'codex',
+      scope: 'global',
+      workspaceId: undefined,
+      workspacePath: undefined,
+      providerMetadata: { approvalMode: 'auto_edit', permissionPresetId: 'full_access' }
+    })
+    const { deps } = makeDeps(chat)
+    const trusted = vi.fn(() => true)
+    const service = new ComposerService({ ...deps, isTrustedSessionGranted: trusted })
+    const unattended = await service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'run-global-sched',
+      provider: 'codex',
+      selectedModelType: 'cli-default',
+      scope: 'global',
+      workspace: undefined,
+      userInput: 'Run the scheduled occurrence.',
+      approvalMode: 'auto_edit',
+      permissionPresetId: 'full_access',
+      scheduledTaskId: 'task-global'
+    })
+    // No verified elevation ack ⇒ the unattended floor is plan, grant or not.
+    expect(unattended.approvalMode).toBe('plan')
+    expect(unattended.effectivePermissions?.readOnly).toBe(true)
+    expect(unattended.effectivePermissions?.presetId).not.toBe('full_access')
+  })
+
   it('builds Kimi prompts with conversation context even when resuming a provider session', async () => {
     const payload = await compose(
       { provider: 'kimi', linkedProviderSessionId: 'kimi-thread-1' },

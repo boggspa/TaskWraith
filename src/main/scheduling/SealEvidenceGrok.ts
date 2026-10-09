@@ -99,12 +99,20 @@ export async function buildGrokSealEvidence(
   }
   const writeCapable = grokWriteCapable(facts.approvalMode)
   const readOnlySeat = !writeCapable
+  const fullAccess =
+    facts.effectivePermissions.presetId === 'full_access' &&
+    !facts.effectivePermissions.readOnly &&
+    facts.effectivePermissions.agenticServices.shellCommands === 'allow'
   // ACP seat, so the ACP rule sets -- not the non-ACP provider ones, which deny
   // reads and were never what `grok ... agent stdio` ships.
   const denyRules: readonly string[] = readOnlySeat
     ? GROK_ACP_READ_ONLY_DENY_RULES
     : GROK_ACP_WRITE_MODE_DENY_RULES
-  const toolsFlag = readOnlySeat ? '' : GROK_ACP_WRITE_MODE_NATIVE_TOOLS.join(',')
+  const toolsFlag = fullAccess
+    ? 'provider-default'
+    : readOnlySeat
+      ? ''
+      : GROK_ACP_WRITE_MODE_NATIVE_TOOLS.join(',')
   // Resolved from THE producer, never re-derived here, so a sealed occurrence
   // and the runtime gate cannot answer this differently.
   const grokNativeShellPermitted = nativeShellPermitted({
@@ -117,6 +125,10 @@ export async function buildGrokSealEvidence(
     reasoningEffort: facts.reasoningEffort,
     readOnlySeat
   })
+  if (fullAccess) {
+    argvTemplate.splice(argvTemplate.indexOf('--tools'), 2)
+    argvTemplate.unshift('--permission-mode', 'bypassPermissions')
+  }
   if (facts.taskWraithMcpAdvertised !== (facts.mcpServerEntry !== null)) {
     throw new SealEvidenceError(
       'Grok TaskWraith MCP advertisement does not match the ACP session server entry.'
@@ -185,7 +197,7 @@ export async function buildGrokSealEvidence(
     controls: {
       transport: 'acp',
       reasoningEffort: facts.reasoningEffort,
-      permissionMode: 'host-gated',
+      permissionMode: fullAccess ? 'bypassPermissions' : 'host-gated',
       readOnlySeat,
       taskWraithMcpAttachmentMode: facts.taskWraithMcpAdvertised ? 'acp-session' : 'none',
       persistentSeatMode: 'fresh',

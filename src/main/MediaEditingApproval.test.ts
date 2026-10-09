@@ -136,12 +136,12 @@ describe('mediaEditing approval service', () => {
     expect(taskWraithToolAgenticService('audio_mix')).toBe('mediaEditing')
   })
 
-  it('full_access ALLOWS mediaEditing but NOT mediaRecording (3)', () => {
+  it('full_access authorizes both mediaEditing and available mediaRecording services (3)', () => {
     expect(DEFAULT_PERMISSION_PRESETS.full_access.agenticServices?.mediaEditing).toBe('allow')
-    // mediaRecording is deliberately absent from full_access (capture always prompts).
+    // Explicit Full Access authorizes the service; OS device permissions remain separate.
     expect(
       DEFAULT_PERMISSION_PRESETS.full_access.agenticServices?.mediaRecording
-    ).toBeUndefined()
+    ).toBe('allow')
 
     const eff = resolveEffectiveRunPermissions({
       provider: 'claude',
@@ -150,8 +150,7 @@ describe('mediaEditing approval service', () => {
       settings: settings({})
     })
     expect(eff.agenticServices.mediaEditing).toBe('allow')
-    // Capture stays at its non-grantable default-deny even under Full access.
-    expect(eff.agenticServices.mediaRecording).toBe('deny')
+    expect(eff.agenticServices.mediaRecording).toBe('allow')
   })
 
   it('mediaEditing deny-survives the effective-settings rebuild (the P1 leak class) (4)', () => {

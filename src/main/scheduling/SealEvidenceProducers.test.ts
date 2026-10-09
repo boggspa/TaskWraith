@@ -18,12 +18,12 @@ import {
   buildProviderLaunchAuthority,
   providerLaunchAuthorityDigest
 } from '../ProviderLaunchAuthorityDigest'
-import {
-  buildCodexTaskWraithMcpArgs,
-  type CodexMcpTaskWraithConfig
-} from '../CodexAppServerClient'
+import { buildCodexTaskWraithMcpArgs, type CodexMcpTaskWraithConfig } from '../CodexAppServerClient'
 import type { CodexAppServerProcessLaunchPlan } from '../codex/CodexAppServerProcessLaunchPlan'
-import { buildContainedCursorReadOnlyArgv } from '../cursor/CursorCliArgs'
+import {
+  buildContainedCursorReadOnlyArgv,
+  buildContainedCursorWriteArgv
+} from '../cursor/CursorCliArgs'
 import { resolveOllamaFinalLaunchPlan } from '../ollama/OllamaLaunchPlan'
 import type { OllamaNativeToolDefinition } from '../ollama/OllamaProvider'
 import { TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE } from '../PromptComposition'
@@ -46,6 +46,7 @@ import { buildCodexSealEvidence } from './SealEvidenceCodex'
 import { buildClaudeSealEvidence } from './SealEvidenceClaude'
 import { buildKimiSealEvidence } from './SealEvidenceKimi'
 import { buildGrokSealEvidence } from './SealEvidenceGrok'
+import { buildMistralSealEvidence } from './SealEvidenceMistral'
 import { buildOllamaSealEvidence } from './SealEvidenceOllama'
 
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'seal-evidence-producers-'))
@@ -198,6 +199,73 @@ describe('deriveScheduledSeatPostureMirror', () => {
 })
 
 describe('cursor seal evidence', () => {
+  it('binds Full Access Mistral auto-approve mode in production evidence', async () => {
+    const evidence = await buildMistralSealEvidence(deps(), {
+      model: 'devstral-small',
+      promptEnvelope: PROMPT_ENVELOPE,
+      thinkingLevel: null,
+      binaryPath: fakeBinary('vibe-acp'),
+      resolvedEnv: {},
+      approvalMode: 'auto_edit',
+      effectivePermissions: fullAccessPermissions(),
+      taskWraithMcpAdvertised: false,
+      taskWraithMcpProfileId: null,
+      mcpServerEntry: null,
+      capabilityContract: {},
+      userMcpConfiguration: {}
+    })
+    expect(buildProviderLaunchAuthority(evidence).controls).toMatchObject({
+      sessionMode: 'auto-approve',
+      readOnlySeat: false
+    })
+  })
+
+  it('binds Full Access Grok bypass and default native tool inventory', async () => {
+    const evidence = await buildGrokSealEvidence(deps(), {
+      model: 'grok-4-5',
+      promptEnvelope: PROMPT_ENVELOPE,
+      reasoningEffort: null,
+      binaryPath: fakeBinary('grok-full'),
+      resolvedEnv: {},
+      approvalMode: 'auto_edit',
+      effectivePermissions: fullAccessPermissions(),
+      acpEnabled: true,
+      taskWraithMcpAdvertised: false,
+      taskWraithMcpProfileId: null,
+      mcpServerEntry: null,
+      capabilityContract: {},
+      userMcpConfiguration: {}
+    })
+    expect(buildProviderLaunchAuthority(evidence).controls).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      readOnlySeat: false
+    })
+  })
+  it('seals Full Access Cursor native argv and mandatory force controls', async () => {
+    const evidence = await buildCursorSealEvidence(deps(), {
+      model: 'composer-1',
+      promptEnvelope: PROMPT_ENVELOPE,
+      resolvedEnv: { PATH: '/usr/bin' },
+      binaryPath: fakeBinary('cursor-full'),
+      workspacePath: WORKSPACE,
+      writeCapable: true,
+      readOnlySeat: false,
+      effectivePermissions: fullAccessPermissions(),
+      taskWraithMcpAdvertised: false,
+      cursorReasoningEffort: null,
+      cursorFastMode: false,
+      capabilityContract: {}
+    })
+    expect(buildProviderLaunchAuthority(evidence).controls).toMatchObject({
+      executionMode: 'full-access',
+      forceMcpTools: true,
+      approveMcpServers: true
+    })
+    const args = buildContainedCursorWriteArgv({ workspace: WORKSPACE, model: 'composer-1' })
+    args[args.indexOf('--sandbox') + 1] = 'disabled'
+    args.push('--force', '--approve-mcps')
+    expect(evidence.runtime.launchArgsTemplateSha256).toBe(launchArgsTemplateSha256(args))
+  })
   it('builds canonical read-only launch authority from the real contained argv', async () => {
     const binary = fakeBinary('cursor-agent')
     const evidence = await buildCursorSealEvidence(deps(), {
@@ -571,6 +639,36 @@ describe('codex seal evidence', () => {
 })
 
 describe('claude seal evidence', () => {
+  it('seals native Claude tools and bypass mode under Full Access', async () => {
+    const sdkPackageJson = join(TEMP_ROOT, 'claude-full-sdk.json')
+    writeFileSync(sdkPackageJson, JSON.stringify({ name: 'sdk', version: '0.2.141' }))
+    const evidence = await buildClaudeSealEvidence(deps(), {
+      model: 'default',
+      promptEnvelope: PROMPT_ENVELOPE,
+      session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
+      resolvedEnv: {},
+      binaryPath: null,
+      sdkPackageJsonPath: sdkPackageJson,
+      sdkBundledCliPath: fakeBinary('claude-full'),
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      effectivePermissions: fullAccessPermissions(),
+      claudeReasoningEffort: null,
+      claudeFastMode: null,
+      imageCount: 0,
+      taskWraithMcpAdvertised: false,
+      taskWraithMcpProfileId: null,
+      mcpServers: null,
+      allowedTools: null,
+      capabilityContract: {},
+      userMcpConfiguration: {},
+      storedApiKeyConfigured: false
+    })
+    expect(buildProviderLaunchAuthority(evidence).controls).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      builtinToolMode: 'provider-native'
+    })
+  })
   it('builds canonical agent-sdk authority with the recon default permission mode', async () => {
     const sdkPackageJson = join(TEMP_ROOT, 'claude-sdk-package.json')
     writeFileSync(sdkPackageJson, JSON.stringify({ name: 'sdk', version: '0.2.141' }))

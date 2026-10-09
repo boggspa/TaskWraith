@@ -34,6 +34,8 @@ export interface PrepareAntigravityProviderLaunchInput {
   model?: string | null
   reasoningEffort?: string | null
   approvalMode?: string | null
+  /** Main-admitted run authority; never copy this from renderer/provider input. */
+  nativeFullAccess?: boolean
   /**
    * Live TaskWraith MCP bridge authority for THIS run, from
    * `buildProviderRunMcpBridgeEnv`. agy's registration file is static by
@@ -121,7 +123,18 @@ export interface AntigravityProviderStatusDependencies {
   verifyBinaryProvenance?: (binaryPath: string | null) => Promise<AgyBinaryProvenance>
 }
 
+function nativeFullAccessAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
+  return (
+    input.nativeFullAccess === true &&
+    input.effectivePermissions?.readOnly === false &&
+    input.effectivePermissions.presetId === 'full_access' &&
+    input.approvalMode === 'auto_edit' &&
+    input.workflowMode !== 'plan'
+  )
+}
+
 function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
+  if (nativeFullAccessAgyMode(input)) return true
   const reconPermissions = input.effectivePermissions?.presetId
     ? {
         presetId: input.effectivePermissions.presetId,
@@ -268,7 +281,10 @@ export async function prepareAntigravityProviderLaunch(
   // is skipped. This is safe because the terminal sandbox stays on, and the
   // live hook bridge routes every command through TaskWraith's gate, which
   // retains authoritative veto power over all native tool calls.
-  if (
+  if (nativeFullAccessAgyMode(input)) {
+    args.splice(args.indexOf('--sandbox'), 1)
+    args.unshift('--dangerously-skip-permissions')
+  } else if (
     input.perToolApprovalBridge &&
     input.effectivePermissions?.readOnly !== true &&
     !agenticServicesDenyWrites(input.agenticServices)

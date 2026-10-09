@@ -186,14 +186,14 @@ export async function buildMistralSealEvidence(
     )
   }
 
-  const sessionMode = mistralSessionModeForSeat(readOnlySeat)
-  // Producer side of the invariant ScheduledOccurrenceSeal enforces on decode.
-  // `accept-edits` and `auto-approve` auto-approve INSIDE the agent, so the
-  // tool call never raises session/request_permission and never reaches
-  // TaskWraith's host gate — the approval boundary would be gone while every
-  // TaskWraith-side control still rendered as armed. Unattended scheduled
-  // occurrences are exactly the context where that must be unreachable.
-  if (!mistralSessionModeIsGated(sessionMode)) {
+  const fullAccess =
+    facts.effectivePermissions.presetId === 'full_access' &&
+    !readOnlySeat &&
+    facts.effectivePermissions.agenticServices.shellCommands === 'allow'
+  const sessionMode = fullAccess ? 'auto-approve' : mistralSessionModeForSeat(readOnlySeat)
+  // Match the verifier: only explicit signed Full Access selects native
+  // auto-approval. Restricted tiers continue through the host permission gate.
+  if (!fullAccess && !mistralSessionModeIsGated(sessionMode)) {
     throw new SealEvidenceError(
       `Scheduled Mistral launches cannot use the ungated '${sessionMode}' session mode: it auto-approves tool executions inside the agent, so nothing reaches the TaskWraith host gate.`
     )
@@ -286,6 +286,14 @@ export async function buildMistralSealEvidence(
     userMcpConfiguration: facts.userMcpConfiguration,
     nativeToolPolicy: {
       ...MISTRAL_NATIVE_TOOL_POLICY,
+      ...(fullAccess
+        ? {
+            allToolCallsRaisePermissionRequest: false,
+            nativeShell: 'native-full-access',
+            nativeShellDenyWall: 'none',
+            ungatedModesNeverSelected: []
+          }
+        : {}),
       selectedSessionMode: sessionMode,
       // Resolved from THE producer, never re-derived here, so a sealed
       // occurrence and the runtime gate cannot answer this differently.

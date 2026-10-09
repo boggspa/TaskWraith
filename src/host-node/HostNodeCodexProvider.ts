@@ -563,6 +563,7 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
           .catch(() => deliver(null))
       }
       const handleApprovalRequest = (frame: Record<string, unknown>): void => {
+        if (settled || active.cancelled) return
         const rpcId = frame.id
         const method = typeof frame.method === 'string' ? frame.method : ''
         if (!method || (typeof rpcId !== 'string' && typeof rpcId !== 'number')) return
@@ -577,8 +578,11 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
           (typeof params?.name === 'string' && params.name) ||
           method
         const title = rawTitle.trim().slice(0, 200) || 'Codex approval'
-        const interactionId =
-          PROVIDER_ID + ':' + request.runId + ':approval:' + ++interactionSequence
+        const nativeFullAccess =
+          posture.sandbox === 'danger-full-access' && posture.approvalPolicy === 'never'
+        const interactionId = nativeFullAccess
+          ? PROVIDER_ID + ':' + request.runId + ':automatic-approval:' + String(rpcId)
+          : PROVIDER_ID + ':' + request.runId + ':approval:' + ++interactionSequence
         const deliver = (decision: 'accept' | 'decline'): void => {
           if (settled || deliveredApprovalIds.has(interactionId)) return
           deliveredApprovalIds.add(interactionId)
@@ -589,6 +593,18 @@ class HostNodeCodexProviderInstance implements HostNodeProviderInstance {
           } catch {
             failure = failure || 'Codex approval response could not be delivered.'
           }
+        }
+        if (nativeFullAccess) {
+          if (deliveredApprovalIds.has(interactionId)) return
+          this.runPort.appendTranscript({
+            threadId: thread.threadId,
+            runId: request.runId,
+            role: 'system',
+            text: `Full Access automatically accepted Codex permission: ${title}. This records permission, not tool execution.`,
+            createdAt: timestamp()
+          })
+          deliver('accept')
+          return
         }
         void this.interactions
           .register({

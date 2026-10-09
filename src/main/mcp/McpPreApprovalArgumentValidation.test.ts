@@ -209,11 +209,12 @@ describe('pre-approval validation integration contracts', () => {
     const receiptScript = source.indexOf('exactCanvasEvalScript,', receipt)
     const receiptApprovalId = source.indexOf('approvalId', receiptScript)
     const correlation = source.indexOf('primeNativeCanvasCompatCorrelation({', receipt)
-    const request = source.indexOf('const allowed = await requestAgenticServiceApproval(')
+    const request = source.indexOf('const allowed = await requestAgenticServiceApproval(', canonicalPreview)
     const postReviewRecheck = source.indexOf('if (!claudeRunAcceptsTools())', request)
 
     expect(canonicalPreview).toBeGreaterThanOrEqual(0)
     expect(canonicalScript).toBeGreaterThan(canonicalPreview)
+    expect(request).toBeGreaterThan(canonicalScript)
     expect(receipt).toBeGreaterThan(canonicalScript)
     expect(receipt).toBeGreaterThan(request)
     expect(receiptScript).toBeGreaterThan(receipt)

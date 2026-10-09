@@ -595,6 +595,24 @@ describe('Kimi production ACP containment', () => {
     })
     expect(snapshot.cwd).toBe('/private/empty')
     expect(snapshot.mcpServers).toEqual([gateway])
+    expect(
+      buildKimiProductionAcpSnapshot({
+        privateCwd: '/private/empty',
+        gatewayServer: gateway,
+        appVersion: '1.8.4',
+        prompt: 'work',
+        nativeToolPolicy: 'native-full-access'
+      }).deniedNativeTools
+    ).toEqual([])
+    expect(
+      buildKimiProductionAcpSnapshot({
+        privateCwd: '/private/empty',
+        gatewayServer: gateway,
+        appVersion: '1.8.4',
+        prompt: 'work',
+        nativeToolPolicy: 'contained'
+      }).deniedNativeTools
+    ).toEqual(snapshot.deniedNativeTools)
     expect(snapshot.deniedNativeTools).toEqual(
       expect.arrayContaining([
         'Read',

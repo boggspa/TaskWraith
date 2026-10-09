@@ -15,6 +15,7 @@ import type { AcpRunEvent, AcpPermissionRequest, AcpPermissionDecision } from '.
 import { buildKimiProductionInitializeParams } from './KimiProductionContainment'
 import { createKimiRunRecovery, type KimiRunRecoveryOptions } from './KimiRunRecovery'
 import { isKimiDeniedNativeTool } from './KimiToolPolicy'
+import { kimiNativeToolsAllowed, type KimiNativeToolPolicy } from './KimiNativeFullAccess'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -64,6 +65,12 @@ export interface KimiAcpRunOptions {
   confirmResumedSession?: () => Promise<boolean>
   /** Main-owned gateway and exact-run context for readiness, receipts and handoff. */
   recovery?: KimiRunRecoveryOptions
+  /**
+   * Main-derived native policy for this run. `native-full-access` disables the
+   * pre-callback native deny short-circuit so Kimi's own tools reach the
+   * mediator (which allows them); omitted/`contained` keeps the deny.
+   */
+  nativeToolPolicy?: KimiNativeToolPolicy | null
   onEvent: (event: AcpRunEvent) => void
   /** Exact notification after every tool in one parallel ACP batch settles. */
   onToolBatchBoundary?: () => void
@@ -111,6 +118,7 @@ export function formatKimiProcessError(err: Error): string {
  */
 export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
   const recovery = options.recovery ? createKimiRunRecovery(options.recovery) : null
+  const nativeToolsAllowed = kimiNativeToolsAllowed(options.nativeToolPolicy)
   let correctionPrompt: string | null = null
   let toolSnapshotRequested = false
   let handle: AcpTurnHandle | null = null
@@ -160,7 +168,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
     beforeInitialize: options.beforeInitialize,
     onPermissionRequest: recovery
       ? async (request) => {
-          if (isKimiDeniedNativeTool(request)) {
+          if (!nativeToolsAllowed && isKimiDeniedNativeTool(request)) {
             recovery.permissionResult(request, 'deny')
             return 'deny'
           }

@@ -6,10 +6,12 @@ import {
   buildKimiBrokeredMcpAllowRule,
   buildKimiDenyWall,
   buildKimiIsolatedConfig,
+  forcePermissionMode,
   forceTelemetryOff,
   forceThinkingEffort,
   forceThinkingMode,
   isPathWithinRoots,
+  kimiDeniedNativeToolsFor,
   stripAllowPermissionRules
 } from './KimiAcpContainment'
 
@@ -244,6 +246,91 @@ describe('buildKimiIsolatedConfig', () => {
     for (const egress of ['FetchURL', 'WebSearch', 'AgentSwarm']) {
       expect(KIMI_ACP_DENY_TOOLS as readonly string[]).toContain(egress)
     }
+  })
+
+  it('keeps the full deny wall for an omitted or contained policy', () => {
+    for (const out of [
+      buildKimiIsolatedConfig({ baseConfig: base }),
+      buildKimiIsolatedConfig({ baseConfig: base, nativeToolPolicy: 'contained' }),
+      buildKimiIsolatedConfig({ baseConfig: base, nativeToolPolicy: null })
+    ]) {
+      for (const tool of KIMI_ACP_DENY_TOOLS) {
+        expect(out).toContain(`decision = "deny"\npattern = "${tool}"`)
+      }
+      expect(out).not.toContain('default_permission_mode')
+    }
+  })
+
+  it('builds a wall-free Never Ask profile only for native-full-access', () => {
+    const out = buildKimiIsolatedConfig({
+      baseConfig: base,
+      nativeToolPolicy: 'native-full-access',
+      extraDenyTools: ['SomethingExtra']
+    })
+    expect(out).not.toContain('decision = "deny"')
+    expect(out).not.toContain('SomethingExtra')
+    expect(out).toContain('default_permission_mode = "auto"')
+    // The user's migrated allow rule is still stripped and the broker transport
+    // allow is still present: the signed broker remains the MCP audit path.
+    expect(out).not.toMatch(/decision = "allow"\npattern = "Bash"/)
+    expect(out).toContain(`decision = "allow"\npattern = "${KIMI_ACP_BROKERED_MCP_ALLOW_PATTERN}"`)
+    expect(out).toContain('telemetry = false')
+    expect(out).toContain('native tools ALLOWED (human-selected Full Access')
+    // Mode is pinned top-level, before the first table.
+    expect(out.indexOf('default_permission_mode = "auto"')).toBeLessThan(
+      out.indexOf('[services.moonshot_search]')
+    )
+  })
+
+  it('keeps the user’s own deny/ask rules under native-full-access (they only tighten)', () => {
+    const out = buildKimiIsolatedConfig({
+      baseConfig: [
+        'telemetry = true',
+        '',
+        '[[permission.rules]]',
+        'decision = "deny"',
+        'pattern = "Bash(rm -rf*)"'
+      ].join('\n'),
+      nativeToolPolicy: 'native-full-access'
+    })
+    expect(out).toContain('decision = "deny"\npattern = "Bash(rm -rf*)"')
+  })
+})
+
+describe('kimiDeniedNativeToolsFor', () => {
+  it('returns the wall plus extras when contained and nothing at native-full-access', () => {
+    expect(kimiDeniedNativeToolsFor(undefined)).toEqual([...KIMI_ACP_DENY_TOOLS])
+    expect(kimiDeniedNativeToolsFor('contained', ['X'])).toEqual([...KIMI_ACP_DENY_TOOLS, 'X'])
+    expect(kimiDeniedNativeToolsFor('native-full-access', ['X'])).toEqual([])
+  })
+})
+
+describe('forcePermissionMode', () => {
+  it('replaces an existing top-level mode or inserts one before the first table', () => {
+    expect(
+      forcePermissionMode('default_permission_mode = "manual"\ntelemetry = false', 'auto')
+    ).toBe('default_permission_mode = "auto"\ntelemetry = false')
+    expect(forcePermissionMode('telemetry = false\n\n[thinking]\nenabled = true', 'auto')).toBe(
+      'telemetry = false\n\ndefault_permission_mode = "auto"\n\n[thinking]\nenabled = true'
+    )
+    expect(forcePermissionMode('telemetry = false', 'auto')).toBe(
+      'telemetry = false\ndefault_permission_mode = "auto"\n'
+    )
+  })
+
+  it('does not treat a same-named key inside a table as the top-level mode', () => {
+    const out = forcePermissionMode('[other]\ndefault_permission_mode = "manual"', 'auto')
+    expect(out).toBe(
+      'default_permission_mode = "auto"\n\n[other]\ndefault_permission_mode = "manual"'
+    )
+  })
+
+  it('fails closed on duplicate, quoted, or malformed inputs', () => {
+    expect(() =>
+      forcePermissionMode('default_permission_mode = "a"\ndefault_permission_mode = "b"', 'auto')
+    ).toThrow('Duplicate')
+    expect(() => forcePermissionMode('"default_permission_mode" = "a"', 'auto')).toThrow('Quoted')
+    expect(() => forcePermissionMode('telemetry = false', 'Auto"')).toThrow('Unsupported')
   })
 })
 

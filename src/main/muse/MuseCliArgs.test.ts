@@ -134,6 +134,18 @@ describe('normalizeMuseReasoningEffort', () => {
 })
 
 describe('buildMuseExecArgv', () => {
+  it('opens native sandbox and web tools only for the explicit Full Access port', () => {
+    const args = buildMuseExecArgv({ ...base, readOnlySeat: false, nativeFullAccess: true })
+    expect(args).toContain('--disable-sandbox')
+    expect(args).toContain('--trust-workspace')
+    expect(args).not.toContain('--disable-web-tools')
+    expect(args.join(' ')).toContain('--sandbox-network enabled')
+    expect(args).not.toContain('--no-session-log')
+    const readOnly = buildMuseExecArgv({ ...base, readOnlySeat: true, nativeFullAccess: true })
+    expect(readOnly).not.toContain('--disable-sandbox')
+    expect(readOnly).toContain('--disable-shell')
+  })
+
   it('always starts with exec --json --provider meta --workspace', () => {
     const args = buildMuseExecArgv(base)
     expect(args.slice(0, 6)).toEqual(['exec', '--json', '--provider', 'meta', '--workspace', '/ws'])
@@ -330,6 +342,22 @@ describe('buildMuseSeatEnv', () => {
 })
 
 describe('buildMuseServeArgv — MSP host posture', () => {
+  it('opens the private host only for an admitted Full Access write-capable run', () => {
+    const full = buildMuseServeArgv({ approvalMode: 'auto_edit', nativeFullAccess: true })
+    expect(full).toEqual([
+      'serve',
+      '--sandbox-network',
+      'enabled',
+      '--disable-sandbox',
+      '--trust-workspace'
+    ])
+    expect(buildMuseServeArgv({ approvalMode: 'auto_edit' })).not.toContain('--disable-sandbox')
+    expect(buildMuseServeArgv({ approvalMode: 'plan', nativeFullAccess: true })).not.toContain(
+      '--disable-sandbox'
+    )
+    expect(buildMuseServeArgv({ nativeFullAccess: true })).toContain('--disable-write')
+  })
+
   it('always pins the sandbox network mode', () => {
     expect(buildMuseServeArgv()).toContain('--sandbox-network')
     expect(buildMuseServeArgv()).toContain(MUSE_DEFAULT_SANDBOX_NETWORK)

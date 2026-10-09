@@ -54,6 +54,8 @@ export interface BuildClaudeCliArgsInput {
   providerSessionId?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
+  /** Main-derived from the admitted Full Access run, never from provider content. */
+  nativeFullAccess?: boolean
   /**
    * Optional Wave C harness posture. When omitted, keeps today's fail-safe:
    * `--setting-sources ''` (suppress native settings/hooks/plugins load).
@@ -66,6 +68,21 @@ export interface BuildClaudeCliArgsInput {
 
 export function claudeFastModeSettingsArg(value: boolean | null | undefined): string | null {
   return typeof value === 'boolean' ? JSON.stringify({ fastMode: value }) : null
+}
+
+/** Native tools remain broker-only in restricted SDK seats. */
+export function claudeSdkNativeToolOptions(nativeFullAccess: boolean): {
+  tools: string[] | { type: 'preset'; preset: 'claude_code' }
+  permissionMode?: 'bypassPermissions'
+  allowDangerouslySkipPermissions?: true
+} {
+  return nativeFullAccess
+    ? {
+        tools: { type: 'preset', preset: 'claude_code' },
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true
+      }
+    : { tools: [] }
 }
 
 /** Select the prompt for a Claude dispatch (SDK and CLI lanes share this
@@ -94,13 +111,14 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
     '--verbose',
     '--include-partial-messages',
     '--permission-mode',
-    input.permissionMode,
+    input.nativeFullAccess === true ? 'bypassPermissions' : input.permissionMode,
     // Empty --tools disables every built-in, including future additions. MCP
     // servers load separately and remain available through their namespaces.
     '--tools',
-    '',
+    input.nativeFullAccess === true ? 'default' : '',
     '--strict-mcp-config'
   ]
+  if (input.nativeFullAccess === true) args.push('--allow-dangerously-skip-permissions')
   // Default / suppress / tw-only: do not auto-load workspace/user settings,
   // hooks, plugins, or MCP files. TaskWraith supplies reviewed settings + MCP
   // config explicitly. allow-native on BOTH skills and hooks omits the empty

@@ -61,6 +61,95 @@ export type { AcpChildProcess as MuseMspChildProcess } from '../acp/AcpTurnClien
 
 export type MuseMspApprovalVerdict = 'allow' | 'deny'
 
+/**
+ * Why TaskWraith's answer to one approval stage is no longer wanted. Whatever
+ * the host showed for it (a card, a pending ledger row) should be withdrawn:
+ * answering it now would decide nothing.
+ */
+export type MuseMspApprovalWithdrawal =
+  | {
+      readonly kind: 'resolved'
+      /** The first durable terminal decision, as `approval/resolved` carried it. */
+      readonly decision: string
+      /** `user`, `policy` or `llmJudge`; empty when the host named none. */
+      readonly resolvedBy: string
+    }
+  | {
+      /**
+       * Muse moved the approval on to another stage before this one was
+       * answered. That stage is a new question with its own handler call; this
+       * answer is never carried over to it.
+       */
+      readonly kind: 'superseded'
+      readonly requirementId: MuseMspApprovalRequirementRef
+    }
+  | { readonly kind: 'turnEnded' }
+
+/** What the client hands the approval handler beside the request. */
+export interface MuseMspApprovalContext {
+  /**
+   * Aborted, with a `MuseMspApprovalWithdrawal` as its reason, once Muse has
+   * settled the approval itself, moved it to another stage, or the turn has
+   * ended. From then on the handler's answer is discarded and no decision is
+   * sent for it.
+   */
+  readonly signal: AbortSignal
+}
+
+/** Why no decision of TaskWraith's was applied to a stage it answered or was asked. */
+export type MuseMspApprovalOutcomeWithdrawal =
+  | MuseMspApprovalWithdrawal
+  /** Muse rejected the decide `approvalNotFound`: it held nothing pending by that id. */
+  | { readonly kind: 'notFound' }
+
+/**
+ * What actually became of one approval stage that was put to the handler.
+ * Reported exactly once per stage, whatever happened to it, so that an audit
+ * row never records a host allow as a tool that ran. Only `allowApplied` means
+ * Muse took an approving decision from TaskWraith for this stage.
+ */
+export interface MuseMspApprovalOutcome {
+  readonly approvalId: string
+  /** The exact stage the handler was asked about. */
+  readonly requirementId: MuseMspApprovalRequirementRef
+  readonly toolName: string
+  /**
+   * TaskWraith's answer for this stage: the handler's, or `deny` when no
+   * handler is attached. Null when the stage was withdrawn before an answer
+   * came. An answer is reported even when it was never applied.
+   */
+  readonly verdict: MuseMspApprovalVerdict | null
+  /** The choice sent to Muse, or null when no decide was sent. */
+  readonly choice: Pick<MuseMspApprovalChoice, 'choiceId' | 'decision' | 'scope'> | null
+  /** The scope of an approving choice Muse accepted, else null. */
+  readonly grantScope: 'once' | 'session' | null
+  /** True only when the verdict was allow and Muse accepted an approving decision. */
+  readonly allowApplied: boolean
+  /**
+   * - `decided`: Muse admitted the decide. That is its admission ack; the
+   *   terminal still arrives as `approval/resolved`.
+   * - `rejected`: Muse refused the decide (`errorKind`); `turnCancelled` says
+   *   whether the turn was cancelled for it.
+   * - `withdrawn`: no decision of TaskWraith's was applied (`reason`).
+   * - `noChoice`: Muse offered nothing usable; the turn was cancelled.
+   */
+  readonly kind: 'decided' | 'rejected' | 'withdrawn' | 'noChoice'
+  readonly errorKind?: string
+  readonly turnCancelled?: boolean
+  readonly reason?: MuseMspApprovalOutcomeWithdrawal
+}
+
+/** How a verdict may be expressed as one of the choices Muse offered. */
+export interface MuseMspApprovalChoiceOptions {
+  /**
+   * The run is an authentic, main-admitted Full Access run whose host was
+   * started for it. An allow may then take a broader approving choice when no
+   * single-use one is offered — never a `localPersistent` rule or an unknown
+   * scope, which author policy that can outlive this host.
+   */
+  readonly nativeFullAccess?: boolean
+}
+
 export interface MuseMspSessionReadyInfo {
   readonly sessionId: string
   readonly resumed: boolean
@@ -155,8 +244,24 @@ export interface MuseMspTurnOptions {
   readonly onNativeGoalObserved?: (goal: unknown) => void
   /** Absent means DENY — see decideApproval. */
   readonly onApprovalRequest?: (
-    request: MuseMspApprovalRequest
+    request: MuseMspApprovalRequest,
+    context: MuseMspApprovalContext
   ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
+  /**
+   * Main-derived ONLY: true for an authentic, admitted Full Access run whose
+   * `muse serve` host was started for that posture. Lets an allow take a
+   * session-scoped approving choice when Muse offers no single-use one; see
+   * `selectMuseMspApprovalChoice`. Never set it from renderer input. Default
+   * false.
+   */
+  readonly nativeFullAccess?: boolean
+  /**
+   * What became of each approval stage put to `onApprovalRequest`, reported
+   * once per stage. `decided` is Muse's admission of TaskWraith's decision,
+   * not evidence that a tool ran; only `allowApplied` means Muse took an
+   * approving decision. A throwing consumer never affects the turn.
+   */
+  readonly onApprovalOutcome?: (outcome: MuseMspApprovalOutcome) => void
   /**
    * Absent means the prompt is CANCELLED rather than left open — an unanswered
    * `userInput` blocks its tool call and the turn never terminates.
@@ -291,7 +396,8 @@ function record(value: unknown): Record<string, unknown> {
  */
 export function selectMuseMspApprovalChoice(
   choices: readonly MuseMspApprovalChoice[] | null | undefined,
-  verdict: MuseMspApprovalVerdict
+  verdict: MuseMspApprovalVerdict,
+  choiceOptions: MuseMspApprovalChoiceOptions = {}
 ): MuseMspApprovalChoice | null {
   // The server's payload is untrusted shape. An absent or non-array
   // `availableChoices` used to throw inside a bare `void decideApproval(...)`,
@@ -319,9 +425,85 @@ export function selectMuseMspApprovalChoice(
       (choice) => choice.decision === 'approved' && choice.scope === 'once'
     )
     if (approved) return approved
+    // Full Access only, and only when no single-use approval exists: the
+    // narrowest approving choice that ends with this host's session. Policy
+    // amendments, `localPersistent` and unknown scopes author rules that can
+    // outlive the posture, so they are never taken here either.
+    if (choiceOptions.nativeFullAccess === true) {
+      const forSession = choices.find(
+        (choice) =>
+          (choice.decision === 'approvedForSession' || choice.decision === 'approved') &&
+          choice.scope === 'session'
+      )
+      if (forSession) return forSession
+    }
     // Fall through to the deny path rather than reaching for a wider grant.
   }
   return byDecision('denied') || byDecision('abort') || null
+}
+
+/** Whether a choice Muse offered would let the gated call proceed. */
+function museMspApprovingDecision(decision: string): boolean {
+  return (
+    decision === 'approved' ||
+    decision === 'approvedForSession' ||
+    decision === 'approvedPolicyAmendment'
+  )
+}
+
+/** What one attempt to send a stage's decision came to. */
+type MuseMspSentDecision =
+  | { readonly kind: 'decided' }
+  | { readonly kind: 'rejected'; readonly errorKind: string }
+  | {
+      readonly kind: 'withdrawn'
+      readonly reason: MuseMspApprovalOutcomeWithdrawal
+      /** Whether a decide was put on the wire before it was withdrawn. */
+      readonly attempted: boolean
+    }
+
+/**
+ * One approval STAGE, which is what a decision answers. `approval/request`
+ * re-presents the pending stage `approval/requested` announced (the schema:
+ * "presenting a pending approval to every subscribed connection"), so keying
+ * on the stage is what keeps one question to one card and one decision. A
+ * multi-stage approval is presented again with a moved `sourceIndex` once a
+ * stage is satisfied (`ApprovalDecideResult.terminal: false`), and that is a
+ * new question, so the approval id alone is not the key.
+ */
+function museMspApprovalStageKey(request: MuseMspApprovalRequest): string {
+  return `${request.approvalId}#${museMspRequirementIndex(request.currentRequirementId)}`
+}
+
+function museMspRequirementIndex(ref: MuseMspApprovalRequirementRef | null | undefined): string {
+  const index = ref?.sourceIndex
+  return typeof index === 'number' ? String(index) : ''
+}
+
+/** Settles with the sentinel once the signal is aborted; never rejects. */
+function museMspApprovalWithdrawn(signal: AbortSignal): Promise<'withdrawn'> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve('withdrawn')
+    else signal.addEventListener('abort', () => resolve('withdrawn'), { once: true })
+  })
+}
+
+/** The visible account of an allow that could not be applied as one. */
+function museMspAllowNotAppliedWarning(
+  request: MuseMspApprovalRequest,
+  answered: MuseMspApprovalChoice
+): string {
+  const offered = Array.isArray(request.availableChoices)
+    ? [...new Set(request.availableChoices.map((choice) => `${choice?.decision}/${choice?.scope}`))]
+        .slice(0, 8)
+        .join(', ')
+    : ''
+  const tool = (typeof request.toolName === 'string' && request.toolName.trim()) || 'a tool'
+  return (
+    `TaskWraith allowed "${tool}", but Muse offered no single-use approval for it ` +
+    `(offered: ${offered || 'none'}). TaskWraith never widens one allow into a standing ` +
+    `grant, so Muse was answered "${answered.decision}" and the tool will not run.`
+  )
 }
 
 export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
@@ -357,6 +539,18 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   const reasoningShown = new Map<string, string>()
   const approvalRequirements = new Map<string, MuseMspApprovalRequirementRef>()
   const settledUserInputs = new Set<string>()
+  // Approval stages already put to TaskWraith (see museMspApprovalStageKey).
+  const presentedApprovalStages = new Set<string>()
+  // The last full request presented per approval, so a stage `approval/updated`
+  // advances to can be asked as its own question.
+  const approvalViews = new Map<string, MuseMspApprovalRequest>()
+  // The terminal of every approval this turn saw resolve, by approval id.
+  const resolvedApprovals = new Map<string, MuseMspApprovalWithdrawal>()
+  // Stages whose answer TaskWraith still owes, by stage key.
+  const awaitingApprovalAnswers = new Map<
+    string,
+    { readonly approvalId: string; readonly controller: AbortController }
+  >()
   let inactivityTimer: ReturnType<typeof setTimeout> | null = null
   // Our OWN in-flight work, deliberately not the host-owned
   // `approvalRequirements` map: that map is pruned by an `approval/resolved`
@@ -638,9 +832,19 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
    * until the host times it out. That makes silence the WORST outcome, not the
    * safe one, which is why every failure path below still sends a decision, and
    * every one of them denies.
+   *
+   * The one exception is an answer nobody is waiting for any more: Muse settled
+   * the approval itself (`approval/resolved` — policy, its judge, its reminder
+   * observer, another client) or the turn ended. Then the handler's signal is
+   * aborted so the host can withdraw its card, its answer is discarded, and no
+   * decision is sent: one would decide nothing, and a decide on a dead host used
+   * to cancel the turn.
    */
-  const decideApproval = async (request: MuseMspApprovalRequest): Promise<void> => {
-    let verdict: MuseMspApprovalVerdict = 'deny'
+  const decideApproval = async (request: MuseMspApprovalRequest, stage: string): Promise<void> => {
+    // Null until an answer arrives; a stage withdrawn first has none.
+    let verdict: MuseMspApprovalVerdict | null = null
+    const controller = new AbortController()
+    awaitingApprovalAnswers.set(stage, { approvalId: request.approvalId, controller })
     // Suspend the inactivity watchdog for exactly as long as TaskWraith (or the
     // human behind it) owes the answer — and NOT a moment longer. Wrapping the
     // `approval/decide` round-trip below in this window would suspend the
@@ -652,49 +856,219 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         warn(
           `Muse asked to run "${request.toolName}" but no TaskWraith approval handler is attached; denying.`
         )
+        verdict = 'deny'
       } else {
         try {
-          verdict = (await options.onApprovalRequest(request)) === 'allow' ? 'allow' : 'deny'
+          const answer = await Promise.race([
+            Promise.resolve(options.onApprovalRequest(request, { signal: controller.signal })),
+            museMspApprovalWithdrawn(controller.signal)
+          ])
+          if (answer !== 'withdrawn') verdict = answer === 'allow' ? 'allow' : 'deny'
         } catch {
           verdict = 'deny'
         }
       }
     } finally {
+      awaitingApprovalAnswers.delete(stage)
       pendingApprovalDecisions -= 1
       // The ball is back in the host's court, so it gets a full fresh deadline.
       noteInboundActivity()
     }
-    const choice = selectMuseMspApprovalChoice(request.availableChoices, verdict)
+    if (
+      verdict === null ||
+      controller.signal.aborted ||
+      resolvedApprovals.has(request.approvalId) ||
+      !isCurrentApprovalStage(request) ||
+      closed ||
+      terminationRequested
+    ) {
+      const aborted = controller.signal.aborted
+        ? (controller.signal.reason as MuseMspApprovalWithdrawal | undefined)
+        : undefined
+      reportApprovalOutcome(request, {
+        verdict,
+        choice: null,
+        grantScope: null,
+        allowApplied: false,
+        kind: 'withdrawn',
+        reason: aborted && typeof aborted === 'object' ? aborted : approvalStageWithdrawal(request)
+      })
+      return
+    }
+    const choice = selectMuseMspApprovalChoice(request.availableChoices, verdict, {
+      nativeFullAccess: options.nativeFullAccess === true
+    })
     if (!choice) {
       warn(
         `Muse offered no usable choice for "${request.toolName}"; cancelling the turn rather than guessing.`
       )
+      reportApprovalOutcome(request, {
+        verdict,
+        choice: null,
+        grantScope: null,
+        allowApplied: false,
+        kind: 'noChoice',
+        turnCancelled: true
+      })
       cancelTurn()
       return
     }
-    await sendApprovalDecision(request, choice, true)
+    const approving = museMspApprovingDecision(choice.decision)
+    // Never silent: the host recorded an allow, and Muse is about to hear a deny.
+    if (verdict === 'allow' && !approving) {
+      warn(museMspAllowNotAppliedWarning(request, choice))
+    }
+    const sent = await sendApprovalDecision(request, choice, true)
+    const sentChoice = { choiceId: choice.choiceId, decision: choice.decision, scope: choice.scope }
+    if (sent.kind === 'decided') {
+      const applied = verdict === 'allow' && approving
+      const scope = choice.scope
+      reportApprovalOutcome(request, {
+        verdict,
+        choice: sentChoice,
+        grantScope: applied
+          ? scope === 'once'
+            ? 'once'
+            : scope === 'session'
+              ? 'session'
+              : null
+          : null,
+        allowApplied: applied,
+        kind: 'decided'
+      })
+    } else if (sent.kind === 'rejected') {
+      reportApprovalOutcome(request, {
+        verdict,
+        choice: sentChoice,
+        grantScope: null,
+        allowApplied: false,
+        kind: 'rejected',
+        errorKind: sent.errorKind,
+        turnCancelled: true
+      })
+    } else {
+      reportApprovalOutcome(request, {
+        verdict,
+        choice: sent.attempted ? sentChoice : null,
+        grantScope: null,
+        allowApplied: false,
+        kind: 'withdrawn',
+        reason: sent.reason
+      })
+    }
+  }
+
+  /** Hand one stage's outcome to the host; its failure never reaches the turn. */
+  const reportApprovalOutcome = (
+    request: MuseMspApprovalRequest,
+    fields: Omit<MuseMspApprovalOutcome, 'approvalId' | 'requirementId' | 'toolName'>
+  ): void => {
+    try {
+      options.onApprovalOutcome?.({
+        approvalId: request.approvalId,
+        requirementId: request.currentRequirementId,
+        toolName: text(request.toolName).trim() || 'tool',
+        ...fields
+      })
+    } catch {
+      /* a throwing consumer must never kill the transport */
+    }
+  }
+
+  /** Why an answer for `request`'s stage no longer counts, as far as the client knows. */
+  const approvalStageWithdrawal = (request: MuseMspApprovalRequest): MuseMspApprovalWithdrawal => {
+    const settled = resolvedApprovals.get(request.approvalId)
+    if (settled) return settled
+    if (!isCurrentApprovalStage(request)) {
+      return {
+        kind: 'superseded',
+        requirementId: approvalRequirements.get(request.approvalId) ?? request.currentRequirementId
+      }
+    }
+    return { kind: 'turnEnded' }
+  }
+
+  /** Abort the outstanding answers for one approval, or for every one (`null`). */
+  const withdrawApprovalAnswers = (
+    approvalId: string | null,
+    reason: MuseMspApprovalWithdrawal
+  ): void => {
+    for (const [stage, waiting] of awaitingApprovalAnswers) {
+      if (approvalId !== null && waiting.approvalId !== approvalId) continue
+      awaitingApprovalAnswers.delete(stage)
+      waiting.controller.abort(reason)
+    }
   }
 
   /**
-   * Send one decision, retrying ONCE on a stale CAS token or a transient
-   * server-side fault.
+   * Whether `request`'s stage is still the one Muse wants answered. Consent is
+   * given to one stage; once another is current, that answer decides nothing.
+   */
+  const isCurrentApprovalStage = (request: MuseMspApprovalRequest): boolean => {
+    const latest = approvalRequirements.get(request.approvalId)
+    return (
+      !latest ||
+      museMspRequirementIndex(latest) === museMspRequirementIndex(request.currentRequirementId)
+    )
+  }
+
+  /** Withdraw the answers still owed for every stage of an approval but `currentStage`. */
+  const supersedeApprovalStages = (
+    approvalId: string,
+    currentStage: string,
+    requirementId: MuseMspApprovalRequirementRef
+  ): void => {
+    for (const [stage, waiting] of awaitingApprovalAnswers) {
+      if (waiting.approvalId !== approvalId || stage === currentStage) continue
+      awaitingApprovalAnswers.delete(stage)
+      waiting.controller.abort({ kind: 'superseded', requirementId })
+    }
+  }
+
+  /** Both presentations of an approval land here; each stage is asked once. */
+  const presentApproval = (request: MuseMspApprovalRequest): void => {
+    if (!request?.approvalId) return
+    // Its terminal has landed: nothing is left to decide.
+    if (resolvedApprovals.has(request.approvalId)) return
+    const stage = museMspApprovalStageKey(request)
+    if (presentedApprovalStages.has(stage)) return
+    presentedApprovalStages.add(stage)
+    approvalViews.set(request.approvalId, request)
+    approvalRequirements.set(request.approvalId, request.currentRequirementId)
+    // This stage is the one Muse now wants answered.
+    supersedeApprovalStages(request.approvalId, stage, request.currentRequirementId)
+    void decideApproval(request, stage).catch(() => cancelTurn())
+  }
+
+  /**
+   * Send one decision for exactly the stage it answers, retrying ONCE on a
+   * transient server-side fault.
    *
-   * A rejected decide is not a sent decision. The two retried kinds are NOT
-   * equally safe, and the asymmetry is the whole point:
+   * A decision is consent to the stage TaskWraith was shown, so it always
+   * carries that stage's own requirement id and is never sent once Muse has
+   * made another stage current. A multi-stage approval puts each stage to the
+   * handler separately (`approval/updated` advancing the stage, or a fresh
+   * `approval/request`), and the earlier stage's answer is withdrawn as
+   * `superseded`.
    *
-   * `approvalRequirementStale` is a CAS rejection, so it PROVES the decide was
-   * not applied. The refreshed requirement is already in hand and the retry is
-   * a re-send of a known no-op.
+   * `approvalRequirementStale` is a CAS rejection: it PROVES the decide was not
+   * applied and that the stage moved. It is never retried — re-sending the
+   * same choice against the new stage would be exactly the carried-over
+   * consent this rule forbids. The new stage is asked when Muse presents it;
+   * the turn is not cancelled.
    *
    * `internal` proves nothing about host state — the host may have committed
    * the decision and only then failed. We retry it anyway because the fault
    * this was written for reports its own non-commit (an approval-ledger
    * durability fence leaving records unflushed), and silently discarding a turn
    * the user has already paid for is the worse trade. The residual risk is
-   * real, though, so state it plainly: the ONLY double-settle guard is the
-   * host-reported `approvalAlreadyResolved` arm below. There is no client-side
-   * settled-approval set here, unlike `settledUserInputs` for prompts. The
-   * retry does re-send the SAME choice and never re-enters
+   * real, though, so state it plainly. On the client side, `presentApproval`
+   * asks once per stage and `resolvedApprovals` (filled from the
+   * `approval/resolved` notification) stops a FIRST decision for an approval
+   * Muse already settled. Neither is consulted between a sent decide and its
+   * retry here beyond the stage check, so for the retry itself the only
+   * double-settle guard is the host-reported `approvalAlreadyResolved` arm
+   * below. The retry re-sends the SAME choice for the SAME stage and never re-enters
    * `onApprovalRequest`, so it cannot duplicate the approval card or the ledger
    * entry; the exposure is a host that re-applies the gated tool call.
    *
@@ -704,7 +1078,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
    * local stdio RPC that spends no model tokens, so the "burns the user's money
    * in a loop" objection does not reach this path.
    *
-   * Both kinds retry exactly ONCE: the recursion passes literal `false` and
+   * It retries exactly ONCE: the recursion passes literal `false` and
    * must never thread `mayRetry` through, or a host that always answers
    * `internal` spins forever on a fresh commandId each time.
    *
@@ -716,30 +1090,77 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     request: MuseMspApprovalRequest,
     choice: MuseMspApprovalChoice,
     mayRetry: boolean
-  ): Promise<void> => {
-    // Echo the LATEST requirement id: approval/updated can move it, and a stale
-    // one is rejected `approvalRequirementStale`.
-    const requirementId =
-      approvalRequirements.get(request.approvalId) || request.currentRequirementId
+  ): Promise<MuseMspSentDecision> => {
+    if (!isCurrentApprovalStage(request)) {
+      return { kind: 'withdrawn', reason: approvalStageWithdrawal(request), attempted: !mayRetry }
+    }
     try {
       await call('approval/decide', {
         commandId: mintCommandId(),
         sessionId: request.sessionId,
         approvalId: request.approvalId,
-        requirementId,
+        requirementId: request.currentRequirementId,
         choiceId: choice.choiceId
       })
+      return { kind: 'decided' }
     } catch (error) {
       const kind = error instanceof MuseMspRpcError ? error.kind : ''
-      if (kind === 'approvalAlreadyResolved') return
-      if (mayRetry && (kind === 'approvalRequirementStale' || kind === 'internal')) {
-        await sendApprovalDecision(request, choice, false)
-        return
+      if (kind === 'approvalAlreadyResolved') {
+        return {
+          kind: 'withdrawn',
+          reason: resolvedApprovals.get(request.approvalId) ?? {
+            kind: 'resolved',
+            decision: '',
+            resolvedBy: ''
+          },
+          attempted: true
+        }
+      }
+      // The host holds no pending approval by that id, so no tool call waits on
+      // this decision and cancelling would end a turn that is still working.
+      // Muse settled it first; say so unless `approval/resolved` already did.
+      if (kind === 'approvalNotFound') {
+        const settled = resolvedApprovals.get(request.approvalId)
+        if (!settled) {
+          warn(
+            `Muse no longer had the approval for "${text(request.toolName)}" pending, so TaskWraith's decision was not applied; the turn continues.`
+          )
+        }
+        return { kind: 'withdrawn', reason: settled ?? { kind: 'notFound' }, attempted: true }
+      }
+      if (kind === 'approvalRequirementStale') {
+        // A later stage is (or is about to be) presented as its own question.
+        if (!resolvedApprovals.has(request.approvalId) && isCurrentApprovalStage(request)) {
+          warn(
+            `Muse moved the approval for "${text(request.toolName)}" to another stage before TaskWraith's decision landed, so it was not applied; TaskWraith will answer the new stage when Muse presents it.`
+          )
+        }
+        return {
+          kind: 'withdrawn',
+          reason: resolvedApprovals.get(request.approvalId) ?? {
+            kind: 'superseded',
+            requirementId:
+              approvalRequirements.get(request.approvalId) ?? request.currentRequirementId
+          },
+          attempted: true
+        }
+      }
+      if (mayRetry && kind === 'internal') {
+        if (
+          resolvedApprovals.has(request.approvalId) ||
+          !isCurrentApprovalStage(request) ||
+          closed ||
+          terminationRequested
+        ) {
+          return { kind: 'withdrawn', reason: approvalStageWithdrawal(request), attempted: true }
+        }
+        return await sendApprovalDecision(request, choice, false)
       }
       warn(
         `Muse rejected the approval decision for "${text(request.toolName)}"; cancelling the turn rather than leaving it gated. ${(error as Error).message}`
       )
       cancelTurn()
+      return { kind: 'rejected', errorKind: kind || 'transport' }
     }
   }
 
@@ -1113,18 +1534,25 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'approval/requested': {
-        const request = params as unknown as MuseMspApprovalRequest
-        if (!request?.approvalId) return
-        approvalRequirements.set(request.approvalId, request.currentRequirementId)
-        void decideApproval(request).catch(() => cancelTurn())
+        presentApproval(params as unknown as MuseMspApprovalRequest)
         return
       }
       case 'approval/resolved': {
         // Protected delivery. An approval settled by policy, by the LLM judge,
         // or by another client must prune our CAS map — otherwise the entry
         // leaks and a later decide echoes a requirement that no longer exists.
+        // It also ends any answer TaskWraith still owes for it.
         const approvalId = text(params.approvalId)
-        if (approvalId) approvalRequirements.delete(approvalId)
+        if (approvalId) {
+          approvalRequirements.delete(approvalId)
+          const settled: MuseMspApprovalWithdrawal = {
+            kind: 'resolved',
+            decision: text(params.decision),
+            resolvedBy: text(params.resolvedBy)
+          }
+          resolvedApprovals.set(approvalId, settled)
+          withdrawApprovalAnswers(approvalId, settled)
+        }
         return
       }
       case 'userInput/requested': {
@@ -1139,11 +1567,32 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       case 'approval/updated': {
         const approvalId = text(params.approvalId)
         const requirementId = record(params.currentRequirementId)
-        if (approvalId && requirementId.approvalId) {
-          approvalRequirements.set(
-            approvalId,
-            requirementId as unknown as MuseMspApprovalRequirementRef
-          )
+        if (!approvalId || !requirementId.approvalId || resolvedApprovals.has(approvalId)) return
+        const current = requirementId as unknown as MuseMspApprovalRequirementRef
+        const previous = approvalRequirements.get(approvalId)
+        approvalRequirements.set(approvalId, current)
+        if (!previous || museMspRequirementIndex(previous) === museMspRequirementIndex(current)) {
+          return
+        }
+        // The stage moved: an answer still owed for an earlier stage would be
+        // consent to a question nobody asked any more. Withdraw it, and ask the
+        // new stage as its own question when this update carries enough to
+        // show it; otherwise Muse's re-presentation of the stage asks it.
+        const view = approvalViews.get(approvalId)
+        const next = {
+          ...(view ?? {}),
+          approvalId,
+          currentRequirementId: current
+        } as MuseMspApprovalRequest
+        supersedeApprovalStages(approvalId, museMspApprovalStageKey(next), current)
+        if (view && Array.isArray(params.availableChoices)) {
+          presentApproval({
+            ...next,
+            availableChoices: params.availableChoices as MuseMspApprovalChoice[],
+            ...(params.subject && typeof params.subject === 'object'
+              ? { subject: params.subject as MuseMspApprovalRequest['subject'] }
+              : {})
+          })
         }
         return
       }
@@ -1233,11 +1682,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       // hung the turn. Acknowledge, then settle through the same handlers.
       writeFrame({ jsonrpc: '2.0', id: frame.id, result: {} })
       if (frame.method === 'approval/request') {
-        const request = frame.params as unknown as MuseMspApprovalRequest
-        if (request?.approvalId) {
-          approvalRequirements.set(request.approvalId, request.currentRequirementId)
-          void decideApproval(request).catch(() => cancelTurn())
-        }
+        presentApproval(frame.params as unknown as MuseMspApprovalRequest)
         return
       }
       if (frame.method === 'userInput/request') {
@@ -1296,6 +1741,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     if (terminalCloseDelivered) return
     terminalCloseDelivered = true
     closed = true
+    withdrawApprovalAnswers(null, { kind: 'turnEnded' })
     clearKillBackstop()
     clearInactivityWatchdog()
     clearTurnStartedTripwire()

@@ -45,14 +45,13 @@ export function TrustedSessionConfirmSheet({
         </header>
 
         <p className="creative-approval-modal-description">
-          Full Access raises only this chat or participant lane to TaskWraith&apos;s highest local
-          authority. It may allow shell commands without the workspace sandbox, signing or
-          keychain-backed tools, and files outside the workspace when the provider adapter supports
-          it.
+          Full Access lets this chat or participant lane use available native tools, run commands
+          outside the workspace sandbox, and change files without TaskWraith approval cards.
         </p>
         <p className="creative-approval-modal-description approval-elevation-caution">
-          Other chats and ensemble participants are unchanged. External publishing, media recording,
-          and anything blocked by global policy keep their own approval rules.
+          Destructive actions, external publishing and media recording are included. Other chats and
+          participants are unchanged. Provider sign-in and operating-system permission prompts still
+          apply.
         </p>
 
         <label className="approval-elevation-ack" htmlFor="trusted-session-ack">
@@ -64,7 +63,7 @@ export function TrustedSessionConfirmSheet({
           />
           <span>
             I understand this applies only to {subjectLabel} and stays active until I lower that
-            lane&apos;s permission.
+            lane&apos;s permission or restart TaskWraith.
           </span>
         </label>
 

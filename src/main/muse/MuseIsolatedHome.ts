@@ -782,6 +782,12 @@ function establishMuseDurableSeat(boundaryRoot: string, seatPath: string): strin
   if (!isAbsolute(boundaryRoot) || !isAbsolute(seatPath)) {
     throw new Error('Muse durable seat paths must be absolute.')
   }
+  if (
+    !pathIsWithin(resolve(boundaryRoot), resolve(seatPath)) ||
+    resolve(boundaryRoot) === resolve(seatPath)
+  ) {
+    throw new Error('The Muse durable seat home escaped its private seat root.')
+  }
   // Order matters: mkdir succeeds silently on an existing symlink-to-directory
   // and chmod FOLLOWS it, so chmod before the leaf-type check would set an
   // arbitrary directory to 0700 before the guard rejects the path.
@@ -790,10 +796,14 @@ function establishMuseDurableSeat(boundaryRoot: string, seatPath: string): strin
   if (process.platform !== 'win32') chmodSync(boundaryRoot, 0o700)
   assertPrivateRealDirectory(boundaryRoot, 'seat root')
 
-  mkdirSync(seatPath, { recursive: true, mode: 0o700 })
-  assertRealDirectoryLeaf(seatPath, 'seat home')
-  if (process.platform !== 'win32') chmodSync(seatPath, 0o700)
-  assertPrivateRealDirectory(seatPath, 'seat home')
+  let componentPath = boundaryRoot
+  for (const component of relative(boundaryRoot, seatPath).split(sep)) {
+    componentPath = join(componentPath, component)
+    mkdirSync(componentPath, { recursive: true, mode: 0o700 })
+    assertRealDirectoryLeaf(componentPath, 'seat home')
+    if (process.platform !== 'win32') chmodSync(componentPath, 0o700)
+    assertPrivateRealDirectory(componentPath, 'seat home')
+  }
 
   const rootReal = realpathSync(boundaryRoot)
   const seatReal = realpathSync(seatPath)

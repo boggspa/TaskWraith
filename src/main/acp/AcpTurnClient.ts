@@ -242,6 +242,8 @@ export interface AcpTurnOptions {
    * `config_unapplied:<configId>`.
    */
   strictConfigIds?: readonly string[]
+  /** Must be acknowledged even when the provider advertises no config surface. */
+  requiredConfigIds?: readonly string[]
   /**
    * Lifetime of `cwd` as a provider-visible workspace identity. A native
    * session may be resumed only when the path remains valid for that session's
@@ -790,7 +792,8 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let nextConfigRpcId = ACP_CONFIG_RPC_START
   let sessionConfigQueue: Array<{ configId: string; values: string[] }> = []
   let configSessionKind: 'new' | 'resumed' = 'new'
-  const strictConfigIds = new Set(options.strictConfigIds ?? [])
+  const requiredConfigIds = new Set(options.requiredConfigIds ?? [])
+  const strictConfigIds = new Set([...(options.strictConfigIds ?? []), ...requiredConfigIds])
   let configSurfaceAdvertised = false
   const pendingConfigRpcs = new Map<number, { configId: string; value: string }>()
   let activePromptRpcId: number | null = null
@@ -1371,7 +1374,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     const desired = sessionConfigQueue.shift()!
     const option = advertised.find((candidate) => candidate.id === desired.configId)
     if (!option) {
-      if (strictConfigIds.has(desired.configId) && configSurfaceAdvertised) {
+      if (requiredConfigIds.has(desired.configId) || (strictConfigIds.has(desired.configId) && configSurfaceAdvertised)) {
         failUnappliedSessionConfig(
           desired.configId,
           desired.values,

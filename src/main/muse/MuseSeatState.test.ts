@@ -6,6 +6,7 @@ import {
   legacyMuseSeatStatePaths,
   legacyMuseSeatStateRoots,
   museSeatStatePath,
+  museSeatHomeForPosture,
   museSeatStateRoot
 } from './MuseSeatState'
 
@@ -15,6 +16,19 @@ const USER_DATA = '/tmp/userData'
 const SEAT_ROOT = join(USER_DATA, 'muse-seats-v1')
 
 describe('Muse seat state paths', () => {
+  it('keeps resumed Full Access grants outside every restricted or legacy session home', () => {
+    const base = { boundaryRoot: SEAT_ROOT, path: museSeatStatePath(USER_DATA, 'chat-a') }
+    const elevated = museSeatHomeForPosture(base, true)
+    const restricted = museSeatHomeForPosture(base, false)
+    expect(new Set([base.path, elevated.path, restricted.path]).size).toBe(3)
+    expect(elevated.boundaryRoot).toBe(SEAT_ROOT)
+    expect(restricted.boundaryRoot).toBe(SEAT_ROOT)
+    // Existing per-chat history erasure removes both posture homes together.
+    expect(elevated.path.startsWith(base.path + sep)).toBe(true)
+    expect(restricted.path.startsWith(base.path + sep)).toBe(true)
+    expect(museSeatHomeForPosture(base, false)).toEqual(restricted)
+  })
+
   it('pins the versioned containment directory', () => {
     // A rename here is a containment change, not a refactor: seats written
     // under the old rule must never be visible to a new session/resume.

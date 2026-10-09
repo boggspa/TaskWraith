@@ -406,6 +406,8 @@ export interface MistralAcpRunOptions {
    * unreachable.
    */
   sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
+  /** Main-admitted Full Access requires the provider to acknowledge its native mode. */
+  nativeFullAccess?: boolean
   onEvent: (event: NormalizedGrokRunEvent) => void
   /** Exact working-phase prompt after transport selection and fallback repair. */
   onWirePrompt?: (
@@ -600,6 +602,7 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     // re-assert.
     sessionConfigOptions: options.sessionConfigOptions,
     strictConfigIds: MISTRAL_STRICT_CONFIG_IDS,
+    requiredConfigIds: options.nativeFullAccess ? ['mode'] : [],
     formatSteerPrompt: formatMistralSteerPrompt,
     onEvent: (event) => {
       if (event.type === 'provider_warning' && event.text) {

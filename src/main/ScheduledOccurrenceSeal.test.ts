@@ -827,6 +827,90 @@ function defaultSeatForPermissions(
   })
 }
 
+describe('signed Full Access native scheduled authority', () => {
+  it.each(['claude', 'grok', 'mistral', 'cursor'] as const)(
+    'accepts %s native authority only for the matching signed Full Access posture',
+    (provider) => {
+      const permissions = effectivePermissions({
+        presetId: 'full_access',
+        approvalMode: 'auto_edit',
+        readOnly: false,
+        agenticServices: {
+          ...effectivePermissions().agenticServices,
+          shellCommands: 'allow',
+          fileChanges: 'allow'
+        }
+      })
+      const plan = providerLaunchPlan(provider)
+      const controls =
+        provider === 'claude'
+          ? {
+              ...plan.controls,
+              permissionMode: 'bypassPermissions',
+              builtinToolMode: 'provider-native'
+            }
+          : provider === 'grok'
+            ? { ...plan.controls, permissionMode: 'bypassPermissions', readOnlySeat: false }
+            : provider === 'mistral'
+              ? { ...plan.controls, sessionMode: 'auto-approve', readOnlySeat: false }
+              : {
+                  ...plan.controls,
+                  executionMode: 'full-access',
+                  forceMcpTools: true,
+                  approveMcpServers: true
+                }
+      const native = {
+        ...plan,
+        controls,
+        ...(provider === 'cursor'
+          ? {
+              tools: {
+                ...plan.tools,
+                taskWraithMcpAdvertised: false,
+                taskWraithMcpProfileId: null
+              },
+              controls: { ...controls, bridgeMode: 'none', brokerRegistration: 'none' }
+            }
+          : {})
+      } as ProviderLaunchAuthorityInput
+      const scheduled = task({
+        provider,
+        runtimeProfileId: undefined,
+        approvalMode: 'auto_edit',
+        permissionPresetId: 'full_access'
+      })
+      expect(
+        mintScheduledOccurrenceSeal(
+          ROOT,
+          context(scheduled, {
+            runtimeSeats: [defaultSeatForPermissions(provider, permissions, native)]
+          }),
+          now
+        )
+      ).toMatchObject({ schemaVersion: 2 })
+      const restricted = effectivePermissions()
+      expect(() =>
+        mintScheduledOccurrenceSeal(
+          ROOT,
+          context(task({ provider, runtimeProfileId: undefined }), {
+            runtimeSeats: [defaultSeatForPermissions(provider, restricted, native)]
+          }),
+          now
+        )
+      ).toThrow()
+      expect(() =>
+        mintScheduledOccurrenceSeal(
+          ROOT,
+          context(scheduled, {
+            runtimeSeats: [defaultSeatForPermissions(provider, permissions, plan)]
+          }),
+          now
+        )
+      ).toThrow()
+    }
+  )
+})
+
 function context(
   scheduledTask: ScheduledTask = task(),
   overrides: Partial<ScheduledOccurrenceCurrentContext> = {}

@@ -29,6 +29,7 @@ import {
  * TaskWraith MCP prompt claims removed by the same sanitizer dispatch uses.
  */
 export interface CursorSealEvidenceFacts {
+  readonly effectivePermissions?: import('../store/types').EffectiveRunPermissions
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']
   readonly resolvedEnv: Readonly<Record<string, string>>
@@ -71,6 +72,7 @@ export async function buildCursorSealEvidence(
     fastMode: facts.cursorFastMode,
     writeCapable: facts.writeCapable,
     planSeat: facts.readOnlySeat,
+    effectivePermissions: facts.effectivePermissions,
     brokerRequested: false,
     brokerOutcome: 'not-requested' as const,
     taskWraithMcpProfileId: null,
@@ -84,6 +86,11 @@ export async function buildCursorSealEvidence(
     ...launchPlanInput,
     prompt: SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER
   }).argv
+  const fullAccess =
+    facts.effectivePermissions?.presetId === 'full_access' &&
+    facts.effectivePermissions.readOnly === false &&
+    facts.effectivePermissions.agenticServices.shellCommands === 'allow'
+  const actualArgv = [...argvTemplate]
 
   const common = buildCommonLaunchAuthority(deps, {
     provider: 'cursor',
@@ -115,7 +122,7 @@ export async function buildCursorSealEvidence(
     userMcpConfiguration: { attachment: 'none' },
     nativeToolPolicy: {
       kind: 'cursor-native-under-os-sandbox',
-      sandbox: 'enabled',
+      sandbox: fullAccess ? 'disabled' : 'enabled',
       mode: launchPlan.controls.executionMode,
       skipWorktreeSetup: true
     },
@@ -133,7 +140,7 @@ export async function buildCursorSealEvidence(
     runtime: await buildCliRuntimeIdentity(deps, {
       binaryPath: facts.binaryPath,
       spawnEnvPath: facts.resolvedEnv.PATH,
-      argvTemplate
+      argvTemplate: actualArgv
     }),
     tools,
     controls: {
@@ -145,7 +152,7 @@ export async function buildCursorSealEvidence(
       brokerRegistration: launchPlan.controls.brokerRegistration,
       forceMcpTools: launchPlan.controls.forceMcpTools,
       approveMcpServers: launchPlan.controls.approveMcpServers,
-      nativeContainmentConfigurationSha256: nativeContainmentConfigurationSha256(argvTemplate),
+      nativeContainmentConfigurationSha256: nativeContainmentConfigurationSha256(actualArgv),
       fallbackPolicy: 'forbid'
     }
   }
