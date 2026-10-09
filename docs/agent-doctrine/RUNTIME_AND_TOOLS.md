@@ -22,6 +22,18 @@ boundaries.
 
 ## Approval flow
 
+For the 1.9.9 / 0.1.0 source, a human-selected Full Access grant is run authority
+after main verifies it. Available provider-native tools use their unrestricted
+launch mode, and TaskWraith automatically accepts permission requests without
+creating a pending approval card, including destructive, external-path and
+Canvas requests. This includes preview models and desktop global chats with an explicit
+grant. Paired-device global chats retain their separate read-only remote policy.
+Provider authentication, OS prompts, unavailable capabilities, exact run
+identity, cancellation and audit remain separate. Other tiers retain their
+existing gates. An unattended or delegated run cannot inherit a parent's grant.
+Muse resumes within separate Full Access and restricted session homes so a
+provider-side session approval cannot survive a permission downgrade.
+
 When an agent attempts a tool call that TaskWraith's permission policy
 flags as needing approval (e.g. `run_shell_command`, file edits
 outside the workspace, MCP elicitations):
@@ -40,7 +52,7 @@ outside the workspace, MCP elicitations):
    Automation → Approvals & Grants) including `decisionSource` (`'user'` vs
    `'system'` for timer auto-deny) and timestamp metadata.
 
-`canvas_eval` has a deliberate surface-scoped exception to repeated prompting.
+Outside Full Access, `canvas_eval` has a surface-scoped exception to repeated prompting.
 The first permitted eval on a live Canvas surface requires exact desktop review;
 accepting opens a 12-hour in-memory window for that canvasId. The window follows
 the same live surface across navigation and later agent turns, but never covers
@@ -110,9 +122,9 @@ identity/probe/posture checks, always enabled, packaged builds included — and
 that labelling cannot qualify a release; only a reviewed roster tuple can.
 Gemini is historical/retired for new runs. **Cursor is in the user-approved
 live set; its current production route is managed Path-B:** TaskWraith starts a
-contained `cursor-agent` process with hard-pinned
-`--sandbox enabled` and seat-routed read-only vs write argv. Path-B keeps native
-Cursor tools under the OS sandbox and also registers a TaskWraith-owned gateway
+`cursor-agent` process with `--sandbox enabled` for restricted tiers and
+`--sandbox disabled --force --approve-mcps` for a verified Full Access run.
+Path-B also registers a TaskWraith-owned gateway
 broker. Brokered calls use TaskWraith policy, approval cards, and workspace
 grants; native actions remain provider-owned. If registration/approval fails,
 TaskWraith visibly warns and runs that turn native-only. The canonical MCP list lives in

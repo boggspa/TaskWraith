@@ -15,12 +15,12 @@
 
 <p align="center">
   <a href="https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml/badge.svg" /></a>
-  <a href="https://github.com/boggspa/TaskWraith/releases/latest"><img alt="Latest GitHub release" src="https://img.shields.io/github/v/release/boggspa/TaskWraith" /></a>
+  <a href="https://taskwraith.dev/"><img alt="TaskWraith downloads" src="https://img.shields.io/badge/TaskWraith-downloads-8b5cf6" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/boggspa/TaskWraith" /></a>
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/boggspa/TaskWraith/releases/latest">Download</a></strong>
+  <strong><a href="https://taskwraith.dev/">Download</a></strong>
   ·
   <a href="https://github.com/boggspa/TaskWraith">Source</a>
   ·
@@ -49,7 +49,7 @@ small Ensemble to deliberate and review in a shared transcript.
   workspace around the way you work.
 - **Spend with no surprises.** Keep provider usage signals and run activity
   visible while each account and quota stays under its provider's control.
-- **Powerful on day one.** Welcome, Goals, Diff Studio, Canvas, terminal, TaskWraith Studio, and
+- **Powerful on day one.** Welcome, Goals, Diff Studio, Canvas, terminal, and
   familiar chat workflows are ready when you need them.
 
 <table>
@@ -72,7 +72,7 @@ small Ensemble to deliberate and review in a shared transcript.
 ## Start in three steps
 
 1. **Download TaskWraith** from the
-   [latest GitHub release](https://github.com/boggspa/TaskWraith/releases/latest).
+   [TaskWraith download page](https://taskwraith.dev/).
    Choose the checksum-listed installer for macOS, Windows, or Linux and verify
    it against the release's `SHA256SUMS-<version>.txt`.
 2. **Bring a provider.** Install and sign in to the provider CLI or account you

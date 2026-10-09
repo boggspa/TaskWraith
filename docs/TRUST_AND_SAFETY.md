@@ -82,9 +82,9 @@ TaskWraith's authority is centered on the desktop app:
   asserts about its own work is unverifiable, and the telemetry it reads to
   produce one is attacker-influenceable.
 
-The tagged v1.9.7 release is the current public baseline. This repository can
+The tagged v1.9.8 release is the current public baseline. This repository can
 also contain source-ahead work that is not a released guarantee until it is
-named in later release notes. The changelog's **1.9.7** section is the newest
+named in later release notes. The changelog's **1.9.8** section is the newest
 released section; anything in this tree beyond it is source-ahead and carries
 no released guarantee.
 
@@ -131,6 +131,13 @@ workspace-under-`$HOME` seal. See `SECURITY_ENGINEERING_LEDGER.md`
 gitignored, and not published.
 
 ## Capability Matrix
+
+The 1.9.9 / 0.1.0 source honors a verified, human-selected **Full Access** grant
+without TaskWraith approval cards and exposes available provider-native tools.
+The approval gates below describe the other permission tiers. Full Access can
+operate beyond the workspace and perform destructive actions; it retains run
+identity, cancellation and audit, but it is not a sandbox. Provider sign-in,
+quotas and operating-system permission prompts remain under their owners.
 
 | Surface                            | Default posture                                                                                   | What it can access                                                                                                                                                                                                                                                | What may leave your computer                                                                                                                                                                     | Approval and audit                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -6,7 +6,29 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
-## Unreleased
+## 1.9.9 - 2026-10-09
+
+The detailed validation notes below retain their source-specific measurements.
+They are not an installed-artifact or migration pass for a later release build.
+
+### Models, Accounts and Usage
+
+- **Updated model catalogues.** GPT-6.1 Sol and Claude Opus 5.5 become the
+  Codex and Claude defaults. The pickers, New Additions and companion catalogues
+  include Claude Sonnet 5.5 and Haiku 5.5, Grok 4.7 and 4.7 Fast, Mistral
+  Large 4 and GLM-5.3, alongside the expanded Pi and Ollama choices. Provider
+  access, subscription and API-key requirements still apply.
+- **Multiple Claude and Codex accounts.** Add secondary accounts beside the
+  primary sign-in and see their usage separately. Claude's subscription and
+  API-key run lanes are explicit choices.
+- **Clearer provider settings and usage.** Provider settings use an icon rail
+  and one focused pane. Plan limits are grouped by period; API credit and
+  reporting-key spend appear under Usage Credits. Muse subscription usage comes
+  from its CLI usage panel.
+- **Ensemble and Host visibility.** New Ensembles start with fan-out enabled.
+  Dispatch failures report their cause, and the Host settings pane exposes its
+  status and transport diagnostics. Transcript appearance controls include a
+  discoverable default view.
 
 ### Thread Custody and Orphan Recovery
 
@@ -42,6 +64,50 @@ startup; committed Host evidence is forwarded into the durable receipt store.
 The coordinator can be constructed from injected Host/journal seams. The two
 thread-custody defaults above have completed installed-build QA. The release
 candidate and updater handoff still require their separate artifact verification.
+
+### Final beta and public-release bridge
+
+- **A safe route into 0.1.0.** Existing beta installs first update to 1.9.9.
+  The bridge verifies the exact size and SHA-256 of its pinned public installer,
+  resumes interrupted downloads, and preserves the existing profile. Both
+  identities retain Windows installation registration; Linux launches the
+  retained AppImage with its extraction fallback.
+- **Independent public updates.** The public identity uses its own Release feed.
+  GitHub Latest stays on the final beta so late beta upgraders can still reach
+  the bridge. An incomplete beta receipt no longer blocks a public app's updater.
+- **Full Access honors your selection.** Available native tools are enabled and
+  TaskWraith permissions are accepted automatically for the verified run,
+  including preview models and desktop global chats. Restricted tiers retain their
+  controls, and stopped runs cannot acquire fresh approval authority.
+  Paired-device global chats retain their separate read-only remote policy.
+- **Muse approvals settle reliably.** Duplicate and superseded requests share
+  the correct lifecycle, provider resolutions withdraw pending cards, and audit
+  records distinguish permission from actual execution. Restricted turns cannot
+  resume a provider session carrying Full Access grants.
+- **Recovery no longer leaves dead Ensemble seats working.** Exact terminal
+  runs reconcile their participant and lane displays after restart. Event
+  queries filter during streaming and avoid retaining full unrelated records.
+- **The two QA-approved persistence defaults are on.** Thread barrier durability
+  and thread-log authority default on, with exact `0` opt-outs. Legacy flushers,
+  checkpoint publication and other independent programme switches retain their
+  previous defaults.
+- **Release scope.** Windows installers are unsigned. TaskWraith Studio is
+  excluded from these desktop packages; Diff Studio remains included.
+
+## 0.1.0 - 2026-10-09
+
+### Public identity
+
+- **The first public version uses the same frozen source as the final beta.**
+  It packages the public application identity and an independent Release feed,
+  with the features and reliability changes described in 1.9.9 above.
+- **Existing work stays in place.** The product/profile name remains TaskWraith;
+  migration does not copy or rewrite chats, settings, journals, pairings or
+  encrypted secrets. Operating-system keychain access may need reconfirmation
+  when the application identity changes.
+- **Future versions move forward from 0.1.x.** Public updates use the public
+  feed, while the beta bridge and its pinned installers remain available for
+  late upgrades and repair.
 
 ## 1.9.8 - 2026-09-15
 

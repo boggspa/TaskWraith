@@ -108,29 +108,31 @@ moving out of `Unreleased`, plus published artifacts.
 - **Managed Cursor Path-B (shipped in v1.8.5; residual risk still disclosed)** —
   Cursor's membership in `LIVE_SELECTABLE_PROVIDER_IDS` is a user-approved
   product decision, independent of run-management maturity. Its current
-  production route has no brittle per-build fingerprint gate and contains
-  Cursor with hard-pinned `--sandbox enabled` argv builders:
-  read-only vs write-capable shapes are routed by seat permission. Production
-  never emits bare uncontained `cursor-agent`, sandbox-disabled, yolo,
-  approve-all-MCP, or resume-token argv; `--force` is emitted only after the
-  TaskWraith-owned broker is registered and enabled so its calls work
-  headlessly. Path B uses the user's real `~/.cursor` login; account
-  skills/plugins/MCP may load but are sandbox-bounded (own-account trust).
+  production route has no brittle per-build fingerprint gate. Restricted
+  tiers use hard-pinned `--sandbox enabled` argv builders; read-only vs
+  write-capable shapes follow the seat permission. The 1.9.9 / 0.1.0
+  source adds `--sandbox disabled --force --approve-mcps` only for verified,
+  human-selected Full Access. It does not add yolo or resume-token argv.
+  Restricted-tier `--force` still requires the registered TaskWraith broker.
+  Path B uses the user's real `~/.cursor` login; account skills/plugins/MCP
+  may load under the selected posture (own-account trust).
   TaskWraith mediates brokered gateway calls and their workspace grants, not
   Cursor-native actions. Honest partial backstop: sandbox blocks many `$HOME`-root
   sensitive writes for a normal project workspace, but a workspace placed
   directly under `$HOME` can leave `$HOME` writable, and network egress is not
   proven blocked. See `CHANGELOG.md`, `src/main/cursor/CursorCliArgs.ts`, and
   `docs/SECURITY_ENGINEERING_LEDGER.md` (TW-SEC-2026-003).
-- **Source-ahead `canvas_eval` surface window + audit minimisation** — the first
-  permitted eval on a live Canvas requires exact transient desktop review and
-  opens a 12-hour in-memory window for that canvasId. The same surface remains
+- **Source-ahead `canvas_eval` surface window + audit minimisation** — outside
+  verified human-selected Full Access, the first permitted eval on a live Canvas
+  requires exact transient desktop review and opens a 12-hour in-memory window
+  for that canvasId. The same surface remains
   covered across navigation and later turns; other canvases and app restarts do
   not. Every execution, including a window auto-approval, retains a joined
   approval id, unkeyed SHA-256 digest, lengths, and outcome rather than
   script/result content; the digest is reproducible correlation/integrity
-  metadata, not encryption or a confidentiality boundary. Auto-denial and
-  compatibility/tool-event rows are content-redacted but do not necessarily
+  metadata, not encryption or a confidentiality boundary. Full Access accepts
+  automatically while retaining the exact single-use receipt and audit.
+  Auto-denial and compatibility/tool-event rows are content-redacted but do not necessarily
   carry that full receipt. Compact and paired-device surfaces cannot accept the
   opening approval without exact desktop review.
   Provider assistant prose can echo the script/result into TaskWraith's
