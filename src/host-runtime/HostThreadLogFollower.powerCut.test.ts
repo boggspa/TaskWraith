@@ -158,14 +158,10 @@ class Compactor implements CheckpointPreparationPort {
   }
 }
 
-const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
-
 async function until(condition: () => boolean, what: string): Promise<void> {
-  for (let turns = 0; turns < 500; turns += 1) {
-    if (condition()) return
-    await turn()
-  }
-  throw new Error(`never: ${what}`)
+  // Compaction joins asynchronous filesystem work; a CPU spin count does
+  // not give that work a consistent time budget on different runners.
+  await vi.waitFor(() => expect(condition(), what).toBe(true), { timeout: 5_000, interval: 5 })
 }
 
 /** The app before the cut. */
