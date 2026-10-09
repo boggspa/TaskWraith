@@ -857,8 +857,11 @@ describe('HostTransactionLog compaction', () => {
     const lastWrite = io.writes[io.writes.length - 1]!
     expect(lastWrite.path).toBe(logPath(dataDir))
     expect(lastWrite.data).toBe(line(abort('kept')) + line(prepare('later')))
-    // The directory was fsynced for the rename, not again for the append into an existing file.
-    expect(io.fsyncs.filter((path) => path === dataDir)).toHaveLength(2)
+    // Where supported, the directory was synced for creation and rename,
+    // never again for an append into the existing file.
+    expect(io.fsyncs.filter((path) => path === dataDir)).toHaveLength(
+      process.platform === 'win32' ? 0 : 2
+    )
     const reopened = HostTransactionLog.open({ dataDir })
     expect(reopened.get('kept')).toEqual({ prepare: prepare('kept'), terminal: abort('kept') })
     expect(reopened.get('later')).toEqual({ prepare: prepare('later'), terminal: null })

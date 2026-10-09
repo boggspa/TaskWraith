@@ -135,7 +135,7 @@ describe('authority metadata witness', () => {
       expect(threadPublicationAuthorityWitness(profile, 'thread')()).toBe(true)
     }))
 
-  it.each(['replace', 'overwrite', 'delete', 'metadata'] as const)(
+  it.each(['replace', 'resize', 'delete', 'metadata'] as const)(
     'rejects %s after capture',
     (change) =>
       fixture((profile, file) => {
@@ -144,8 +144,11 @@ describe('authority metadata witness', () => {
         if (change === 'replace') {
           writeFileSync(file + '.tmp', 'authority')
           renameSync(file + '.tmp', file)
-        } else if (change === 'overwrite') writeFileSync(file, 'different')
-        else if (change === 'delete') unlinkSync(file)
+        } else if (change === 'resize') {
+          // This is a metadata witness for atomic protocol writes. Equal-size
+          // in-place writes can retain the same timestamp on Windows.
+          writeFileSync(file, 'authority with a changed size')
+        } else if (change === 'delete') unlinkSync(file)
         else utimesSync(file, new Date(0), new Date(0))
         expect(unchanged()).toBe(false)
       })

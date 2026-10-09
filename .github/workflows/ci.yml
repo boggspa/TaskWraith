@@ -102,6 +102,9 @@ jobs:
           src/main/store/IncrementalChatJournal.folderDebt.test.ts
           src/host-shared/thread-log/NodeThreadFileSystem.test.ts
           src/host-runtime/HostThreadLogFollower.process.test.ts
+          src/host-runtime/HostThreadHistoryRouter.test.ts
+          src/host-runtime/HostThreadPublicationGuard.test.ts
+          src/host-runtime/HostTransactionLog.test.ts
       - run: npm run ci
       # The native macOS bridge daemon gates Screen Watch / creative-app /
       # editor actions, so its Swift unit tests must pass before changes land.

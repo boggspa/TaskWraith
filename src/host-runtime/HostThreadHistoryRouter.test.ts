@@ -452,7 +452,29 @@ describe('the followers the router keeps', () => {
   it('are polled once a second without a nudge, and let go once their file goes', async () => {
     const log = logOf(CHAT, 2)
     await own()
-    const { router, timers, thread, idle } = routerOf()
+    const files = new ThreadAuthorityFiles(profile)
+    let authorityRead: Promise<unknown> = Promise.resolve()
+    const {
+      router,
+      timers,
+      thread,
+      idle: pollsIdle
+    } = routerOf({
+      files: {
+        read: (threadId) => {
+          const reading = files.read(threadId)
+          authorityRead = reading
+          return reading
+        }
+      }
+    })
+    const idle = async (): Promise<void> => {
+      await pollsIdle()
+      // The interval checks authority separately from polling the log. Join
+      // both before another synthetic tick, including the check's continuations.
+      await authorityRead
+      await turn()
+    }
     await router.threadHistory(tail())
     expect(timers.handles.map((handle) => handle.ms)).toEqual([1000])
     const revision = log.say('no nudge')
