@@ -441,8 +441,8 @@ async function runProductionRoundTrip(launcher, target) {
       fail('production Host snapshot must include a providers inventory')
     }
     // The initial snapshot is intentionally useful before historical indexing
-    // completes. Assert the release-scale families only after explicit coverage
-    // and the corresponding projection have both arrived.
+    // completes. The run window refreshes independently of catalogue coverage;
+    // wait for every release-scale family in the same public snapshot.
     const coverageStartedAt = Date.now()
     const coverageDeadline = coverageStartedAt + Math.max(timeoutMs, coverageBudgetMs)
     let coverageComplete = false
@@ -468,12 +468,17 @@ async function runProductionRoundTrip(launcher, target) {
         if (complete.frame?.ok !== true)
           fail('production Host did not return the completed snapshot')
         const snapshot = complete.frame.result?.frame?.snapshot
+        releaseScaleSnapshot = snapshot
+        const warnings = Array.isArray(snapshot?.warnings)
+          ? snapshot.warnings.map((warning) => `${warning.code}:${warning.warningId}`)
+          : []
         if (
           snapshot?.threads?.length === releaseScale.threadCount &&
           snapshot?.participants?.length === 2_000 &&
-          snapshot?.runs?.length > 0
+          snapshot?.runs?.length === 1_800 &&
+          warnings.includes('projection_windowed:projection_windowed:runs') &&
+          warnings.includes('projection_truncated:projection_truncated:participants')
         ) {
-          releaseScaleSnapshot = snapshot
           coverageComplete = true
           break
         }
@@ -485,7 +490,8 @@ async function runProductionRoundTrip(launcher, target) {
         `production Host history coverage did not complete within ${String(Date.now() - coverageStartedAt)} ms` +
           ` (last coverage=${lastCoverage}, threads=${String(releaseScaleSnapshot?.threads?.length)},` +
           ` participants=${String(releaseScaleSnapshot?.participants?.length)},` +
-          ` runs=${String(releaseScaleSnapshot?.runs?.length)})`
+          ` runs=${String(releaseScaleSnapshot?.runs?.length)},` +
+          ` warnings=${JSON.stringify(releaseScaleSnapshot?.warnings ?? [])})`
       )
     }
     const warningCodes = Array.isArray(releaseScaleSnapshot?.warnings)
@@ -493,7 +499,7 @@ async function runProductionRoundTrip(launcher, target) {
       : []
     if (
       !Array.isArray(releaseScaleSnapshot?.runs) ||
-      releaseScaleSnapshot.runs.length >= 2_000 ||
+      releaseScaleSnapshot.runs.length !== 1_800 ||
       !warningCodes.includes('projection_windowed:projection_windowed:runs')
     ) {
       fail('production Host must intentionally window oversized run history below the wire cap')
