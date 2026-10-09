@@ -100,7 +100,8 @@ candidate and updater handoff still require their separate artifact verification
 
 - **The first public version uses the same frozen source as the final beta.**
   It packages the public application identity and an independent Release feed,
-  with the features and reliability changes described in 1.9.9 above.
+  with the features and reliability changes described in the
+  [1.9.9 release notes](https://github.com/boggspa/TaskWraith/releases/tag/v1.9.9).
 - **Existing work stays in place.** The product/profile name remains TaskWraith;
   migration does not copy or rewrite chats, settings, journals, pairings or
   encrypted secrets. Operating-system keychain access may need reconfirmation
