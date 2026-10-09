@@ -4415,6 +4415,7 @@ oser-orchestration-cell-label {
  * real shell. Both are carried as `--codex-cc-box-*` tokens below; the
  * light family keeps its shard-08 white box by re-pointing the fill
  * token at the theme composer variables.
+ * 2026-10-09: the chosen dark fill is two steps lighter, #2e2e2e.
  *
  * Isolation contract:
  *   - Every selector is prefixed `[data-composer-style="codex"] .app-transcript .composer-surface` (or its .welcome-mode /
@@ -4436,7 +4437,7 @@ oser-orchestration-cell-label {
   --codex-cc-send-bg: rgba(255, 255, 255, 0.86);
   --codex-cc-send-ink: #0d0d0d;
   --codex-cc-box-radius: 24px;
-  --codex-cc-box-bg: #2a2a2a;
+  --codex-cc-box-bg: #2e2e2e;
   --codex-cc-strip-inset: 14px;
   --codex-cc-strip-radius: 12px;
   --codex-cc-strip-overlap: 14px;
@@ -4471,7 +4472,7 @@ oser-orchestration-cell-label {
   --codex-cc-send-ink: #ffffff;
   /* Light family keeps the shard-08 white box: the dark token above is
    * unqualified, so without this reset the light box would inherit the
-   * dark #2a2a2a fill. Falling back to the theme composer variables
+   * dark #2e2e2e fill. Falling back to the theme composer variables
    * preserves the exact pre-token light behavior. */
   --codex-cc-box-bg: var(--composer-bg-solid, var(--composer-bg));
 }
