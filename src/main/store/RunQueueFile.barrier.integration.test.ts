@@ -609,7 +609,15 @@ describe('the run queue through the store, under barrier durability', () => {
     AppStore.updateRunQueueJob('run-a', { status: 'starting' })
     AppStore.updateRunQueueJob('run-a', { status: 'active' })
     AppStore.saveRunQueueJob(job('b'))
-    await settle()
+    // Establish a fully synced baseline before cutting off later writes.
+    await vi.waitFor(
+      () => {
+        const queue = AppStore.getThreadBarrierDurabilityPerf().runQueue
+        expect(queue).toMatchObject({ writing: false, unwrittenChanges: 0 })
+        expect(queue?.writes).toBeGreaterThan(0)
+      },
+      { timeout: 2_000, interval: 10 }
+    )
     expect(statuses(queueFile(profilePath))).toEqual([
       ['run-a', 'active'],
       ['run-b', 'queued']

@@ -5346,13 +5346,14 @@ async function setupLeaseHost(
 }
 
 function tuiState(tui: TaskWraithTui): {
+  connection: string
   notice?: { text: string }
   overlay: string
   hostPanel?: unknown
 } {
   return (
     tui as unknown as {
-      state: { notice?: { text: string }; overlay: string; hostPanel?: unknown }
+      state: { connection: string; notice?: { text: string }; overlay: string; hostPanel?: unknown }
     }
   ).state
 }
@@ -5642,6 +5643,7 @@ describe('TaskWraithTui /host', () => {
     )
     host.dropAllClients()
     await waitFor(() => host.welcomeCount >= 2, 'welcomed after restart')
+    await waitFor(() => tuiState(tui).connection === 'connected', 'client applied restart welcome')
     expect(tuiNotice(tui)).toBe(
       `Restarted the TaskWraith Host (was pid ${process.pid}) · now pid 777`
     )

@@ -124,14 +124,14 @@ const LEASE_HOLDER_ENTRY = `
 import { HostLeaseClient } from './HostLeaseClient'
 import { HostProjectionClient } from './HostProjectionClient'
 
-const [profile, clientId] = process.argv.slice(2)
+const [profile, clientId, startupDelayMs = '0'] = process.argv.slice(2)
 const client = new HostProjectionClient({
   userDataPath: profile,
   client: { clientId, clientClass: 'tui', clientVersion: '1.0' },
   capabilities: ['bootstrap', 'health']
 })
-client
-  .connect()
+new Promise((resolve) => setTimeout(resolve, Number(startupDelayMs)))
+  .then(() => client.connect())
   .then(async () => {
     const lease = new HostLeaseClient({ client })
     const state = await lease.acquire()
@@ -498,19 +498,39 @@ function openCommandClient(
 }
 
 /** A lease holder in its own process, returned once it holds its lease. */
-async function startHolder(profile: string, clientId: string): Promise<Started> {
-  const holder = startProcess(`lease holder ${clientId}`, [paths().holder, profile, clientId], {
-    env: isolatedEnv(),
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-  await waitFor(
-    () => holder.stdout().includes('\n') || holder.exit !== null,
-    `${clientId} to hold its lease`
-  )
-  const line = holder.stdout().split('\n')[0]
-  expect(line, holder.stderr()).not.toBe('')
-  expect(JSON.parse(line)).toEqual({ state: 'held', leaseId: expect.any(String) })
-  return holder
+async function startHolder(
+  profile: string,
+  clientId: string,
+  startupDelayMs = 0
+): Promise<Started> {
+  // The already-loaded parent holds the Host implicitly while the child starts.
+  // Cold process launch must not race this fixture's shortened idle grace.
+  const { client: bootstrap } = await openClient(profile, `${clientId}-bootstrap`)
+  try {
+    const holder = startProcess(
+      `lease holder ${clientId}`,
+      [paths().holder, profile, clientId, String(startupDelayMs)],
+      { env: isolatedEnv(), stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    await waitFor(
+      () => holder.stdout().includes('\n') || holder.exit !== null,
+      `${clientId} to hold its lease`
+    )
+    const line = holder.stdout().split('\n')[0]
+    const host = started.find((entry) => entry.label === `Host ${profile}`)
+    expect(line, `${holder.stderr()}\n${host?.stderr() ?? ''}`).not.toBe('')
+    expect(JSON.parse(line)).toEqual({ state: 'held', leaseId: expect.any(String) })
+    // Receive the release acknowledgement before the caller starts measuring.
+    await expect(declineHostLease(bootstrap)).resolves.toBe('declined')
+    await expect(bootstrap.getHostStatus()).resolves.toMatchObject({
+      lifetime: { phase: 'held', implicitHolders: 0 },
+      clients: expect.arrayContaining([expect.objectContaining({ clientId, lease: 'explicit' })])
+    })
+    return holder
+  } finally {
+    bootstrap.close()
+    clients.delete(bootstrap)
+  }
 }
 
 async function runCli(
@@ -826,7 +846,9 @@ describe('1. grace exit', () => {
   it('exits one grace after its last lease holder is killed, removing every artefact it published', async () => {
     const profile = profileDir('grace')
     const host = spawnHost(profile)
-    const holder = await startHolder(profile, 'tui-grace-holder')
+    // Deliberately take longer than the idle grace before the child connects.
+    // Fixture startup must finish before measuring the last-holder exit.
+    const holder = await startHolder(profile, 'tui-grace-holder', 2 * GRACE_MS)
     const discovery = decodeTaskWraithHostDiscovery(
       JSON.parse(readFileSync(taskWraithHostDiscoveryPath(profile), 'utf8'))
     )
