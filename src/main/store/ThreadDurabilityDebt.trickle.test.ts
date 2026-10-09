@@ -344,7 +344,7 @@ describe('a round of the trickle', () => {
 describe('a barrier and the trickle', () => {
   it('begins at once while a round runs on its thread, and pays what it took with syncs of its own', async () => {
     const { port, open, settle } = heldPort()
-    const debt = createThreadDurabilityDebt({ port })
+    const debt = createThreadDurabilityDebt({ port, now: () => 0 })
     debt.note(CHAT, { file: journal, owner: 'journal' })
     debt.note(CHAT, { file: events('run-1'), owner: 'run-events', run: 'run-1' })
 

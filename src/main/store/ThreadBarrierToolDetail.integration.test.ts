@@ -99,9 +99,12 @@ describe('tool detail under barrier durability, through the real store', () => {
     expect(staging()).toMatchObject({ batches: { committed: 1 }, rows: { staged: 2 } })
 
     await vi.waitFor(() => expect(staging().batches.durable).toBe(1))
-    // Every sync the batch asked for was at background class.
+    // Every native sync runs at background class. Windows acknowledges
+    // unsupported directory sync requests without starting a port job.
     const { port } = AppStore.getThreadBarrierDurabilityPerf()
-    expect(port!.startedBackground).toBe(staging().syncs.files + staging().syncs.directories)
+    expect(port!.startedBackground).toBe(
+      staging().syncs.files + (process.platform === 'win32' ? 0 : staging().syncs.directories)
+    )
     expect(port!.startedBackground).toBeGreaterThan(0)
 
     AppStore.saveChat({ ...AppStore.getChat(CHAT)!, title: 'The next save' })
@@ -139,7 +142,7 @@ describe('tool detail under barrier durability, through the real store', () => {
     // folders and its checkpoint were the staging's, each at background class.
     expect(debt.owners.journal.synced).toBeGreaterThan(0)
     expect(AppStore.getThreadBarrierDurabilityPerf().port!.startedBackground).toBe(
-      staging().syncs.files + staging().syncs.directories
+      staging().syncs.files + (process.platform === 'win32' ? 0 : staging().syncs.directories)
     )
   })
 })

@@ -386,7 +386,7 @@ describe('RegistryIsolationGuard', () => {
     const strictRoot = join(scratch('host-registry-isolation-'), 'hosts')
     mkdirSync(strictRoot)
     const strict = guardFor(strictRoot, processTable(), undefined, {
-      temporaryRoots: ['/profiles']
+      temporaryRoots: [resolve('/profiles')]
     })
     entry(strictRoot, '3', 940, { profile: '/profiles/relaunched' })
     entry(strictRoot, '4', 930, { profile: '/profiles/tui' })
@@ -411,7 +411,9 @@ describe('RegistryIsolationGuard', () => {
     // The same orphan, with /tmp2 itself a temporary root, is a test Host.
     const strictRoot = join(scratch('host-registry-isolation-'), 'hosts')
     mkdirSync(strictRoot)
-    const strict = guardFor(strictRoot, processTable(), undefined, { temporaryRoots: ['/tmp2'] })
+    const strict = guardFor(strictRoot, processTable(), undefined, {
+      temporaryRoots: [resolve('/tmp2')]
+    })
     entry(strictRoot, '6', 935, { profile: '/tmp2/profile' })
     strict.poll()
     expect(

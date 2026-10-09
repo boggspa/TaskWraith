@@ -382,6 +382,20 @@ async function waitForExit(entry: Started, timeoutMs = 15_000): Promise<ExitStat
   return withTimeout(entry.closed, timeoutMs, `${entry.label} to exit`)
 }
 
+/** Measure the lease decision independently of the resource cleanup it starts. */
+async function waitForIdleExit(entry: Started, releasedAt: number): Promise<ExitStatus> {
+  await waitFor(
+    () => entry.stderr().includes('[host-lease] exit requested: idle'),
+    `${entry.label} to request its idle exit`
+  )
+  const graceElapsed = Date.now() - releasedAt
+  expect(graceElapsed, entry.stderr()).toBeGreaterThanOrEqual(GRACE_MS - 300)
+  expect(graceElapsed, entry.stderr()).toBeLessThanOrEqual(GRACE_MS + 2_000)
+  // Worker shutdown and Windows handle release follow the decision. They
+  // still have to complete cleanly within waitForExit's existing 15 s bound.
+  return waitForExit(entry)
+}
+
 /**
  * Kills every process still running that this suite started, each only after
  * re-proving it is the same process, and returns any that outlived the kill.
@@ -827,12 +841,9 @@ describe('1. grace exit', () => {
     })
 
     const killedAt = await signalStarted(holder, 'SIGKILL')
-    const exit = await waitForExit(host)
+    const exit = await waitForIdleExit(host, killedAt)
 
     expect(exit.code, host.stderr()).toBe(0)
-    // It waited out the grace, and left within it plus two seconds.
-    expect(exit.at - killedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)
-    expect(exit.at - killedAt).toBeLessThanOrEqual(GRACE_MS + 2_000)
     expect(host.stderr()).toContain(`${HOST_LEASE_TIMING_ENV} shortened timing`)
     expect(host.stderr()).toContain('[host-lease] exit requested: idle')
     expectProfileReleased(profile)
@@ -872,10 +883,8 @@ describe('1. grace exit', () => {
     await delay(GRACE_MS / 2)
     expect(host.exit, 'a declined probe leaving changes nothing').toBeNull()
     const killedAt = await signalStarted(second, 'SIGKILL')
-    const exit = await waitForExit(host)
+    const exit = await waitForIdleExit(host, killedAt)
     expect(exit.code, host.stderr()).toBe(0)
-    expect(exit.at - killedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)
-    expect(exit.at - killedAt).toBeLessThanOrEqual(GRACE_MS + 2_000)
     expectProfileReleased(profile)
   }, 60_000)
 })
@@ -896,10 +905,8 @@ describe('2. implicit holder', () => {
 
     const closedAt = Date.now()
     client.close()
-    const exit = await waitForExit(host)
+    const exit = await waitForIdleExit(host, closedAt)
     expect(exit.code, host.stderr()).toBe(0)
-    expect(exit.at - closedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)
-    expect(exit.at - closedAt).toBeLessThanOrEqual(GRACE_MS + 2_000)
     expect(host.stderr()).toContain('[host-lease] exit requested: idle')
     expectProfileReleased(profile)
   }, 60_000)
@@ -913,10 +920,8 @@ describe('2. implicit holder', () => {
 
     await delay(GRACE_MS / 2)
     expect(client.connected).toBe(true)
-    const exit = await waitForExit(host)
+    const exit = await waitForIdleExit(host, declinedAt)
     expect(exit.code, host.stderr()).toBe(0)
-    expect(exit.at - declinedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)
-    expect(exit.at - declinedAt).toBeLessThanOrEqual(GRACE_MS + 2_000)
     expect(host.stderr()).toContain('[host-lease] exit requested: idle')
     expectProfileReleased(profile)
   }, 60_000)
@@ -994,10 +999,8 @@ describe.skipIf(IS_WINDOWS)('3. busy at grace', () => {
 
     const closedAt = Date.now()
     app.close()
-    const exit = await waitForExit(host)
+    const exit = await waitForIdleExit(host, closedAt)
     expect(exit.code, host.stderr()).toBe(0)
-    expect(exit.at - closedAt).toBeGreaterThanOrEqual(GRACE_MS - 300)
-    expect(exit.at - closedAt).toBeLessThanOrEqual(GRACE_MS + 2_000)
     expect(host.stderr()).toContain('[host-lease] exit requested: idle')
     expect(host.stderr()).not.toContain('draining')
     expectProfileReleased(profile)

@@ -199,7 +199,9 @@ describe('journal descriptor adapter', () => {
     const file = path.join(root, 'a', 'b', 'chat.jsonl')
     cache.append('chat', file, 'one\n', 'immediate')
     expect(fs.readFileSync(file, 'utf8')).toBe('one\n')
-    expect(syncs).toEqual(['directory', 'directory', 'directory', 'file'])
+    expect(syncs).toEqual(
+      process.platform === 'win32' ? ['file'] : ['directory', 'directory', 'directory', 'file']
+    )
     await cache.awaitDurable('chat')
     await cache.retire()
   })

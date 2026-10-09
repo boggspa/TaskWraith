@@ -675,7 +675,7 @@ describe('HostTransactionLog compaction', () => {
     expect(await log.compact(() => receipt('succeeded'))).toMatchObject({ dropped: 1 })
   })
 
-  it('fail-stops after rename when directory durability is unknown', async () => {
+  it.skipIf(process.platform === 'win32')('fails a POSIX directory sync', async () => {
     const dataDir = directory()
     const io = seams(dataDir)
     const log = HostTransactionLog.open(io.options)
@@ -751,7 +751,9 @@ describe('HostTransactionLog compaction', () => {
     expect(tempWrites.every((write) => write.path === from)).toBe(true)
     const afterSeed = io.fsyncs.indexOf(from)
     expect(afterSeed).toBeGreaterThan(-1)
-    expect(io.fsyncs.slice(afterSeed)).toEqual([from, dataDir])
+    expect(io.fsyncs.slice(afterSeed)).toEqual(
+      process.platform === 'win32' ? [from] : [from, dataDir]
+    )
 
     expect(readLines(dataDir)).toEqual([
       prepare('pending'),
@@ -836,7 +838,7 @@ describe('HostTransactionLog compaction', () => {
     const compacted = log.compact((commandId) =>
       commandId === 'old' ? receipt('succeeded') : receipt('pending')
     )
-    await until(() => io.fsyncs.length > 4, 'the temp file fsync')
+    await until(() => io.fsyncs.some((file) => file.endsWith('.tmp')), 'the temp file fsync')
     const during = [log.append(abort('kept')), log.append(prepare('later'))]
     expect(await settledWithin(Promise.race([compacted, ...during]))).toBe('pending')
     // The rules see the pre-compaction index: 'kept' still has its prepare.
