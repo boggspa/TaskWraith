@@ -100,6 +100,7 @@ export function prepareThreadCatalogueMutation(
     const result = reconcileStaleChatRuns([original], (id) => !wanted.has(id), operation.nowIso, {
       nowMs: at,
       minAgeMs: operation.minAgeMs,
+      runtimeInstanceId: operation.runtimeInstanceId ?? options.runtimeInstanceId,
       getRunSession: (id) => wanted.get(id)?.session
     })
     next = result.chats[0] ?? original

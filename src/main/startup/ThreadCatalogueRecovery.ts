@@ -310,7 +310,13 @@ export class ThreadCatalogueRecovery {
     if (runs.length)
       await this.mutate(
         chatId,
-        { kind: 'settle-runs', nowIso: new Date().toISOString(), minAgeMs: 0, runs },
+        {
+          kind: 'settle-runs',
+          nowIso: new Date().toISOString(),
+          minAgeMs: 0,
+          runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
+          runs
+        },
         () =>
           runs.every(
             (run) =>

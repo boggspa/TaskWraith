@@ -3,6 +3,7 @@ import {
   LIVE_ENSEMBLE_LANE_STATUSES
 } from '../shared/ensembleRoundLifecycle'
 import type { ChatRecord, ChatRun, EnsembleParticipantStatus } from './store/types'
+import { currentEnsembleRuntimeInstanceId } from './EnsembleRuntimeIdentity'
 
 const LIVE_PARTICIPANT = new Set<EnsembleParticipantStatus>(['idle', 'running', 'sleeping'])
 
@@ -45,10 +46,14 @@ function terminalStatus(run: ChatRun): 'completed' | 'failed' | 'cancelled' | nu
 export function recoverEnsembleRoundFromRuns(
   chat: ChatRecord,
   isRunLive: (runId: string) => boolean,
-  nowIso: string
+  nowIso: string,
+  ownerRuntimeInstanceId: string = currentEnsembleRuntimeInstanceId()
 ): ChatRecord {
   const round = chat.ensemble?.activeRound
   if (!chat.ensemble || round?.status !== 'running') return chat
+  // The provider can finish long before its live orchestrator finishes seat
+  // compaction or admission. Only a foreign process's transition is stale.
+  if (round.turnTransition?.runtimeInstanceId === ownerRuntimeInstanceId) return chat
   const wanted = ensembleRoundRecoveryRunIds(chat)
   const terminal = new Map(
     (chat.runs ?? []).flatMap((run) => {

@@ -119,6 +119,8 @@ export interface ReconcileStaleChatRunsOptions {
    * recovery can mark a queue job terminal without provider completion.
    */
   getRunSession?: (runId: string) => TerminalChatRunSessionLike | undefined
+  /** Pass the owning desktop's identity when reconciliation runs in a decoder worker. */
+  runtimeInstanceId?: string
 }
 
 export function settleStaleChatRun(run: ChatRun, nowIso: string): ChatRun {
@@ -395,7 +397,8 @@ export function reconcileStaleChatRuns(
     const recoveredRound = recoverEnsembleRoundFromRuns(
       changed ? { ...chat, runs: nextRuns } : chat,
       isRunLive,
-      nowIso
+      nowIso,
+      options.runtimeInstanceId
     )
     if (changed || recoveredRound !== chat) {
       const base = Array.isArray(chat.messages) ? chat.messages : []

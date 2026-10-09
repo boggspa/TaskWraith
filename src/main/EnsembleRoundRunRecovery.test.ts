@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { recoverEnsembleRoundFromRuns } from './EnsembleRoundRunRecovery'
+import { currentEnsembleRuntimeInstanceId } from './EnsembleRuntimeIdentity'
 import { chatHasReconcilableRun, reconcileStaleChatRuns } from './ChatRunReconciler'
 import { collectThreadCatalogueRecovery } from './store/ThreadCatalogueRecovery'
 import { projectThreadCatalogueRecord } from './store/ThreadCatalogueFromRecord'
@@ -92,6 +93,19 @@ function fixture(): ChatRecord {
 }
 
 describe('durable Ensemble restart recovery', () => {
+  it('leaves a current-process handoff alive after every provider has finished', () => {
+    const chat = fixture()
+    const round = chat.ensemble!.activeRound!
+    round.lanes = {}
+    round.participants = round.participants.map((seat) => ({ ...seat, status: 'answered' }))
+    round.turnTransition!.runtimeInstanceId = currentEnsembleRuntimeInstanceId()
+    chat.runs = chat.runs!.map((run) => ({ ...run, status: 'success' }))
+    // The provider liveness grace has elapsed, but compaction/admission still
+    // belongs to this process. A periodic sweep cannot complete its handoff.
+    expect(recoverEnsembleRoundFromRuns(chat, () => false, AT)).toBe(chat)
+    expect(reconcileStaleChatRuns([chat], () => false, AT).chats).toEqual([])
+  })
+
   it('repairs the lanes even when their provider runs were already marked failed', () => {
     const chat = fixture()
     expect(chatHasReconcilableRun(chat)).toBe(true)
@@ -114,6 +128,19 @@ describe('durable Ensemble restart recovery', () => {
     ).toBe(true)
     expect(projectThreadCatalogueRecord(repaired).recovery.unsettledRuns).toBe(0)
     expect(reconcileStaleChatRuns([repaired], () => false, AT).chats).toHaveLength(0)
+  })
+
+  it('uses the desktop identity supplied to decoder reconciliation', () => {
+    const chat = fixture()
+    chat.ensemble!.activeRound!.turnTransition!.runtimeInstanceId = 'owning-desktop'
+    expect(
+      reconcileStaleChatRuns([chat], () => false, AT, { runtimeInstanceId: 'owning-desktop' }).chats
+    ).toEqual([])
+    // The same persisted transition is recoverable after a real process restart.
+    expect(
+      reconcileStaleChatRuns([chat], () => false, AT, { runtimeInstanceId: 'replacement-desktop' })
+        .chats[0].ensemble?.activeRound?.status
+    ).toBe('failed')
   })
 
   it('retains a lane still owned by a live run or finalizer', () => {

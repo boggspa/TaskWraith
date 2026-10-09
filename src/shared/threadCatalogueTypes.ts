@@ -196,6 +196,8 @@ export type ThreadCatalogueMutation =
       kind: 'settle-runs'
       nowIso: string
       minAgeMs: number
+      /** Calling desktop identity; the catalogue may be hosted in another process. */
+      runtimeInstanceId?: string
       runs: Array<{ runId: string; session?: TerminalChatRunSessionLike }>
     }
   | { kind: 'prune-blackboard'; atMs: number }
