@@ -23,7 +23,10 @@ export function launchIdentityHandoffInstaller(
   if (artifact.launchKind === 'appimage') {
     try {
       if (!options.relaunch) throw new Error('The application restart service is unavailable.')
-      const args: string[] = []
+      // The pinned public AppImage must also start on beta installations that
+      // used a deb and have no FUSE device/library. The runtime consumes this
+      // argument, then forwards only the app's own isolated-profile selector.
+      const args: string[] = ['--appimage-extract-and-run']
       if (options.isolatedInstanceId !== undefined) {
         if (!isValidPackagedIsolatedInstanceId(options.isolatedInstanceId)) {
           throw new Error('The isolated instance selector is invalid.')

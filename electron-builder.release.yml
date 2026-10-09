@@ -1,5 +1,7 @@
 extends: electron-builder.yml
 appId: com.taskwraith.desktop
+toolsets:
+  appimage: '1.0.3'
 generateUpdatesFilesForAllChannels: false
 extraMetadata:
   taskwraithDistributionIdentity: release

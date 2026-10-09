@@ -37,7 +37,10 @@ describe('identity handoff OS launch', () => {
         spawn: child.spawn
       })
     ).resolves.toEqual({ ok: true })
-    expect(relaunch).toHaveBeenCalledExactlyOnceWith({ execPath: executable, args: [] })
+    expect(relaunch).toHaveBeenCalledExactlyOnceWith({
+      execPath: executable,
+      args: ['--appimage-extract-and-run']
+    })
     expect(child.create).not.toHaveBeenCalled()
     if (process.platform !== 'win32') expect(statSync(executable).mode & 0o777).toBe(0o700)
   })

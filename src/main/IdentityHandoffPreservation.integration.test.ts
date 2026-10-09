@@ -126,7 +126,7 @@ describe('identity handoff opaque profile preservation', () => {
     expect(beta.service?.launch()).toBe(true)
     expect(relaunch).toHaveBeenCalledExactlyOnceWith({
       execPath: expect.stringContaining('TaskWraith-0.1.0.AppImage'),
-      args: [selector]
+      args: ['--appimage-extract-and-run', selector]
     })
     const targetPosture = resolveInstanceLaunchPosture({
       isPackaged: true,
