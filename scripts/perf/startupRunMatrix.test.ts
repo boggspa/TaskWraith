@@ -110,7 +110,7 @@ describe('the authority root the matrix may wipe for --seed-wal', () => {
       [path.join(home, 'Library'), 'home_or_application_support_or_above'],
       [tree, 'home_or_application_support_or_above'],
       [path.dirname(tree), 'home_or_application_support_or_above'],
-      ['/', 'home_or_application_support_or_above'],
+      [path.parse(tree).root, 'home_or_application_support_or_above'],
       [path.join(appSupport, 'TaskWraith'), 'inside_application_support'],
       [path.join(appSupport, 'not-there-yet'), 'inside_application_support'],
       // The same folders by where they lead: the temporary folder is itself reached through a link.
@@ -118,11 +118,7 @@ describe('the authority root the matrix may wipe for --seed-wal', () => {
       [path.join(realpathSync(appSupport), 'TaskWraith'), 'inside_application_support']
     ]
     for (const [root, reason] of refusals) {
-      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(
-        process.platform === 'win32' && !/^\/[A-Za-z0-9._/-]+$/.test(root)
-          ? 'not_a_plain_absolute_path'
-          : reason
-      )
+      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(reason)
       expect(() => matrix.removeAuthorityRoot(root, { home, homesRoot, rm })).toThrow(
         /refusing to remove/
       )
@@ -147,11 +143,7 @@ describe('the authority root the matrix may wipe for --seed-wal', () => {
       [realpathSync(library), 'home_or_application_support_or_above']
     ]
     for (const [root, reason] of refusals) {
-      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(
-        process.platform === 'win32' && !/^\/[A-Za-z0-9._/-]+$/.test(root)
-          ? 'not_a_plain_absolute_path'
-          : reason
-      )
+      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(reason)
       expect(() => matrix.removeAuthorityRoot(root, { home, homesRoot, rm })).toThrow(
         /refusing to remove/
       )
@@ -190,11 +182,7 @@ describe('the authority root the matrix may wipe for --seed-wal', () => {
       [`${allowed}/../${path.basename(allowed)}`, 'not_a_plain_absolute_path']
     ]
     for (const [root, reason] of refusals) {
-      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(
-        process.platform === 'win32' && !/^\/[A-Za-z0-9._/-]+$/.test(root)
-          ? 'not_a_plain_absolute_path'
-          : reason
-      )
+      expect(matrix.authorityRootRefusal(root, { home, homesRoot })).toBe(reason)
       expect(() => matrix.removeAuthorityRoot(root, { home, homesRoot, rm })).toThrow(
         /refusing to remove/
       )

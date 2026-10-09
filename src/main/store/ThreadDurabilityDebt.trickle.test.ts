@@ -380,7 +380,7 @@ describe('a barrier and the trickle', () => {
 
   it("asks a user's barrier's syncs as urgent at once while a round runs on its thread", async () => {
     const { port, open, settle } = heldPort()
-    const debt = createThreadDurabilityDebt({ port })
+    const debt = createThreadDurabilityDebt({ port, now: () => 0 })
     debt.note(CHAT, { file: journal, owner: 'journal' })
 
     void debt.trickle(CHAT)

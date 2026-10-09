@@ -92,10 +92,7 @@ afterEach(() => {
 const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 async function until(condition: () => boolean, what: string): Promise<void> {
-  for (let turns = 0; !condition(); turns += 1) {
-    if (turns > 2000) throw new Error(`never: ${what}`)
-    await turn()
-  }
+  await vi.waitFor(() => expect(condition(), what).toBe(true), { timeout: 5_000, interval: 5 })
 }
 
 /** A thread's journal, written on this thread as the app writes it under the barrier. */

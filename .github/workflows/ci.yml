@@ -95,6 +95,13 @@ jobs:
           echo "runner.name=${{ runner.name }}"
           uname -a || true
           node -p "'node ' + process.version + ' ' + process.platform + '/' + process.arch"
+      - name: Verify native Windows persistence startup
+        if: runner.os == 'Windows'
+        run: >-
+          npx vitest run
+          src/main/store/IncrementalChatJournal.folderDebt.test.ts
+          src/host-shared/thread-log/NodeThreadFileSystem.test.ts
+          src/host-runtime/HostThreadLogFollower.process.test.ts
       - run: npm run ci
       # The native macOS bridge daemon gates Screen Watch / creative-app /
       # editor actions, so its Swift unit tests must pass before changes land.

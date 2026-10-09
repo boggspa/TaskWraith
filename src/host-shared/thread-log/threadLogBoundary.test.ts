@@ -68,7 +68,7 @@ function closureViolations(roots: readonly string[]): { visited: string[]; viola
     visited.add(file)
     for (const specifier of importSpecifiers(file)) {
       if (specifier.startsWith('node:')) continue
-      const edge = `${relative(REPO_ROOT, file)} -> ${specifier}`
+      const edge = `${relative(REPO_ROOT, file).split(sep).join('/')} -> ${specifier}`
       if (!specifier.startsWith('.')) {
         violations.push(edge)
         continue
