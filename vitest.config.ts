@@ -56,6 +56,9 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       '.local-only/**',
+      // This ignored nested repository owns Node's test runner, not Vitest.
+      // Its website tests run separately with `node --test website/demo/*.test.mjs`.
+      'website/**',
       // Never discover test copies inside agent worktrees: they are redundant
       // with the main tree, and double-discovery breaks strict per-file
       // assertion validation (e.g. the provider-containment canary rejects

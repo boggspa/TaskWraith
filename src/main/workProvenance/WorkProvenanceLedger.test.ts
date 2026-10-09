@@ -614,12 +614,16 @@ describe('WorkProvenanceRecorder', () => {
       await releaseLink.promise
     })
     const open = vi.spyOn(fs, 'open')
+    // Expire after the observed link, not while a loaded disk is still doing
+    // setup I/O. The test specifically exercises the post-publication boundary.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let persistence!: Promise<void>
     const settlement = settleWorkProvenanceWithin(() => {
       persistence = provenance.persist(captured)
       return persistence
     }, 50)
     await linked.promise
+    await vi.advanceTimersByTimeAsync(50)
     expect((await settlement) == null).toBe(true)
     releaseLink.resolve()
     await persistence
