@@ -14,12 +14,14 @@ import {
   type HostCommand
 } from '../shared/hostProtocol'
 import {
+  taskWraithHostAuthorityLeasePath,
   taskWraithHostDiscoveryPath,
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
 import { publishHostThreadRecordTransfer } from '../host-runtime/HostThreadRecordTransfer'
 import { TASKWRAITH_HOST_QUEUED_START_ENV } from './HostNodeDomainPorts'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from './HostNodeProductionServer'
 
 interface Occupancy {
   readonly inflight: number
@@ -34,6 +36,7 @@ type FixtureMessage =
   | { readonly type: 'fatal'; readonly message: string }
 
 const paths: string[] = []
+const TEST_OPTIONS = { timeout: HOST_LIFETIME_STOP_DEADLINE_MS + 120_000 }
 
 afterEach(() => {
   while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
@@ -92,7 +95,7 @@ function waitForExit(child: ChildProcess, timeoutMs = 15_000): Promise<void> {
 }
 
 describe('HostQueuedStartInterference subprocess', () => {
-  it('persists an unrelated Desktop record while the real Host holds 16 starts and queues the 17th', async () => {
+  it('persists beside 16 held starts and the queued 17th', TEST_OPTIONS, async () => {
     const root = mkdtempSync(join(tmpdir(), 'host-queued-start-interference-'))
     paths.push(root)
     const outDir = join(root, 'out')
@@ -390,13 +393,37 @@ describe('HostQueuedStartInterference subprocess', () => {
       desktop?.close()
       if (child.exitCode === null && child.signalCode === null) {
         try {
-          if (child.connected) child.send({ type: 'stop' })
+          const stopStartedAt = Date.now()
+          const acknowledged = () => messages.some((message) => message.type === 'stopped')
+          if (child.connected) {
+            child.send({ type: 'stop' })
+            // Sixteen held runs still need their durable terminal writes.
+            // Join the Host's shutdown before timing the process-exit boundary.
+            await waitFor(
+              acknowledged,
+              'Host shutdown acknowledgement',
+              () =>
+                fatalMessage ??
+                (!acknowledged() && (child.exitCode !== null || child.signalCode !== null)
+                  ? `child exited before acknowledgement: ${childStderr}`
+                  : null),
+              HOST_LIFETIME_STOP_DEADLINE_MS + 5_000
+            )
+          }
+          const acknowledgedAt = Date.now()
           await waitForExit(child)
+          process.stderr.write(
+            `[HostQueuedStartInterference] shutdown acknowledged after ${acknowledgedAt - stopStartedAt}ms; process exited after ${Date.now() - acknowledgedAt}ms\n`
+          )
         } catch (error) {
           if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
           await waitForExit(child).catch(() => undefined)
-          if (bodyFailure === null) cleanupFailure = error
-          else
+          if (bodyFailure === null) {
+            cleanupFailure = new Error(
+              `${String(error)}; shutdown acknowledged=${messages.some((message) => message.type === 'stopped')}; exit=${String(child.exitCode)}; signal=${String(child.signalCode)}\n${childStderr}`,
+              { cause: error }
+            )
+          } else
             console.error(
               `[HostQueuedStartInterference] cleanup failed after body error: ${String(error)}\n${childStderr}`
             )
@@ -409,5 +436,6 @@ describe('HostQueuedStartInterference subprocess', () => {
     expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostSocketPath(profile))).toBe(false)
-  }, 90_000)
+    expect(existsSync(taskWraithHostAuthorityLeasePath(profile))).toBe(false)
+  })
 })

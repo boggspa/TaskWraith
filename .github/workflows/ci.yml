@@ -105,6 +105,7 @@ jobs:
           src/host-runtime/HostThreadHistoryRouter.test.ts
           src/host-runtime/HostThreadPublicationGuard.test.ts
           src/host-runtime/HostTransactionLog.test.ts
+          src/host-node/HostQueuedStartInterference.subprocess.test.ts
       - run: npm run ci
       # The native macOS bridge daemon gates Screen Watch / creative-app /
       # editor actions, so its Swift unit tests must pass before changes land.
