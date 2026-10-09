@@ -68,9 +68,10 @@ async function main(argv = process.argv.slice(2)) {
   const userData = createSmokeUserDataPath()
   const registry = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-appimage-registry-'))
   fs.mkdirSync(userData, { mode: 0o700 })
+  // Exercise the shipped AppRun's user-namespace/sandbox decision, just as
+  // the handoff does. Do not mask it with a harness-only --no-sandbox flag.
   const args = [
     '--appimage-extract-and-run',
-    '--no-sandbox',
     '--disable-gpu',
     ...buildSmokeLaunchArgv(userData)
   ]
