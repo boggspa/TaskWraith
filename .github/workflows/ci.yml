@@ -881,5 +881,6 @@ jobs:
             ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*.deb
             ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*-linux*.yml
             ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/sbom.cdx.json
+            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/appimage-runtime-smoke.json
           if-no-files-found: error
           retention-days: 14

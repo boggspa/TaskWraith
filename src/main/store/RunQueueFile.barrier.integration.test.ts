@@ -234,7 +234,11 @@ describe('the run queue through the store, under barrier durability', () => {
     expect(queueSyncs(disk.issued)).toEqual([])
     expect(statuses(AppStore.getRunQueueJobs())).toEqual([['run-a', 'active']])
     expect(AppStore.getRunQueueJob('run-a')?.status).toBe('active')
-    await settle()
+    await vi.waitFor(
+      () =>
+        expect(queueFile(profilePath)).toEqual(AppStore.getRunQueueJobs({ includeTerminal: true })),
+      { timeout: 2_000, interval: 10 }
+    )
 
     expect(queueSyncs(disk.issued)).toEqual([])
     expect(paid).toEqual(['file:run-queue.json.tmp:normal', 'directory:profile:normal'])
@@ -247,7 +251,8 @@ describe('the run queue through the store, under barrier durability', () => {
       syncs: { files: 1, directories: 1 },
       unwrittenChanges: 0
     })
-  })
+    // This first case also imports the real store and its workers from cold.
+  }, 30_000)
 
   it('starts a provider only after the lease generation is written, at normal class', async () => {
     const { AppStore, profilePath, disk } = await barrierStore()
@@ -604,8 +609,12 @@ describe('the run queue through the store, under barrier durability', () => {
       ['run-b', 'queued'],
       ['run-a', 'failed']
     ])
-    await settle()
-    expect(queueFile(profilePath)).toEqual(recovered)
+    // Startup recovery writes asynchronously. Observe the durable outcome;
+    // a fixed 20 ms pause can end before the filesystem work on a loaded host.
+    await vi.waitFor(() => expect(queueFile(profilePath)).toEqual(recovered), {
+      timeout: 2_000,
+      interval: 10
+    })
   })
 })
 

@@ -147,9 +147,9 @@ describe('packaged production Host smoke', () => {
         {
           cwd: repoRoot,
           encoding: 'utf8',
-          // Cold history coverage is asynchronous; each protocol response
-          // still has the smoke script's original 12-second deadline.
-          timeout: 60_000
+          // The end-to-end smoke includes cold history indexing and several
+          // separately bounded protocol exchanges; keep room for their sum.
+          timeout: 120_000
         }
       )
       expect(result.error).toBeUndefined()
@@ -158,6 +158,6 @@ describe('packaged production Host smoke', () => {
         'packaged production Host source launcher smoke ok'
       )
     },
-    90_000
+    150_000
   )
 })

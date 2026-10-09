@@ -125,6 +125,21 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
       repoRoot,
       path.basename(appImage)
     )
+    if (
+      distributionArg === '--distribution=debut' ||
+      distributionArg === '--distribution=release'
+    ) {
+      runChecked(
+        process.execPath,
+        [
+          path.join(repoRoot, 'scripts', 'smoke-appimage-runtime.cjs'),
+          appImage,
+          path.join(distDir, 'appimage-runtime-smoke.json')
+        ],
+        { cwd: repoRoot, timeout: 120_000 },
+        'Public AppImage runtime launch'
+      )
+    }
 
     const debArchitecture = process.arch === 'arm64' ? 'arm64' : 'amd64'
     const metadata = runChecked(
