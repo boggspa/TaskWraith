@@ -38,6 +38,25 @@ function Wait-CheckedProcess(
   }
 }
 
+function Wait-UninstallCompletion(
+  [string]$AppExecutable,
+  [string]$InstallRegistration,
+  [string]$UninstallRegistration,
+  [int]$TimeoutSeconds
+) {
+  # NSIS may hand off to a temporary child before its launcher exits. Observe
+  # the actual filesystem and registry outcome; never remove them for the test.
+  $watch = [System.Diagnostics.Stopwatch]::StartNew()
+  do {
+    $remaining = @($AppExecutable, $InstallRegistration, $UninstallRegistration) |
+      Where-Object { Test-Path -LiteralPath $_ }
+    if (@($remaining).Count -eq 0) { return }
+    if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+    Start-Sleep -Milliseconds 250
+  } while ($true)
+  throw "Uninstall did not complete after $TimeoutSeconds seconds; remaining: $($remaining -join ', ')"
+}
+
 if (!(Test-Path $InstallerPath)) {
   throw "Installer not found: $InstallerPath"
 }
@@ -144,13 +163,14 @@ try {
 
   $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @("/S") -PassThru
   Wait-CheckedProcess $uninstall "Uninstaller" $TimeoutSeconds
-  $uninstalled = $true
+  Wait-UninstallCompletion $appExe $installRegistryPath $uninstallRegistryPath $TimeoutSeconds
   if (Test-Path $appExe) {
     throw "App executable still exists after uninstall: $appExe"
   }
   if ((Test-Path $installRegistryPath) -or (Test-Path $uninstallRegistryPath)) {
     throw "Installer registration remains after uninstall."
   }
+  $uninstalled = $true
 } finally {
   if ($app -and !$app.HasExited) {
     Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue

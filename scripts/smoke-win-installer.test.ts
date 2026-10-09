@@ -51,4 +51,49 @@ describe('Windows installer lifecycle smoke contract', () => {
     expect(source).toContain('finally {')
     expect(source).toContain('Wait-CheckedProcess $cleanup "Cleanup uninstaller"')
   })
+
+  it.runIf(process.platform === 'win32')(
+    'waits for every uninstall postcondition and reports persistent leftovers',
+    () => {
+      const helper = /^function Wait-UninstallCompletion[\s\S]*?^}/m.exec(source)?.[0]
+      expect(helper).toBeDefined()
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `
+$ErrorActionPreference = 'Stop'
+. ([scriptblock]::Create($env:TASKWRAITH_UNINSTALL_WAIT_HELPER))
+$script:checks = 0
+function Test-Path([string]$LiteralPath) {
+  $script:checks += 1
+  if ($LiteralPath -eq 'app') { return $script:checks -le 3 }
+  if ($LiteralPath -eq 'install-key') { return $script:checks -le 6 }
+  return $script:checks -le 9
+}
+Wait-UninstallCompletion 'app' 'install-key' 'uninstall-key' 5
+if ($script:checks -lt 12) { throw 'Accepted an incomplete uninstall.' }
+function Test-Path([string]$LiteralPath) { return $true }
+$caught = $false
+try { Wait-UninstallCompletion 'app' 'install-key' 'uninstall-key' 1 }
+catch {
+  $caught = $true
+  foreach ($remaining in @('app', 'install-key', 'uninstall-key')) {
+    if (!$_.Exception.Message.Contains($remaining)) { throw 'Missing leftover diagnostic.' }
+  }
+}
+if (!$caught) { throw 'Accepted permanent uninstall leftovers.' }
+`
+        ],
+        {
+          env: { ...process.env, TASKWRAITH_UNINSTALL_WAIT_HELPER: helper },
+          timeout: 15_000,
+          stdio: 'pipe'
+        }
+      )
+    },
+    20_000
+  )
 })
