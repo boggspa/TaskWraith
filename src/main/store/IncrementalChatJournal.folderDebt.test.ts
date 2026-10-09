@@ -6,7 +6,7 @@
 import fs, { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, sep, toNamespacedPath } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -135,6 +135,20 @@ describe('the name of a folder the journal makes, under the debt option', () => 
     journal.initialize('chat-1', record('chat-1'))
     expect(directories).toEqual([
       ['chat-1', alias],
+      ['chat-1', baseDir]
+    ])
+  })
+
+  it('accepts the native namespace spelling of the first created folder', () => {
+    const root = temporary()
+    const baseDir = join(root, 'chat-journal-v2')
+    mkdirSync(baseDir)
+    vi.spyOn(fs, 'mkdirSync').mockReturnValueOnce(toNamespacedPath(baseDir))
+    syncBuiltinESMExports()
+    const { journal, directories } = journalIn(baseDir)
+    journal.initialize('chat-1', record('chat-1'))
+    expect(directories).toEqual([
+      ['chat-1', root],
       ['chat-1', baseDir]
     ])
   })
