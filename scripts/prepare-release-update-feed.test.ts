@@ -60,6 +60,41 @@ afterEach(() =>
 )
 
 describe('Release update feed preparation', () => {
+  it('retains and verifies both Linux packages emitted by electron-builder', () => {
+    const args = fixture()
+    const debName = 'taskwraith_0.1.0_amd64.deb'
+    const debPath = path.join(args.inputDirs[2], debName)
+    const bytes = Buffer.from('independent Debian package fixture')
+    fs.writeFileSync(debPath, bytes)
+    mutateFeed(args.feedPaths['release-linux.yml'], (feed) => {
+      feed.files = [
+        feed.files[0],
+        {
+          url: debName,
+          size: bytes.length,
+          sha512: crypto.createHash('sha512').update(bytes).digest('base64')
+        }
+      ]
+    })
+
+    prepareReleaseUpdateFeed(args)
+    const prepared = yaml.load(
+      fs.readFileSync(path.join(args.outputDir, 'release-linux.yml'), 'utf8')
+    )
+    expect(prepared.files.map((entry: any) => entry.url)).toEqual([
+      'https://github.com/boggspa/TaskWraith/releases/download/v0.1.0/TaskWraith-0.1.0.AppImage',
+      `https://github.com/boggspa/TaskWraith/releases/download/v0.1.0/${debName}`
+    ])
+    expect(prepared.path).toBe(prepared.files[0].url)
+
+    fs.appendFileSync(debPath, 'changed after packaging')
+    const outputDir = `${args.outputDir}-tampered`
+    expect(() => prepareReleaseUpdateFeed({ ...args, outputDir })).toThrow(
+      `Artifact hash or size mismatch: ${debName}`
+    )
+    expect(fs.existsSync(outputDir)).toBe(false)
+  })
+
   it('preserves verified AppImage embedded blockmap metadata', () => {
     const args = fixture()
     const artifact = path.join(args.inputDirs[2], 'TaskWraith-0.1.0.AppImage')

@@ -25,7 +25,7 @@ function releaseInventory(version) {
     ],
     'release-win-x64.yml': [`TaskWraith-${version}-win-x64-setup.exe`],
     'release-win-arm64.yml': [`TaskWraith-${version}-win-arm64-setup.exe`],
-    'release-linux.yml': [`TaskWraith-${version}.AppImage`]
+    'release-linux.yml': [`TaskWraith-${version}.AppImage`, `taskwraith_${version}_amd64.deb`]
   }
 }
 

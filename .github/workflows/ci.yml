@@ -54,6 +54,54 @@ on:
         default: v0.1.0
 
 jobs:
+  handoff-input-preflight:
+    name: Read-only handoff input access
+    if: github.event_name == 'workflow_dispatch' && inputs.unsigned_distribution == 'handoff'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.3'
+      # No checkout, dependency installation, publication, or permission
+      # escalation. Surface inaccessible drafts before the full matrix ends.
+      - name: Verify the runner can read the approved handoff payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
+          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
+          TASKWRAITH_HANDOFF_SOURCE_COMMIT: ${{ inputs.unsigned_build_ref || github.sha }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const tag = process.env.TASKWRAITH_HANDOFF_DOWNLOAD_TAG;
+          const digest = process.env.TASKWRAITH_HANDOFF_PAYLOAD_SHA256;
+          const source = process.env.TASKWRAITH_HANDOFF_SOURCE_COMMIT;
+          if (!/^v0\.1\.0(?:-handoff-rc\.[1-9]\d*)?$/.test(tag || '')) throw new Error('Invalid handoff tag.');
+          if (!/^[a-f0-9]{64}$/.test(digest || '')) throw new Error('Approved payload SHA-256 is required.');
+          if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source || '')) throw new Error('Exact handoff source commit is required.');
+          const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-handoff-access-'));
+          try {
+            execFileSync('gh', ['release', 'download', tag, '--repo', 'boggspa/TaskWraith', '--pattern', 'identity-handoff.json', '--dir', directory], { stdio: 'pipe' });
+            const file = path.join(directory, 'identity-handoff.json');
+            if (fs.statSync(file).size > 64 * 1024) throw new Error('Handoff payload is oversized.');
+            const bytes = fs.readFileSync(file);
+            if (crypto.createHash('sha256').update(bytes).digest('hex') !== digest) throw new Error('Handoff payload SHA-256 mismatch.');
+            const payload = JSON.parse(bytes.toString('utf8'));
+            if (payload.prepared !== true || payload.sourceCommit !== source) throw new Error('Handoff payload source mismatch.');
+            console.log('Read-only runner verified access to the approved handoff payload.');
+          } finally {
+            fs.rmSync(directory, { recursive: true, force: true });
+          }
+          NODE
+
   test:
     name: Test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

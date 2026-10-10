@@ -1,6 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import crypto from 'node:crypto'
+import os from 'node:os'
+import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -39,6 +42,69 @@ function actionSteps(job: Job) {
 }
 
 describe('release workflow contract', () => {
+  it('checks private handoff access without giving CI broader repository permissions', () => {
+    const preflight = jobs['handoff-input-preflight']
+    expect(preflight.if).toBe(
+      "github.event_name == 'workflow_dispatch' && inputs.unsigned_distribution == 'handoff'"
+    )
+    expect(preflight.permissions).toEqual({ contents: 'read' })
+    expect(actionSteps(preflight).some((step) => step.uses?.startsWith('actions/checkout@'))).toBe(
+      false
+    )
+    expect(runText(preflight)).not.toContain('npm ')
+    const script = runText(preflight)
+      .trim()
+      .replace(/^node <<'NODE'\n/, '')
+      .replace(/\nNODE\s*$/, '')
+    const source = 'a'.repeat(40)
+    const bytes = Buffer.from(JSON.stringify({ prepared: true, sourceCommit: source }))
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex')
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-handoff-preflight-test-'))
+    const downloads: string[][] = []
+    const execute = (expectedDigest: string, expectedSource: string) =>
+      vm.runInNewContext(script, {
+        require: (name: string) => {
+          if (name === 'node:os') return { tmpdir: () => root }
+          if (name === 'node:child_process') {
+            return {
+              execFileSync: (command: string, args: string[]) => {
+                expect(command).toBe('gh')
+                expect(args.slice(0, 7)).toEqual([
+                  'release',
+                  'download',
+                  'v0.1.0-handoff-rc.1',
+                  '--repo',
+                  'boggspa/TaskWraith',
+                  '--pattern',
+                  'identity-handoff.json'
+                ])
+                downloads.push(args)
+                fs.writeFileSync(path.join(args[8], 'identity-handoff.json'), bytes)
+              }
+            }
+          }
+          return require(name)
+        },
+        process: {
+          env: {
+            TASKWRAITH_HANDOFF_DOWNLOAD_TAG: 'v0.1.0-handoff-rc.1',
+            TASKWRAITH_HANDOFF_PAYLOAD_SHA256: expectedDigest,
+            TASKWRAITH_HANDOFF_SOURCE_COMMIT: expectedSource
+          }
+        },
+        console: { log: () => {} }
+      })
+    try {
+      expect(() => execute(digest, source)).not.toThrow()
+      expect(() => execute('b'.repeat(64), source)).toThrow('SHA-256 mismatch')
+      expect(() => execute(digest, 'c'.repeat(40))).toThrow('source mismatch')
+      expect(downloads).toHaveLength(3)
+      expect(fs.readdirSync(root)).toEqual([])
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('defers Studio from both release identities while retaining its separate development lane', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'))
     const { loadBuilderIdentity } = require('./release-distribution.cjs')
