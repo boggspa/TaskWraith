@@ -1,6 +1,6 @@
 {
   "name": "taskwraith",
-  "version": "1.9.9",
+  "version": "0.1.1",
   "private": true,
   "description": "TaskWraith desktop workspace",
   "main": "./out/main/index.js",
@@ -20,7 +20,7 @@
     "url": "https://github.com/boggspa/TaskWraith/issues"
   },
   "taskwraithRelease": {
-    "distribution": "beta",
+    "distribution": "release",
     "studioCompanion": false,
     "tuiNodeRuntime": {
       "version": "22.23.3",

@@ -6,6 +6,14 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
+## Unreleased
+
+### Release preparation
+
+- Open the 0.1.1 development cycle with the public Release build identity and
+  its independent update feed. The immutable 1.9.9 bridge and 0.1.0 debut remain
+  available for migration and repair; this change does not publish a new build.
+
 ## 1.9.9 - 2026-10-09
 
 The detailed validation notes below retain their source-specific measurements.
