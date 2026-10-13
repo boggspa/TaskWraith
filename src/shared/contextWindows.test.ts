@@ -94,6 +94,11 @@ describe('ContextWindows.swift drift guard', () => {
 })
 
 describe('resolveContextWindow provider-specific Grok windows', () => {
+  it('uses the provider-published context window for both Muse Wonder models', () => {
+    expect(resolveContextWindow('muse', 'muse-wonder-1.0')).toBe(1_007_997)
+    expect(resolveContextWindow('muse', 'muse-wonder-full-1.0')).toBe(1_007_997)
+  })
+
   it('keeps every Muse Spark route on the explicit conservative window', () => {
     expect(resolveContextWindow('muse', 'muse-spark-1.3')).toBe(200_000)
     expect(resolveContextWindow('muse', 'muse-spark-1.3-contributor')).toBe(200_000)

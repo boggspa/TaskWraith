@@ -428,8 +428,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Claude leads the lineup with Haiku 5.5; Mistral follows with Large 4
-      // (2026-10-06).
+      // Muse leads the lineup with Wonder (2026-10-12).
+      'muse',
       'claude',
       'mistral',
       'codex',
@@ -438,7 +438,6 @@ describe('buildRemoteFirstLaunchState', () => {
       'antigravity',
       'grok',
       'cursor',
-      'muse',
       'ollama',
       'pi'
     ])
@@ -465,6 +464,8 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toBe('Grok 4.6')
     const museGroup = newAdditions?.groups?.find((group) => group.provider === 'muse')
     expect(museGroup?.models.map((model) => model.name)).toEqual([
+      'Muse Wonder 1.0',
+      'Muse Wonder Full 1.0',
       'Muse Spark 1.3',
       'Muse Contributor Spark 1.3'
     ])

@@ -116,7 +116,9 @@ describe('normalizeMuseReasoningEffort', () => {
     }
   })
 
-  it('keeps Max distinct on Spark 1.3 and clamps it elsewhere', () => {
+  it('keeps Max distinct on Wonder and Spark 1.3 and clamps it elsewhere', () => {
+    expect(normalizeMuseReasoningEffort('max', 'muse-wonder-1.0')).toBe('max')
+    expect(normalizeMuseReasoningEffort('max', 'muse-wonder-full-1.0')).toBe('max')
     expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3')).toBe('max')
     expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3-contributor')).toBe('ultra')
     expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.2')).toBe('ultra')
@@ -163,13 +165,15 @@ describe('buildMuseExecArgv', () => {
     expect(args[args.length - 1]).toBe('summarize the repo')
   })
 
-  it('emits Max only for regular Spark 1.3 and clamps stale Max elsewhere', () => {
+  it('emits Max for Wonder and regular Spark 1.3 and clamps stale Max elsewhere', () => {
     const wireEffort = (model: string): string => {
       const args = buildMuseExecArgv({ ...base, model, reasoningEffort: 'max' })
       const effortIndex = args.indexOf('--reasoning-effort')
       return args[effortIndex + 1]!
     }
 
+    expect(wireEffort('muse-wonder-1.0')).toBe('max')
+    expect(wireEffort('muse-wonder-full-1.0')).toBe('max')
     expect(wireEffort('muse-spark-1.3')).toBe('max')
     expect(wireEffort('muse-spark-1.3-contributor')).toBe('ultra')
     expect(wireEffort('muse-spark-1.2')).toBe('ultra')

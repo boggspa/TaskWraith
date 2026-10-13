@@ -1406,9 +1406,9 @@ const MISTRAL_STATIC_MODELS = [
 // their discount comes with the catalogue's product-improvement data-use notice,
 // so the user must choose one rather than being opted in by a default migration.
 //
-// Spark 1.3 (catalogue release_date 2026-09-02) leads the list in the CLI's own
-// order; 1.2 stays the seat default because the catalogue still flags it
-// `is_current`, and moving the default is a separate, user-decided change.
+// Wonder 1.0 and Wonder Full 1.0 (catalogue release_date 2026-10-12) lead the
+// list in the CLI's own order. TaskWraith retains its Spark 1.2 seat default;
+// moving the default is a separate, user-decided change.
 // Pricing per Meta's Model API page (verified 2026-09-02) is identical for 1.2
 // and 1.3.
 //
@@ -1416,6 +1416,18 @@ const MISTRAL_STATIC_MODELS = [
 // providerModelDefaults.ts — providerFallthroughGuards compares the two sides
 // and a divergence means the picker and the run disagree.
 const MUSE_STATIC_MODELS = [
+  {
+    id: 'muse-wonder-1.0',
+    label: 'Muse Wonder 1.0',
+    description: '1M context - $4.00/$20.00 per Mtok',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'muse-wonder-full-1.0',
+    label: 'Muse Wonder Full 1.0',
+    description: '1M context - advanced coding and long-running agents',
+    ultraTaskSupported: true
+  },
   {
     id: 'muse-spark-1.3',
     label: 'Muse Spark 1.3',

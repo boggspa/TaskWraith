@@ -19,8 +19,16 @@ describe('Muse model reasoning support', () => {
     ])
   })
 
-  it('scopes the newly published Max tier to regular Muse Spark 1.3', () => {
-    expect(MUSE_MAX_REASONING_MODEL_IDS).toEqual(['muse-spark-1.3'])
+  it('offers Max on both Wonder models and regular Muse Spark 1.3', () => {
+    expect(MUSE_MAX_REASONING_MODEL_IDS).toEqual([
+      'muse-wonder-1.0',
+      'muse-wonder-full-1.0',
+      'muse-spark-1.3'
+    ])
+    for (const modelId of ['muse-wonder-1.0', 'muse-wonder-full-1.0']) {
+      expect(museModelSupportsMaxReasoning(` ${modelId.toUpperCase()} `)).toBe(true)
+      expect(museReasoningEffortsForModel(modelId)).toContain('max')
+    }
     expect(museModelSupportsMaxReasoning(' MUSE-SPARK-1.3 ')).toBe(true)
     expect(museReasoningEffortsForModel('muse-spark-1.3')).toContain('max')
 
@@ -38,6 +46,8 @@ describe('Muse model reasoning support', () => {
 
   it('preserves the existing Ultra capability for every Muse route', () => {
     for (const modelId of [
+      'muse-wonder-1.0',
+      'muse-wonder-full-1.0',
       'muse-spark-1.3',
       'muse-spark-1.3-contributor',
       'muse-spark-1.2',

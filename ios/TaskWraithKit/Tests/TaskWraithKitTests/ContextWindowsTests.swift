@@ -8,6 +8,12 @@ import Testing
 
 @Suite("Context windows")
 struct ContextWindowsTests {
+    @Test("Muse Wonder uses the provider-published context window")
+    func museWonderContext() {
+        #expect(ContextWindows.resolve(provider: "muse", model: "muse-wonder-1.0") == 1_007_997)
+        #expect(ContextWindows.resolve(provider: "muse", model: "muse-wonder-full-1.0") == 1_007_997)
+    }
+
     @Test("exact model id wins over the provider fallback")
     func modelIdWins() {
         // gpt-oss:20b is 131_072 even though Ollama's provider fallback is 262_144.

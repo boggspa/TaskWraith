@@ -18,6 +18,8 @@ export const HOST_NODE_MUSE_MODEL_ID = 'muse-spark-1.2'
 export const HOST_NODE_MUSE_CONTRIBUTOR_MODEL_ID = 'muse-spark-1.2-contributor'
 export const HOST_NODE_MUSE_SPARK_1_3_MODEL_ID = 'muse-spark-1.3'
 export const HOST_NODE_MUSE_SPARK_1_3_CONTRIBUTOR_MODEL_ID = 'muse-spark-1.3-contributor'
+export const HOST_NODE_MUSE_WONDER_MODEL_ID = 'muse-wonder-1.0'
+export const HOST_NODE_MUSE_WONDER_FULL_MODEL_ID = 'muse-wonder-full-1.0'
 export const HOST_NODE_MUSE_REASONING = MUSE_META_REASONING_EFFORTS
 
 const postures = [
@@ -59,9 +61,16 @@ const postures = [
       'Unavailable in the standalone Host because Muse deliberately keeps its sandbox enabled.'
   }
 ]
-// Newest first, mirroring the CLI's own picker; Spark 1.2 stays the default
-// (the on-disk catalogue still flags it `is_current`).
+// Newest first, mirroring the CLI's own picker; retain TaskWraith's Spark 1.2 default.
 const museModels = [
+  {
+    modelId: HOST_NODE_MUSE_WONDER_MODEL_ID,
+    label: 'Muse Wonder 1.0'
+  },
+  {
+    modelId: HOST_NODE_MUSE_WONDER_FULL_MODEL_ID,
+    label: 'Muse Wonder Full 1.0'
+  },
   {
     modelId: HOST_NODE_MUSE_SPARK_1_3_MODEL_ID,
     label: 'Muse Spark 1.3'

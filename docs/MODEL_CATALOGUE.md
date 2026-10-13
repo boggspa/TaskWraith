@@ -219,6 +219,8 @@ the upstream API lifecycle.
 
 | Model                                                       | Reasoning                                 | Fast | Notes                                                                             |
 | ----------------------------------------------------------- | ----------------------------------------- | ---- | --------------------------------------------------------------------------------- |
+| **Muse Wonder 1.0** `muse-wonder-1.0`                     | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $4.00/$20.00 per Mtok. Muse Code and Meta Model API; released 12 October 2026. |
+| **Muse Wonder Full 1.0** `muse-wonder-full-1.0`           | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · advanced coding and long-running agents. Available in Muse Code; API pricing is unpublished. |
 | **Muse Spark 1.3** `muse-spark-1.3`                         | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok. Meta's newest Spark, released 2 September 2026. |
 | **Muse Contributor Spark 1.3** `muse-spark-1.3-contributor` | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $0.10/$0.20 per Mtok. Content may be used for product improvement.   |
 | **Muse Spark 1.2** `muse-spark-1.2` **(Default)**           | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok.                                                |
@@ -226,8 +228,13 @@ the upstream API lifecycle.
 
 Muse's model lifecycle is provider-published from the local Muse CLI catalogue,
 so the live picker follows the CLI's own current-model set; the rows above are
-TaskWraith's curated fallback, and Spark 1.2 stays the seat default until the
-catalogue promotes 1.3. Muse's own picker labels its stops **Minimal ·
+TaskWraith's curated fallback, and Spark 1.2 retains its existing seat default.
+Both Wonder rows remain selectable with subscription or API authentication;
+TaskWraith adds no authentication-mode filter. Meta's public
+[Wonder model page](https://dev.meta.ai/models/muse-wonder) currently documents
+Wonder Full through Muse Code subscriptions and publishes API rates only for
+Wonder. The Muse Code catalogue reports a 1,007,997-token context window for
+both Wonder models. Muse's own picker labels its stops **Minimal ·
 Low · Medium · High · Extra High · Max · Ultra**; the Reasoning column above maps
 them onto the shared ladder vocabulary.
 

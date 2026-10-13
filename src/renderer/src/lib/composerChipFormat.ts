@@ -376,7 +376,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'muse') {
-    // Provider label already says Muse; badge is the spark family only.
+    // Provider label already says Muse; badge names the model family only.
+    if (id === 'muse-wonder-1.0') return 'Wonder 1.0'
+    if (id === 'muse-wonder-full-1.0') return 'Wonder Full 1.0'
     if (id === 'muse-spark-1.3-contributor') return 'Contributor Spark 1.3'
     if (id === 'muse-spark-1.3' || id.includes('spark-1.3')) return 'Spark 1.3'
     if (id === 'muse-spark-1.2-contributor') return 'Contributor Spark 1.2'
