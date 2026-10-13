@@ -2872,7 +2872,13 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-10-07","kind":"addition","title":"New Additions","body":"Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-10-13","kind":"addition","title":"New Additions","body":"Muse Wonder 1.0 and Muse Wonder Full 1.0, Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"muse","label":"Muse","models":[
+              {"name":"Muse Wonder 1.0","blurb":"Meta's frontier model in Muse Code and Meta Model API — 1M context, reasoning through Max, $4.00/$20.00 per Mtok."},
+              {"name":"Muse Wonder Full 1.0","blurb":"Meta's most advanced Wonder in Muse Code — 1M context, reasoning through Max, coding and long-running agents."},
+              {"name":"Muse Spark 1.3","blurb":"Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."},
+              {"name":"Muse Contributor Spark 1.3","blurb":"The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement."}
+            ]},
             {"provider":"claude","label":"Claude","models":[
               {"name":"Haiku 5.5","blurb":"Anthropic's current Haiku — 1M context, adaptive thinking with the full effort ladder, $0.10/$0.50 per Mtok."},
               {"name":"Sonnet 5.5","blurb":"Anthropic's newest Sonnet — 1M context, adaptive thinking, the full effort ladder, $2/$10 per Mtok."},
@@ -2922,10 +2928,6 @@ public final class RemoteSessionModel: ObservableObject {
             ]},
             {"provider":"cursor","label":"Cursor","models":[
               {"name":"Grok 4.6","blurb":"A 256K Cursor model with Low through Extra High reasoning and Standard/Fast modes."}
-            ]},
-            {"provider":"muse","label":"Muse","models":[
-              {"name":"Muse Spark 1.3","blurb":"Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."},
-              {"name":"Muse Contributor Spark 1.3","blurb":"The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
               {"name":"Clef & Clef Flash","blurb":"Cloudflare's multimodal decision models, 27B and 9B — a state and typed questions in, choices out.","accentProvider":"cloudflare"},

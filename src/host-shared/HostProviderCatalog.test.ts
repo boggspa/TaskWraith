@@ -146,7 +146,7 @@ describe('HostProviderCatalog', () => {
     expect(muse!.providerId).toBe('muse')
     expect(typeof muse!.offerRevision).toBe('string')
     expect(muse!.offerRevision.length).toBe(64)
-    expect(muse!.models[0].modelId).toBe('muse-spark-1.3')
+    expect(muse!.models[0].modelId).toBe('muse-wonder-1.0')
     expect(muse!.models[0].default).toBeUndefined()
     expect(muse!.models.find((model) => model.default === true)?.modelId).toBe('muse-spark-1.2')
     expect(muse!.models[0].available).toBe(true)
@@ -332,6 +332,8 @@ describe('HostProviderCatalog', () => {
         isDefault: Boolean(isDefault)
       }))
     ).toEqual([
+      { modelId: 'muse-wonder-1.0', label: 'Muse Wonder 1.0', isDefault: false },
+      { modelId: 'muse-wonder-full-1.0', label: 'Muse Wonder Full 1.0', isDefault: false },
       { modelId: 'muse-spark-1.3', label: 'Muse Spark 1.3', isDefault: false },
       {
         modelId: 'muse-spark-1.3-contributor',
@@ -346,19 +348,23 @@ describe('HostProviderCatalog', () => {
       }
     ])
     expect(entry!.models[0]?.detail).toBeUndefined()
-    expect(entry!.models[1]?.detail).toMatch(/content.*product improvement/i)
+    expect(entry!.models[1]?.detail).toBeUndefined()
     expect(entry!.models[2]?.detail).toBeUndefined()
     expect(entry!.models[3]?.detail).toMatch(/content.*product improvement/i)
-    expect(entry!.models[0]?.reasoning.map((r) => r.reasoningId)).toEqual([
-      'minimal',
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-      'ultra'
-    ])
-    for (const model of entry!.models.slice(1)) {
+    expect(entry!.models[4]?.detail).toBeUndefined()
+    expect(entry!.models[5]?.detail).toMatch(/content.*product improvement/i)
+    for (const model of entry!.models.slice(0, 3)) {
+      expect(model.reasoning.map((r) => r.reasoningId)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultra'
+      ])
+    }
+    for (const model of entry!.models.slice(3)) {
       expect(model.reasoning.map((r) => r.reasoningId)).toEqual([
         'minimal',
         'low',

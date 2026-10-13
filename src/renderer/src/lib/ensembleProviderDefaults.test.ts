@@ -1314,9 +1314,11 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 })
 
 describe('muse reasoning options', () => {
-  it('offers both Spark 1.3 routes ahead of 1.2 without changing the standard default', () => {
+  it('offers both Wonder models ahead of Spark without changing the standard default', () => {
     const defaults = getEnsembleModelDefaults('muse')
     expect(defaults.modelOptions.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'muse-wonder-1.0', label: 'Muse Wonder 1.0' },
+      { id: 'muse-wonder-full-1.0', label: 'Muse Wonder Full 1.0' },
       { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
       { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
       { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
@@ -1328,18 +1330,18 @@ describe('muse reasoning options', () => {
     expect(defaults.defaultModelId).toBe('muse-spark-1.2')
   })
 
-  it('adds Max only to regular Spark 1.3 while preserving every existing tier', () => {
-    expect(
-      getEnsembleReasoningOptions('muse', 'muse-spark-1.3').map((option) => option.value)
-    ).toEqual([
-      'minimal',
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-      'ultra'
-    ])
+  it('offers Max on both Wonder models and Spark 1.3 while preserving every existing tier', () => {
+    for (const modelId of ['muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-spark-1.3']) {
+      expect(getEnsembleReasoningOptions('muse', modelId).map((option) => option.value)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultra'
+      ])
+    }
     for (const modelId of [
       'muse-spark-1.3-contributor',
       'muse-spark-1.2',

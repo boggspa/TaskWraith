@@ -82,6 +82,20 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(pi.accent).toBe(TASKWRAITH_PROVIDER_ACCENTS.pi)
   })
 
+  it('humanises both Muse Wonder models without changing their runtime identity', () => {
+    for (const [modelId, modelLabel] of [
+      ['muse-wonder-1.0', 'Muse Wonder 1.0'],
+      ['muse-wonder-full-1.0', 'Muse Wonder Full 1.0']
+    ]) {
+      expect(resolveTaskWraithProviderPresentation('muse', modelId)).toMatchObject({
+        runtimeProvider: 'muse',
+        displayProvider: 'Muse',
+        modelLabel
+      })
+      expect(taskWraithModelLabel('muse', modelId)).toBe(modelLabel)
+    }
+  })
+
   it('humanises both Muse Spark 1.3 routes without changing their runtime identity', () => {
     expect(resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.3')).toMatchObject({
       runtimeProvider: 'muse',

@@ -255,9 +255,11 @@ function ollamaReasoningOptions(
 }
 
 /** Muse Code seat models. Wire ids mirror the visible rows in the on-disk Muse
- *  model-catalog, newest first; Spark 1.2 stays the default (still `is_current`
- *  there) and Contributor Spark remains an explicit non-default choice. */
+ *  model-catalog, newest first; TaskWraith retains its Spark 1.2 default and
+ *  Contributor Spark remains an explicit non-default choice. */
 const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  { id: 'muse-wonder-1.0', label: 'Muse Wonder 1.0' },
+  { id: 'muse-wonder-full-1.0', label: 'Muse Wonder Full 1.0' },
   { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
   { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
   { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
@@ -294,9 +296,9 @@ function devinReasoningOptions(
   }))
 }
 
-// Muse Spark effort ladder (Meta `/effort`). Never `none` — meta rejects it
-// (maps to minimal at argv). The shared resolver inserts Max only for regular
-// Spark 1.3, matching the provider-published model catalog; existing Ultra
+// Muse effort ladder (Meta `/effort`). Never `none` — meta rejects it
+// (maps to minimal at argv). The shared resolver inserts Max for Wonder and
+// regular Spark 1.3, matching the provider-published model catalog; existing Ultra
 // remains available on every route.
 function museReasoningOptions(
   modelId: string | null | undefined

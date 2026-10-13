@@ -2292,6 +2292,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Meta Model API published pricing for muse-spark-1.3-contributor ($0.10/$0.20/$0.002 per Mtok input/output/cached), verified 2026-09-02. Discounted tokens carry the provider notice that content, including inter-session messages, may be used for product improvement. Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-wonder-1.0',
+        inputUsdPerMillion: 4,
+        outputUsdPerMillion: 20,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://dev.meta.ai/models/muse-wonder',
+        lastVerified: '2026-10-13',
+        notes:
+          'Meta Model API published pricing for Muse Wonder ($4/$20/$0.20 per Mtok input/output/cached). API-equivalent estimate; subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-wonder-full-1.0',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        pricingPending: true,
+        sourceUrl: 'https://dev.meta.ai/models/muse-wonder',
+        lastVerified: '2026-10-13',
+        notes:
+          'Muse Wonder Full has no published API token pricing; re-verify when Meta publishes rates. Keep its estimate unpriced rather than borrowing Spark or Wonder rates; zero is a placeholder, not a free-model claim.'
       }
     ]
   },

@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-07'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-13'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,12 +162,38 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Muse Wonder 1.0 and Muse Wonder Full 1.0, Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
-        // Claude Haiku 5.5, the current Haiku and successor to Haiku 4.5, is
-        // the headline of this lineup, so Claude leads the card with it first.
+        provider: 'muse',
+        label: 'Muse',
+        models: [
+          {
+            name: 'Muse Wonder 1.0',
+            blurb:
+              "Meta's frontier model in Muse Code and Meta Model API — 1M context, reasoning through Max, $4.00/$20.00 per Mtok."
+          },
+          {
+            name: 'Muse Wonder Full 1.0',
+            blurb:
+              "Meta's most advanced Wonder in Muse Code — 1M context, reasoning through Max, coding and long-running agents."
+          },
+          {
+            name: 'Muse Spark 1.3',
+            blurb:
+              "Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."
+          },
+          {
+            name: 'Muse Contributor Spark 1.3',
+            blurb:
+              'The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement.'
+          }
+        ]
+      },
+      {
+        // Claude Haiku 5.5, the current Haiku and successor to Haiku 4.5,
+        // leads the Claude group.
         // Sonnet 5.5 (2026-09-28) and Opus 5.5 (2026-09-22) follow it, with
         // Fable 5.1 still listed beneath them.
         provider: 'claude',
@@ -391,22 +417,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Grok 4.6',
             blurb:
               'A 256K Cursor model with Low through Extra High reasoning and Standard/Fast modes.'
-          }
-        ]
-      },
-      {
-        provider: 'muse',
-        label: 'Muse',
-        models: [
-          {
-            name: 'Muse Spark 1.3',
-            blurb:
-              "Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."
-          },
-          {
-            name: 'Muse Contributor Spark 1.3',
-            blurb:
-              'The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement.'
           }
         ]
       },
