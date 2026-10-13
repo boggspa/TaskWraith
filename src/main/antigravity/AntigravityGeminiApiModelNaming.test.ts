@@ -8,6 +8,7 @@ import {
 describe('antigravityGeminiApiModelLabel', () => {
   it('reads as a product name, not an API id', () => {
     const expected: Record<string, string> = {
+      'gemini-4-argon': '4 Argon',
       'gemini-3.6-flash': '3.6 Flash',
       'gemini-3.5-flash': '3.5 Flash',
       'gemini-3.5-live-translate': '3.5 Live Translate',
@@ -37,6 +38,7 @@ describe('antigravityGeminiApiModelLabel', () => {
 describe('isCuratedAntigravityGeminiApiModelId', () => {
   it('keeps current families including bare previews and unversioned ones', () => {
     for (const modelId of [
+      'gemini-4-argon',
       'gemini-3.6-flash',
       'gemini-3.1-pro-preview',
       'gemini-2.5-flash-lite',

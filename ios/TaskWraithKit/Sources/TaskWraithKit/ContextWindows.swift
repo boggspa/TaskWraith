@@ -19,6 +19,15 @@ public enum ContextWindows {
         "cli-default": 1_048_576,
         // Gemini wire model ids (antigravity gemini-api lane; both bare and
         // catalog-prefixed spellings) — mirrors src/shared/contextWindows.ts.
+        // Argon shares this window across input, thinking, and output.
+        "gemini-4-argon": 1_048_576,
+        "gemini-api:gemini-4-argon": 1_048_576,
+        "gemini-4-argon-high": 1_048_576,
+        "gemini-4-argon-medium": 1_048_576,
+        "gemini-4-argon-low": 1_048_576,
+        "antigravity-acp:gemini-4-argon-high": 1_048_576,
+        "antigravity-acp:gemini-4-argon-medium": 1_048_576,
+        "antigravity-acp:gemini-4-argon-low": 1_048_576,
         "gemini-2.5-pro": 1_048_576,
         "gemini-2.5-flash": 1_048_576,
         "gemini-2.5-flash-lite": 1_048_576,

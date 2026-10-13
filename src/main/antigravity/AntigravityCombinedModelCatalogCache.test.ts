@@ -8,6 +8,15 @@ import { discoverAuthenticatedAntigravityCombinedModels } from './AntigravityCom
 
 const paths: string[] = []
 
+const EXPECTED_ROWS = [
+  { id: 'agy-live', label: 'AGY Live' },
+  { id: 'gemini-4-argon-high', label: 'gemini-4-argon-high' },
+  { id: 'gemini-4-argon-medium', label: 'gemini-4-argon-medium' },
+  { id: 'gemini-4-argon-low', label: 'gemini-4-argon-low' },
+  { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' },
+  { id: 'gemini-api:gemini-4-argon', label: '4 Argon' }
+]
+
 afterEach(() => {
   while (paths.length > 0) rmSync(paths.pop()!, { recursive: true, force: true })
 })
@@ -39,20 +48,14 @@ it('mirrors the combined non-secret rows for the external Host', async () => {
         agyDependencies: { cache: { userDataPath: path } }
       }
     )
-  ).resolves.toEqual([
-    { id: 'agy-live', label: 'AGY Live' },
-    { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' }
-  ])
+  ).resolves.toEqual(EXPECTED_ROWS)
 
   await vi.waitFor(
     () => {
       const parsed = JSON.parse(
         readFileSync(join(path, 'antigravity-combined-models.json'), 'utf8')
       ) as unknown
-      expect(sanitizeAntigravityCatalogCache(parsed)).toEqual([
-        { id: 'agy-live', label: 'AGY Live' },
-        { id: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' }
-      ])
+      expect(sanitizeAntigravityCatalogCache(parsed)).toEqual(EXPECTED_ROWS)
     },
     { timeout: 2_000 }
   )

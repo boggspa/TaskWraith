@@ -10,6 +10,9 @@ import { isAntigravityGeminiApiModelCandidate } from './AntigravityCombinedModeD
 
 describe('antigravityAgyStaticModels', () => {
   it('offers Gemini and third-party families now that CLAUDE/GPT fallback IDs are supported', () => {
+    for (const effort of ['high', 'medium', 'low']) {
+      expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain(`gemini-4-argon-${effort}`)
+    }
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-medium')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-low')

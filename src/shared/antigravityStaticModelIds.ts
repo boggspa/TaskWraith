@@ -1,10 +1,20 @@
 /**
  * The bounded fallback floors shared by the Electron catalog and the pure
  * Node Host. These are model ids only; lane admission still comes from the
- * owning consent/credential checks at each call site.
+ * owning consent/credential checks at each call site. Argon also supplements
+ * admitted live catalogues during rollout; upstream access errors fail at run time.
  */
 
+export const ANTIGRAVITY_ARGON_AGY_MODEL_IDS = [
+  'gemini-4-argon-high',
+  'gemini-4-argon-medium',
+  'gemini-4-argon-low'
+] as const
+
+export const ANTIGRAVITY_ARGON_GEMINI_API_MODEL_ID = 'gemini-4-argon'
+
 export const ANTIGRAVITY_AGY_STATIC_MODEL_IDS = [
+  ...ANTIGRAVITY_ARGON_AGY_MODEL_IDS,
   'gemini-3.8-flash-high',
   'gemini-3.8-flash-medium',
   'gemini-3.8-flash-low',
@@ -33,6 +43,7 @@ export const ANTIGRAVITY_AGY_STATIC_MODEL_IDS = [
 
 /** Bare Gemini model ids; the persisted/API wire namespace adds `gemini-api:`. */
 export const ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS = [
+  ANTIGRAVITY_ARGON_GEMINI_API_MODEL_ID,
   'gemini-3.6-flash',
   'gemini-3.5-flash',
   'gemini-3.1-pro-preview',

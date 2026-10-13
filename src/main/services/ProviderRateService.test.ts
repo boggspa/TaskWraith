@@ -88,6 +88,24 @@ describe('findDollarRateNearTokenPhrase', () => {
 })
 
 describe('BAKED_IN_RATES', () => {
+  it('prices Argon API explicitly and distinguishes its subscription transports', () => {
+    const rates = BAKED_IN_RATES.antigravity.models
+    expect(rates.find((row) => row.modelId === 'gemini-api:gemini-4-argon')).toMatchObject({
+      inputUsdPerMillion: 2,
+      outputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 0.1,
+      lastVerified: '2026-10-13'
+    })
+    for (const modelId of ['gemini-4-argon', 'antigravity-acp:gemini-4-argon']) {
+      expect(rates.find((row) => row.modelId === modelId)).toMatchObject({
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true
+      })
+    }
+    expect(rates.find((row) => row.isFallback)?.modelId).toBe('gemini-api:gemini-2.5-flash')
+  })
+
   it('has an entry for every provider', () => {
     expect(BAKED_IN_RATES.codex).toBeDefined()
     expect(BAKED_IN_RATES.claude).toBeDefined()
