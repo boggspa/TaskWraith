@@ -20,7 +20,35 @@ const optedIn = {
 
 const store = { loadApiKey: vi.fn(() => ({ status: 'ok' as const, value: 'secret' })) }
 
+const ARGON_AGY_ROWS = ['high', 'medium', 'low'].map((effort) => ({
+  id: `gemini-4-argon-${effort}`,
+  label: `gemini-4-argon-${effort}`
+}))
+const ARGON_ACP_ROWS = ARGON_AGY_ROWS.map((row) => ({
+  ...row,
+  id: `antigravity-acp:${row.id}`
+}))
+const ARGON_API_ROW = { id: 'gemini-api:gemini-4-argon', label: '4 Argon' }
+
 describe('discoverAuthenticatedAntigravityCombinedModels', () => {
+  it('preserves advertised Argon labels and offers each variant only once', async () => {
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: async () => [{ id: 'gemini-4-argon-low', label: 'Argon Low (live)' }],
+      discoverGeminiApi: async () => ({
+        status: 'ok',
+        models: [{ id: 'gemini-api:gemini-4-argon', modelId: 'gemini-4-argon' }]
+      }),
+      getSecretStore: () => store
+    })
+    expect(rows).toEqual([
+      { id: 'gemini-4-argon-low', label: 'Argon Low (live)' },
+      ARGON_AGY_ROWS[0],
+      ARGON_AGY_ROWS[1],
+      ARGON_API_ROW
+    ])
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length)
+  })
+
   it('only treats actual AGY rows as authenticated AGY quota eligibility', () => {
     expect(
       hasAuthenticatedAgyCatalogRow([
@@ -117,7 +145,9 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     ).resolves.toEqual([
       { id: 'agy-one', label: 'AGY One' },
       { id: 'duplicate', label: 'AGY Duplicate' },
-      { id: 'gemini-api:gemini-one', label: 'One' }
+      ...ARGON_AGY_ROWS,
+      { id: 'gemini-api:gemini-one', label: 'One' },
+      ARGON_API_ROW
     ])
     expect(discoverAgy).toHaveBeenCalledOnce()
     expect(discoverGeminiApi).toHaveBeenCalledOnce()
@@ -135,7 +165,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
       getSecretStore: () => store
     })
     expect(rejected[0]).toEqual({ id: 'agy-only', label: 'AGY Only' })
-    expect(rejected.slice(1)).toEqual(antigravityGeminiApiStaticModels())
+    expect(rejected.slice(1)).toEqual([...ARGON_AGY_ROWS, ...antigravityGeminiApiStaticModels()])
     expect(JSON.stringify(rejected)).not.toContain('private detail')
 
     await expect(
@@ -159,7 +189,8 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
       })
     ).resolves.toEqual([
       ...antigravityAgyStaticModels(),
-      { id: 'gemini-api:gemini-fast', label: 'Fast' }
+      { id: 'gemini-api:gemini-fast', label: 'Fast' },
+      ARGON_API_ROW
     ])
   })
 
@@ -177,7 +208,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         getSecretStore: () => store,
         timeoutMs: 5
       })
-    ).resolves.toEqual([{ id: 'gemini-api:gemini-fast', label: 'Fast' }])
+    ).resolves.toEqual([{ id: 'gemini-api:gemini-fast', label: 'Fast' }, ARGON_API_ROW])
   })
 
   it('offers the configured key its static rows when the live catalogue cannot be verified', async () => {
@@ -245,7 +276,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     }
   })
 
-  it('prefers the live catalogue over the static rows', async () => {
+  it('preserves the live catalogue and supplements only Argon during rollout', async () => {
     await expect(
       discoverAuthenticatedAntigravityCombinedModels(
         {},
@@ -260,7 +291,8 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-live', label: 'Live' }
+      { id: 'gemini-api:gemini-live', label: 'Live' },
+      ARGON_API_ROW
     ])
   })
 
@@ -292,7 +324,8 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-solo', label: 'Solo' }
+      { id: 'gemini-api:gemini-solo', label: 'Solo' },
+      ARGON_API_ROW
     ])
     expect(discoverAgy).not.toHaveBeenCalled()
     expect(discoverGeminiApi).toHaveBeenCalledOnce()
@@ -312,7 +345,8 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         { discoverAgy, discoverGeminiApi, getSecretStore: () => store }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-both', label: 'Both' }
+      { id: 'gemini-api:gemini-both', label: 'Both' },
+      ARGON_API_ROW
     ])
     expect(discoverAgy).not.toHaveBeenCalled()
   })
@@ -398,7 +432,7 @@ describe('Gemini API discovery outcome reporting', () => {
       }
     )
     expect(recordGeminiApiOutcome).toHaveBeenCalledWith({ status: 'ok', modelCount: rows.length })
-    expect(rows.length).toBe(2)
+    expect(rows.length).toBe(3)
   })
 
   it('distinguishes a lane that never answered from one that rejected', async () => {
@@ -499,7 +533,9 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
     const expected = [
       { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
       { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-      { id: 'gemini-api:gemini-one', label: 'One' }
+      ...ARGON_AGY_ROWS,
+      { id: 'gemini-api:gemini-one', label: 'One' },
+      ARGON_API_ROW
     ]
     // Absent (the default for every existing install) and explicit false must
     // both preserve the pre-existing catalogue exactly.
@@ -524,9 +560,11 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
     ).resolves.toEqual([
       { id: 'antigravity-acp:gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
       { id: 'antigravity-acp:claude-opus-4-6', label: 'Claude Opus 4.6' },
+      ...ARGON_ACP_ROWS,
       // The separately billed API lane keeps its own namespace and its own
       // dispatch arm in BOTH switch states.
-      { id: 'gemini-api:gemini-one', label: 'One' }
+      { id: 'gemini-api:gemini-one', label: 'One' },
+      ARGON_API_ROW
     ])
   })
 
@@ -536,7 +574,8 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
       discoverGeminiApi: oneApiRow,
       getSecretStore: () => store
     })
-    expect(rows).toHaveLength(3)
+    expect(rows).toHaveLength(7)
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length)
     expect(rows.map((row) => row.id)).not.toContain('gemini-3.8-flash-high')
     expect(rows.map((row) => row.id)).not.toContain('claude-opus-4-6')
   })
@@ -548,7 +587,8 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
     })
     expect(rows.map((row) => row.id)).toEqual([
       'antigravity-acp:gemini-3.8-flash-high',
-      'antigravity-acp:claude-opus-4-6'
+      'antigravity-acp:claude-opus-4-6',
+      ...ARGON_ACP_ROWS.map((row) => row.id)
     ])
     for (const row of rows) {
       expect(isAntigravityAcpModelCandidate(row.id)).toBe(true)
@@ -573,7 +613,7 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
       { antigravityUseAcp: true },
       { discoverAgy, discoverGeminiApi: oneApiRow, getSecretStore: () => store }
     )
-    expect(apiOnly).toEqual([{ id: 'gemini-api:gemini-one', label: 'One' }])
+    expect(apiOnly).toEqual([{ id: 'gemini-api:gemini-one', label: 'One' }, ARGON_API_ROW])
     expect(discoverAgy).not.toHaveBeenCalled()
   })
 
@@ -589,8 +629,8 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
     })
     expect(rows).toHaveLength(antigravityAgyStaticModels().length)
     expect(rows[0]).toEqual({
-      id: 'antigravity-acp:gemini-3.8-flash-high',
-      label: 'gemini-3.8-flash-high'
+      id: 'antigravity-acp:gemini-4-argon-high',
+      label: 'gemini-4-argon-high'
     })
     for (const row of rows) {
       expect(isAntigravityAcpModelCandidate(row.id)).toBe(true)
@@ -657,7 +697,8 @@ describe('official-ACP transport switch (antigravityUseAcp)', () => {
       })
     ).resolves.toEqual([
       { id: 'gemini-api:gemini-stray', label: 'Stray' },
-      { id: 'antigravity-acp:gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' }
+      { id: 'antigravity-acp:gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
+      ...ARGON_ACP_ROWS
     ])
   })
 

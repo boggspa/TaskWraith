@@ -17,6 +17,7 @@ import {
 } from '../../shared/antigravityGeminiApiModelNaming'
 import {
   ANTIGRAVITY_AGY_STATIC_MODEL_IDS,
+  ANTIGRAVITY_ARGON_AGY_MODEL_IDS,
   ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS
 } from '../../shared/antigravityStaticModelIds'
 import {
@@ -242,6 +243,11 @@ export function readHostStandaloneAntigravityInventory(
     // catalogue, but must not append aliases or withdrawn rows to a healthy one.
     if (rows.length === 0) {
       for (const row of staticAgyRows()) appendUnique(rows, seen, row)
+    }
+    // Offer Argon throughout the account rollout, including with a healthy
+    // cached catalogue that does not advertise it yet. Dispatch owns failures.
+    for (const modelId of ANTIGRAVITY_ARGON_AGY_MODEL_IDS) {
+      appendUnique(rows, seen, { modelId, label: modelId })
     }
   }
 

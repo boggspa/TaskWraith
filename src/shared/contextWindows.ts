@@ -27,6 +27,15 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini wire model ids (antigravity gemini-api lane resolves aliases to
   // these; runs may report either the bare wire id or the catalog-prefixed
   // `gemini-api:` form, so both spellings are registered).
+  // Argon shares this window across input, thinking, and output.
+  'gemini-4-argon': 1_048_576,
+  'gemini-api:gemini-4-argon': 1_048_576,
+  'gemini-4-argon-high': 1_048_576,
+  'gemini-4-argon-medium': 1_048_576,
+  'gemini-4-argon-low': 1_048_576,
+  'antigravity-acp:gemini-4-argon-high': 1_048_576,
+  'antigravity-acp:gemini-4-argon-medium': 1_048_576,
+  'antigravity-acp:gemini-4-argon-low': 1_048_576,
   'gemini-2.5-pro': 1_048_576,
   'gemini-2.5-flash': 1_048_576,
   'gemini-2.5-flash-lite': 1_048_576,

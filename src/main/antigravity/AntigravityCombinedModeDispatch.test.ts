@@ -125,6 +125,33 @@ describe('isAntigravityGeminiApiModelCandidate', () => {
 })
 
 describe('dispatchAntigravityCombinedMode', () => {
+  it.each(['low', 'medium', 'high'])(
+    'dispatches Argon %s on the subscription lane',
+    async (effort) => {
+      const payload = basePayload({ model: `gemini-4-argon-${effort}` })
+      const { deps, capture } = createDeps()
+      await dispatchAntigravityCombinedMode(mockEvent(), payload, deps)
+      expect(capture.agentTurnCalls).toEqual([])
+      expect(capture.agyCalls).toEqual([payload])
+    }
+  )
+
+  it('keeps an unavailable Argon API run failed without falling back to the subscription lane', async () => {
+    const { deps, capture } = createDeps({
+      runGeminiApiAgentTurn: async () => {
+        throw new Error('Argon unavailable for this account')
+      }
+    })
+    await dispatchAntigravityCombinedMode(
+      mockEvent(),
+      basePayload({ model: 'gemini-api:gemini-4-argon' }),
+      deps
+    )
+    expect(capture.agyCalls).toEqual([])
+    expect(capture.finishes).toEqual([{ runId: RUN_ID, status: 'failed' }])
+    expect(capture.exits).toEqual([1])
+  })
+
   it('routes exact valid API models to the agentic Gemini API turn', async () => {
     const { deps, capture } = createDeps()
     const payload = basePayload()
