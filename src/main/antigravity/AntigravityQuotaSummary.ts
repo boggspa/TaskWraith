@@ -276,7 +276,8 @@ function agyHeaders(accessToken: string): Record<string, string> {
   return {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
-    'User-Agent': `antigravity/cli/1.1.9 (aidev_client; os_type=${process.platform}; arch=${process.arch}; auth_method=consumer)`
+    // Google varies quota families by client identity; 1.1.9 omits Argon.
+    'User-Agent': `antigravity/cli/1.3.6 (aidev_client; os_type=${process.platform}; arch=${process.arch}; auth_method=consumer)`
   }
 }
 

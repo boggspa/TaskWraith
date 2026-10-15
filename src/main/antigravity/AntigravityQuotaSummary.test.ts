@@ -169,6 +169,9 @@ describe('fetchAntigravityCliQuotaSummary', () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const fetchImpl = async (url: string, init?: RequestInit): Promise<Response> => {
       requests.push({ url, init })
+      const argonCapable = new Headers(init?.headers)
+        .get('User-Agent')
+        ?.startsWith('antigravity/cli/1.3.6 ')
       if (url.includes('loadCodeAssist')) {
         return new Response(
           JSON.stringify({
@@ -186,7 +189,10 @@ describe('fetchAntigravityCliQuotaSummary', () => {
                 { bucketId: 'gemini-5h', remainingFraction: 1 },
                 { bucketId: 'gemini-weekly', remainingFraction: 0.97 },
                 { bucketId: '3p-5h', remainingFraction: 0.88 },
-                { bucketId: '3p-weekly', remainingFraction: 0.95 }
+                { bucketId: '3p-weekly', remainingFraction: 0.95 },
+                ...(argonCapable
+                  ? [{ bucketId: 'gemini-argon-wtu-weekly', remainingFraction: 0.75 }]
+                  : [])
               ]
             }
           ]
@@ -209,6 +215,14 @@ describe('fetchAntigravityCliQuotaSummary', () => {
       expect.objectContaining({ Authorization: 'Bearer private-access-token' })
     )
     expect(requests[1]?.init?.body).toBe(JSON.stringify({ project: 'quota-project' }))
+    expect(snapshot?.windows).toHaveLength(5)
+    expect(
+      snapshot?.windows?.find((window) => window.id === 'agy-gemini-argon-wtu-weekly')
+    ).toMatchObject({
+      label: 'Gemini 4 Argon Weekly',
+      remainingPercent: 75,
+      usedPercent: 25
+    })
     expect(snapshot).toMatchObject({
       provider: 'antigravity',
       source: 'agy-quota-summary',
