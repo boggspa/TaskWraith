@@ -53,6 +53,13 @@ describe('antigravityModelGrouping', () => {
       expect(antigravityUltraTaskTargetId(rows, `${prefix}gemini-4-argon-low`)).toBe(
         `${prefix}gemini-4-argon-high`
       )
+      expect(
+        antigravityReasoningLadderOptions(rows, `${prefix}gemini-4-argon-medium`, false)
+      ).toEqual([
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' }
+      ])
     }
   )
 
