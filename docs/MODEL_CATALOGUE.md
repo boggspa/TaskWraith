@@ -190,6 +190,11 @@ AntiGravity subscription catalogue. Its newest families are:
 | **Gemini 3.8 Flash** `gemini-3.8-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; the standalone Host's default row.       |
 | **Gemini 3.7 Flash** `gemini-3.7-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; availability remains account-controlled. |
 
+The picker presents **Gemini 4 Argon** once per subscription route; its existing
+effort ladder selects the concrete Low, Medium, or High wire variant. Limits
+retains Google's separate **Gemini 4 Argon Weekly** pool alongside the shared
+Gemini and Claude/GPT windows, with the reported percentage and reset time.
+
 The independent bring-your-own-key lane curates the authenticated Gemini API
 `models.list` response, so the live picker—not a frozen documentation table—is
 authoritative. Its current static fallback floor is:

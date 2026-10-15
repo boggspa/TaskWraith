@@ -36,6 +36,40 @@ describe('parseAntigravityOAuthSession', () => {
 })
 
 describe('parseAntigravityQuotaSummary', () => {
+  it('preserves the independently reported Argon weekly pool alongside shared Gemini limits', () => {
+    const snapshot = parseAntigravityQuotaSummary({
+      groups: [
+        { buckets: [{ bucketId: 'gemini-weekly', remainingFraction: 0.9 }] },
+        { buckets: [{ bucketId: '3p-weekly', remainingFraction: 0.5 }] },
+        {
+          name: 'Gemini 4 Argon',
+          buckets: [
+            {
+              bucketId: 'gemini-argon-wtu-weekly',
+              displayName: 'Gemini 4 Argon Weekly Limit',
+              remainingFraction: 1,
+              resetTime: '2026-10-22T23:23:04Z'
+            }
+          ]
+        }
+      ]
+    })
+    expect(snapshot?.windows?.map((window) => window.label)).toEqual([
+      'Gemini Weekly',
+      'Claude/GPT Weekly',
+      'Gemini 4 Argon Weekly'
+    ])
+    expect(snapshot?.windows?.[2]).toMatchObject({
+      id: 'agy-gemini-argon-wtu-weekly',
+      remainingPercent: 100,
+      usedPercent: 0,
+      resetAt: '2026-10-22T23:23:04.000Z',
+      windowKind: 'weekly',
+      limitWindowSeconds: 604800
+    })
+    expect(snapshot?.windows).toHaveLength(3)
+  })
+
   it('surfaces the combined Claude/GPT 5H and weekly buckets', () => {
     const snapshot = parseAntigravityQuotaSummary(
       {

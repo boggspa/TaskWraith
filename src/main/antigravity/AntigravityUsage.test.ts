@@ -18,6 +18,23 @@ import {
 const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1 }
 const now = () => '2026-07-23T12:00:00.000Z'
 
+it('keeps the CLI Argon weekly limit separate after both shared pools', () => {
+  const panel = observedPanel() + '\nGemini 4 Argon\nGemini 4 Argon Weekly Limit\n100%'
+  const observation = parseAgyUsagePanel(panel)
+  expect(observation.windows.map((window) => window.id)).toEqual([
+    'agy-gemini-weekly',
+    'agy-gemini-5h',
+    'agy-3p-weekly',
+    'agy-3p-5h',
+    'agy-gemini-argon-wtu-weekly'
+  ])
+  expect(observation.windows[4]).toMatchObject({
+    label: 'Gemini 4 Argon Weekly',
+    remainingPercent: 100,
+    usedPercent: 0
+  })
+})
+
 // The real agy 1.1.8 /usage panel (observed 2026-07-28): pools with two
 // sub-limits each, progress bars carrying a bare percentage, and a status
 // line. The Gemini weekly here is deliberately partial (42%) and the
