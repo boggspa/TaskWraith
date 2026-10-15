@@ -343,16 +343,18 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
-    @Test("antigravity group mirrors the four-model gemini-api floor in order")
+    @Test("antigravity group includes Argon before the existing gemini-api floor")
     func antigravityGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let models = groups.first { $0.provider == "antigravity" }?.models ?? []
         #expect(models.map(\.modelId) == [
+            "gemini-api:gemini-4-argon",
             "gemini-api:gemini-2.5-pro",
             "gemini-api:gemini-2.5-flash",
             "gemini-api:gemini-2.5-flash-lite",
             "gemini-api:gemini-2.0-flash",
         ])
+        #expect(models.first?.contextWindow == 1_048_576)
     }
 
     // MARK: - Mistral group
