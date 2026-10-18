@@ -3399,15 +3399,14 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
         .homeContinuationThreadId
     ).toBe('thread-lazy')
     expect(output.lastFrame).toContain('TaskWraith')
-    // The cold-start continuation selects the thread and (re-)arms the Home
-    // continuation synchronously in the same tick; wait for that selection so a
-    // slow runner cannot interleave openThread() before the re-arm and then see
-    // the id come back.
+    // The Host records composer.send before the client processes its receipt.
+    // Navigation is ignored while that command is in flight, so wait for both
+    // the selection and command completion before explicitly opening the thread.
     await waitFor(
       () =>
         (tui as unknown as { state: { selectedThreadId?: string } }).state.selectedThreadId ===
-        'thread-lazy',
-      'lazy thread selected'
+          'thread-lazy' && !(tui as unknown as { mutationInFlight: boolean }).mutationInFlight,
+      'lazy thread selected and first prompt completed'
     )
     await (tui as unknown as { openThread: (threadId: string) => Promise<void> }).openThread(
       'thread-lazy'
