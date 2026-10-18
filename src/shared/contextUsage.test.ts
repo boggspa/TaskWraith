@@ -70,6 +70,28 @@ describe('contextUsage', () => {
     })
   })
 
+  it('treats thoughts as a subset after Gemini billable output has been normalized', () => {
+    expect(
+      contextUsageFromStats({
+        input_tokens: 1_000,
+        output_tokens: 200,
+        candidatesTokenCount: 80,
+        thoughtsTokenCount: 120,
+        cachedContentTokenCount: 700,
+        _taskwraith_output_includes_reasoning: true
+      })
+    ).toMatchObject({
+      contextTokens: 1_200,
+      inputTokens: 1_000,
+      freshInputTokens: 300,
+      cacheReadInputTokens: 700,
+      outputTokens: 200,
+      visibleOutputTokens: 80,
+      reasoningTokens: 120,
+      unclassifiedTokens: 0
+    })
+  })
+
   it('adds Pi cache counters because Pi input excludes them', () => {
     expect(
       contextUsageFromStats({

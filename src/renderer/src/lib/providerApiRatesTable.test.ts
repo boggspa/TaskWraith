@@ -1,13 +1,98 @@
 import { describe, expect, it } from 'vitest'
 import { buildProviderApiRateGroups } from './providerApiRatesTable'
-import { BAKED_IN_RATES, RATE_TABLE_VERSION } from '../../../main/services/ProviderRateService'
+import {
+  applyManualProviderRateOverrides,
+  BAKED_IN_RATES,
+  RATE_TABLE_VERSION
+} from '../../../main/services/ProviderRateService'
 import type { ProviderId } from '../../../main/store/types'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { getEnsembleModelDefaults } from './ensembleProviderDefaults'
 import { MODEL_USAGE_PROVIDER_ORDER } from './modelUsageTable'
-import { normalizeProviderRates, resolveModelRate } from './providerRateEstimate'
+import {
+  estimateRunCostUsd,
+  normalizeProviderRates,
+  resolveModelRate
+} from './providerRateEstimate'
 
 describe('buildProviderApiRateGroups', () => {
+  it('keeps unpublished Wonder Full pricing distinct from Wonder and a free API route', () => {
+    const snapshot = { rateTableVersion: RATE_TABLE_VERSION, baseline: BAKED_IN_RATES }
+    const group = buildProviderApiRateGroups(snapshot).find((entry) => entry.provider === 'muse')!
+    const full = group.rows.find((row) => row.modelId === 'muse-wonder-full-1.0')!
+
+    expect(full.pricingPending).toBe(true)
+    expect(full.sourceUrl).toBe('https://dev.meta.ai/models/muse-wonder')
+    expect(group.rows.find((row) => row.modelId === 'muse-wonder-1.0')).toMatchObject({
+      inputUsdPerMillion: 4,
+      cachedInputUsdPerMillion: 0.2,
+      outputUsdPerMillion: 20
+    })
+    const rates = normalizeProviderRates(snapshot)
+    expect(resolveModelRate(rates, 'muse', full.modelId)?.modelId).toBe(full.modelId)
+    expect(estimateRunCostUsd(rates, 'muse', full.modelId, 1_000_000, 1_000_000)).toBe(0)
+    expect(estimateRunCostUsd(rates, 'muse', 'muse-wonder-1.0', 1_000_000, 1_000_000)).toBe(24)
+  })
+
+  it('never marks unpublished placeholder prices as verified by a page probe', () => {
+    const groups = buildProviderApiRateGroups({
+      rateTableVersion: RATE_TABLE_VERSION,
+      baseline: BAKED_IN_RATES,
+      probe: {
+        runAt: '2026-10-14T10:00:00.000Z',
+        results: {
+          muse: {
+            models: [
+              {
+                modelId: 'muse-wonder-full-1.0',
+                status: 'verified',
+                baseline: {
+                  inputUsdPerMillion: 0,
+                  outputUsdPerMillion: 0,
+                  confidence: 'baked-in'
+                }
+              }
+            ]
+          }
+        }
+      }
+    })
+    const full = groups
+      .find((group) => group.provider === 'muse')!
+      .rows.find((row) => row.modelId === 'muse-wonder-full-1.0')!
+
+    expect(full.pricingPending).toBe(true)
+    expect(full.status).toBe('baseline')
+    expect(full.statusMessage).toMatch(/not.*published/i)
+  })
+
+  it('shows explicit manual prices even when the baked-in row is still pricing pending', () => {
+    const { baseline, summary } = applyManualProviderRateOverrides(
+      BAKED_IN_RATES,
+      [
+        {
+          provider: 'muse',
+          modelId: 'muse-wonder-full-1.0',
+          inputUsdPerMillion: 6,
+          outputUsdPerMillion: 30
+        }
+      ],
+      '2026-10-14T10:00:00.000Z'
+    )
+    expect(summary.rejected).toEqual([])
+    const full = buildProviderApiRateGroups({ rateTableVersion: RATE_TABLE_VERSION, baseline })
+      .find((group) => group.provider === 'muse')!
+      .rows.find((row) => row.modelId === 'muse-wonder-full-1.0')!
+
+    expect(full.pricingPending).not.toBe(true)
+    expect(full).toMatchObject({
+      inputUsdPerMillion: 6,
+      outputUsdPerMillion: 30,
+      confidence: 'manual-override',
+      status: 'manual-override'
+    })
+  })
+
   it('preserves provider/model rate provenance from the raw snapshot', () => {
     const groups = buildProviderApiRateGroups({
       rateTableVersion: '2026-06-23',

@@ -366,6 +366,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     // alias rows (`pro`/`flash`/`cli-default`), and agy-CLI rows stay
     // discovery-owned.
     expect(antigravity).toEqual([
+      'gemini-api:gemini-4-argon',
       'gemini-api:gemini-3.6-flash',
       'gemini-api:gemini-3.5-flash',
       'gemini-api:gemini-3.1-pro-preview',

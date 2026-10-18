@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import vm from 'node:vm'
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -229,6 +230,85 @@ describe('release workflow contract', () => {
     expect(armText).toContain('candidate/win-arm64-unpacked')
     expect(armText).toContain('smoke-win-installer.ps1')
   })
+
+  it.each([
+    { version: '1.9.9', distribution: 'beta', channel: 'latest' },
+    { version: '0.1.1', distribution: 'release', channel: 'release' },
+    { version: '0.1.1-beta.1', distribution: 'release', channel: 'beta' }
+  ])(
+    'packages and verifies signed Windows $version using its $distribution identity',
+    ({ version, distribution, channel }) => {
+      const steps = jobs['signed-windows-release'].steps || []
+      const signing = steps.find((step) => step.name === 'Sign and package Windows artifacts')
+      const verification = steps.find((step) => step.name === 'Verify signed Windows artifacts')
+      const builderCommand = signing?.run?.match(
+        /^\s*node (scripts\/run-electron-builder\.cjs) (.+)$/m
+      )
+      const feedExpression = verification?.run?.match(/^\s*\$feedPrefix = node -p "([^"]+)"$/m)?.[1]
+      expect(builderCommand, 'signed packaging must resolve the declared distribution').toBeTruthy()
+      expect(
+        feedExpression,
+        'feed verification must resolve the declared distribution'
+      ).toBeTruthy()
+
+      const sourceRoot = process.cwd()
+      const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-signed-windows-distribution-'))
+      const distDir = path.join(repoRoot, 'dist')
+      try {
+        fs.mkdirSync(distDir)
+        fs.mkdirSync(path.join(repoRoot, 'scripts'))
+        fs.writeFileSync(
+          path.join(repoRoot, 'package.json'),
+          JSON.stringify({ version, taskwraithRelease: { distribution } })
+        )
+        for (const file of [
+          'scripts/release-distribution.cjs',
+          'electron-builder.yml',
+          'electron-builder.release.yml'
+        ]) {
+          fs.copyFileSync(path.join(sourceRoot, file), path.join(repoRoot, file))
+        }
+        for (const arch of ['x64', 'arm64']) {
+          const installer = path.join(distDir, `TaskWraith-${version}-win-${arch}-setup.exe`)
+          fs.writeFileSync(installer, `fixture installer ${arch}`)
+          fs.writeFileSync(`${installer}.blockmap`, `fixture blockmap ${arch}`)
+        }
+        const options = {
+          cwd: repoRoot,
+          encoding: 'utf8' as const,
+          stdio: 'pipe' as const,
+          env: { ...process.env, NODE_PATH: path.join(sourceRoot, 'node_modules') }
+        }
+        execFileSync(
+          process.execPath,
+          [path.join(sourceRoot, 'scripts/write-win-update-feeds.cjs'), 'dist'],
+          options
+        )
+        // Execute the exact channel expression from the workflow against the
+        // real release configs, then compare it with the producer's files.
+        const feedPrefix = execFileSync(process.execPath, ['-p', feedExpression!], options).trim()
+        expect(feedPrefix).toBe(channel)
+        expect(
+          fs
+            .readdirSync(distDir)
+            .filter((file) => file.endsWith('.yml'))
+            .sort()
+        ).toEqual(['x64', 'arm64'].map((arch) => `${feedPrefix}-win-${arch}.yml`).sort())
+        const { resolveBuilderArgs } = require(path.join(sourceRoot, builderCommand![1]))
+        expect(resolveBuilderArgs(builderCommand![2].trim().split(/\s+/), repoRoot)).toEqual([
+          '--win',
+          '--x64',
+          '--arm64',
+          '--publish',
+          'never',
+          '--config',
+          distribution === 'beta' ? 'electron-builder.yml' : 'electron-builder.release.yml'
+        ])
+      } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('labels manual unsigned artifacts with the selected source SHA', () => {
     const windows = jobs['unsigned-windows-build']

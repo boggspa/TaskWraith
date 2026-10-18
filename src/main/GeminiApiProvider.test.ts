@@ -2006,7 +2006,7 @@ describe('GeminiApiProvider (Phase M1 Step 8 — usage tracking)', () => {
     })
   })
 
-  it('includes thinking tokens when persisted usage must derive its total', async () => {
+  it('bills thinking output when persisted usage must derive its total', async () => {
     const chat = makeChat({ workspaceId: 'ws-1', messages: [] })
     const usage = {
       promptTokenCount: 17,
@@ -2024,7 +2024,7 @@ describe('GeminiApiProvider (Phase M1 Step 8 — usage tracking)', () => {
 
     expect(usageRecords[0]).toMatchObject({
       inputTokens: 17,
-      outputTokens: 23,
+      outputTokens: 34,
       totalTokens: 51
     })
   })
@@ -2320,7 +2320,7 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
       model: 'gemini-api:gemini-2.5-flash',
       inputTokens: 20,
       cacheReadInputTokens: 10,
-      outputTokens: 5,
+      outputTokens: 12,
       totalTokens: 42
     })
     const result = lines.find((line) => line.payload?.type === 'result')?.payload
@@ -2331,11 +2331,13 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
       candidatesTokenCount: 5,
       thoughtsTokenCount: 7,
       totalTokenCount: 42,
+      output_tokens: 12,
       _taskwraith_context_usage: {
         contextTokens: 42,
         inputTokens: 30,
         freshInputTokens: 20,
         cacheReadInputTokens: 10,
+        outputTokens: 12,
         visibleOutputTokens: 5,
         reasoningTokens: 7,
         toolUsePromptTokens: 4,
