@@ -3405,8 +3405,7 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await waitFor(
       () =>
         (tui as unknown as { state: { selectedThreadId?: string } }).state.selectedThreadId ===
-          'thread-lazy' &&
-        !(tui as unknown as { mutationInFlight: boolean }).mutationInFlight,
+          'thread-lazy' && !(tui as unknown as { mutationInFlight: boolean }).mutationInFlight,
       'lazy thread selected and first prompt completed'
     )
     await (tui as unknown as { openThread: (threadId: string) => Promise<void> }).openThread(
