@@ -153,8 +153,8 @@ function workspaceMatrixCellTitle(cell: ModelUsageWorkspaceCell): string {
   ].join(' · ')
 }
 
-function rateCell(value: number | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+function rateCell(value: number | undefined, pricingPending = false): string {
+  if (pricingPending || typeof value !== 'number' || !Number.isFinite(value)) return '—'
   return `$${value.toLocaleString(undefined, {
     minimumFractionDigits: value % 1 === 0 ? 0 : 2,
     maximumFractionDigits: 4
@@ -163,6 +163,7 @@ function rateCell(value: number | undefined): string {
 
 function statusLabel(row: ProviderApiRateRow): string {
   if (row.status === 'manual-override') return 'override'
+  if (row.pricingPending) return 'unpublished'
   if (row.status === 'verified') return 'verified'
   if (row.status === 'not-verified') return 'review'
   return 'source'
@@ -534,6 +535,9 @@ export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGr
       </tr>
       {group.rows.map((row) => {
         const sourceTitle = rateSourceTitle(row, group)
+        const unpublishedRateTitle = row.pricingPending
+          ? 'API token pricing has not been published for this model.'
+          : undefined
         const source =
           row.sourceUrl && /^https?:\/\//.test(row.sourceUrl) ? (
             <a
@@ -555,21 +559,21 @@ export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGr
             <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, row.modelId)}>
               {humaniseModelIdTableCell(group.provider, row.modelId)}
             </td>
-            <td className="model-usage-table-rate" title={`${row.inputUsdPerMillion} USD per 1M input tokens`}>
-              {rateCell(row.inputUsdPerMillion)}
+            <td className="model-usage-table-rate" title={unpublishedRateTitle ?? `${row.inputUsdPerMillion} USD per 1M input tokens`}>
+              {rateCell(row.inputUsdPerMillion, row.pricingPending)}
             </td>
             <td
               className="model-usage-table-rate"
               title={
-                row.cachedInputUsdPerMillion !== undefined
+                unpublishedRateTitle ?? (row.cachedInputUsdPerMillion !== undefined
                   ? `${row.cachedInputUsdPerMillion} USD per 1M cached input tokens`
-                  : undefined
+                  : undefined)
               }
             >
-              {rateCell(row.cachedInputUsdPerMillion)}
+              {rateCell(row.cachedInputUsdPerMillion, row.pricingPending)}
             </td>
-            <td className="model-usage-table-rate" title={`${row.outputUsdPerMillion} USD per 1M output tokens`}>
-              {rateCell(row.outputUsdPerMillion)}
+            <td className="model-usage-table-rate" title={unpublishedRateTitle ?? `${row.outputUsdPerMillion} USD per 1M output tokens`}>
+              {rateCell(row.outputUsdPerMillion, row.pricingPending)}
             </td>
             <td className="model-usage-table-rate-source-cell">{source}</td>
           </tr>
