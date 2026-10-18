@@ -4,11 +4,12 @@ import {
   cursorCostRateModel,
   cursorUsageToStats,
   extractProviderUsage,
+  geminiRunUsageToStats,
   geminiUsageMetadataToStats,
   normalizeProviderUsage,
   mergeProviderUsage
 } from './ProviderRunStats'
-import { TASKWRAITH_CONTEXT_USAGE_KEY } from '../shared/contextUsage'
+import { contextUsageFromStats, TASKWRAITH_CONTEXT_USAGE_KEY } from '../shared/contextUsage'
 
 describe('ProviderRunStats', () => {
   it('normalizes Codex token snapshots into canonical run stats', () => {
@@ -509,5 +510,81 @@ describe('ProviderRunStats', () => {
         reasoningTokens: 25
       }
     })
+  })
+
+  it('sums Gemini invocation billing but keeps only the final invocation in context', () => {
+    const stats = geminiRunUsageToStats([
+      {
+        promptTokenCount: 100,
+        cachedContentTokenCount: 70,
+        candidatesTokenCount: 8,
+        thoughtsTokenCount: 12,
+        totalTokenCount: 120
+      },
+      {
+        promptTokenCount: 150,
+        cachedContentTokenCount: 100,
+        candidatesTokenCount: 10,
+        thoughtsTokenCount: 20,
+        totalTokenCount: 180
+      }
+    ])
+
+    expect(stats).toMatchObject({
+      input_tokens: 250,
+      cache_read_input_tokens: 170,
+      output_tokens: 50,
+      total_tokens: 300,
+      [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+        inputTokens: 150,
+        freshInputTokens: 50,
+        cacheReadInputTokens: 100,
+        outputTokens: 30,
+        visibleOutputTokens: 10,
+        reasoningTokens: 20,
+        contextTokens: 180,
+        source: 'provider-last-invocation',
+        precision: 'exact'
+      }
+    })
+  })
+
+  it('derives missing totals per Gemini invocation before adding the run total', () => {
+    expect(
+      geminiRunUsageToStats([
+        { promptTokenCount: 100, candidatesTokenCount: 8, totalTokenCount: 108 },
+        null,
+        { promptTokenCount: 150, candidatesTokenCount: 10, thoughtsTokenCount: 20 }
+      ])
+    ).toMatchObject({
+      input_tokens: 250,
+      output_tokens: 38,
+      total_tokens: 288,
+      [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+        contextTokens: 180,
+        source: 'provider-last-invocation',
+        precision: 'derived'
+      }
+    })
+  })
+
+  it('retains known Gemini billing when the latest invocation reports no usage', () => {
+    const stats = geminiRunUsageToStats([
+      { promptTokenCount: 100, candidatesTokenCount: 8, thoughtsTokenCount: 12 },
+      null
+    ])
+    expect(stats).toMatchObject({ input_tokens: 100, output_tokens: 20, total_tokens: 120 })
+    expect(stats[TASKWRAITH_CONTEXT_USAGE_KEY]).toBeUndefined()
+    expect(contextUsageFromStats(stats)).toMatchObject({
+      contextTokens: 120,
+      source: 'provider-turn-aggregate',
+      precision: 'derived'
+    })
+  })
+
+  it('does not invent Gemini billing or context when no invocation reports usage', () => {
+    const stats = geminiRunUsageToStats([null, undefined])
+    expect(stats).toMatchObject({ input_tokens: 0, output_tokens: 0, total_tokens: 0 })
+    expect(contextUsageFromStats(stats)).toBeNull()
   })
 })
