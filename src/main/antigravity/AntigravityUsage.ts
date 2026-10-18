@@ -27,7 +27,6 @@ export const AGY_USAGE_FRESH_TTL_MS = 5 * 60 * 1000
 export const AGY_USAGE_MANUAL_MIN_INTERVAL_MS = 5 * 60 * 1000
 
 const MAX_CAPTURED_OUTPUT = 80_000
-const MAX_QUOTA_GROUPS = 5
 const MAX_LABEL_LENGTH = 120
 const ANSI_CSI_RE = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, 'g')
 const ANSI_OSC_RE = new RegExp(String.raw`\u001b\][^\u0007]*(?:\u0007|\u001b\\)`, 'g')
@@ -241,7 +240,7 @@ function parsePlanType(lines: readonly string[]): string | undefined {
 function parseAgyUsagePoolWindows(
   poolType: AntigravityUsagePoolType,
   region: readonly string[],
-  windows: NormalizedProviderUsageWindow[]
+  windows: Map<string, NormalizedProviderUsageWindow>
 ): void {
   const config = AGY_USAGE_POOL_WINDOWS[poolType]
   const seenKinds = new Set<'weekly' | 'five-hour'>()
@@ -262,7 +261,7 @@ function parseAgyUsagePoolWindows(
     const reset = block.map(parseObservedReset).find((value): value is string => Boolean(value))
     const mapping = kind === 'weekly' ? config.weekly : config.fiveHour
     if (!mapping) continue
-    windows.push({
+    windows.set(mapping.id, {
       id: mapping.id,
       label: mapping.label,
       runs: 0,
@@ -277,7 +276,6 @@ function parseAgyUsagePoolWindows(
         ? { resetAt: reset }
         : {})
     })
-    if (windows.length >= MAX_QUOTA_GROUPS) return
   }
 }
 
@@ -313,12 +311,13 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
   // a Claude+GPT line is never mislabelled as Gemini, and vice versa.
   const headers = lines
     .map((line, index) => ({ line, index }))
-    .filter((entry) => agyUsagePoolType(entry.line) !== null)
+    .filter((entry) => isGroupHeaderLine(entry.line))
   if (headers.length === 0) return { planType, windows: [] }
 
-  const windows: NormalizedProviderUsageWindow[] = []
+  // The fixed pool mappings bound this to five distinct windows. Process every
+  // redraw so duplicates cannot crowd out Argon or retain an older reading.
+  const windows = new Map<string, NormalizedProviderUsageWindow>()
   for (let headerIndex = 0; headerIndex < headers.length; headerIndex += 1) {
-    if (windows.length >= MAX_QUOTA_GROUPS) break
     const currentHeader = headers[headerIndex]
     const currentPool = agyUsagePoolType(currentHeader.line)
     if (!currentPool) continue
@@ -329,9 +328,8 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
     }
     const region = lines.slice(currentHeader.index + 1, nextHeaderIndex)
     parseAgyUsagePoolWindows(currentPool, region, windows)
-    if (windows.length >= MAX_QUOTA_GROUPS) break
   }
-  return { planType, windows }
+  return { planType, windows: [...windows.values()] }
 }
 
 function captureAgyUsagePanel(

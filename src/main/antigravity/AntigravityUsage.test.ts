@@ -43,7 +43,7 @@ it('keeps the CLI Argon weekly limit separate after both shared pools', () => {
 function observedPanel(): string {
   return [
     '\u001b[1mModels & Quota\u001b[0m',
-    'Account: chrisizatt@hotmail.co.uk',
+    'Account: quota.reader@example.com',
     'GEMINI MODELS',
     'Models within this group: Gemini Flash, Gemini Pro',
     'Weekly Limit',
@@ -215,6 +215,65 @@ describe('parseAgyUsagePanel', () => {
       { label: 'Claude/GPT Weekly', remainingPercent: 5 },
       { label: 'Claude/GPT 5H', remainingPercent: 88 }
     ])
+  })
+
+  it('keeps Argon when shared-pool redraws precede the complete panel', () => {
+    const parsed = parseAgyUsagePanel(
+      [
+        observedPanel(),
+        observedPanel().replace('42% remaining', '37% remaining'),
+        'Gemini 4 Argon',
+        'Gemini 4 Argon Weekly Limit',
+        '75% remaining',
+        'Resets: 2026-10-22T23:23:04Z'
+      ].join('\n')
+    )
+
+    expect(parsed.windows).toHaveLength(5)
+    expect(new Set(parsed.windows.map((window) => window.id)).size).toBe(5)
+    expect(parsed.windows[0]).toMatchObject({ remainingPercent: 37, usedPercent: 63 })
+    expect(parsed.windows[4]).toMatchObject({
+      id: 'agy-gemini-argon-wtu-weekly',
+      remainingPercent: 75,
+      usedPercent: 25,
+      resetAt: '2026-10-22T23:23:04Z'
+    })
+  })
+
+  it('uses the latest complete reading when all five windows redraw', () => {
+    const panel = (remaining: number) =>
+      [
+        observedPanel(),
+        'Gemini 4 Argon',
+        'Gemini 4 Argon Weekly Limit',
+        `${remaining}% remaining`
+      ].join('\n')
+    const parsed = parseAgyUsagePanel(
+      [panel(100), panel(25), 'Gemini 4 Argon', 'Gemini 4 Argon Weekly Limit'].join('\n')
+    )
+
+    expect(parsed.windows).toHaveLength(5)
+    expect(parsed.windows[4]).toMatchObject({
+      id: 'agy-gemini-argon-wtu-weekly',
+      remainingPercent: 25,
+      usedPercent: 75
+    })
+  })
+
+  it('does not assign an unrelated pool reading to an incomplete Argon window', () => {
+    const parsed = parseAgyUsagePanel(
+      [
+        'Models & Quota',
+        'Gemini 4 Argon',
+        'Gemini 4 Argon Weekly Limit',
+        'Loading quota',
+        'OTHER MODELS',
+        'Weekly Limit',
+        '80% remaining'
+      ].join('\n')
+    )
+
+    expect(parsed.windows).toEqual([])
   })
 
   it('reads the bar percentage when there is no explicit remaining text', () => {

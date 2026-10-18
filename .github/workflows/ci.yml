@@ -327,7 +327,7 @@ jobs:
         run: |
           node scripts/require-windows-signing-env.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\node_modules\.bin\electron-builder.cmd --win --x64 --arm64 --publish never
+          node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run post-package Windows checks without signing credentials
         run: npm run build:win:checks
@@ -360,8 +360,8 @@ jobs:
               throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
             }
           }
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $feedPrefix = if ($version -match "-") { "beta" } else { "latest" }
+          $feedPrefix = node -p "require('./scripts/release-distribution.cjs').resolveReleaseDistribution().feedChannel"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($arch in @("x64", "arm64")) {
             $feed = "dist/$feedPrefix-win-$arch.yml"
             if (!(Test-Path $feed)) {

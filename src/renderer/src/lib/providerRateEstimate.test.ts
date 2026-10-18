@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BAKED_IN_RATES } from '../../../main/services/ProviderRateService'
+import { geminiUsageMetadataToStats } from '../../../main/ProviderRunStats'
+import { buildEnsembleUsageRecord } from '../../../main/ensembleUsageRecord'
 import {
   estimateRunCostUsd,
   estimateUsageRecordCostUsd,
@@ -417,6 +419,34 @@ describe('usageRecordTotalTokens', () => {
 })
 
 describe('estimateUsageRecordCostUsd', () => {
+  it('bills persisted Argon candidate and thinking tokens once while discounting cached input', () => {
+    const rates = normalizeProviderRates({ baseline: BAKED_IN_RATES })
+    const stats = geminiUsageMetadataToStats({
+      promptTokenCount: 100_000,
+      cachedContentTokenCount: 70_000,
+      candidatesTokenCount: 8_000,
+      thoughtsTokenCount: 12_000,
+      totalTokenCount: 120_000
+    })
+    const record = buildEnsembleUsageRecord({
+      provider: 'antigravity',
+      model: 'gemini-api:gemini-4-argon',
+      workspaceId: 'ws-argon',
+      chatId: 'chat-argon',
+      runId: 'run-argon',
+      stats
+    })!
+
+    expect(record).toMatchObject({
+      inputTokens: 30_000,
+      cacheReadInputTokens: 70_000,
+      outputTokens: 20_000,
+      totalTokens: 120_000
+    })
+    // $0.06 fresh input + $0.007 cached input + $0.20 output (including thoughts).
+    expect(estimateUsageRecordCostUsd(rates, record)).toBeCloseTo(0.267, 6)
+  })
+
   it('prices cache reads at the cached input rate', () => {
     const usd = estimateUsageRecordCostUsd(CLAUDE_RATES, {
       provider: 'claude',

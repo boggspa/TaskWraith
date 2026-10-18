@@ -5,6 +5,7 @@ import {
   cursorUsageToStats,
   extractProviderUsage,
   geminiUsageMetadataToStats,
+  normalizeProviderUsage,
   mergeProviderUsage
 } from './ProviderRunStats'
 import { TASKWRAITH_CONTEXT_USAGE_KEY } from '../shared/contextUsage'
@@ -412,9 +413,13 @@ describe('ProviderRunStats', () => {
         toolUsePromptTokenCount: 250
       })
     ).toMatchObject({
+      input_tokens: 1_000,
+      output_tokens: 200,
+      total_tokens: 1_200,
       [TASKWRAITH_CONTEXT_USAGE_KEY]: {
         contextTokens: 1_200,
         cacheReadInputTokens: 700,
+        outputTokens: 200,
         visibleOutputTokens: 80,
         reasoningTokens: 120,
         toolUsePromptTokens: 250,
@@ -457,7 +462,7 @@ describe('ProviderRunStats', () => {
     })
   })
 
-  it('includes Gemini thinking tokens when deriving a missing total', () => {
+  it('includes Gemini thinking in billable output without counting it twice in a derived total', () => {
     expect(
       geminiUsageMetadataToStats({
         promptTokenCount: 100,
@@ -466,8 +471,43 @@ describe('ProviderRunStats', () => {
       })
     ).toMatchObject({
       input_tokens: 100,
-      output_tokens: 10,
-      total_tokens: 135
+      output_tokens: 35,
+      total_tokens: 135,
+      [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+        contextTokens: 135,
+        outputTokens: 35,
+        visibleOutputTokens: 10,
+        reasoningTokens: 25
+      }
+    })
+  })
+
+  it('bills thought-only Gemini output and remains idempotent when normalized again', () => {
+    const stats = geminiUsageMetadataToStats({
+      promptTokenCount: 100,
+      thoughtsTokenCount: 25
+    })
+    expect(stats).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 25,
+      total_tokens: 125,
+      [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+        contextTokens: 125,
+        outputTokens: 25,
+        visibleOutputTokens: 0,
+        reasoningTokens: 25
+      }
+    })
+    expect(normalizeProviderUsage('antigravity', stats)).toEqual(stats)
+    expect(geminiUsageMetadataToStats(stats)).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 25,
+      total_tokens: 125,
+      [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+        contextTokens: 125,
+        visibleOutputTokens: 0,
+        reasoningTokens: 25
+      }
     })
   })
 })

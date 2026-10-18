@@ -294,7 +294,10 @@ export function geminiUsageMetadataToStats(
   const normalized = normalizeProviderUsage('gemini', {
     ...raw,
     input_tokens: promptTokenCount,
-    output_tokens: candidatesTokenCount,
+    // Gemini bills thinking at the output rate, but reports it separately
+    // from candidates. Keep raw metadata for the visible/context breakdown.
+    output_tokens: candidatesTokenCount + thoughtsTokenCount,
+    _taskwraith_output_includes_reasoning: true,
     ...(cachedContentTokenCount > 0
       ? {
           cache_read_input_tokens: cachedContentTokenCount,
