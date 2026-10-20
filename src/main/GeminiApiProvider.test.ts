@@ -1006,7 +1006,7 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     }
   )
 
-  it('does not reuse an earlier tool-round usage snapshot when the final invocation omits it', async () => {
+  it('retains earlier billing without reusing its context when the final invocation omits usage', async () => {
     const { loader } = scriptedSdk([
       [
         {
@@ -1032,15 +1032,84 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
 
     const result = lines.find((line) => line.payload?.type === 'result')?.payload
     expect(result?.stats).toMatchObject({
-      input_tokens: 0,
-      output_tokens: 0,
-      total_tokens: 0
+      input_tokens: 12,
+      output_tokens: 1,
+      total_tokens: 13
     })
     expect(result?.stats?._taskwraith_context_usage).toBeUndefined()
     expect(usageRecords[0]).toMatchObject({
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0
+      inputTokens: 12,
+      outputTokens: 1,
+      totalTokens: 13
+    })
+  })
+
+  it('bills each merged tool-round snapshot once and keeps final-call context separate', async () => {
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          functionCalls: [{ id: 'call-1', name: 'read_file', args: { path: 'README.md' } }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            cachedContentTokenCount: 70,
+            candidatesTokenCount: 8,
+            thoughtsTokenCount: 12,
+            totalTokenCount: 120
+          }
+        },
+        { usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 8 } }
+      ],
+      [
+        {
+          text: 'Final answer.',
+          usageMetadata: { promptTokenCount: 150, cachedContentTokenCount: 100 }
+        },
+        {
+          usageMetadata: {
+            candidatesTokenCount: 10,
+            thoughtsTokenCount: 20,
+            totalTokenCount: 180
+          }
+        },
+        { usageMetadata: { totalTokenCount: 180 } }
+      ]
+    ])
+    const { deps, lines, usageRecords } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'file contents here', isError: false })
+    })
+
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    expect(callsRef).toHaveLength(2)
+    expect(usageRecords).toHaveLength(1)
+    expect(usageRecords[0]).toMatchObject({
+      inputTokens: 80,
+      cacheReadInputTokens: 170,
+      outputTokens: 50,
+      totalTokens: 300
+    })
+    const result = lines.find((line) => line.payload?.type === 'result')?.payload
+    expect(result?.stats).toMatchObject({
+      input_tokens: 250,
+      cache_read_input_tokens: 170,
+      output_tokens: 50,
+      total_tokens: 300,
+      _taskwraith_usage_recorded: true,
+      _taskwraith_context_usage: {
+        contextTokens: 180,
+        inputTokens: 150,
+        freshInputTokens: 50,
+        cacheReadInputTokens: 100,
+        outputTokens: 30,
+        visibleOutputTokens: 10,
+        reasoningTokens: 20,
+        source: 'provider-last-invocation',
+        precision: 'exact'
+      }
     })
   })
 

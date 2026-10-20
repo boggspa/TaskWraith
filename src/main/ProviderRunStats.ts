@@ -5,7 +5,7 @@ import {
   usageCacheReadInputTokens,
   usageInputIncludesCache
 } from '../shared/usageAccounting'
-import { withContextUsageSnapshot } from '../shared/contextUsage'
+import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../shared/contextUsage'
 import {
   GROK_46_MODEL_ID,
   cursorGrokBaseModelId,
@@ -316,6 +316,49 @@ export function geminiUsageMetadataToStats(
     // thoughts/candidates fields are indistinguishable from genuine zeroes.
     precision: hasExplicitTotalTokenCount ? 'exact' : 'derived'
   })
+}
+
+/**
+ * Each entry is one completed invocation's already-merged stream metadata.
+ * Bill every invocation once while retaining only the final one's context.
+ * A missing final snapshot must not reuse an earlier exact context reading.
+ */
+export function geminiRunUsageToStats(
+  invocations: ReadonlyArray<Record<string, unknown> | null | undefined>,
+  durationMs = 0,
+  options: { alreadyRecorded?: boolean } = {}
+): Record<string, unknown> {
+  const aggregate = {
+    promptTokenCount: 0,
+    cachedContentTokenCount: 0,
+    candidatesTokenCount: 0,
+    thoughtsTokenCount: 0,
+    toolUsePromptTokenCount: 0,
+    totalTokenCount: 0
+  }
+  let latestStats: Record<string, unknown> | undefined
+  for (const usage of invocations) {
+    const raw = usage || {}
+    latestStats = geminiUsageMetadataToStats(raw)
+    for (const key of [
+      'promptTokenCount',
+      'cachedContentTokenCount',
+      'candidatesTokenCount',
+      'thoughtsTokenCount',
+      'toolUsePromptTokenCount'
+    ] as const) {
+      aggregate[key] += canonicalUsageCount(raw, key)
+    }
+    // Derive a missing total per invocation, before adding it to other
+    // invocations whose provider total may have been present.
+    aggregate.totalTokenCount += canonicalUsageCount(latestStats, 'total_tokens')
+  }
+
+  const stats = geminiUsageMetadataToStats(aggregate, durationMs, options)
+  delete stats[TASKWRAITH_CONTEXT_USAGE_KEY]
+  const latestContext = latestStats?.[TASKWRAITH_CONTEXT_USAGE_KEY]
+  if (latestContext) stats[TASKWRAITH_CONTEXT_USAGE_KEY] = latestContext
+  return stats
 }
 
 export function buildAgentExitStats(

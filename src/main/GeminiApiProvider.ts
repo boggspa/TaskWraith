@@ -78,7 +78,7 @@
 import { promises as fsPromises } from 'fs'
 import { extname } from 'path'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
-import { geminiUsageMetadataToStats } from './ProviderRunStats'
+import { geminiRunUsageToStats } from './ProviderRunStats'
 import type {
   AppSettings,
   ChatMessage,
@@ -1126,7 +1126,7 @@ export async function tryRunGeminiApi(
     }
 
     const startedAt = Date.now()
-    let lastUsage: Record<string, number> | null = null
+    const invocationUsage: Array<Record<string, number> | null> = []
     let aborted = false
 
     // Phase M1 Step 3: outer round loop. Each iteration consumes one
@@ -1157,11 +1157,9 @@ export async function tryRunGeminiApi(
       const roundThinkingId = `gemini-thinking-${normalizedRoute.appRunId || 'run'}-${round}`
       // Gemini normally puts one complete usageMetadata object on the final
       // chunk, but the streaming contract permits fields to arrive across
-      // several chunks. Merge only within this model invocation; a later tool
-      // round starts a fresh snapshot and replaces it. Clear the run-level
-      // pointer too: if that later invocation omits metadata, retaining the
-      // prior round would falsely label stale usage as the exact latest call.
-      lastUsage = null
+      // several chunks. Merge only within this model invocation, then append
+      // it once for billing. Retain null entries too: if the final invocation
+      // omits metadata, it must not inherit the prior round's exact context.
       let roundUsage: Record<string, number> | null = null
       try {
         const stream = await client.models.generateContentStream({
@@ -1227,7 +1225,6 @@ export async function tryRunGeminiApi(
           const usage = chunkUsage(chunk)
           if (usage) {
             roundUsage = mergeChunkUsage(roundUsage, usage)
-            lastUsage = roundUsage
           }
         }
       } catch (error) {
@@ -1253,6 +1250,8 @@ export async function tryRunGeminiApi(
         aborted = true
         break
       }
+
+      invocationUsage.push(roundUsage)
 
       // No function calls this round → model emitted its final answer.
       if (pendingFunctionCalls.length === 0) break
@@ -1395,6 +1394,7 @@ export async function tryRunGeminiApi(
     }
 
     const durationMs = Date.now() - startedAt
+    const runUsageStats = geminiRunUsageToStats(invocationUsage, durationMs)
 
     // Phase M1 Step 8: route the API's `usageMetadata` into the host-side
     // `AppStore.recordUsage` so the renderer's usage card + quota
@@ -1415,13 +1415,11 @@ export async function tryRunGeminiApi(
     if (recordUsage && appRunId && appChatId) {
       usageAlreadyRecorded = true
       try {
-        const reportedInputTokens = lastUsage?.promptTokenCount ?? 0
-        const cacheReadInputTokens = lastUsage?.cachedContentTokenCount ?? 0
+        const reportedInputTokens = Number(runUsageStats.input_tokens) || 0
+        const cacheReadInputTokens = Number(runUsageStats.cache_read_input_tokens) || 0
         const inputTokens = Math.max(0, reportedInputTokens - cacheReadInputTokens)
-        // Thinking is reported separately but is billed at the output rate.
-        const outputTokens =
-          (lastUsage?.candidatesTokenCount ?? 0) + (lastUsage?.thoughtsTokenCount ?? 0)
-        const totalTokens = lastUsage?.totalTokenCount ?? reportedInputTokens + outputTokens
+        const outputTokens = Number(runUsageStats.output_tokens) || 0
+        const totalTokens = Number(runUsageStats.total_tokens) || 0
         const workspaceId =
           priorChat?.workspaceId ||
           (priorChat?.scope === 'global' ? '__taskwraith_global_chats__' : '') ||
@@ -1507,9 +1505,8 @@ export async function tryRunGeminiApi(
             type: 'result',
             status: 'success',
             stats: {
-              ...geminiUsageMetadataToStats(lastUsage || {}, durationMs, {
-                alreadyRecorded: usageAlreadyRecorded
-              })
+              ...runUsageStats,
+              ...(usageAlreadyRecorded ? { _taskwraith_usage_recorded: true } : {})
             },
             provider: tag,
             runtime: runtimeLabel,
