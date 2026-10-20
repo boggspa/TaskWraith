@@ -31,6 +31,7 @@ import {
 } from '../host-runtime/HostLeaseRegistry'
 import { readHostRegistryEntry } from '../host-runtime/HostRegistry'
 import { HOST_END_PROCESS_FLUSH_MS } from '../host-runtime/cli'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from './HostNodeProductionServer'
 import { observeProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
 
 const paths: string[] = []
@@ -885,7 +886,7 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     const host = spawnHost(
       cli,
       profile,
-      // A grace longer than the test: only the request stops this Host.
+      // Allow startup and the explicit stop request before lifetime idling.
       { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:40000,stop:5000' },
       [],
       ['--require', writersDrainHook(root, cli, 'fail')]
@@ -915,12 +916,14 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     )
     // The request was acknowledged, but the authority it waits to see go
     // names a process that is gone: `cli.js stop` says the stop did not finish.
-    await waitForExit(stop, 15_000)
+    // Give the client its declared cleanup budget plus the existing scheduling
+    // allowance; the Host's own exit bound above remains independent.
+    await waitForExit(stop, HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS + 15_000)
     expect(stop.exitCode, stopStderr).toBe(1)
     expect(stopStderr).toContain('ownership artifacts remain')
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
     await takesTheProfileOver(cli, profile, root)
-  }, 90_000)
+  }, HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS + 90_000)
 
   /**
    * S1a review N2b. endHostProcess exits once stderr has drained, and only its
