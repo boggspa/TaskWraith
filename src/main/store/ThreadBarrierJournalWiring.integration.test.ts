@@ -357,6 +357,13 @@ describe("the journal's idle sweep, with the Host owning the store", () => {
     const written = statSync(lines).size
     expect(written).toBeGreaterThan(MiB)
 
+    if (env[BARRIER] === '1') {
+      // Pay the journal debt from both setup saves before the idle timer
+      // treats their files as quiet. Dispatch tickets omit the running reply.
+      await AppStore.payOwnedThreadJournal('chat-quiet')
+      expect(AppStore.getThreadBarrierDurabilityPerf().threads).toMatchObject({ owing: 0 })
+    }
+
     vi.advanceTimersByTime(20_000)
     return { journal, lines, written }
   }
@@ -364,9 +371,13 @@ describe("the journal's idle sweep, with the Host owning the store", () => {
   it('folds a quiet thread that meets the fold rule under barrier durability', async () => {
     const { journal, lines } = await quietThread({ [BARRIER]: '1' })
 
-    await vi.waitFor(() => expect(journal.stats().compactionsAdopted).toBe(1), {
-      timeout: 3_000
-    })
+    await vi.waitFor(
+      () => {
+        const stats = journal.stats()
+        expect(stats.compactionsAdopted, JSON.stringify(stats)).toBe(1)
+      },
+      { timeout: 3_000 }
+    )
     expect(built.idleSweeps).toBeGreaterThan(0)
     // The segmented store keeps to where the legacy store may write.
     expect(built.segmentedSweeps).toBe(0)

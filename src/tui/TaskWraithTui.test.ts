@@ -3964,6 +3964,10 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await host.start()
     cleanup.push(() => host.stop())
     const { tui, input, output } = startTui(userDataPath)
+    const internals = tui as unknown as {
+      state: { coldStart?: { kind: string; workspaceId?: string; threadId?: string } }
+      mutationInFlight: boolean
+    }
 
     await tui.start()
     await waitFor(
@@ -3972,9 +3976,15 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
     feed(input, '/tmp/tui-cold-start')
     feed(input, '\r')
+    // The Host records each command before its receipt advances the TUI's
+    // setup state. Complete that transition before sending the next Enter.
     await waitFor(
-      () => host.commands.some((command) => command.name === 'workspace.register'),
-      'workspace registration command'
+      () =>
+        host.commands.some((command) => command.name === 'workspace.register') &&
+        internals.state.coldStart?.kind === 'workspace' &&
+        internals.state.coldStart.workspaceId === 'setup-workspace-1' &&
+        !internals.mutationInFlight,
+      'workspace registration applied and completed'
     )
 
     feed(input, '\r')
@@ -3983,8 +3993,13 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     await waitFor(() => output.lastFrame.includes('create a thread'), 'thread creation prompt')
     feed(input, '\r')
     await waitFor(
-      () => host.commands.some((command) => command.name === 'thread.create'),
-      'thread creation command'
+      () =>
+        host.commands.some((command) => command.name === 'thread.create') &&
+        internals.state.coldStart?.kind === 'thread' &&
+        internals.state.coldStart.workspaceId === 'setup-workspace-1' &&
+        internals.state.coldStart.threadId === 'setup-thread-1' &&
+        !internals.mutationInFlight,
+      'thread creation applied and completed'
     )
 
     feed(input, '\r')
