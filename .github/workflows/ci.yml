@@ -1,981 +1,131 @@
-name: CI
+name: Cancel superseded queued-start CI
 
 on:
   push:
-  pull_request:
-  # Nightly platform sweep. The local gate runs on macOS, so a defect shaped by
-  # Linux or Windows is invisible until something triggers the matrix — and on
-  # the 1.9.0 candidate the thing that triggered it was ship night. Three of
-  # five legs went red with five separate defects, every one in a feature that
-  # landed after v1.8.9 and had therefore never executed on those platforms.
-  # A nightly run surfaces that class the day it lands instead of on the eve of
-  # a release. scripts/platform-portability-guard.cjs catches the greppable
-  # signatures locally; this catches everything that is only visible by running.
-  #
-  # Only `test` (the four-OS matrix) and `ios` execute on this trigger: the
-  # release jobs require a `refs/tags/v` ref and the unsigned build jobs require
-  # `github.event_name == 'workflow_dispatch'`, so neither fires on a schedule.
-  # GitHub runs scheduled workflows on the DEFAULT BRANCH only, and disables the
-  # schedule after 60 days without repository activity.
-  schedule:
-    - cron: '17 3 * * *' # 03:17 UTC daily — off the hour, which is peak queueing
-  workflow_dispatch:
-    inputs:
-      build_unsigned_windows:
-        description: 'Build SHA/run-labelled unsigned Windows test artifacts. Never publishes a release.'
-        required: true
-        type: boolean
-        default: false
-      build_unsigned_linux:
-        description: 'Build SHA/run-labelled unsigned Linux test artifacts. Never publishes a release.'
-        required: true
-        type: boolean
-        default: false
-      unsigned_build_ref:
-        description: 'Optional exact source ref for unsigned artifact recovery. Defaults to the dispatched workflow SHA.'
-        required: false
-        type: string
-        default: ''
-      unsigned_distribution:
-        description: 'Package the source identity, the 0.1.0 debut, or the frozen 1.9.9 handoff.'
-        required: true
-        type: choice
-        options: [source, debut, handoff]
-        default: source
-      handoff_payload_sha256:
-        description: 'Approved identity-handoff.json SHA-256; required only for handoff builds.'
-        required: false
-        type: string
-        default: ''
-      handoff_download_tag:
-        description: 'Source of pinned target bytes: v0.1.0 or a private v0.1.0-handoff-rc.N draft.'
-        required: false
-        type: string
-        default: v0.1.0
+    branches:
+      - codex/cancel-superseded-queued-start-ci-666bdf7
+
+permissions: {}
 
 jobs:
-  handoff-input-preflight:
-    name: Read-only handoff input access
-    if: github.event_name == 'workflow_dispatch' && inputs.unsigned_distribution == 'handoff'
+  cancel-obsolete:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: write
       contents: read
+      pull-requests: read
     steps:
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.3'
-      # No checkout, dependency installation, publication, or permission
-      # escalation. Surface inaccessible drafts before the full matrix ends.
-      - name: Verify the runner can read the approved handoff payload
-        shell: bash
+      - name: Cancel only the four verified superseded CI runs
         env:
           GH_TOKEN: ${{ github.token }}
-          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
-          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
-          TASKWRAITH_HANDOFF_SOURCE_COMMIT: ${{ inputs.unsigned_build_ref || github.sha }}
+        shell: bash
         run: |
           node <<'NODE'
-          const fs = require('node:fs');
-          const os = require('node:os');
-          const path = require('node:path');
-          const crypto = require('node:crypto');
-          const { execFileSync } = require('node:child_process');
-          const tag = process.env.TASKWRAITH_HANDOFF_DOWNLOAD_TAG;
-          const digest = process.env.TASKWRAITH_HANDOFF_PAYLOAD_SHA256;
-          const source = process.env.TASKWRAITH_HANDOFF_SOURCE_COMMIT;
-          if (!/^v0\.1\.0(?:-handoff-rc\.[1-9]\d*)?$/.test(tag || '')) throw new Error('Invalid handoff tag.');
-          if (!/^[a-f0-9]{64}$/.test(digest || '')) throw new Error('Approved payload SHA-256 is required.');
-          if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source || '')) throw new Error('Exact handoff source commit is required.');
-          const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-handoff-access-'));
-          try {
-            execFileSync('gh', ['release', 'download', tag, '--repo', 'boggspa/TaskWraith', '--pattern', 'identity-handoff.json', '--dir', directory], { stdio: 'pipe' });
-            const file = path.join(directory, 'identity-handoff.json');
-            if (fs.statSync(file).size > 64 * 1024) throw new Error('Handoff payload is oversized.');
-            const bytes = fs.readFileSync(file);
-            if (crypto.createHash('sha256').update(bytes).digest('hex') !== digest) throw new Error('Handoff payload SHA-256 mismatch.');
-            const payload = JSON.parse(bytes.toString('utf8'));
-            if (payload.prepared !== true || payload.sourceCommit !== source) throw new Error('Handoff payload source mismatch.');
-            console.log('Read-only runner verified access to the approved handoff payload.');
-          } finally {
-            fs.rmSync(directory, { recursive: true, force: true });
+          const repo = 'boggspa/TaskWraith'
+          const current16 = '666bdf72ec989968cd8a58fd355c699edfbd225b'
+          const current17 = '5df86faaed363e789487cc3bbc7af15e25f9c42f'
+          const branch16 = 'codex/argon-quota-effort-followup'
+          const branch17 = 'codex/gemini-tool-loop-billing'
+          const maintenanceBranch = 'codex/cancel-superseded-queued-start-ci-666bdf7'
+          const allowed = [
+            { id: 39375008998, sha: 'feb14a51cf082db65c578c1edb0792d997690ef9', branch: branch16, event: 'push' },
+            { id: 39375015364, sha: 'feb14a51cf082db65c578c1edb0792d997690ef9', branch: branch16, event: 'pull_request' },
+            { id: 39375276126, sha: '9206d9e2bde14ca62d26dc75b834c0329e19fc42', branch: branch17, event: 'push' },
+            { id: 39375281797, sha: '9206d9e2bde14ca62d26dc75b834c0329e19fc42', branch: branch17, event: 'pull_request' }
+          ]
+          if (process.env.GITHUB_REPOSITORY !== repo ||
+              process.env.GITHUB_EVENT_NAME !== 'push' ||
+              process.env.GITHUB_REF !== 'refs/heads/' + maintenanceBranch ||
+              !process.env.GH_TOKEN) throw new Error('Unexpected maintenance context')
+          async function request(path, method = 'GET') {
+            const response = await fetch('https://api.github.com/repos/' + repo + '/' + path, {
+              method,
+              redirect: 'error',
+              signal: AbortSignal.timeout(15000),
+              headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: 'Bearer ' + process.env.GH_TOKEN,
+                'X-GitHub-Api-Version': '2026-03-10',
+                'User-Agent': 'TaskWraith-superseded-CI-maintenance'
+              }
+            })
+            const expected = method === 'POST' ? 202 : 200
+            if (response.status !== expected) throw new Error(method + ' ' + path + ' returned ' + response.status)
+            return method === 'POST' ? response.status : response.json()
           }
+          async function protectedHeads() {
+            const branches = ['master', 'codex/add-gemini-4-argon', branch16, branch17]
+            const refs = await Promise.all(branches.map((branch) => request('git/ref/heads/' + branch)))
+            if (refs.some((ref, index) => ref.ref !== 'refs/heads/' + branches[index] ||
+                ref.object?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(ref.object.sha))) {
+              throw new Error('Invalid protected branch response')
+            }
+            if (refs[2].object.sha !== current16) throw new Error('Current PR16 branch changed')
+            if (refs[3].object.sha !== current17) throw new Error('Current PR17 branch changed')
+            const heads = new Set(refs.map((ref) => ref.object.sha))
+            heads.add(process.env.GITHUB_SHA)
+            let foundCurrent16 = false
+            let foundCurrent17 = false
+            let complete = false
+            for (let page = 1; page <= 100; page += 1) {
+              const pulls = await request('pulls?state=open&per_page=100&page=' + page)
+              if (!Array.isArray(pulls)) throw new Error('Invalid open PR response')
+              for (const pr of pulls) {
+                if (!/^[a-f0-9]{40}$/.test(pr.head?.sha)) throw new Error('Invalid open PR head')
+                heads.add(pr.head.sha)
+                if (pr.number === 16) {
+                  if (pr.head.sha !== current16 || pr.head.ref !== branch16 ||
+                      pr.head.repo?.full_name !== repo) throw new Error('Open PR16 head changed')
+                  foundCurrent16 = true
+                }
+                if (pr.number === 17) {
+                  if (pr.head.sha !== current17 || pr.head.ref !== branch17 ||
+                      pr.head.repo?.full_name !== repo) throw new Error('Open PR17 head changed')
+                  foundCurrent17 = true
+                }
+              }
+              if (pulls.length < 100) { complete = true; break }
+            }
+            if (!complete || !foundCurrent16 || !foundCurrent17) throw new Error('Could not establish every open PR head')
+            return heads
+          }
+          function validate(run, target) {
+            if (run.id !== target.id || run.head_sha !== target.sha ||
+                run.head_branch !== target.branch || run.event !== target.event ||
+                run.name !== 'CI' || run.path !== '.github/workflows/ci.yml' ||
+                run.workflow_id !== 287125620 || run.run_attempt !== 1 ||
+                run.repository?.full_name !== repo || run.head_repository?.full_name !== repo ||
+                String(run.id) === process.env.GITHUB_RUN_ID) {
+              throw new Error('Allowlisted run identity mismatch: ' + target.id)
+            }
+            if (!['queued', 'in_progress', 'completed'].includes(run.status)) {
+              throw new Error('Unexpected run state: ' + target.id + ' ' + run.status)
+            }
+          }
+          ;(async () => {
+            const initialHeads = await protectedHeads()
+            for (const target of allowed) {
+              const run = await request('actions/runs/' + target.id)
+              validate(run, target)
+              if (initialHeads.has(run.head_sha)) throw new Error('Run is current: ' + target.id)
+              console.log('PREFLIGHT ' + JSON.stringify({ id: run.id, head: run.head_sha, event: run.event, status: run.status }))
+            }
+            for (const target of allowed) {
+              const run = await request('actions/runs/' + target.id)
+              validate(run, target)
+              if (run.status === 'completed') {
+                console.log('SKIP_COMPLETED ' + JSON.stringify({ id: run.id, conclusion: run.conclusion }))
+                continue
+              }
+              const liveHeads = await protectedHeads()
+              if (liveHeads.has(run.head_sha)) throw new Error('Run became current: ' + target.id)
+              const status = await request('actions/runs/' + target.id + '/cancel', 'POST')
+              console.log('CANCEL_ACCEPTED ' + JSON.stringify({ id: target.id, head: target.sha, status }))
+            }
+          })().catch((error) => { console.error(String(error)); process.exitCode = 1 })
+          
           NODE
-
-  test:
-    name: Test (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    env:
-      NODE_OPTIONS: --max-old-space-size=4096
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-          - name: macOS Apple Silicon
-            os: macos-15
-          - name: macOS Intel
-            os: macos-15-intel
-          - name: Windows
-            os: windows-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      - run: npm ci
-      # Configuration-honest breadcrumb for the platform-evidence loop: records
-      # which matrix leg and runner host executed this job. Does not prove local
-      # countermeasures; the local platform-evidence guard only checks that this
-      # step still exists and never claims remote legs ran.
-      - name: Record runner identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "matrix.name=${{ matrix.name }}"
-          echo "matrix.os=${{ matrix.os }}"
-          echo "runner.os=${{ runner.os }}"
-          echo "runner.arch=${{ runner.arch }}"
-          echo "runner.name=${{ runner.name }}"
-          uname -a || true
-          node -p "'node ' + process.version + ' ' + process.platform + '/' + process.arch"
-      - name: Verify native Windows persistence startup
-        if: runner.os == 'Windows'
-        run: >-
-          npx vitest run
-          src/main/store/IncrementalChatJournal.folderDebt.test.ts
-          src/host-shared/thread-log/NodeThreadFileSystem.test.ts
-          src/host-runtime/HostThreadLogFollower.process.test.ts
-          src/host-runtime/HostThreadHistoryRouter.test.ts
-          src/host-runtime/HostThreadPublicationGuard.test.ts
-          src/host-runtime/HostTransactionLog.test.ts
-          src/host-node/HostQueuedStartInterference.subprocess.test.ts
-      - run: npm run ci
-      # The native macOS bridge daemon gates Screen Watch / creative-app /
-      # editor actions, so its Swift unit tests must pass before changes land.
-      # The bridge is macOS-only and needs the Xcode Swift toolchain
-      # (preinstalled on GitHub macOS runners), so this step is gated to the
-      # macOS legs of the matrix and skipped on Linux/Windows. `swift test`
-      # exits non-zero on failure, which fails this job.
-      # Pin the same Xcode the ios job and the ship toolchain use. The runner
-      # default is newer, and Swift 6.3 promotes region-isolation sending
-      # diagnostics to ERRORS that 6.2 only warns on -- so an unpinned lane
-      # fails on latent concurrency debt in TaskWraithStudioCore rather than on
-      # a regression, and tests a compiler we do not ship with.
-      - name: Select Xcode 26.0 (Swift 6.2 - matches ship toolchain)
-        if: runner.os == 'macOS'
-        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with:
-          xcode-version: '26.0'
-      - name: Swift bridge tests (macOS only)
-        if: runner.os == 'macOS'
-        run: |
-          swift --version
-          npm run test:swift:bridge
-
-  # iOS companion gate — the Electron matrix can't see iOS regressions, and the
-  # phone is the monetized launch surface. macOS 26 runner for the iOS 26 SDK
-  # (TaskWraithUI uses `.glassEffect`), with Xcode PINNED to 26.0 (Swift 6.2) to
-  # MATCH the shipping toolchain: the runner's default Xcode 26.5 (Swift 6.3.2)
-  # enforces region-isolation `sending` diagnostics as errors that local
-  # Swift 6.2.4 does not, so an unpinned lane would fail on latent concurrency
-  # debt rather than real regressions. (TODO: clear that Swift-6.3 region-
-  # isolation debt in RemoteSessionModel before bumping the pin.)
-  ios:
-    name: iOS (Kit tests)
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Available Xcodes (pre-pin diagnostic)
-        run: ls -d /Applications/Xcode*.app
-      - name: Select Xcode 26.0 (Swift 6.2 — matches ship toolchain)
-        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with:
-          xcode-version: '26.0'
-      - name: Toolchain versions
-        run: xcodebuild -version && swift --version
-      # `swift test` builds TaskWraithKit + TaskWraithUI (all the SwiftUI/Glass
-      # code) for the host and runs the 73 unit tests — the real regression
-      # gate. An app-target `xcodebuild` is intentionally NOT run here: the
-      # pinned Xcode 26.0 lacks the iOS simulator PLATFORM (GitHub pre-installs
-      # it only for the runner's default Xcode 26.5), and `-downloadPlatform iOS`
-      # would add minutes + GBs per run just to compile the thin app wrapper.
-      - name: Swift package tests (TaskWraithKit)
-        run: swift test --package-path ios/TaskWraithKit
-
-  notarized-macos-release:
-    name: Notarized macOS Release
-    runs-on: macos-15
-    needs: [test, ios]
-    outputs:
-      artifact-name: ${{ steps.release-artifact-name.outputs.name }}
-    if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true'
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      - run: npm ci
-      - name: Verify tag and release metadata
-        run: npm run verify:release-tag
-      - run: npm run security:deps
-      - name: Prepare macOS artifacts without signing credentials
-        run: |
-          npm run clean:dist
-          npm run test:swift:bridge
-          TASKWRAITH_BRIDGE_ARCH=universal npm run prebuild:bridge-daemon
-          node scripts/smoke-bridge-daemon-roundtrip.cjs
-          npm run prepare:mac-universal-deps
-          npm run prepare:tui-runtime:mac
-          npm run build
-      - name: Sign, package, and notarize macOS artifacts
-        env:
-          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-          CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
-          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: >-
-          node scripts/run-electron-builder.cjs --mac --universal --publish never
-          -c.npmRebuild=false -c.mac.notarize=true
-      - name: Finalize exact macOS release artifacts
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run finalize:mac-release-artifacts
-      - name: Run post-package macOS checks without signing credentials
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
-        run: |
-          node scripts/smoke-packaged-electron.cjs dist
-          npm run smoke:mac-artifacts
-          node scripts/guard-no-bundled-secrets.cjs --require-packaged
-          npm run validate:mac-update-feed
-          npm run security:sbom
-      - name: Verify notarized macOS artifacts
-        run: |
-          set -euo pipefail
-          test -d "dist/mac-universal/TaskWraith.app"
-          codesign --verify --deep --strict --verbose=2 "dist/mac-universal/TaskWraith.app"
-          spctl --assess --type execute --verbose=4 "dist/mac-universal/TaskWraith.app"
-          xcrun stapler validate "dist/mac-universal/TaskWraith.app"
-          for artifact in dist/*.dmg; do
-            test -f "$artifact"
-            xcrun stapler validate "$artifact"
-          done
-      - name: Record macOS candidate artifact name
-        id: release-artifact-name
-        run: echo "name=release-macos-${GITHUB_REF_NAME}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Stage verified macOS release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ steps.release-artifact-name.outputs.name }}
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*-universal-mac.zip.blockmap
-            dist/*-mac.yml
-            dist/sbom.cdx.json
-          if-no-files-found: error
-          retention-days: 7
-
-  signed-windows-release:
-    name: Signed Windows Release
-    runs-on: windows-latest
-    needs: [test, ios]
-    outputs:
-      artifact-name: ${{ steps.release-artifact-name.outputs.name }}
-    if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      - run: npm ci
-      - name: Verify tag and release metadata
-        run: npm run verify:release-tag
-      - run: npm run security:deps
-      - name: Compile Windows artifacts without signing credentials
-        run: npm run build:win:compile
-      - name: Sign and package Windows artifacts
-        env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-        shell: pwsh
-        run: |
-          node scripts/require-windows-signing-env.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run post-package Windows checks without signing credentials
-        run: npm run build:win:checks
-      - name: Run strict native Windows package and TUI smoke
-        shell: pwsh
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-        run: |
-          node scripts/smoke-packaged-electron.cjs dist/win-unpacked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Scan final Windows package payloads for bundled secrets
-        run: node scripts/guard-no-bundled-secrets.cjs --require-packaged
-      - name: Generate Windows SBOM with embedded runtime components
-        env:
-          TASKWRAITH_SBOM_PATH: dist/sbom-windows.cdx.json
-        run: npm run security:sbom
-      - name: Verify signed Windows artifacts
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installers = Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe"
-          if ($installers.Count -lt 2) {
-            throw "Expected signed x64 and arm64 Windows installers in dist/."
-          }
-          foreach ($installer in $installers) {
-            $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
-            if ($signature.Status -ne "Valid") {
-              throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
-            }
-          }
-          $feedPrefix = node -p "require('./scripts/release-distribution.cjs').resolveReleaseDistribution().feedChannel"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($arch in @("x64", "arm64")) {
-            $feed = "dist/$feedPrefix-win-$arch.yml"
-            if (!(Test-Path $feed)) {
-              throw "Missing $feed"
-            }
-          }
-      - name: Smoke signed Windows installer lifecycle
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem -Path dist -Filter "TaskWraith-*-win-x64-setup.exe" |
-            Select-Object -First 1
-          if (!$installer) {
-            throw "Missing signed x64 installer for lifecycle smoke."
-          }
-          & .\scripts\smoke-win-installer.ps1 -InstallerPath $installer.FullName
-      - name: Record Windows candidate artifact name
-        id: release-artifact-name
-        shell: pwsh
-        run: |
-          $name = "release-windows-$env:GITHUB_REF_NAME-$env:GITHUB_RUN_ATTEMPT"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "name=$name"
-      - name: Stage verified Windows release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ steps.release-artifact-name.outputs.name }}
-          path: |
-            dist/TaskWraith-*-win-*-setup.exe
-            dist/TaskWraith-*-win-*-setup.exe.blockmap
-            dist/*-win-*.yml
-            dist/sbom-windows.cdx.json
-            dist/win-arm64-unpacked/**
-          if-no-files-found: error
-          retention-days: 7
-
-  windows-arm64-release-candidate:
-    name: Windows ARM64 Release Candidate Gate
-    runs-on: windows-11-arm
-    needs: [signed-windows-release]
-    if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      - run: npm ci
-      - name: Download signed Windows candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ${{ needs.signed-windows-release.outputs.artifact-name }}
-          path: candidate
-      - name: Verify native ARM64 signatures
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem candidate -Filter "TaskWraith-*-win-arm64-setup.exe" |
-            Select-Object -First 1
-          if (!$installer) {
-            throw "Missing signed ARM64 installer."
-          }
-          foreach ($path in @(
-            $installer.FullName,
-            (Join-Path $PWD "candidate/win-arm64-unpacked/TaskWraith.exe")
-          )) {
-            $signature = Get-AuthenticodeSignature -FilePath $path
-            if ($signature.Status -ne "Valid") {
-              throw "Invalid Authenticode signature for ${path}: $($signature.Status)"
-            }
-          }
-      - name: Run strict native ARM64 package and TUI smoke
-        shell: pwsh
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-        run: |
-          node scripts/smoke-packaged-electron.cjs candidate/win-arm64-unpacked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Smoke signed ARM64 installer lifecycle
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem candidate -Filter "TaskWraith-*-win-arm64-setup.exe" |
-            Select-Object -First 1
-          if (!$installer) {
-            throw "Missing signed ARM64 installer."
-          }
-          & .\scripts\smoke-win-installer.ps1 `
-            -InstallerPath $installer.FullName `
-            -InstallDir (Join-Path $env:TEMP "TaskWraithArm64SmokeInstall")
-
-  publish-coordinated-release:
-    name: Publish Coordinated Release
-    runs-on: ubuntu-latest
-    needs:
-      - notarized-macos-release
-      - signed-windows-release
-      - windows-arm64-release-candidate
-    # Credentialed CI publication is permanently inoperative. Stable releases
-    # use the local signed/notarized macOS build plus manually attached unsigned
-    # Windows/Linux artifacts.
-    if: ${{ false }}
-    concurrency:
-      group: release-publish-${{ github.ref }}
-      cancel-in-progress: false
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      - run: npm ci
-      - name: Download verified macOS artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ${{ needs.notarized-macos-release.outputs.artifact-name }}
-          path: release-assets/mac
-      - name: Download verified Windows artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ${{ needs.signed-windows-release.outputs.artifact-name }}
-          path: release-assets/windows
-      - name: Atomically publish all verified platform artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          npm run verify:release-tag
-
-          version="$(node -p "require('./package.json').version")"
-          release_title="TaskWraith v${version}"
-          notes_path="release-assets/RELEASE_NOTES-${version}.md"
-          node scripts/prepare-release-notes.cjs "$version" "$notes_path"
-          channel="latest"
-          prerelease="false"
-          create_flags=(--draft)
-          if [[ "$version" == *-* ]]; then
-            channel="beta"
-            prerelease="true"
-            create_flags+=(--prerelease)
-          fi
-
-          shopt -s nullglob
-          mac_dmg=(release-assets/mac/TaskWraith-"$version"-universal-mac.dmg)
-          mac_zip=(release-assets/mac/TaskWraith-"$version"-universal-mac.zip)
-          mac_blockmaps=(release-assets/mac/TaskWraith-"$version"-universal-mac.zip.blockmap)
-          mac_feed=(release-assets/mac/"$channel"-mac.yml)
-          mac_sbom=(release-assets/mac/sbom.cdx.json)
-          win_installers=(
-            release-assets/windows/TaskWraith-"$version"-win-x64-setup.exe
-            release-assets/windows/TaskWraith-"$version"-win-arm64-setup.exe
-          )
-          win_blockmaps=(
-            release-assets/windows/TaskWraith-"$version"-win-x64-setup.exe.blockmap
-            release-assets/windows/TaskWraith-"$version"-win-arm64-setup.exe.blockmap
-          )
-          win_feeds=(
-            release-assets/windows/"$channel"-win-x64.yml
-            release-assets/windows/"$channel"-win-arm64.yml
-          )
-          win_sbom=(release-assets/windows/sbom-windows.cdx.json)
-          linux_appimage=(release-assets/linux/TaskWraith-"$version".AppImage)
-          linux_deb=(release-assets/linux/taskwraith_"$version"_amd64.deb)
-          linux_feed=(release-assets/linux/"$channel"-linux.yml)
-          linux_sbom=(release-assets/linux/sbom-linux.cdx.json)
-
-          for required in \
-            "${mac_dmg[@]}" \
-            "${mac_zip[@]}" \
-            "${mac_blockmaps[@]}" \
-            "${mac_feed[@]}" \
-            "${mac_sbom[@]}" \
-            "${win_installers[@]}" \
-            "${win_blockmaps[@]}" \
-            "${win_feeds[@]}" \
-            "${win_sbom[@]}" \
-            "${linux_appimage[@]}" \
-            "${linux_deb[@]}" \
-            "${linux_feed[@]}" \
-            "${linux_sbom[@]}"; do
-            test -f "$required"
-          done
-          assets=(
-            "${mac_dmg[@]}"
-            "${mac_zip[@]}"
-            "${mac_blockmaps[@]}"
-            "${mac_feed[@]}"
-            "${mac_sbom[@]}"
-            "${win_installers[@]}"
-            "${win_blockmaps[@]}"
-            "${win_feeds[@]}"
-            "${win_sbom[@]}"
-            "${linux_appimage[@]}"
-            "${linux_deb[@]}"
-            "${linux_feed[@]}"
-            "${linux_sbom[@]}"
-          )
-          node scripts/validate-linux-update-feed.cjs release-assets/linux
-          checksums_path="release-assets/SHA256SUMS-${version}.txt"
-          node scripts/write-release-checksums.cjs "$checksums_path" "${assets[@]}"
-          assets+=("$checksums_path")
-          declare -A asset_paths=()
-          for asset in "${assets[@]}"; do
-            name="$(basename "$asset")"
-            if [[ -n "${asset_paths[$name]:-}" ]]; then
-              echo "Duplicate release asset name: $name"
-              exit 1
-            fi
-            asset_paths[$name]="$asset"
-          done
-          mapfile -t expected_assets < <(
-            for asset in "${assets[@]}"; do basename "$asset"; done | sort
-          )
-
-          release_tag="$GITHUB_REF_NAME"
-          candidate_sha="$(git rev-parse HEAD)"
-          verify_remote_release_tag() {
-            local tag_ref="refs/tags/$release_tag"
-            local tag_type
-            local remote_tag_sha
-            git fetch --force --no-tags origin "+$tag_ref:$tag_ref"
-            tag_type="$(git cat-file -t "$tag_ref")"
-            if [ "$tag_type" = "tag" ]; then
-              remote_tag_sha="$(git rev-parse "$tag_ref^{}")"
-            elif [ "$tag_type" = "commit" ]; then
-              remote_tag_sha="$(git rev-parse "$tag_ref")"
-            else
-              echo "Release tag $tag_ref has unsupported object type $tag_type."
-              return 1
-            fi
-            if [ "$remote_tag_sha" != "$candidate_sha" ]; then
-              echo "Remote release tag resolves to $remote_tag_sha; expected $candidate_sha."
-              return 1
-            fi
-          }
-
-          verify_release_copy() {
-            local actual_title
-            local body_json
-            local body_file
-            actual_title="$(gh release view "$release_tag" --json name --jq .name)"
-            if [ "$actual_title" != "$release_title" ]; then
-              echo "Release title is $actual_title; expected $release_title."
-              return 1
-            fi
-            body_json="$(mktemp)"
-            body_file="$(mktemp)"
-            gh release view "$release_tag" --json body > "$body_json"
-            node -e \
-              'const fs=require("node:fs");const data=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));fs.writeFileSync(process.argv[2],data.body||"")' \
-              "$body_json" "$body_file"
-            if ! cmp --silent "$notes_path" "$body_file"; then
-              echo "Release body differs from the prepared CHANGELOG release notes."
-              return 1
-            fi
-            rm -f "$body_json" "$body_file"
-          }
-
-          verify_remote_release_tag
-          existing_assets=()
-          if gh release view "$release_tag" >/dev/null 2>&1; then
-            is_draft="$(gh release view "$release_tag" --json isDraft --jq .isDraft)"
-            is_prerelease="$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)"
-            if [ "$is_prerelease" != "$prerelease" ]; then
-              echo "Existing release prerelease state does not match the verified candidate."
-              exit 1
-            fi
-            if [ "$is_draft" != "true" ] && [ "$is_draft" != "false" ]; then
-              echo "Existing release returned an invalid draft state: $is_draft."
-              exit 1
-            fi
-            verify_release_copy
-            mapfile -t existing_assets < <(
-              gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
-            )
-            if [ "${#existing_assets[@]}" -gt 0 ]; then
-              existing_asset_dir="$(mktemp -d)"
-              trap 'rm -rf "$existing_asset_dir"' EXIT
-              gh release download "$release_tag" --dir "$existing_asset_dir"
-              for name in "${existing_assets[@]}"; do
-                expected_path="${asset_paths[$name]:-}"
-                if [ -z "$expected_path" ]; then
-                  echo "Existing draft contains unexpected asset $name; refusing mutation."
-                  exit 1
-                fi
-                if ! cmp --silent "$expected_path" "$existing_asset_dir/$name"; then
-                  echo "Existing draft asset $name differs from the verified candidate."
-                  exit 1
-                fi
-              done
-            fi
-            if [ "$is_draft" = "false" ]; then
-              verify_remote_release_tag
-              verify_release_copy
-              mapfile -t fresh_public_assets < <(
-                gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
-              )
-              if [ "${fresh_public_assets[*]}" != "${expected_assets[*]}" ]; then
-                echo "Existing public release asset set does not match the verified local set."
-                printf 'Expected: %s\n' "${expected_assets[@]}"
-                printf 'Remote: %s\n' "${fresh_public_assets[@]}"
-                exit 1
-              fi
-              echo "Existing public release exactly matches the verified candidate; no mutation needed."
-              exit 0
-            fi
-          else
-            gh release create "$release_tag" \
-              --verify-tag \
-              --title "$release_title" \
-              --notes-file "$notes_path" \
-              "${create_flags[@]}"
-            verify_release_copy
-          fi
-
-          verify_remote_release_tag
-          declare -A existing_names=()
-          for name in "${existing_assets[@]}"; do
-            existing_names[$name]=1
-          done
-          missing_assets=()
-          for asset in "${assets[@]}"; do
-            name="$(basename "$asset")"
-            if [[ -z "${existing_names[$name]:-}" ]]; then
-              missing_assets+=("$asset")
-            fi
-          done
-          if [ "${#missing_assets[@]}" -gt 0 ]; then
-            gh release upload "$release_tag" "${missing_assets[@]}"
-          fi
-
-          mapfile -t remote_assets < <(
-            gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
-          )
-          if [ "${remote_assets[*]}" != "${expected_assets[*]}" ]; then
-            echo "Remote release asset set does not match the verified local set."
-            printf 'Expected: %s\n' "${expected_assets[@]}"
-            printf 'Remote: %s\n' "${remote_assets[@]}"
-            exit 1
-          fi
-
-          verify_remote_release_tag
-          verify_release_copy
-          gh release edit "$release_tag" --draft=false
-
-  unsigned-windows-build:
-    name: Unsigned Windows Build (testing)
-    runs-on: windows-latest
-    needs: [test, ios]
-    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_windows == true
-    permissions:
-      contents: read
-    outputs:
-      source-sha: ${{ steps.unsigned-source.outputs.sha }}
-      artifact-name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
-      handoff-target-artifact-name: handoff-windows-targets-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ inputs.unsigned_build_ref || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Record unsigned artifact source SHA
-        id: unsigned-source
-        shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      # Match the validated local packaging toolchain. npm 10.9.9 emits
-      # duplicate CycloneDX graph refs for repeated installed packages.
-      - name: Pin the packaging SBOM generator
-        run: npm install --global npm@11.12.1
-      - name: Resolve the pinned Windows npm launcher
-        shell: pwsh
-        run: |
-          $nodeExe = (Get-Command node.exe).Source
-          $globalModules = (& npm root --global).Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve global npm modules.' }
-          $npmCli = Join-Path $globalModules 'npm/bin/npm-cli.js'
-          if (!(Test-Path -LiteralPath $npmCli)) { throw 'Pinned npm CLI is missing.' }
-          if (($nodeExe + $npmCli) -match '[^\x20-\x7e]|["%!^&|<>]') { throw 'Unsupported characters in the pinned npm tool paths.' }
-          $npmVersion = (& $nodeExe $npmCli --version).Trim()
-          if ($LASTEXITCODE -ne 0 -or $npmVersion -ne '11.12.1') { throw 'Unexpected packaging npm version.' }
-          $shimDirectory = Join-Path $env:RUNNER_TEMP 'taskwraith-packaging-npm'
-          New-Item -ItemType Directory -Force -Path $shimDirectory | Out-Null
-          $wrapper = "@echo off`r`n`"$nodeExe`" `"$npmCli`" %*`r`nexit /b %errorlevel%`r`n"
-          [System.IO.File]::WriteAllText((Join-Path $shimDirectory 'npm.cmd'), $wrapper, [System.Text.Encoding]::ASCII)
-          $shimDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - run: npm --version
-      - run: npm ci
-      - name: Verify nested Windows npm invocation
-        shell: pwsh
-        run: |
-          $env:Path = "$(Join-Path $PWD 'node_modules/.bin');$env:Path"
-          $probe = @'
-          const { spawnSync } = require('node:child_process');
-          const { resolvePlatformCommandInvocation } = require('./scripts/windows-cmd-invocation.cjs');
-          const invocation = resolvePlatformCommandInvocation('npm.cmd', ['--version']);
-          const result = spawnSync(invocation.command, invocation.arguments, { ...invocation.spawnOptions, encoding: 'utf8' });
-          if (result.error) throw result.error;
-          if (result.status !== 0 || result.stdout.trim() !== '11.12.1') throw new Error('Nested npm launcher failed: ' + result.stdout + result.stderr);
-          console.log('Verified nested npm launcher: 11.12.1');
-          '@
-          node -e $probe
-          if ($LASTEXITCODE -ne 0) { throw 'Nested npm invocation failed.' }
-      - run: npm run security:deps
-      # Keep packaging sourced entirely from the selected ref. For recovery of
-      # an older exact release SHA, overlay only the current CI smoke harness
-      # after electron-builder has finished creating the installers.
-      - run: npm run build:win:compile
-        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
-      - run: node scripts/run-electron-builder.cjs --win --x64 --arm64 --publish never
-        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
-      - name: Build unsigned Windows public debut
-        if: inputs.unsigned_distribution == 'debut'
-        run: npm run build:debut:win
-      - name: Verify the frozen Windows handoff input
-        if: inputs.unsigned_distribution == 'handoff'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
-          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
-        run: node scripts/prepare-ci-identity-handoff.cjs
-      - name: Build unsigned Windows final beta bridge
-        if: inputs.unsigned_distribution == 'handoff'
-        shell: pwsh
-        run: node scripts/run-identity-handoff-build.cjs --script build:win:handoff-smoke --payload "$env:TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD" --artifact-dir "$env:TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR"
-      - name: Check out current Windows smoke harness for exact-ref recovery
-        if: steps.unsigned-source.outputs.sha != github.sha && (inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == '')
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ github.sha }}
-          path: .ci-release-harness
-          sparse-checkout: |
-            scripts/smoke-packaged-electron.cjs
-            scripts/smoke-packaged-host.cjs
-            scripts/smoke-packaged-tui.cjs
-            scripts/windows-cmd-invocation.cjs
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - name: Overlay current Windows smoke harness after packaging
-        if: steps.unsigned-source.outputs.sha != github.sha && (inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == '')
-        shell: pwsh
-        run: |
-          Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-electron.cjs -Destination scripts\smoke-packaged-electron.cjs -Force
-          Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-host.cjs -Destination scripts\smoke-packaged-host.cjs -Force
-          Copy-Item -LiteralPath .ci-release-harness\scripts\smoke-packaged-tui.cjs -Destination scripts\smoke-packaged-tui.cjs -Force
-          Copy-Item -LiteralPath .ci-release-harness\scripts\windows-cmd-invocation.cjs -Destination scripts\windows-cmd-invocation.cjs -Force
-      # The packaged-app launch smoke skips the arm64 executable on this x64
-      # runner because it cannot execute it natively.
-      - run: npm run build:win:checks
-        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
-      - name: Generate Windows source-identity SBOM
-        if: inputs.unsigned_distribution != 'debut'
-        run: npm run security:sbom
-      - name: Rehearse the Windows x64 beta-to-Release installer replacement
-        if: inputs.unsigned_distribution == 'handoff'
-        shell: pwsh
-        run: |
-          $payload = Get-Content -LiteralPath $env:TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD -Raw | ConvertFrom-Json
-          $target = Join-Path $env:TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR 'TaskWraith-0.1.0-win-x64-setup.exe'
-          ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath $target -PreviousInstallerPath 'dist/TaskWraith-1.9.9-win-x64-setup.exe' -ExpectedInstallerSha256 $payload.artifacts.'win32-x64'.sha256 -InstallDir (Join-Path $env:TEMP 'TaskWraith Migration x64')
-      - name: Retain verified Windows target bytes for the native arm64 rehearsal
-        if: inputs.unsigned_distribution == 'handoff'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: handoff-windows-targets-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR }}/TaskWraith-0.1.0-win-arm64-setup.exe
-            ${{ env.TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD }}
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload SHA/run-labelled unsigned Windows test artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
-          path: |
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/TaskWraith-*-win-*-setup.exe
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/TaskWraith-*-win-*-setup.exe.blockmap
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*-win-*.yml
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/sbom.cdx.json
-          if-no-files-found: error
-          retention-days: 14
-
-  unsigned-windows-arm64-smoke:
-    name: Unsigned Windows arm64 installer smoke
-    runs-on: windows-11-arm
-    needs: [unsigned-windows-build]
-    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_windows == true
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ needs.unsigned-windows-build.outputs.source-sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-      # Only the installed-archive verifier runs here. It needs the lockfile's
-      # ASAR/YAML readers; no native dependency build or package mutation.
-      - run: npm ci --ignore-scripts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ${{ needs.unsigned-windows-build.outputs.artifact-name }}
-          path: candidate
-      - name: Install, launch and uninstall the native arm64 candidate
-        shell: pwsh
-        env:
-          TASKWRAITH_BUILD_DISTRIBUTION: ${{ inputs.unsigned_distribution || 'source' }}
-        run: |
-          $version = if ($env:TASKWRAITH_BUILD_DISTRIBUTION -eq 'debut') { '0.1.0' } else { (Get-Content package.json | ConvertFrom-Json).version }
-          ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath "candidate/TaskWraith-$version-win-arm64-setup.exe"
-      - name: Download verified public target bytes for the native arm64 replacement
-        if: inputs.unsigned_distribution == 'handoff'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ${{ needs.unsigned-windows-build.outputs.handoff-target-artifact-name }}
-          path: migration-target
-      - name: Rehearse the Windows arm64 beta-to-Release installer replacement
-        if: inputs.unsigned_distribution == 'handoff'
-        shell: pwsh
-        run: |
-          $payload = Get-Content -LiteralPath 'migration-target/identity-handoff.json' -Raw | ConvertFrom-Json
-          ./scripts/smoke-win-installer.ps1 -AllowUnsigned -InstallerPath 'migration-target/TaskWraith-0.1.0-win-arm64-setup.exe' -PreviousInstallerPath 'candidate/TaskWraith-1.9.9-win-arm64-setup.exe' -ExpectedInstallerSha256 $payload.artifacts.'win32-arm64'.sha256 -InstallDir (Join-Path $env:TEMP 'TaskWraith Migration arm64')
-
-  unsigned-linux-build:
-    name: Unsigned Linux Build (testing)
-    runs-on: ubuntu-latest
-    needs: [test, ios]
-    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_linux == true
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ inputs.unsigned_build_ref || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Record unsigned artifact source SHA
-        id: unsigned-source
-        shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.3'
-          cache: npm
-      # Keep metadata generation identical to the verified macOS toolchain;
-      # the source checkout remains the explicit unsigned_build_ref.
-      - name: Pin the packaging SBOM generator
-        run: npm install --global npm@11.12.1
-      - run: npm --version
-      - run: npm ci
-      - run: npm run security:deps
-      # AppImage + deb only — snap needs snapcraft (absent on the default
-      # runner). `--publish never` keeps this manual testing lane outside the
-      # GitHub Release publication surface.
-      - name: Build and strictly smoke unsigned Linux artifacts
-        if: inputs.unsigned_distribution == 'source' || inputs.unsigned_distribution == ''
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
-        run: xvfb-run -a npm run build:linux:nopublish
-      - name: Build and smoke Linux public debut
-        if: inputs.unsigned_distribution == 'debut'
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
-        run: xvfb-run -a npm run build:debut:linux
-      - name: Verify the frozen Linux handoff input
-        if: inputs.unsigned_distribution == 'handoff'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TASKWRAITH_HANDOFF_PAYLOAD_SHA256: ${{ inputs.handoff_payload_sha256 }}
-          TASKWRAITH_HANDOFF_DOWNLOAD_TAG: ${{ inputs.handoff_download_tag }}
-        run: node scripts/prepare-ci-identity-handoff.cjs
-      - name: Build and smoke Linux final beta bridge
-        if: inputs.unsigned_distribution == 'handoff'
-        env:
-          TASKWRAITH_FORCE_LAUNCH_SMOKE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGE: '1'
-          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: '1'
-          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: '1'
-        run: xvfb-run -a node scripts/run-identity-handoff-build.cjs --script build:linux:nopublish --payload "$TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD" --artifact-dir "$TASKWRAITH_IDENTITY_HANDOFF_ARTIFACT_DIR"
-      - name: Generate Linux source-identity SBOM
-        if: inputs.unsigned_distribution != 'debut'
-        run: npm run security:sbom
-      - name: Upload SHA/run-labelled unsigned Linux test artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: unsigned-linux-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.unsigned_distribution || 'source' }}
-          path: |
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*.AppImage
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*.deb
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/*-linux*.yml
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/sbom.cdx.json
-            ${{ inputs.unsigned_distribution == 'debut' && 'dist-debut' || 'dist' }}/appimage-runtime-smoke.json
-          if-no-files-found: error
-          retention-days: 14
