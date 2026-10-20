@@ -26,10 +26,14 @@ import { ANTIGRAVITY_AGY_STATIC_MODEL_IDS as STATIC_AGY_MODEL_IDS } from '../../
  * Ids are the offerable rows from the verbatim `agy models` catalogue,
  * refreshed 2026-09-02 after Gemini 3.8 Flash became live and 2026-10-03 when
  * Claude Opus/Sonnet 5.5 (Low/Medium/High) replaced the Claude 4.x rows.
+ * Argon's Low/Medium/High ids are present in the official CLI binary as of
+ * 2026-10-13 and are offered throughout rollout, even before account discovery
+ * advertises them. Unsupported accounts receive the upstream dispatch error.
  * Floor labels equal ids deliberately: the shared picker grouping derives the
  * same family label and effort ladder that the richer live labels produce.
  *
- * Live discovery always wins: these are returned only when it yields nothing. A
+ * The full floor is returned only when live discovery yields nothing. Argon
+ * also supplements admitted live lists during rollout. A
  * stale id fails at dispatch with agy's own model error rather than silently
  * hiding the provider.
  */

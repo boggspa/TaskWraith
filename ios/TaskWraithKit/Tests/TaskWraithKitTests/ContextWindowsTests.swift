@@ -8,6 +8,17 @@ import Testing
 
 @Suite("Context windows")
 struct ContextWindowsTests {
+    @Test("Argon resolves across API and subscription transports")
+    func argonContext() {
+        let models = ["gemini-4-argon", "gemini-api:gemini-4-argon"]
+            + ["low", "medium", "high"].flatMap { effort in
+                ["gemini-4-argon-\(effort)", "antigravity-acp:gemini-4-argon-\(effort)"]
+            }
+        for model in models {
+            #expect(ContextWindows.resolve(provider: "antigravity", model: model) == 1_048_576)
+        }
+    }
+
     @Test("Muse Wonder uses the provider-published context window")
     func museWonderContext() {
         #expect(ContextWindows.resolve(provider: "muse", model: "muse-wonder-1.0") == 1_007_997)

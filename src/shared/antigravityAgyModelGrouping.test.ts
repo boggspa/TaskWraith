@@ -33,6 +33,29 @@ const CATALOGUE = [
 ].map((id) => ({ id, label: id }))
 
 describe('antigravityModelGrouping', () => {
+  it.each(['', 'antigravity-acp:'])(
+    'groups Argon and switches its concrete wire variant (%s)',
+    (prefix) => {
+      const rows = ['high', 'medium', 'low'].map((effort) => ({
+        id: `${prefix}gemini-4-argon-${effort}`,
+        label: `gemini-4-argon-${effort}`
+      }))
+      expect(groupAntigravityModelRows(rows, `${prefix}gemini-4-argon-medium`)).toEqual([
+        {
+          id: `${prefix}gemini-4-argon-medium`,
+          label: 'Gemini 4 Argon',
+          antigravityVariants: ['low', 'medium', 'high'].map((effort) => ({
+            effort,
+            id: `${prefix}gemini-4-argon-${effort}`
+          }))
+        }
+      ])
+      expect(antigravityUltraTaskTargetId(rows, `${prefix}gemini-4-argon-low`)).toBe(
+        `${prefix}gemini-4-argon-high`
+      )
+    }
+  )
+
   it('groups the live catalogue to one readable row per host model', () => {
     const rows = groupAntigravityModelRows(CATALOGUE)
     expect(rows.map((row) => row.label)).toEqual([

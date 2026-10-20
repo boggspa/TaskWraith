@@ -8,6 +8,11 @@ import { readHostStandaloneAntigravityInventory } from './HostStandaloneAntigrav
 
 const profiles: string[] = []
 
+const ARGON_AGY_ROWS = ['high', 'medium', 'low'].map((effort) => ({
+  modelId: `gemini-4-argon-${effort}`,
+  label: `gemini-4-argon-${effort}`
+}))
+
 function profile(settings: Record<string, unknown>): string {
   const path = mkdtempSync(join(tmpdir(), 'host-antigravity-catalog-'))
   profiles.push(path)
@@ -39,9 +44,13 @@ describe('readHostStandaloneAntigravityInventory', () => {
 
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
-    expect(rows).toHaveLength(28)
+    expect(rows).toHaveLength(32)
     expect(rows.map((row) => row.modelId)).toEqual(
       expect.arrayContaining([
+        'gemini-4-argon-high',
+        'gemini-4-argon-medium',
+        'gemini-4-argon-low',
+        'gemini-api:gemini-4-argon',
         'gemini-3.8-flash-high',
         'gemini-3.8-flash-medium',
         'gemini-3.8-flash-low',
@@ -77,6 +86,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
     expect(rows[0]).toEqual({ modelId: 'agy-live', label: 'AGY Live' })
+    expect(rows).toEqual(expect.arrayContaining(ARGON_AGY_ROWS))
     expect(rows).toContainEqual({ modelId: 'gemini-api:gemini-4.0-flash', label: '4.0 Flash' })
     expect(rows.map((row) => row.modelId)).not.toContain('gemini-api:not safe!')
     expect(rows.map((row) => row.modelId)).not.toContain('gemini-3.7-flash-high')
@@ -100,7 +110,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
 
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
-    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'Gemini Live' }])
+    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'Gemini Live' }, ...ARGON_AGY_ROWS])
   })
 
   it('does not publish AGY rows without its binary and does not publish API rows without disclosure', () => {
@@ -114,6 +124,8 @@ describe('readHostStandaloneAntigravityInventory', () => {
     })
     expect(apiOnly.map((row) => row.modelId)).not.toContain('gemini-3.8-flash-high')
     expect(apiOnly.map((row) => row.modelId)).not.toContain('gemini-3.7-flash-high')
+    expect(apiOnly.some((row) => row.modelId.startsWith('gemini-4-argon-'))).toBe(false)
+    expect(apiOnly.map((row) => row.modelId)).toContain('gemini-api:gemini-4-argon')
     expect(apiOnly.map((row) => row.modelId)).toContain('gemini-api:gemini-3.6-flash')
 
     const noDisclosure = profile({
@@ -174,7 +186,7 @@ describe('readHostStandaloneAntigravityInventory', () => {
 
     const rows = readHostStandaloneAntigravityInventory(path, { agyBinaryAvailable: true })
 
-    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'gemini-live' }])
+    expect(rows).toEqual([{ modelId: 'gemini-live', label: 'gemini-live' }, ...ARGON_AGY_ROWS])
     expect(rows.map((row) => row.modelId)).not.toContain('antigravity-acp:gemini-live')
   })
 

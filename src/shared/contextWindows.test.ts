@@ -94,6 +94,21 @@ describe('ContextWindows.swift drift guard', () => {
 })
 
 describe('resolveContextWindow provider-specific Grok windows', () => {
+  it('registers Argon explicitly across API, AGY, and ACP ids', () => {
+    const models = [
+      'gemini-4-argon',
+      'gemini-api:gemini-4-argon',
+      ...['high', 'medium', 'low'].flatMap((effort) => [
+        `gemini-4-argon-${effort}`,
+        `antigravity-acp:gemini-4-argon-${effort}`
+      ])
+    ]
+    for (const model of models) {
+      expect(knownModelContextWindow(model)).toBe(1_048_576)
+      expect(resolveContextWindow('antigravity', model)).toBe(1_048_576)
+    }
+  })
+
   it('uses the provider-published context window for both Muse Wonder models', () => {
     expect(resolveContextWindow('muse', 'muse-wonder-1.0')).toBe(1_007_997)
     expect(resolveContextWindow('muse', 'muse-wonder-full-1.0')).toBe(1_007_997)

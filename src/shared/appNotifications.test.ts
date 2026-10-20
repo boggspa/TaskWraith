@@ -150,8 +150,8 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(newAdditions?.id).toBe('new-additions-2026-10-13')
-    expect(newAdditions?.body.startsWith('Muse Wonder 1.0 and Muse Wonder Full 1.0')).toBe(true)
+    expect(newAdditions?.id).toBe('new-additions-2026-10-13-argon')
+    expect(newAdditions?.body.startsWith('Gemini 4 Argon on Gemini API and Antigravity')).toBe(true)
     expect(groups.map((g) => g.provider)).toEqual([
       // Muse leads for Wonder (2026-10-12); previous additions retain their order.
       'muse',
@@ -246,9 +246,10 @@ describe('notification registry', () => {
     }
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
-    expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.8 Flash'])
+    expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 4 Argon', 'Gemini 3.8 Flash'])
+    expect(antigravity?.models[0]?.blurb).toMatch(/1M.*Gemini API and Antigravity/i)
     expect(antigravity?.models[0]?.blurb).toMatch(/Low.*Medium.*High.*official agy CLI/i)
-    expect(antigravity?.models[0]?.blurb).not.toMatch(/API key|separately billed/i)
+    expect(antigravity?.models[1]?.blurb).not.toMatch(/API key|separately billed/i)
 
     const grok = groups.find((g) => g.provider === 'grok')
     expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.7', 'Grok 4.7 Fast'])

@@ -16,6 +16,11 @@ import {
   formatAntigravityGeminiApiLabel
 } from './AntigravityGeminiApiStaticModels'
 import { curateAntigravityGeminiApiModels } from './AntigravityGeminiApiModelNaming'
+import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from '../../shared/antigravityGeminiApiModelNaming'
+import {
+  ANTIGRAVITY_ARGON_AGY_MODEL_IDS,
+  ANTIGRAVITY_ARGON_GEMINI_API_MODEL_ID
+} from '../../shared/antigravityStaticModelIds'
 import type { AntigravityGeminiApiSecretStore } from './AntigravityGeminiApiSecretStore'
 import {
   discoverAuthenticatedAgyModels,
@@ -246,6 +251,15 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
           api.value.models.map(projectGeminiApiModel).filter((row) => row !== null)
         )
       : null
+  // Argon remains offerable while Google's account rollout catches up with
+  // discovery. This adds a model to an already admitted lane, never a plan gate.
+  const argonApiId = `${ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX}${ANTIGRAVITY_ARGON_GEMINI_API_MODEL_ID}`
+  if (liveApiRows && !liveApiRows.some((row) => row.id === argonApiId)) {
+    liveApiRows.push({
+      id: argonApiId,
+      label: formatAntigravityGeminiApiLabel(ANTIGRAVITY_ARGON_GEMINI_API_MODEL_ID)
+    })
+  }
   // Recorded before any row assembly can return early, so the outcome is
   // reported for every probed pass. The count is of curated rows actually
   // offered, not of raw `models.list` entries, so "N models available" matches
@@ -272,7 +286,12 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
           ? antigravityAcpStaticModels()
           : offerableAgyModels(antigravityAgyStaticModels())
         : []
-  for (const model of agyRows) {
+  const argonAgyRows =
+    agyAdmitted &&
+    (agyRows.length > 0 || (agyBinary.status === 'ok' && Boolean(agyBinary.value?.binaryPath)))
+      ? ANTIGRAVITY_ARGON_AGY_MODEL_IDS.map((id) => ({ id, label: id }))
+      : []
+  for (const model of [...agyRows, ...argonAgyRows]) {
     if (!isSafeModelRow(model)) continue
     // The ONE place the transport switch changes the catalogue: with the
     // switch on, agy-lane rows are emitted in the official-ACP namespace so

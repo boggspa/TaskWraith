@@ -155,10 +155,11 @@ public enum ModelContextLengths {
         case "antigravity":
             // Gemini-api lane. The `gemini-api:` prefix is load-bearing
             // (dispatch + discovery both key on it); the live discovery
-            // snapshot may extend this list, but these four wire models are
+            // snapshot may extend this list, but these wire models are
             // the deterministic floor. Mirrors ANTIGRAVITY_MODELS and the
             // contextWindows registrations.
             return [
+                (id: "gemini-api:gemini-4-argon",         label: "4 Argon"),
                 (id: "gemini-api:gemini-2.5-pro",         label: "Gemini 2.5 Pro (API)"),
                 (id: "gemini-api:gemini-2.5-flash",       label: "Gemini 2.5 Flash (API)"),
                 (id: "gemini-api:gemini-2.5-flash-lite",  label: "Gemini 2.5 Flash Lite (API)"),

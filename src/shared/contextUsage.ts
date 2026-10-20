@@ -235,9 +235,17 @@ function deriveSnapshot(
   const outputTokens = maxAlias(source, OUTPUT_PATHS)
   const reasoningSubsetTokens = Math.min(outputTokens, maxAlias(source, REASONING_SUBSET_PATHS))
   const separateReasoningTokens = maxAlias(source, SEPARATE_REASONING_PATHS)
-  const reasoningTokens = Math.max(reasoningSubsetTokens, separateReasoningTokens)
+  // Canonical Gemini billing output includes thoughts; raw provider metadata
+  // still reports candidates and thoughts separately. Only the explicit
+  // normalization marker changes their relationship to outputTokens.
+  const outputIncludesReasoning = source._taskwraith_output_includes_reasoning === true
+  const reasoningTokens = outputIncludesReasoning
+    ? Math.min(outputTokens, Math.max(reasoningSubsetTokens, separateReasoningTokens))
+    : Math.max(reasoningSubsetTokens, separateReasoningTokens)
   const visibleOutputTokens =
-    separateReasoningTokens > 0 ? outputTokens : Math.max(0, outputTokens - reasoningSubsetTokens)
+    separateReasoningTokens > 0 && !outputIncludesReasoning
+      ? outputTokens
+      : Math.max(0, outputTokens - reasoningTokens)
 
   const knownTokens = inputTokens + visibleOutputTokens + reasoningTokens
   const reportedTotalTokens = maxAlias(source, TOTAL_PATHS)

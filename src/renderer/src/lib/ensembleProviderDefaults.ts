@@ -477,7 +477,7 @@ const CURSOR_MODELS = withCuratedUltraTaskSupport(CURSOR_MODEL_ROWS)
 
 /** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
  * load-bearing (dispatch + discovery both key on it); the live discovery
- * snapshot may extend this list, but these four wire models are the
+ * snapshot may extend this list, but these wire models are the
  * deterministic floor.
  *
  * MUST stay in lockstep with ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS in
@@ -491,6 +491,7 @@ const CURSOR_MODELS = withCuratedUltraTaskSupport(CURSOR_MODEL_ROWS)
  * Context windows resolve through the provider-level antigravity fallback
  * (1M), not per-model rows — shared/contextWindows.ts has no 3.x entries. */
 const ANTIGRAVITY_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  { id: 'gemini-api:gemini-4-argon', label: '4 Argon' },
   { id: 'gemini-api:gemini-3.6-flash', label: '3.6 Flash' },
   { id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' },
   { id: 'gemini-api:gemini-3.1-pro-preview', label: '3.1 Pro Preview' },

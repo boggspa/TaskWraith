@@ -1934,14 +1934,35 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     models: [
       {
+        modelId: 'gemini-api:gemini-4-argon',
+        inputUsdPerMillion: 2,
+        outputUsdPerMillion: 10,
+        cachedInputUsdPerMillion: 0.1,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/generate-content/latest-model',
+        lastVerified: '2026-10-13',
+        notes:
+          'Gemini API introductory rate through 2026-11-30; $4/$20 per Mtok thereafter. Cached input receives a 95% discount. Re-verify the flat rate at the end of the introductory period.'
+      },
+      ...['gemini-4-argon', 'antigravity-acp:gemini-4-argon'].map((modelId) => ({
+        modelId,
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true as const,
+        sourceUrl: 'https://antigravity.google/blog/gemini-4-argon-in-google-antigravity',
+        lastVerified: '2026-10-13',
+        notes:
+          'Antigravity subscription route, including Low/Medium/High variants; no per-token API billing estimate.'
+      })),
+      {
         modelId: 'gemini-api:gemini-2.5-flash',
         inputUsdPerMillion: 0.3,
         outputUsdPerMillion: 2.5,
         cachedInputUsdPerMillion: 0.03,
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
         lastVerified: RATE_TABLE_VERSION,
+        isFallback: true,
         notes:
-          'Gemini API paid tier via the AntiGravity BYO-key lane. First row = fallback rate for unknown/agy ids.'
+          'Gemini API paid tier via the AntiGravity BYO-key lane. Fallback rate for unknown/agy ids.'
       },
       {
         modelId: 'gemini-api:gemini-2.5-flash-lite',

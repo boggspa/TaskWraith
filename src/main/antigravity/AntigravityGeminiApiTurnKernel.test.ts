@@ -49,6 +49,21 @@ function clientFor(stream: AsyncIterable<unknown>) {
 }
 
 describe('streamAntigravityGeminiApiTurn', () => {
+  it('dispatches the namespaced Argon offer as the exact bare API model id', async () => {
+    const client = clientFor(chunks([{ text: 'Argon response' }]))
+    const deps = dependencies(client.client)
+    const result = await streamAntigravityGeminiApiTurn(
+      settings,
+      { model: 'gemini-api:gemini-4-argon', prompt: 'Hi' },
+      deps
+    )
+    expect(result.status).toBe('ok')
+    expect(client.generateContentStream).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gemini-4-argon', contents: 'Hi' })
+    )
+    expect(deps.onText).toHaveBeenCalledWith('Argon response')
+  })
+
   it('rejects every non-exact Gemini API route before reading the key', async () => {
     for (const model of [
       'gemini-2.5-flash',

@@ -25,8 +25,8 @@ describe('AntigravityAcpStaticModels', () => {
       expect(isAntigravityAcpModelCandidate(row.id)).toBe(true)
     }
     expect(rows[0]).toEqual({
-      id: 'antigravity-acp:gemini-3.8-flash-high',
-      label: 'gemini-3.8-flash-high'
+      id: 'antigravity-acp:gemini-4-argon-high',
+      label: 'gemini-4-argon-high'
     })
   })
 
@@ -67,7 +67,7 @@ describe('AntigravityAcpStaticModels', () => {
     const rows = antigravityAcpStaticModels()
     const mirrored = sanitizeAntigravityCatalogCache({ version: 1, models: rows })
     expect(mirrored).toHaveLength(rows.length)
-    expect(mirrored[0]?.id).toBe('antigravity-acp:gemini-3.8-flash-high')
+    expect(mirrored[0]?.id).toBe('antigravity-acp:gemini-4-argon-high')
   })
 
   it('mirrors the agy floor one-to-one and keeps the bare id as the label', () => {

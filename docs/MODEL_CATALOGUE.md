@@ -186,6 +186,7 @@ AntiGravity subscription catalogue. Its newest families are:
 
 | Model                                                           | Reasoning           | Fast | Notes                                                                      |
 | --------------------------------------------------------------- | ------------------- | ---- | -------------------------------------------------------------------------- |
+| **Gemini 4 Argon** `gemini-4-argon-{low,medium,high}` | Low · Medium · High | — | 1M shared context; offered during rollout without a TaskWraith subscription gate. |
 | **Gemini 3.8 Flash** `gemini-3.8-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; the standalone Host's default row.       |
 | **Gemini 3.7 Flash** `gemini-3.7-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; availability remains account-controlled. |
 
@@ -195,20 +196,27 @@ authoritative. Its current static fallback floor is:
 
 | Model                                                               | Reasoning | Fast | Notes                                                       |
 | ------------------------------------------------------------------- | --------- | ---- | ----------------------------------------------------------- |
+| **Gemini 4 Argon** `gemini-api:gemini-4-argon` | Provider default (Medium) | — | 1M shared context; introductory $2/$10 per Mtok through 2026-11-30, then $4/$20. |
 | **Gemini 3.6 Flash** `gemini-api:gemini-3.6-flash`                  | —         | —    | Latest balanced model for agentic and multimodal work.      |
 | **Gemini 3.5 Flash** `gemini-api:gemini-3.5-flash`                  | —         | —    | Sustained frontier performance for agentic and coding work. |
 | **Gemini 3.1 Pro Preview** `gemini-api:gemini-3.1-pro-preview`      | —         | —    | Preview-tier reasoning model retained in the fallback floor. |
 | **Gemini 3.1 Flash-Lite** `gemini-api:gemini-3.1-flash-lite`        | —         | —    | Lowest-cost row for high-throughput execution.              |
 
-Live discovery wins for both lanes. The consent-gated CLI catalogue has a
+Live discovery preserves its labels and order for both lanes. Argon offers
+supplement admitted catalogues even when account discovery does not advertise
+them yet. Upstream access failures surface as normal failed runs; TaskWraith
+adds no Ultra subscription check or rollout restriction. The consent-gated CLI catalogue has a
 current mixed-family floor so a transient `agy models` failure does not hide
 the provider; the API-key lane likewise retains bounded fallback rows, and the
-four rows above are exactly that floor — the 3.6, 3.5, and 3.1 families. The
+rows above are exactly that floor — Argon and the 3.6, 3.5, and 3.1 families. The
 2.5 family was dropped from the floor because `gemini-2.5-flash` now 404s as
 "no longer available to new users". A stale row still fails visibly at
 dispatch. See Google's
 [Gemini API model catalogue](https://ai.google.dev/gemini-api/docs/models) for
-the upstream API lifecycle.
+the upstream API lifecycle and the
+[Argon launch guide](https://ai.google.dev/gemini-api/docs/generate-content/latest-model)
+for its shared input/thinking/output window. This catalogue update uses the
+existing streaming path; it does not enable automatic long decode continuation.
 
 <table>
   <tr>
