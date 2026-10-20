@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RunQueueFile, type RunQueueFileOptions } from './RunQueueFile'
 import type {
   ThreadDurabilityPort,
@@ -391,7 +391,7 @@ describe('the run queue file under barrier durability', () => {
     const port = options.port as ReturnType<typeof heldPort>
 
     file.replace([job('a')])
-    await settle()
+    await vi.waitFor(() => expect(port.calls).toHaveLength(1))
     file.replace([job('b')])
     file.writeNowSync()
     port.calls[0].fail()
