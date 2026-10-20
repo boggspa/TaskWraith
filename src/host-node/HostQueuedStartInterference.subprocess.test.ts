@@ -377,8 +377,10 @@ describe('HostQueuedStartInterference subprocess', () => {
       expect(admittedThread?.messageCount).toBeGreaterThan(queuedThread!.messageCount)
       // Run projection precedes the durable receipt's final acknowledgement.
       await waitFor(
-        async () =>
-          (await client!.lookupReceipt({ commandId: queuedCommandId })).phase === 'started',
+        async () => {
+          const receipt = await client!.lookupReceipt({ commandId: queuedCommandId })
+          return receipt.phase === 'started' && receipt.status !== 'pending'
+        },
         '17th start receipt',
         () => fatalMessage
       )
