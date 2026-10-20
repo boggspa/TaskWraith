@@ -369,20 +369,22 @@ it.each(['removed', 'retained'] as const)(
     let elapsedMs = 0
     const now = vi.spyOn(Date, 'now').mockImplementation(() => elapsedMs)
     try {
-      const shutdown = runHostShutdownCli(['stop', '--profile', profile], (options) =>
-        new HostShutdownClient({
-          ...options,
-          exists: (path) => present.has(path),
-          connect: () => {
-            queueMicrotask(() => socket.emit('connect'))
-            return socket as unknown as Socket
-          },
-          // Exercise the real removal loop without waiting two minutes.
-          delay: async (ms) => {
-            elapsedMs += ms
-            if (artifacts === 'removed' && elapsedMs >= removalAtMs) present.clear()
-          }
-        })
+      const shutdown = runHostShutdownCli(
+        ['stop', '--profile', profile],
+        (options) =>
+          new HostShutdownClient({
+            ...options,
+            exists: (path) => present.has(path),
+            connect: () => {
+              queueMicrotask(() => socket.emit('connect'))
+              return socket as unknown as Socket
+            },
+            // Exercise the real removal loop without waiting two minutes.
+            delay: async (ms) => {
+              elapsedMs += ms
+              if (artifacts === 'removed' && elapsedMs >= removalAtMs) present.clear()
+            }
+          })
       )
       if (artifacts === 'removed') {
         await expect(shutdown).resolves.toBeUndefined()
@@ -407,13 +409,15 @@ it('keeps the CLI socket round-trip bounded by the default five seconds', async 
   const socket = new AckingSocket(() => undefined)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   try {
-    const shutdown = runHostShutdownCli(['stop', '--profile', profile], (options) =>
-      new HostShutdownClient({
-        ...options,
-        exists: (path) => present.has(path),
-        // A silent socket never reaches welcome or acknowledges shutdown.
-        connect: () => socket as unknown as Socket
-      })
+    const shutdown = runHostShutdownCli(
+      ['stop', '--profile', profile],
+      (options) =>
+        new HostShutdownClient({
+          ...options,
+          exists: (path) => present.has(path),
+          // A silent socket never reaches welcome or acknowledges shutdown.
+          connect: () => socket as unknown as Socket
+        })
     )
     const rejected = expect(shutdown).rejects.toThrow('Host shutdown request timed out')
     await vi.advanceTimersByTimeAsync(4_999)
