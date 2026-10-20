@@ -18,6 +18,8 @@ import {
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
 import type { ProcessBirthObservation } from '../host-runtime/ProcessBirthIdentity'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from '../host-node/HostNodeProductionServer'
+import { HOST_END_PROCESS_FLUSH_MS, runHostShutdownCli } from '../host-runtime/cli'
 import {
   HostShutdownClient,
   HostShutdownIdentityError,
@@ -356,6 +358,77 @@ it('waits for artefact removal on its own budget, not the ACK budget', async () 
   })
   await expect(client.shutdown()).resolves.toBe('stopping')
   expect(polls).toBe(5)
+})
+
+it.each(['removed', 'retained'] as const)(
+  'bounds CLI cleanup by the Host stop deadline when artifacts are %s',
+  async (artifacts) => {
+    const { profile, present } = seedLiveProfile('host-shutdown-cli-cleanup-')
+    const socket = new AckingSocket(() => undefined)
+    const removalAtMs = HOST_LIFETIME_STOP_DEADLINE_MS - 25
+    let elapsedMs = 0
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => elapsedMs)
+    try {
+      const shutdown = runHostShutdownCli(
+        ['stop', '--profile', profile],
+        (options) =>
+          new HostShutdownClient({
+            ...options,
+            exists: (path) => present.has(path),
+            connect: () => {
+              queueMicrotask(() => socket.emit('connect'))
+              return socket as unknown as Socket
+            },
+            // Exercise the real removal loop without waiting two minutes.
+            delay: async (ms) => {
+              elapsedMs += ms
+              if (artifacts === 'removed' && elapsedMs >= removalAtMs) present.clear()
+            }
+          })
+      )
+      if (artifacts === 'removed') {
+        await expect(shutdown).resolves.toBeUndefined()
+        expect(elapsedMs).toBe(removalAtMs)
+      } else {
+        await expect(shutdown).rejects.toThrow(
+          'Host shutdown timed out while ownership artifacts remain'
+        )
+        expect(elapsedMs).toBe(HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS)
+      }
+      expect(present.size).toBe(artifacts === 'removed' ? 0 : 4)
+      expect(socket.lines).toEqual([GOLDEN_HELLO_FRAME, GOLDEN_SHUTDOWN_FRAME])
+      expect(socket.destroyed).toBe(true)
+    } finally {
+      now.mockRestore()
+    }
+  }
+)
+
+it('keeps the CLI socket round-trip bounded by the default five seconds', async () => {
+  const { profile, present } = seedLiveProfile('host-shutdown-cli-ack-')
+  const socket = new AckingSocket(() => undefined)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const shutdown = runHostShutdownCli(
+      ['stop', '--profile', profile],
+      (options) =>
+        new HostShutdownClient({
+          ...options,
+          exists: (path) => present.has(path),
+          // A silent socket never reaches welcome or acknowledges shutdown.
+          connect: () => socket as unknown as Socket
+        })
+    )
+    const rejected = expect(shutdown).rejects.toThrow('Host shutdown request timed out')
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(socket.destroyed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await rejected
+    expect(socket.destroyed).toBe(true)
+    expect(present.size).toBe(4)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('times out the removal wait on the removal budget alone', async () => {

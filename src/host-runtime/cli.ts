@@ -3,11 +3,15 @@
 import { parseHostDiagnosticCli, HostDiagnosticCliError } from './HostDiagnosticCli'
 import { HostDiagnosticServer } from './HostDiagnosticServer'
 import { createHostNodeProductionFactory } from '../host-node/HostNodeProductionFactory'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from '../host-node/HostNodeProductionServer'
 import { createHostNodeTerminalLauncher } from '../host-node/HostNodeTerminalLauncher'
 import { createHostNodeTerminalWindowLauncher } from '../host-node/HostNodeTerminalWindowLauncher'
 import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
-import { HostShutdownClient } from '../host-client/HostShutdownClient'
+import {
+  HostShutdownClient,
+  type HostShutdownClientOptions
+} from '../host-client/HostShutdownClient'
 import {
   formatHostStopAllReport,
   stopAllHosts,
@@ -166,7 +170,7 @@ function providerTerminalLauncher(
 
 export async function runHostShutdownCli(
   argv: readonly string[] = process.argv.slice(2),
-  createShutdown: (input: { profilePath: string }) => Pick<HostShutdownClient, 'shutdown'> = (
+  createShutdown: (input: HostShutdownClientOptions) => Pick<HostShutdownClient, 'shutdown'> = (
     input
   ) => new HostShutdownClient(input)
 ): Promise<void> {
@@ -176,7 +180,12 @@ export async function runHostShutdownCli(
   installHostStdioGuard()
   const command = parseHostProductionCli(argv)
   if (command.command !== 'stop') throw new HostProductionCliError('Expected stop command.')
-  await createShutdown({ profilePath: command.profilePath }).shutdown()
+  await createShutdown({
+    profilePath: command.profilePath,
+    // The ACK has its own short budget. Cleanup may use the Host's full stop
+    // deadline and finish releasing authority while its final stderr flushes.
+    removalTimeoutMs: HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS
+  }).shutdown()
 }
 
 export interface HostRegistryCliRuntime {

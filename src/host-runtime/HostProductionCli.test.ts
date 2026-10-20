@@ -6,7 +6,8 @@ import {
   HostProductionCliError,
   parseHostProductionCli
 } from './HostProductionCli'
-import { runHostShutdownCli } from './cli'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from '../host-node/HostNodeProductionServer'
+import { HOST_END_PROCESS_FLUSH_MS, runHostShutdownCli } from './cli'
 
 /**
  * The CLI rejects a non-canonical --profile (`resolve(value) === value`), so
@@ -90,7 +91,10 @@ it('dispatches stop only through the authenticated shutdown client', async () =>
   const shutdown = vi.fn(async () => 'stopping' as const)
   const createShutdown = vi.fn(() => ({ shutdown }))
   await runHostShutdownCli(['stop', '--profile', STOP_PROFILE], createShutdown)
-  expect(createShutdown).toHaveBeenCalledWith({ profilePath: STOP_PROFILE })
+  expect(createShutdown).toHaveBeenCalledWith({
+    profilePath: STOP_PROFILE,
+    removalTimeoutMs: HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS
+  })
   expect(shutdown).toHaveBeenCalledOnce()
 })
 

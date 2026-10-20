@@ -86,7 +86,7 @@ export function parseAntigravityOAuthSession(value: unknown): AntigravityOAuthSe
   }
 }
 
-type BucketFamily = 'gemini' | 'claude' | 'gpt' | 'third-party'
+type BucketFamily = 'gemini' | 'gemini-argon-wtu' | 'claude' | 'gpt' | 'third-party'
 type BucketWindow = 'five-hour' | 'weekly'
 
 interface ParsedBucket {
@@ -103,20 +103,24 @@ function parseBucket(value: unknown): ParsedBucket | null {
   if (!id || remaining === null || remaining < -0.000_001 || remaining > 1.000_001) {
     return null
   }
-  const separator = id.indexOf('-')
+  // Family ids can contain hyphens: the live Argon pool is
+  // `gemini-argon-wtu-weekly`, independent of Gemini's shared pool.
+  const separator = id.lastIndexOf('-')
   if (separator <= 0) return null
   const rawFamily = id.slice(0, separator)
   const rawWindow = id.slice(separator + 1)
   const family: BucketFamily | null =
     rawFamily === 'gemini'
       ? 'gemini'
-      : rawFamily === 'claude'
-        ? 'claude'
-        : rawFamily === 'gpt'
-          ? 'gpt'
-          : rawFamily === '3p'
-            ? 'third-party'
-            : null
+      : rawFamily === 'gemini-argon-wtu'
+        ? 'gemini-argon-wtu'
+        : rawFamily === 'claude'
+          ? 'claude'
+          : rawFamily === 'gpt'
+            ? 'gpt'
+            : rawFamily === '3p'
+              ? 'third-party'
+              : null
   const window: BucketWindow | null =
     rawWindow === '5h' ? 'five-hour' : rawWindow === 'weekly' ? 'weekly' : null
   if (!family || !window) return null
@@ -130,11 +134,13 @@ function parseBucket(value: unknown): ParsedBucket | null {
 
 function bucketLabel(bucket: ParsedBucket): string {
   const family =
-    bucket.family === 'third-party'
-      ? 'Claude/GPT'
-      : bucket.family === 'gpt'
-        ? 'GPT'
-        : bucket.family[0].toUpperCase() + bucket.family.slice(1)
+    bucket.family === 'gemini-argon-wtu'
+      ? 'Gemini 4 Argon'
+      : bucket.family === 'third-party'
+        ? 'Claude/GPT'
+        : bucket.family === 'gpt'
+          ? 'GPT'
+          : bucket.family[0].toUpperCase() + bucket.family.slice(1)
   return `${family} ${bucket.window === 'five-hour' ? '5H' : 'Weekly'}`
 }
 
@@ -146,7 +152,9 @@ function bucketOrder(bucket: ParsedBucket): number {
         ? 1
         : bucket.family === 'gpt'
           ? 2
-          : 3
+          : bucket.family === 'third-party'
+            ? 3
+            : 4
   return familyOrder * 2 + (bucket.window === 'five-hour' ? 0 : 1)
 }
 
@@ -268,7 +276,8 @@ function agyHeaders(accessToken: string): Record<string, string> {
   return {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
-    'User-Agent': `antigravity/cli/1.1.9 (aidev_client; os_type=${process.platform}; arch=${process.arch}; auth_method=consumer)`
+    // Google varies quota families by client identity; 1.1.9 omits Argon.
+    'User-Agent': `antigravity/cli/1.3.6 (aidev_client; os_type=${process.platform}; arch=${process.arch}; auth_method=consumer)`
   }
 }
 

@@ -31,6 +31,7 @@ import {
 } from '../host-runtime/HostLeaseRegistry'
 import { readHostRegistryEntry } from '../host-runtime/HostRegistry'
 import { HOST_END_PROCESS_FLUSH_MS } from '../host-runtime/cli'
+import { HOST_LIFETIME_STOP_DEADLINE_MS } from './HostNodeProductionServer'
 import { observeProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
 
 const paths: string[] = []
@@ -877,50 +878,56 @@ describe('production Host CLI subprocess: lease lifetime', () => {
   // The same for a stop requested over the socket. `cli.js stop` and the
   // Desktop's HostShutdownClient reach the Host through the listener the stop
   // closes first, so nothing can request it again.
-  it('ends the process when a requested stop fails, and a second Host takes the profile', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'host-failed-request-subprocess-'))
-    paths.push(root)
-    const cli = buildCli(root)
-    const profile = join(root, 'requested')
-    const host = spawnHost(
-      cli,
-      profile,
-      // A grace longer than the test: only the request stops this Host.
-      { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:40000,stop:5000' },
-      [],
-      ['--require', writersDrainHook(root, cli, 'fail')]
-    )
-    let tail = ''
-    host.child.stderr?.on('data', (chunk: string) => {
-      tail = (tail + chunk).slice(-4_096)
-    })
-    await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
-    const requestedAt = Date.now()
-    const stop = spawn(process.execPath, [cli, 'stop', '--profile', realpathSync(profile)], {
-      env: { ...process.env, PATH: '' },
-      stdio: ['ignore', 'ignore', 'pipe']
-    })
-    spawned.push(stop)
-    let stopStderr = ''
-    stop.stderr?.setEncoding('utf8')
-    stop.stderr?.on('data', (chunk: string) => {
-      stopStderr += chunk
-    })
-    await waitForExit(host.child, 15_000)
-    expect(host.child.exitCode, tail).toBe(1)
-    expect(Date.now() - requestedAt).toBeLessThan(5_000)
-    expect(tail).toContain(
-      'stopping on request failed, profile authority retained: ' +
-        'History source writers have not drained'
-    )
-    // The request was acknowledged, but the authority it waits to see go
-    // names a process that is gone: `cli.js stop` says the stop did not finish.
-    await waitForExit(stop, 15_000)
-    expect(stop.exitCode, stopStderr).toBe(1)
-    expect(stopStderr).toContain('ownership artifacts remain')
-    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
-    await takesTheProfileOver(cli, profile, root)
-  }, 90_000)
+  it(
+    'ends the process when a requested stop fails, and a second Host takes the profile',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'host-failed-request-subprocess-'))
+      paths.push(root)
+      const cli = buildCli(root)
+      const profile = join(root, 'requested')
+      const host = spawnHost(
+        cli,
+        profile,
+        // Allow startup and the explicit stop request before lifetime idling.
+        { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:40000,stop:5000' },
+        [],
+        ['--require', writersDrainHook(root, cli, 'fail')]
+      )
+      let tail = ''
+      host.child.stderr?.on('data', (chunk: string) => {
+        tail = (tail + chunk).slice(-4_096)
+      })
+      await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
+      const requestedAt = Date.now()
+      const stop = spawn(process.execPath, [cli, 'stop', '--profile', realpathSync(profile)], {
+        env: { ...process.env, PATH: '' },
+        stdio: ['ignore', 'ignore', 'pipe']
+      })
+      spawned.push(stop)
+      let stopStderr = ''
+      stop.stderr?.setEncoding('utf8')
+      stop.stderr?.on('data', (chunk: string) => {
+        stopStderr += chunk
+      })
+      await waitForExit(host.child, 15_000)
+      expect(host.child.exitCode, tail).toBe(1)
+      expect(Date.now() - requestedAt).toBeLessThan(5_000)
+      expect(tail).toContain(
+        'stopping on request failed, profile authority retained: ' +
+          'History source writers have not drained'
+      )
+      // The request was acknowledged, but the authority it waits to see go
+      // names a process that is gone: `cli.js stop` says the stop did not finish.
+      // Give the client its declared cleanup budget plus the existing scheduling
+      // allowance; the Host's own exit bound above remains independent.
+      await waitForExit(stop, HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS + 15_000)
+      expect(stop.exitCode, stopStderr).toBe(1)
+      expect(stopStderr).toContain('ownership artifacts remain')
+      expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
+      await takesTheProfileOver(cli, profile, root)
+    },
+    HOST_LIFETIME_STOP_DEADLINE_MS + HOST_END_PROCESS_FLUSH_MS + 90_000
+  )
 
   /**
    * S1a review N2b. endHostProcess exits once stderr has drained, and only its
