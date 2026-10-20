@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { HostProfileRun } from '../host-runtime/HostProfileDomainStore'
 import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
+import { ThreadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 
 type RunWindowPage = {
@@ -164,6 +165,151 @@ describe('ThreadCatalogueHostRunWindow.refreshFor', () => {
       })
     ])
     window.dispose()
+  })
+
+  it('re-reads after a display refresh begins during the metadata-open barrier', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    const opening = deferred<ReturnType<typeof opened>>()
+    const openingStarted = deferred<void>()
+    const older = deferred<RunWindowPage>()
+    const olderStarted = deferred<void>()
+    let hostRunQueries = 0
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method === 'open') {
+        openingStarted.resolve()
+        return opening.promise
+      }
+      if (query.method === 'host-runs') {
+        hostRunQueries += 1
+        if (hostRunQueries === 1) {
+          olderStarted.resolve()
+          return older.promise
+        }
+        return page('witness-2', 'run-current')
+      }
+      if (query.method === 'release') return true
+      throw new Error(`unexpected query ${query.method}`)
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    h.setWitness('witness-2')
+
+    const refreshing = window.refreshFor('chat-1', 'run-current')
+    await openingStarted.promise
+    h.touch('chat-1')
+    await vi.advanceTimersByTimeAsync(100)
+    await olderStarted.promise
+
+    opening.resolve(opened())
+    await vi.advanceTimersByTimeAsync(0)
+    older.resolve(page('witness-1', 'run-old'))
+
+    await expect(refreshing).resolves.toBe(true)
+    expect(h.query.mock.calls.map(([query]) => query.method)).toEqual([
+      'open',
+      'host-runs',
+      'host-runs',
+      'release'
+    ])
+    expect(window.snapshot()).toEqual({
+      entries: [
+        expect.objectContaining({
+          chatId: 'chat-1',
+          sourceWitness: 'witness-2',
+          run: expect.objectContaining({ runId: 'run-current' })
+        })
+      ],
+      total: 1,
+      complete: true
+    })
+    window.dispose()
+  })
+
+  it('retries a superseded metadata import before proving a run omitted by an earlier display read', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    const firstOpen = deferred<ReturnType<typeof opened>>()
+    let opens = 0
+    let indexed = false
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method === 'open') {
+        opens += 1
+        return opens === 1 ? firstOpen.promise : opened()
+      }
+      if (query.method === 'host-runs') {
+        return indexed ? page('witness-2', 'run-current') : { entries: [], total: 0, next: null }
+      }
+      if (query.method === 'release') return true
+      throw new Error(`unexpected query ${query.method}`)
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    try {
+      const refreshing = window.refreshFor('chat-1', 'run-current')
+      h.setWitness('witness-2')
+      await vi.advanceTimersByTimeAsync(100)
+      expect(window.snapshot().entries).toEqual([])
+
+      // The old import lost to the source write. A fresh open can now index it;
+      // no further mirror event is needed to make the new run queryable.
+      indexed = true
+      firstOpen.reject(new ThreadCatalogueRequestError('source_changed'))
+
+      await expect(refreshing).resolves.toBe(true)
+      expect(h.query.mock.calls.map(([query]) => query.method)).toEqual([
+        'open',
+        'host-runs',
+        'open',
+        'host-runs',
+        'release'
+      ])
+      expect(window.snapshot()).toEqual({
+        entries: page('witness-2', 'run-current').entries,
+        total: 1,
+        complete: true
+      })
+    } finally {
+      window.dispose()
+    }
+  })
+
+  it.each(['source_changed', 'source_unsettled', 'lease_erased', 'unknown'] as const)(
+    'keeps a refused metadata barrier bounded and fail-closed for %s',
+    async (code) => {
+      vi.useFakeTimers()
+      const h = mirrorHarness()
+      h.query.mockImplementation(async (query: { method: string }) => {
+        if (query.method !== 'open') throw new Error(`unexpected query ${query.method}`)
+        throw code === 'unknown'
+          ? new Error('worker unavailable')
+          : new ThreadCatalogueRequestError(code)
+      })
+      const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+      try {
+        await expect(window.refreshFor('chat-1', 'run-current')).resolves.toBe(false)
+        expect(h.query.mock.calls.map(([query]) => query.method)).toEqual(
+          code === 'source_changed' ? ['open', 'open'] : ['open']
+        )
+        expect(window.snapshot().entries).toEqual([])
+      } finally {
+        window.dispose()
+      }
+    }
+  )
+
+  it('does not reopen a superseded import after the window is disposed', async () => {
+    vi.useFakeTimers()
+    const h = mirrorHarness()
+    const firstOpen = deferred<ReturnType<typeof opened>>()
+    h.query.mockImplementation(async (query: { method: string }) => {
+      if (query.method === 'open') return firstOpen.promise
+      throw new Error(`unexpected query ${query.method}`)
+    })
+    const window = new ThreadCatalogueHostRunWindow(h.mirror, vi.fn())
+    const refreshing = window.refreshFor('chat-1', 'run-current')
+    window.dispose()
+    firstOpen.reject(new ThreadCatalogueRequestError('source_changed'))
+    await expect(refreshing).resolves.toBe(false)
+    expect(h.query.mock.calls.map(([query]) => query.method)).toEqual(['open'])
   })
 
   it('returns false on query failure, releases the lease, and never counts an old-witness row as fresh', async () => {
