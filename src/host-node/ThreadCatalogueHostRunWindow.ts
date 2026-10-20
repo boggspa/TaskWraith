@@ -1,5 +1,6 @@
 import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
 import type { ThreadCatalogueOpenResult } from '../shared/threadCatalogueTypes'
+import { ThreadCatalogueRequestError } from '../shared/threadCatalogueRequestError'
 import type { HostCatalogueRunWindow, HostProfileRun } from '../host-runtime/HostProfileDomainStore'
 
 type RunWindowEntry = { chatId: string; sourceWitness: string; run: HostProfileRun }
@@ -213,10 +214,29 @@ export class ThreadCatalogueHostRunWindow {
       // `changed` only arms the worker's own 100 ms debounce. The mirror's
       // established metadata-open barrier awaits foreground indexing, making
       // the new source witness queryable now without an arbitrary sleep.
-      opened = await this.mirror.port.query({ method: 'open', chatId, mode: 'metadata' })
+      try {
+        opened = await this.mirror.port.query({ method: 'open', chatId, mode: 'metadata' })
+      } catch (error) {
+        // A shared import may have started before the persisted source write.
+        // Once it is superseded, request one fresh import of the current source.
+        if (
+          this.stopped ||
+          !(error instanceof ThreadCatalogueRequestError) ||
+          error.code !== 'source_changed'
+        ) {
+          throw error
+        }
+        opened = await this.mirror.port.query({ method: 'open', chatId, mode: 'metadata' })
+      }
       if (!opened || opened.entry.snapshot || opened.entry.projection.sourceComplete === false) {
         return false
       }
+      // A display refresh can start while metadata-open is pending. It may
+      // still reflect the old index, so it cannot satisfy this read barrier.
+      const overlappingRefresh = this.refreshPromise
+      if (overlappingRefresh) await overlappingRefresh
+      if (this.stopped) return false
+      this.cancelScheduledRefresh()
       refreshed = true
       if (!(await this.refresh())) return false
       return this.rows.some(
