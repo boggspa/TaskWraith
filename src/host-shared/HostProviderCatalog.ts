@@ -457,9 +457,14 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
     muse: {
       displayProvider: 'Muse',
       shortCode: 'MUSE',
-      // Newest first, mirroring the CLI's own picker; Spark 1.2 stays the
-      // default (the on-disk catalogue still flags it `is_current`).
+      // Newest first, mirroring the CLI's own picker; retain TaskWraith's Spark 1.2 default.
       models: [
+        model('muse-wonder-1.0', 'Muse Wonder 1.0', museReasoning('muse-wonder-1.0')),
+        model(
+          'muse-wonder-full-1.0',
+          'Muse Wonder Full 1.0',
+          museReasoning('muse-wonder-full-1.0')
+        ),
         model('muse-spark-1.3', 'Muse Spark 1.3', museReasoning('muse-spark-1.3')),
         {
           ...model(

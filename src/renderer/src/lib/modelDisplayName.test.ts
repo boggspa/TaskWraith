@@ -221,7 +221,9 @@ describe('humaniseModelId', () => {
   })
 
   describe('Muse', () => {
-    it('maps Spark wire ids to a human-readable name', () => {
+    it('maps Wonder and Spark wire ids to a human-readable name', () => {
+      expect(humaniseModelId('muse', 'muse-wonder-1.0')).toBe('Muse Wonder 1.0')
+      expect(humaniseModelId('muse', 'muse-wonder-full-1.0')).toBe('Muse Wonder Full 1.0')
       expect(humaniseModelId('muse', 'muse-spark-1.3')).toBe('Muse Spark 1.3')
       expect(humaniseModelId('muse', 'muse-spark-1.3-contributor')).toBe(
         'Muse Contributor Spark 1.3'

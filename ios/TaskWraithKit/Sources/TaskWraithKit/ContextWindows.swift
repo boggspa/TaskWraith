@@ -149,7 +149,10 @@ public enum ContextWindows {
         "ministral-14b-2512": 262_144,
         "ministral-8b-2512": 262_144,
         "ministral-3b-2512": 262_144,
-        // Muse Code CLI models (opaque exec seat).
+        // Wonder windows from the Muse Code provider catalogue, verified 2026-10-13.
+        "muse-wonder-1.0": 1_007_997,
+        "muse-wonder-full-1.0": 1_007_997,
+        // Existing Spark models retain their conservative opaque-seat fallback.
         "muse-spark-1.3": 200_000,
         "muse-spark-1.3-contributor": 200_000,
         "muse-spark-1.2": 200_000,

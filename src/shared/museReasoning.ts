@@ -3,9 +3,9 @@
  *
  * Muse Code 1.0.3 accepts both `max` and `ultra` on its exec argv. The Meta
  * provider catalog published 2026-09-04 exposes the new `max` tier only for
- * regular Muse Spark 1.3; Spark 1.2 and both Contributor routes still stop at
- * xhigh in that catalog. TaskWraith already offers the CLI-compatible `ultra`
- * tier, so keep it available while scoping only the new Max rung.
+ * regular Muse Spark 1.3. The 2026-10-12 catalogue also publishes Max for
+ * Wonder 1.0 and Wonder Full 1.0. TaskWraith already offers the CLI-compatible
+ * `ultra` tier, so keep it available while adding Max to the Wonder routes.
  */
 
 export const MUSE_META_REASONING_EFFORTS = [
@@ -40,7 +40,11 @@ const MUSE_META_REASONING_EFFORTS_WITHOUT_MAX: readonly MuseMetaReasoningEffort[
   'ultra'
 ]
 
-export const MUSE_MAX_REASONING_MODEL_IDS = ['muse-spark-1.3'] as const
+export const MUSE_MAX_REASONING_MODEL_IDS = [
+  'muse-wonder-1.0',
+  'muse-wonder-full-1.0',
+  'muse-spark-1.3'
+] as const
 
 const MUSE_MAX_REASONING_MODEL_ID_SET: ReadonlySet<string> = new Set(MUSE_MAX_REASONING_MODEL_IDS)
 

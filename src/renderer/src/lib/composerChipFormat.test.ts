@@ -74,6 +74,11 @@ describe('shortModelName', () => {
     expect(shortModelName('grok', '', 'grok-4.5')).toBe('Grok 4.5 Fast')
   })
 
+  it('keeps Muse Wonder Full distinct from Wonder in the compact chip', () => {
+    expect(shortModelName('muse', '', 'muse-wonder-1.0')).toBe('Wonder 1.0')
+    expect(shortModelName('muse', '', 'muse-wonder-full-1.0')).toBe('Wonder Full 1.0')
+  })
+
   it('keeps Muse Contributor Spark distinct from the standard Spark route', () => {
     expect(shortModelName('muse', '', 'muse-spark-1.3')).toBe('Spark 1.3')
     expect(shortModelName('muse', '', 'muse-spark-1.3-contributor')).toBe('Contributor Spark 1.3')

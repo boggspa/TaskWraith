@@ -150,11 +150,11 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(newAdditions?.id).toBe('new-additions-2026-10-07')
-    expect(newAdditions?.body.startsWith('Claude Haiku 5.5, Mistral Large 4')).toBe(true)
+    expect(newAdditions?.id).toBe('new-additions-2026-10-13')
+    expect(newAdditions?.body.startsWith('Muse Wonder 1.0 and Muse Wonder Full 1.0')).toBe(true)
     expect(groups.map((g) => g.provider)).toEqual([
-      // Claude leads for Haiku 5.5, the headline of this lineup; Mistral
-      // follows for Large 4 (2026-10-06), then Codex for GPT-6 Sol and Luna.
+      // Muse leads for Wonder (2026-10-12); previous additions retain their order.
+      'muse',
       'claude',
       'mistral',
       'codex',
@@ -163,11 +163,11 @@ describe('notification registry', () => {
       'antigravity',
       'grok',
       'cursor',
-      'muse',
       'ollama',
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Muse',
       'Claude',
       'Mistral',
       'Codex',
@@ -176,7 +176,6 @@ describe('notification registry', () => {
       'AntiGravity',
       'Grok',
       'Cursor',
-      'Muse',
       'Ollama',
       'Pi'
     ])
@@ -261,11 +260,15 @@ describe('notification registry', () => {
 
     const muse = groups.find((g) => g.provider === 'muse')
     expect(muse?.models.map((m) => m.name)).toEqual([
+      'Muse Wonder 1.0',
+      'Muse Wonder Full 1.0',
       'Muse Spark 1.3',
       'Muse Contributor Spark 1.3'
     ])
-    expect(muse?.models[0]?.blurb).toMatch(/newest Spark.*1M context.*\$1\.25\/\$4\.25/)
-    expect(muse?.models[1]?.blurb).toMatch(/\$0\.10\/\$0\.20.*product improvement/i)
+    expect(muse?.models[0]?.blurb).toMatch(/Meta Model API.*1M context.*Max.*\$4\.00\/\$20\.00/)
+    expect(muse?.models[1]?.blurb).toMatch(/Muse Code.*1M context.*Max/)
+    expect(muse?.models[2]?.blurb).toMatch(/newest Spark.*1M context.*\$1\.25\/\$4\.25/)
+    expect(muse?.models[3]?.blurb).toMatch(/\$0\.10\/\$0\.20.*product improvement/i)
     for (const model of muse?.models ?? []) {
       expect(model.accentProvider).toBeUndefined()
     }

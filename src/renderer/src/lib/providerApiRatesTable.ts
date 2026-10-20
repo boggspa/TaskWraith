@@ -19,6 +19,8 @@ export interface ProviderApiRateRow {
   longContextInputUsdPerMillion?: number
   longContextCachedInputUsdPerMillion?: number
   longContextOutputUsdPerMillion?: number
+  /** Upstream has not published API pricing; numeric rates are placeholders. */
+  pricingPending?: true
   sourceUrl: string
   lastVerified: string
   notes?: string
@@ -91,6 +93,12 @@ function rowStatus(
   rateTableVersion: string
 ): { status: ProviderApiRateStatus; statusMessage?: string } {
   if (row.confidence === 'manual-override') return { status: 'manual-override' }
+  if (row.pricingPending) {
+    return {
+      status: 'baseline',
+      statusMessage: 'API token pricing has not been published for this model.'
+    }
+  }
   if (!probe) return { status: 'baseline' }
   if (!probeIsFreshForRow(probeRunAt, row, rateTableVersion)) {
     return {
@@ -197,6 +205,10 @@ export function buildProviderApiRateGroups(raw: unknown): ProviderApiRateGroup[]
         inputUsdPerMillion: model.inputUsdPerMillion,
         ...(cached !== undefined ? { cachedInputUsdPerMillion: cached } : {}),
         outputUsdPerMillion: model.outputUsdPerMillion,
+        // An explicit manual rate replaces the unpublished baseline placeholder.
+        ...(model.pricingPending === true && model.confidence !== 'manual-override'
+          ? { pricingPending: true as const }
+          : {}),
         ...(hasLongContextTier
           ? {
               longContextThresholdTokens: model.longContextThresholdTokens as number,

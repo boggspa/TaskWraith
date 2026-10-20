@@ -80,8 +80,20 @@ describe('getStaticProviderModels (Mistral hosted GLM-5.2 thinking correlation)'
 })
 
 describe('getStaticProviderModels (Muse catalogue)', () => {
-  it('offers both Spark 1.3 routes ahead of 1.2 while keeping Spark 1.2 the default', () => {
+  it('offers both Wonder models ahead of Spark while keeping Spark 1.2 the default', () => {
     expect(getStaticProviderModels('muse')).toEqual([
+      {
+        id: 'muse-wonder-1.0',
+        label: 'Muse Wonder 1.0',
+        description: '1M context - $4.00/$20.00 per Mtok',
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-wonder-full-1.0',
+        label: 'Muse Wonder Full 1.0',
+        description: '1M context - advanced coding and long-running agents',
+        ultraTaskSupported: true
+      },
       {
         id: 'muse-spark-1.3',
         label: 'Muse Spark 1.3',

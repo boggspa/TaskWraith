@@ -559,16 +559,26 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
   }
 ] satisfies CodexModelOption[]
 const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
-// Muse Code CLI seat catalog (opaque exec). Spark 1.3 leads in the CLI's own
-// order while 1.2 stays the default (the catalogue still flags it `is_current`).
+// Muse Code CLI seat catalog (opaque exec). Wonder leads in the CLI's own
+// order while TaskWraith retains its existing Spark 1.2 default.
 // Contributor Spark stays opt-in: its discount carries the provider catalogue's
 // product-improvement data-use notice.
 const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
 const MUSE_DEFAULT_MODEL_ROWS = [
   {
+    id: 'muse-wonder-1.0',
+    label: 'Muse Wonder 1.0',
+    description: '1M context - $4.00/$20.00 per Mtok'
+  },
+  {
+    id: 'muse-wonder-full-1.0',
+    label: 'Muse Wonder Full 1.0',
+    description: '1M context - advanced coding and long-running agents'
+  },
+  {
     id: 'muse-spark-1.3',
     label: 'Muse Spark 1.3',
-    description: 'Muse Code CLI newest model'
+    description: 'Muse Code CLI Spark model'
   },
   {
     id: 'muse-spark-1.3-contributor',

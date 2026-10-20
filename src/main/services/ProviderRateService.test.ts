@@ -352,6 +352,31 @@ describe('BAKED_IN_RATES', () => {
     })
   })
 
+  it('prices Wonder at its own API rates and keeps Full unpriced instead of using Spark rates', () => {
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-wonder-1.0')
+    ).toMatchObject({
+      inputUsdPerMillion: 4,
+      outputUsdPerMillion: 20,
+      cachedInputUsdPerMillion: 0.2,
+      sourceUrl: 'https://dev.meta.ai/models/muse-wonder',
+      lastVerified: '2026-10-13'
+    })
+    const full = BAKED_IN_RATES.muse.models.find(
+      (model) => model.modelId === 'muse-wonder-full-1.0'
+    )
+    expect(full).toMatchObject({
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+      pricingPending: true,
+      lastVerified: '2026-10-13'
+    })
+    expect(full?.freeModel).not.toBe(true)
+    expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(
+      'muse-spark-1.2'
+    )
+  })
+
   it('prices both Muse Spark 1.3 routes exactly, leaving 1.2 flagged as the fallback', () => {
     expect(BAKED_IN_RATES.muse.models.filter((model) => model.isFallback)).toHaveLength(1)
     expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(

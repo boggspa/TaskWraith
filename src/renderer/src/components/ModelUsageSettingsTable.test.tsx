@@ -303,6 +303,61 @@ describe('ModelUsageWorkspaceMatrixTable (populated render)', () => {
 })
 
 describe('ProviderApiRatesTableBlock (populated render)', () => {
+  it('renders unpublished API prices as neutral cells with an explanatory source label', () => {
+    const [group] = buildProviderApiRateGroups({
+      baseline: {
+        muse: {
+          pricingUrl: 'https://dev.meta.ai/models/muse-wonder',
+          models: [
+            {
+              modelId: 'muse-wonder-full-1.0',
+              inputUsdPerMillion: 0,
+              outputUsdPerMillion: 0,
+              pricingPending: true
+            }
+          ]
+        }
+      }
+    })
+    const html = renderToStaticMarkup(
+      <table>
+        <ProviderApiRatesTableBlock group={group} />
+      </table>
+    )
+
+    expect(html).toContain('Wonder Full 1.0')
+    expect(html).toContain('>unpublished</a>')
+    expect(html.match(/>—<\/td>/g)).toHaveLength(3)
+    expect(html).toContain('API token pricing has not been published')
+    expect(html).not.toContain('$0')
+    expect(html).not.toContain('0 USD per 1M')
+  })
+
+  it('continues to render published zero API rates as free', () => {
+    const [group] = buildProviderApiRateGroups({
+      baseline: {
+        pi: {
+          models: [
+            {
+              modelId: 'openrouter/nex-agi/nex-n2.5:free',
+              inputUsdPerMillion: 0,
+              outputUsdPerMillion: 0,
+              freeModel: true
+            }
+          ]
+        }
+      }
+    })
+    const html = renderToStaticMarkup(
+      <table>
+        <ProviderApiRatesTableBlock group={group} />
+      </table>
+    )
+
+    expect(html.match(/>\$0<\/td>/g)).toHaveLength(2)
+    expect(html).not.toContain('unpublished')
+  })
+
   it('renders provider/model API rates with cached input and source status', () => {
     const [group] = buildProviderApiRateGroups({
       rateTableVersion: '2026-06-23',

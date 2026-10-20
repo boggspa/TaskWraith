@@ -250,6 +250,24 @@ describe('MSP vocabularies', () => {
 })
 
 describe('runMuseMspProvider', () => {
+  it.each(['muse-wonder-1.0', 'muse-wonder-full-1.0'])(
+    'passes %s and Max through with subscription and API authentication',
+    async (modelId) => {
+      for (const apiKey of [undefined, 'k'.repeat(32)]) {
+        const child = new FakeMspChild()
+        const pending = run(child, { model: modelId, reasoningEffort: 'max', apiKey })
+        await playTurn(child)
+        await pending
+
+        expect(child.sentMethod('session/start')?.params).toMatchObject({
+          providerId: 'meta',
+          modelId
+        })
+        expect(child.sentMethod('turn/start')?.params.reasoningEffort).toBe('max')
+      }
+    }
+  )
+
   it('pins the same native provider as exec so resumed reasoning retains its route', async () => {
     const child = new FakeMspChild()
     const pending = run(child, { model: 'muse-spark-1.3' })
