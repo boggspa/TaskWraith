@@ -45,6 +45,14 @@ max_context_size = 262144
 display_name = "K3-256k"
 support_efforts = [ "low", "high", "max" ]
 default_effort = "high"
+
+[models."kimi-code/k3.1-pro"]
+provider = "managed:kimi-code"
+model = "k3.1-pro"
+max_context_size = 1048576
+display_name = "K3.1 Pro"
+support_efforts = [ "low", "high", "max" ]
+default_effort = "high"
 `
 
 const fallbackRows = () => getStaticProviderModels('kimi')
@@ -52,11 +60,12 @@ const fallbackRows = () => getStaticProviderModels('kimi')
 describe('KimiModelCatalog', () => {
   it('parses only managed model aliases and their credential-free metadata', () => {
     const aliases = parseKimiManagedModelAliases(FULL_CONFIG)
+    // Kimi Code still configures both K3 routes; TaskWraith retired them for
+    // K3.1 Pro (2026-10-27), so their tables are not read at all.
     expect([...aliases.keys()]).toEqual([
       'kimi-code/kimi-for-coding',
       'kimi-code/kimi-for-coding-highspeed',
-      'kimi-code/k3',
-      'kimi-code/k3-256k'
+      'kimi-code/k3.1-pro'
     ])
     expect(aliases.get('kimi-code/kimi-for-coding')).toEqual({
       alias: 'kimi-code/kimi-for-coding',
@@ -66,10 +75,10 @@ describe('KimiModelCatalog', () => {
       defaultEffort: 'max',
       maxContextSize: 1_048_576
     })
-    expect(aliases.get('kimi-code/k3')).toEqual({
-      alias: 'kimi-code/k3',
-      modelId: 'k3',
-      displayName: 'K3',
+    expect(aliases.get('kimi-code/k3.1-pro')).toEqual({
+      alias: 'kimi-code/k3.1-pro',
+      modelId: 'k3.1-pro',
+      displayName: 'K3.1 Pro',
       supportEfforts: ['low', 'high', 'max'],
       defaultEffort: 'high',
       maxContextSize: 1_048_576
@@ -78,13 +87,12 @@ describe('KimiModelCatalog', () => {
     expect(JSON.stringify([...aliases.values()])).not.toContain('also-ignored')
   })
 
-  it('projects K2.8, Highspeed, and both K3 routes as distinct rows', () => {
+  it('projects K2.8, Highspeed, and K3.1 Pro as distinct rows, never the retired K3 routes', () => {
     const rows = projectKimiManagedModelRows(FULL_CONFIG, fallbackRows())
     expect(rows?.map((row) => row.id)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
     const standard = rows?.find((row) => row.id === 'kimi-k2.8-preview')
     expect(standard).toMatchObject({
@@ -105,45 +113,46 @@ describe('KimiModelCatalog', () => {
       contextWindow: 262_144
     })
     expect(highspeed?.additionalSpeedTiers).toBeUndefined()
-    const k3 = rows?.find((row) => row.id === 'kimi-k3')
-    expect(k3).toMatchObject({
-      label: 'K3 (1M)',
+    const k31Pro = rows?.find((row) => row.id === 'kimi-k3.1-pro')
+    expect(k31Pro).toMatchObject({
+      label: 'K3.1 Pro',
       defaultReasoningEffort: 'high',
       contextWindow: 1_048_576
     })
-    expect(k3?.additionalSpeedTiers).toBeUndefined()
-    const k3Short = rows?.find((row) => row.id === 'kimi-k3-256k')
-    expect(k3Short).toMatchObject({
-      label: 'K3 (256K)',
-      defaultReasoningEffort: 'high',
-      contextWindow: 262_144
-    })
-    expect(k3Short?.additionalSpeedTiers).toBeUndefined()
+    expect(k31Pro?.supportedReasoningEfforts?.map((effort) => effort.reasoningEffort)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
+    expect(k31Pro?.additionalSpeedTiers).toBeUndefined()
   })
 
-  it('shows a plan-capped K3 route and omits Highspeed when its alias is unavailable', () => {
+  it("reads K3.1 Pro's configured window and omits Highspeed when its alias is unavailable", () => {
     const config = FULL_CONFIG.replace(
       /\n\[models\."kimi-code\/kimi-for-coding-highspeed"\][\s\S]*?(?=\n\[models\.)/,
       '\n'
     ).replace(
-      /(\[models\."kimi-code\/k3"\][\s\S]*?max_context_size = )1048576/,
+      /(\[models\."kimi-code\/k3\.1-pro"\][\s\S]*?max_context_size = )1048576/,
       (_match, prefix: string) => `${prefix}262144`
     )
     const rows = projectKimiManagedModelRows(config, fallbackRows())
 
     expect(rows?.map((row) => row.id)).not.toContain('kimi-k2.7-code-highspeed')
     expect(rows?.find((row) => row.id === 'kimi-k2.8-preview')?.contextWindow).toBe(1_048_576)
-    expect(rows?.find((row) => row.id === 'kimi-k3')?.label).toBe('K3 (plan-capped 256K)')
+    expect(rows?.find((row) => row.id === 'kimi-k3.1-pro')).toMatchObject({
+      label: 'K3.1 Pro',
+      contextWindow: 262_144
+    })
   })
 
   it('honors a user context override without borrowing another alias window', () => {
     const config = `${FULL_CONFIG}
-[models."kimi-code/k3".overrides]
+[models."kimi-code/k3.1-pro".overrides]
 max_context_size = 262144
 `
     const rows = projectKimiManagedModelRows(config, fallbackRows())
-    expect(rows?.find((row) => row.id === 'kimi-k3')?.label).toBe('K3 (plan-capped 256K)')
-    expect(rows?.find((row) => row.id === 'kimi-k3-256k')?.label).toBe('K3 (256K)')
+    expect(rows?.find((row) => row.id === 'kimi-k3.1-pro')?.contextWindow).toBe(262_144)
+    expect(rows?.find((row) => row.id === 'kimi-k2.8-preview')?.contextWindow).toBe(1_048_576)
   })
 
   it('omits absent managed routes and falls back when no recognized alias exists', () => {
@@ -159,17 +168,19 @@ max_context_size = 1048576
     ).toBeNull()
   })
 
-  it('does not label a remapped alias as K3 or expose unknown effort tokens', () => {
-    const config = FULL_CONFIG.replace('model = "k3-256k"', 'model = "not-k3"').replace(
-      'display_name = "K3"\nsupport_efforts = [ "low", "high", "max" ]',
-      'display_name = "K3"\nsupport_efforts = [ "low", "invented", "max" ]'
-    )
-    const rows = projectKimiManagedModelRows(config, fallbackRows())
-
-    expect(rows?.map((row) => row.id)).not.toContain('kimi-k3-256k')
+  it('drops a remapped K3.1 Pro alias and never exposes unknown effort tokens', () => {
+    const remapped = FULL_CONFIG.replace('model = "k3.1-pro"', 'model = "not-k3.1-pro"')
     expect(
-      rows
-        ?.find((row) => row.id === 'kimi-k3')
+      projectKimiManagedModelRows(remapped, fallbackRows())?.map((row) => row.id)
+    ).not.toContain('kimi-k3.1-pro')
+
+    const invented = FULL_CONFIG.replace(
+      'display_name = "K3.1 Pro"\nsupport_efforts = [ "low", "high", "max" ]',
+      'display_name = "K3.1 Pro"\nsupport_efforts = [ "low", "invented", "max" ]'
+    )
+    expect(
+      projectKimiManagedModelRows(invented, fallbackRows())
+        ?.find((row) => row.id === 'kimi-k3.1-pro')
         ?.supportedReasoningEfforts?.map((effort) => effort.reasoningEffort)
     ).toEqual(['low', 'max'])
   })
@@ -178,7 +189,7 @@ max_context_size = 1048576
     const readFile = vi.fn(async () => FULL_CONFIG)
     await expect(
       discoverKimiManagedModelRows('/tmp/kimi-home', fallbackRows(), readFile)
-    ).resolves.toHaveLength(4)
+    ).resolves.toHaveLength(3)
     // The catalog joins the config filename onto the home with path.join, whose
     // separator is platform-specific; build the expectation the same way.
     expect(readFile).toHaveBeenCalledWith(join('/tmp/kimi-home', 'config.toml'))

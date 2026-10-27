@@ -19,6 +19,7 @@ import {
   KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_LABEL,
+  KIMI_K31_PRO_MODEL_LABEL,
   canonicalKimiTaskWraithModelId
 } from '../../../shared/kimiModels'
 import {
@@ -73,6 +74,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // ── Codex (GPT) ───────────────────────────────────────────
   'gpt-6-astra': 'GPT-6-Astra',
   'gpt-6.1-sol': 'GPT-6.1-Sol',
+  'gpt-6.1-terra': 'GPT-6.1 Terra',
   'gpt-6-sol': 'GPT-6-Sol',
   'gpt-6-luna': 'GPT-6-Luna',
   'gpt-5.5': 'GPT-5.5',
@@ -121,7 +123,9 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // mappings; includes the variants visible in the user's
   // Settings → Model usage list). The legacy K2.6 aliases remain
   // readable for historical usage rows; new dispatch defaults to
-  // K2.8 Preview, with K3 and Highspeed selectable alongside it. ─────────────
+  // K2.8 Preview, with K3.1 Pro and Highspeed selectable alongside it. The two
+  // K3 rows retired for K3.1 Pro on 2026-10-27 keep their labels for history.
+  'kimi-k3.1-pro': KIMI_K31_PRO_MODEL_LABEL,
   'kimi-k3': KIMI_K3_MODEL_LABEL,
   'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
   'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,

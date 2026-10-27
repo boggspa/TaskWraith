@@ -126,8 +126,7 @@ describe('HostNodeKimiProvider', () => {
   it.each([
     ['kimi-k2.8-preview', 'max', 'kimi-code/kimi-for-coding'],
     ['kimi-k2.7-code-highspeed', 'on', 'kimi-code/kimi-for-coding-highspeed'],
-    ['kimi-k3', 'high', 'kimi-code/k3'],
-    ['kimi-k3-256k', 'high', 'kimi-code/k3-256k']
+    ['kimi-k3.1-pro', 'high', 'kimi-code/k3.1-pro']
   ])('maps the offered %s/%s row to Kimi CLI alias %s', async (modelId, reasoningId, cliAlias) => {
     const { instance, child, spawn } = open({
       configuredThread: thread({ modelId, reasoningId })
@@ -148,7 +147,7 @@ describe('HostNodeKimiProvider', () => {
 
   it('re-asserts the picker with session/set_config_option after session/new', async () => {
     const { instance, child } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: 'high' })
     })
     const sent = frames(child)
     const running = instance.run({
@@ -176,7 +175,7 @@ describe('HostNodeKimiProvider', () => {
             {
               id: 'model',
               currentValue: 'kimi-code/kimi-for-coding',
-              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3' }]
+              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3.1-pro' }]
             },
             {
               id: 'thinking',
@@ -194,7 +193,7 @@ describe('HostNodeKimiProvider', () => {
     expect(modelConfig.params).toEqual({
       sessionId: 'session-k3',
       configId: 'model',
-      value: 'kimi-code/k3'
+      value: 'kimi-code/k3.1-pro'
     })
     child.stdout.write(
       JSON.stringify({
@@ -203,8 +202,8 @@ describe('HostNodeKimiProvider', () => {
           configOptions: [
             {
               id: 'model',
-              currentValue: 'kimi-code/k3',
-              options: [{ value: 'kimi-code/k3' }]
+              currentValue: 'kimi-code/k3.1-pro',
+              options: [{ value: 'kimi-code/k3.1-pro' }]
             },
             {
               id: 'thinking',
@@ -237,7 +236,7 @@ describe('HostNodeKimiProvider', () => {
   it('resumes an existing ACP session and falls back with bounded transcript context', async () => {
     const { instance, child } = open({
       configuredThread: thread({
-        modelId: 'kimi-k3',
+        modelId: 'kimi-k3.1-pro',
         reasoningId: 'high',
         providerSessionId: 'session-existing'
       })
@@ -288,7 +287,7 @@ describe('HostNodeKimiProvider', () => {
     const { instance, child } = open({
       configuredThread: thread({
         providerSessionId: 'session-expired',
-        modelId: 'kimi-k3',
+        modelId: 'kimi-k3.1-pro',
         reasoningId: 'high'
       })
     })
@@ -335,7 +334,7 @@ describe('HostNodeKimiProvider', () => {
 
   it('publishes bounded file-edit activity with line counts', async () => {
     const { instance, child, events } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: 'high' })
     })
     const running = instance.run({
       runId: 'run-edit-activity',
@@ -588,14 +587,13 @@ describe('HostNodeKimiProvider', () => {
     expect(offers?.models.map((model) => model.modelId)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
   })
 
-  it('omits unverified K3 routes instead of remapping them onto K2.7', async () => {
+  it('omits an unverified K3.1 Pro route instead of remapping it onto K2.7', async () => {
     const { instance } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' }),
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: 'high' }),
       discoverManagedModels: async (fallback) =>
         fallback.filter((row) => row.id === 'kimi-k2.8-preview')
     })
@@ -606,9 +604,9 @@ describe('HostNodeKimiProvider', () => {
     ).rejects.toThrow(/configuration is not selectable/)
   })
 
-  it('rejects a K3 thread when the ACP session only advertises K2.7', async () => {
+  it('rejects a K3.1 Pro thread when the ACP session only advertises K2.7', async () => {
     const { instance, child, finishes } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: 'high' })
     })
     const sent = frames(child)
     const running = instance.run({
@@ -645,14 +643,16 @@ describe('HostNodeKimiProvider', () => {
       expect.objectContaining({
         status: 'failed',
         errorCode: 'provider_failed',
-        warningSummaries: [expect.stringMatching(/does not offer selected model "kimi-code\/k3"/)]
+        warningSummaries: [
+          expect.stringMatching(/does not offer selected model "kimi-code\/k3\.1-pro"/)
+        ]
       })
     ])
   })
 
   it('fails the turn when set_config_option rejects the selected model', async () => {
     const { instance, child, finishes } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: undefined })
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: undefined })
     })
     const sent = frames(child)
     const running = instance.run({
@@ -674,7 +674,7 @@ describe('HostNodeKimiProvider', () => {
             {
               id: 'model',
               currentValue: 'kimi-code/kimi-for-coding',
-              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3' }]
+              options: [{ value: 'kimi-code/kimi-for-coding' }, { value: 'kimi-code/k3.1-pro' }]
             }
           ]
         }
@@ -695,14 +695,14 @@ describe('HostNodeKimiProvider', () => {
       expect.objectContaining({
         status: 'failed',
         errorCode: 'provider_failed',
-        warningSummaries: [expect.stringContaining('kimi-code/k3')]
+        warningSummaries: [expect.stringContaining('kimi-code/k3.1-pro')]
       })
     ])
   })
 
   it('fails the turn when the advertised config surface omits model entirely', async () => {
     const { instance, child, finishes } = open({
-      configuredThread: thread({ modelId: 'kimi-k3', reasoningId: 'high' })
+      configuredThread: thread({ modelId: 'kimi-k3.1-pro', reasoningId: 'high' })
     })
     const sent = frames(child)
     const running = instance.run({
@@ -738,7 +738,7 @@ describe('HostNodeKimiProvider', () => {
       expect.objectContaining({
         status: 'failed',
         errorCode: 'provider_failed',
-        warningSummaries: [expect.stringContaining('kimi-code/k3')]
+        warningSummaries: [expect.stringContaining('kimi-code/k3.1-pro')]
       })
     ])
   })

@@ -151,11 +151,12 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.1M")
     }
 
-    @Test("codex gpt-6.1-sol, gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
+    @Test("codex gpt-6.1-sol, gpt-6.1-terra, gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
     func codexGpt6SolAndLuna() {
         let codex = ModelContextLengths.buildGroups().first { $0.provider == "codex" }?.models ?? []
         for (modelId, label) in [
-            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
+            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6.1-terra", "GPT-6.1 Terra"),
+            ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
         ] {
             let row = codex.first { $0.modelId == modelId }
             #expect(row != nil)
@@ -163,12 +164,14 @@ struct ModelContextLengthsTests {
             #expect(row?.contextWindow == 1_050_000)
             #expect(row?.formatted == "1.1M")
         }
-        // Mirrors the TS order: gpt-5.5 first, GPT-6.1 Sol, the GPT-6 pair, then the 5.6 trio.
+        // Mirrors the TS order: gpt-5.5 first, GPT-6.1 Sol and Terra, the GPT-6
+        // pair, then the 5.6 trio.
         let ids = codex.map(\.modelId)
         #expect(ids.firstIndex(of: "gpt-6.1-sol") == 1)
-        #expect(ids.firstIndex(of: "gpt-6-sol") == 2)
-        #expect(ids.firstIndex(of: "gpt-6-luna") == 3)
-        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 4)
+        #expect(ids.firstIndex(of: "gpt-6.1-terra") == 2)
+        #expect(ids.firstIndex(of: "gpt-6-sol") == 3)
+        #expect(ids.firstIndex(of: "gpt-6-luna") == 4)
+        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 5)
     }
 
     @Test("codex drops the rows retired on 2026-09-18")
@@ -243,36 +246,26 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("kimi kimi-k3: official fixed 1M window, range display retired")
-    func kimiK3() {
-        // Mirrors desktop f661ac2a1: the split routes each carry their own
-        // official window, so the old plan-dependent '256k–1.0M' is retired.
+    @Test("kimi kimi-k3.1-pro: official fixed 1M window")
+    func kimiK31Pro() {
+        // K3.1 Pro replaced both K3 routes on 2026-10-27; mirrors the desktop
+        // row and its official 1_048_576 window.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
-            .models.first { $0.modelId == "kimi-k3" }
+            .models.first { $0.modelId == "kimi-k3.1-pro" }
         #expect(row != nil)
-        #expect(row?.label == "K3 (1M)")
+        #expect(row?.label == "K3.1 Pro")
         #expect(row?.contextWindow == 1_048_576)
         #expect(row?.formatted == "1.0M")
     }
 
-    @Test("kimi fixed K3 route: exact 262_144 / displayed 256k")
-    func kimiK3256K() {
-        let groups = ModelContextLengths.buildGroups()
-        let row = groups.first { $0.provider == "kimi" }?
-            .models.first { $0.modelId == "kimi-k3-256k" }
-        #expect(row?.label == "K3 (256K)")
-        #expect(row?.contextWindow == 262_144)
-        #expect(row?.formatted == "256k")
-    }
-
-    @Test("kimi group mirrors the current picker rows (K2.8, Highspeed, both K3 routes)")
+    @Test("kimi group mirrors the current picker rows (K2.8, Highspeed, K3.1 Pro)")
     func kimiGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let kimiModels = groups.first { $0.provider == "kimi" }?.models ?? []
         #expect(
             kimiModels.map(\.modelId) == [
-                "kimi-k2.8-preview", "kimi-k2.7-code-highspeed", "kimi-k3", "kimi-k3-256k",
+                "kimi-k2.8-preview", "kimi-k2.7-code-highspeed", "kimi-k3.1-pro",
             ])
     }
 

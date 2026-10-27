@@ -55,12 +55,14 @@ import {
   KIMI_K3_256K_API_MODEL,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_256K_MODEL_ID,
-  KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_API_MODEL,
   KIMI_K3_CLI_MODEL,
   KIMI_K3_LONG_CONTEXT_WINDOW,
   KIMI_K3_MODEL_ID,
-  KIMI_K3_MODEL_LABEL,
+  KIMI_K31_PRO_API_MODEL,
+  KIMI_K31_PRO_CLI_MODEL,
+  KIMI_K31_PRO_MODEL_ID,
+  KIMI_K31_PRO_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_API_MODEL,
   KIMI_STANDARD_CLI_MODEL,
@@ -76,9 +78,13 @@ export {
   KIMI_K28_MODEL_ID,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
+  KIMI_K31_PRO_CLI_MODEL,
+  KIMI_K31_PRO_MODEL_ID,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_CLI_MODEL,
   isKimiK3Model,
+  isKimiK31ProModel,
+  kimiRetiredModelSuccessor,
   kimiModelSupportsReasoningEfforts
 } from '../../shared/kimiModels'
 
@@ -133,6 +139,13 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
   // GPT-6.1 Sol (2026-09-29): same 1,050,000 window and 128K max output on
   // developers.openai.com/api/docs/models/gpt-6.1-sol.
   'gpt-6.1-sol': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  // GPT-6.1 Terra (2026-10-27): the same 1,050,000 window and 128K max output
+  // on developers.openai.com/api/docs/models/gpt-6.1-terra. Codex CLI 0.159.0
+  // ships a 500K working window (872K max) for it, as it does for 6.1 Sol.
+  'gpt-6.1-terra': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
   },
@@ -201,8 +214,8 @@ function codexModelRequiresFullStandardReasoning(modelId?: string | null): boole
 
 // Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
 // `max` tier ("Maximum reasoning depth for the hardest problems"). GPT-6 Sol
-// and Luna (2026-09-22) and GPT-6.1 Sol (2026-09-29) list `max` on their
-// official model pages too.
+// and Luna (2026-09-22), GPT-6.1 Sol (2026-09-29) and GPT-6.1 Terra
+// (2026-10-27) list `max` on their official model pages too.
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
@@ -210,6 +223,7 @@ export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean
   return (
     id === 'gpt-6-astra' ||
     id === 'gpt-6.1-sol' ||
+    id === 'gpt-6.1-terra' ||
     id === 'gpt-6-sol' ||
     id === 'gpt-6-luna' ||
     id === 'gpt-5.6-sol' ||
@@ -514,6 +528,26 @@ export const CODEX_STATIC_MODELS = [
     description: 'Near-Astra performance for complex work at a lower cost.',
     isDefault: true,
     supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6.1-sol', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    // GPT-6.1 Terra (2026-10-27). Official model page
+    // (developers.openai.com/api/docs/models/gpt-6.1-terra): a fast, efficient
+    // model for visual reasoning, computer use and writing; none..max ladder
+    // with a Medium default. Codex CLI 0.159.0 lists it GA (`visibility: list`)
+    // with the Fast tier, so it is NOT a staged-rollout append. No `ultra`
+    // tier on the official page, so `ultracode` waits for the live
+    // `model/list`, as it does for 6.1 Sol. Sits behind 6.1 Sol, above GPT-6 Sol.
+    id: 'gpt-6.1-terra',
+    label: 'GPT-6.1 Terra',
+    description: 'Fast, efficient model for visual reasoning, computer use and writing.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6.1-terra', [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
@@ -848,31 +882,21 @@ const KIMI_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
-    // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
-    // on Allegretto+, with model-advertised Low/High/Max effort choices. No
-    // Highspeed route — that one stayed on K2.7 and is its own row above.
-    id: KIMI_K3_MODEL_ID,
-    label: KIMI_K3_MODEL_LABEL,
+    // Managed `kimi-code/k3.1-pro` alias (2026-10-27): the post-trained K3
+    // successor, a fixed 1M window on platform.kimi.ai, Low/High/Max effort.
+    // It replaced both K3 routes (`k3`, `k3-256k`), which left the pickers by
+    // user decision; their saved selections resolve forward to this row. Its
+    // `k3.1-pro-highspeed` sibling is deliberately not offered.
+    id: KIMI_K31_PRO_MODEL_ID,
+    label: KIMI_K31_PRO_MODEL_LABEL,
     description:
-      "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
+      "Moonshot's flagship K3.1 Pro - 1M context - Low, High, or Max thinking",
     ultraTaskSupported: true,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),
-    defaultReasoningEffort: 'max'
-  },
-  {
-    // `k3-256k` is a distinct, quota-efficient route for the same K3 model
-    // generation. It is regular speed and must never inherit K2.7 Fast.
-    id: KIMI_K3_256K_MODEL_ID,
-    label: KIMI_K3_256K_MODEL_LABEL,
-    description:
-      "Moonshot's quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking",
-    ultraTaskSupported: true,
-    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
-      reasoningEffort
-    })),
-    defaultReasoningEffort: 'max'
+    defaultReasoningEffort: 'max',
+    contextWindow: KIMI_K3_LONG_CONTEXT_WINDOW
   }
 ]
 /** AntiGravity gemini-api (BYO-key) lane floor — mirrors the renderer's
@@ -1505,8 +1529,7 @@ const KIMI_CLI_MODEL_IDS = new Set([
   ...KIMI_STATIC_MODELS.map((model) => model.id),
   KIMI_STANDARD_CLI_MODEL,
   KIMI_HIGHSPEED_CLI_MODEL,
-  KIMI_K3_CLI_MODEL,
-  KIMI_K3_256K_CLI_MODEL
+  KIMI_K31_PRO_CLI_MODEL
 ])
 const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['default', KIMI_DEFAULT_MODEL],
@@ -1522,12 +1545,19 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   // on the row instead of silently falling back to the standard route.
   [KIMI_HIGHSPEED_API_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
   [KIMI_HIGHSPEED_CLI_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
-  // K3's raw API id and managed CLI alias both resolve to the canonical
-  // TaskWraith id; 'kimi-k3' itself passes through via KIMI_CLI_MODEL_IDS.
-  [KIMI_K3_API_MODEL, 'kimi-k3'],
-  [KIMI_K3_CLI_MODEL, 'kimi-k3'],
-  [KIMI_K3_256K_API_MODEL, KIMI_K3_256K_MODEL_ID],
-  [KIMI_K3_256K_CLI_MODEL, KIMI_K3_256K_MODEL_ID],
+  // K3.1 Pro's raw API id and managed CLI alias resolve to the canonical
+  // TaskWraith id; 'kimi-k3.1-pro' itself passes through via KIMI_CLI_MODEL_IDS.
+  [KIMI_K31_PRO_API_MODEL, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K31_PRO_CLI_MODEL, KIMI_K31_PRO_MODEL_ID],
+  // Both K3 routes were retired for K3.1 Pro on 2026-10-27 (user decision).
+  // Every spelling a saved chat, scheduled run, or Ensemble seat may carry
+  // moves forward; the shared Low/High/Max axis keeps its effort valid.
+  [KIMI_K3_MODEL_ID, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K3_API_MODEL, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K3_CLI_MODEL, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K3_256K_MODEL_ID, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K3_256K_API_MODEL, KIMI_K31_PRO_MODEL_ID],
+  [KIMI_K3_256K_CLI_MODEL, KIMI_K31_PRO_MODEL_ID],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
   // The retired combined row. Its standard tier is exactly today's K2.8 route.
   [KIMI_K27_MODEL_ID, KIMI_DEFAULT_MODEL],

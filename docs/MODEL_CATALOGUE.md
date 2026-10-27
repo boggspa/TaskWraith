@@ -45,6 +45,7 @@ not the monoline glyph set.
 | --------------------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------------------------------- |
 | **GPT-6-Astra** `gpt-6-astra`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Leads the picker from 2026-09-03. Not the seat default.          |
 | **GPT-6.1-Sol** `gpt-6.1-sol`                 | Light · Medium · High · Extra · Max             | Toggle | Near-Astra performance at a lower cost. Rolling out 2026-09-29.  |
+| **GPT-6.1 Terra** `gpt-6.1-terra`             | Light · Medium · High · Extra · Max             | Toggle | Fast, efficient visual reasoning, computer use and writing. 2026-10-27. |
 | **GPT-6-Sol** `gpt-6-sol`                     | Light · Medium · High · Extra · Max             | Toggle | Complex coding and agentic work. Rolling out from 2026-09-22.    |
 | **GPT-6-Luna** `gpt-6-luna`                   | Light · Medium · High · Extra · Max             | Toggle | Most efficient GPT-6 for focused, high-volume tasks.             |
 | **GPT-5.6-Sol** `gpt-5.6-sol`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Latest frontier agentic coding model.                            |
@@ -55,6 +56,13 @@ not the monoline glyph set.
 GPT-6.1 Sol (2026-09-29) follows the same pattern: 1,050,000 window, Low..Max
 with a Medium default, Fast mode, no `ultra`, staged. Codex CLI 0.155.1 has no
 metadata row for it yet and this account's turn was refused as unsupported.
+
+GPT-6.1 Terra (2026-10-27) shares that shape: 1,050,000 window and 128K max
+output on its official model page, Low..Max with a Medium default, Fast mode,
+no documented `ultra`, at $1 / $5 per Mtok ($0.05 cached; $2 / $7.50 above
+272K input). Unlike 6.1 Sol at launch it is not staged: Codex CLI 0.159.0's
+catalogue already lists it, with a 500K working window that TaskWraith's
+long-context override raises to the API window.
 
 GPT-6 Sol and GPT-6 Luna began rolling out on 2026-09-22 (Codex changelog,
 alongside Codex CLI 0.155.0). Their official model pages document a
@@ -122,8 +130,14 @@ its row, and the bare `haiku` alias is still passed through to the CLI.
 | ---------------------------------------------- | ---------------- | ------------------ | ------------------------------------------------ |
 | **K2.8 Preview** `kimi-k2.8-preview` **(Default)** | Low · High · **Max** | — | Rolled out 2026-09-11 onto the UNCHANGED `kimi-for-coding` wire id, so it is the route the retired combined "K2.7 Coding" row already dispatched with Fast off. It took K3's effort axis and a 1M window on every membership tier. `kimi-k2.7-code` resolves forward to this row. |
 | **K2.7 Code Highspeed** `kimi-k2.7-code-highspeed` | On (fixed) | — | Its own picker row since 2026-09-11, not K2.8's Fast tier: Highspeed stayed on K2.7 when the standard route moved, so it keeps a 256K window, always-on thinking and no effort axis. No Kimi row carries a Fast toggle any more. |
-| **K3 (up to 1M)** `kimi-k3`                    | Low · High · Max | —                  | 256K on Moderato; up to 1M on Allegretto+ tiers. |
-| **K3 256K** `kimi-k3-256k`                     | Low · High · Max | —                  | Quota-efficient K3 route — fixed 256K context. |
+| **K3.1 Pro** `kimi-k3.1-pro`                   | Low · High · Max | —                  | Managed `kimi-code/k3.1-pro` route, added 2026-10-27: Moonshot's post-trained K3 successor with a fixed 1,048,576-token window, $2 / $10 per Mtok ($0.20 cache hit). |
+
+Both K3 rows, **K3 (1M)** `kimi-k3` and **K3 (256K)** `kimi-k3-256k`, left
+the pickers on 2026-10-27 by user decision. Kimi Code still configures
+`k3` and `k3-256k`, so TaskWraith ignores those aliases, and saved chats,
+scheduled runs and Ensemble seats that name either one move forward to
+K3.1 Pro with their effort intact. The K3 labels, rates and windows stay so
+history still reads correctly. The `k3.1-pro-highspeed` sibling is not offered.
 
 <table>
   <tr>

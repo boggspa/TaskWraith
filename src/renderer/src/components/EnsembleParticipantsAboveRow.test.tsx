@@ -864,17 +864,9 @@ describe('EnsembleParticipantsAboveRow', () => {
         reasoningEffort: 'on',
         serviceTier: 'standard'
       })
-      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3')).toMatchObject({
+      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3.1-pro')).toMatchObject({
         provider: 'kimi',
-        model: 'kimi-k3',
-        reasoningEffort: 'max',
-        thinkingEnabled: true,
-        fastModeEnabled: false,
-        serviceTier: 'standard'
-      })
-      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3-256k')).toMatchObject({
-        provider: 'kimi',
-        model: 'kimi-k3-256k',
+        model: 'kimi-k3.1-pro',
         reasoningEffort: 'max',
         thinkingEnabled: true,
         fastModeEnabled: false,
@@ -910,10 +902,10 @@ describe('EnsembleParticipantsAboveRow', () => {
         reasoningEffort: 'ultraTask'
       }
       expect(
-        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3', undefined, kimiUltra)
+        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3.1-pro', undefined, kimiUltra)
       ).toMatchObject({
         provider: 'kimi',
-        model: 'kimi-k3',
+        model: 'kimi-k3.1-pro',
         reasoningEffort: 'ultraTask'
       })
       expect(

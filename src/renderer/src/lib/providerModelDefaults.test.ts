@@ -97,13 +97,15 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with Astra, GPT-6.1 Sol, GPT-6 Sol and Luna, then the GPT-5.6 trio, with 6.1 Sol the default', () => {
+  it('leads the picker with Astra, GPT-6.1 Sol and Terra, GPT-6 Sol and Luna, then the GPT-5.6 trio, with 6.1 Sol the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
-    // Astra leads from 2026-09-03; GPT-6.1 Sol (2026-09-29) then GPT-6 Sol and
-    // Luna (2026-09-22) follow it, above the 5.6 trio in Sol → Terra → Luna order.
-    expect(ids.slice(0, 7)).toEqual([
+    // Astra leads from 2026-09-03; GPT-6.1 Sol (2026-09-29), GPT-6.1 Terra
+    // (2026-10-27), then GPT-6 Sol and Luna (2026-09-22) follow it, above the
+    // 5.6 trio in Sol → Terra → Luna order.
+    expect(ids.slice(0, 8)).toEqual([
       'gpt-6-astra',
       'gpt-6.1-sol',
+      'gpt-6.1-terra',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -126,6 +128,11 @@ describe('Codex provider model defaults', () => {
 
   it.each([
     ['gpt-6.1-sol', 'GPT-6.1-Sol', 'Near-Astra performance for complex work at a lower cost.'],
+    [
+      'gpt-6.1-terra',
+      'GPT-6.1 Terra',
+      'Fast, efficient model for visual reasoning, computer use and writing.'
+    ],
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
@@ -468,12 +475,12 @@ describe('Grok provider model defaults', () => {
 })
 
 describe('provider model picker sentinels', () => {
-  it('keeps K2.8 Preview as the default row with Highspeed and both K3 routes after it', () => {
+  it('keeps K2.8 Preview as the default row with Highspeed and K3.1 Pro after it', () => {
+    // K3.1 Pro replaced both K3 routes on 2026-10-27 (user decision).
     expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
     // The standard `kimi-for-coding` route is K2.8 Preview since 2026-09-11 and
     // carries the same Low/High/Max axis as K3, defaulting to Max.
@@ -502,21 +509,16 @@ describe('provider model picker sentinels', () => {
     for (const model of KIMI_DEFAULT_MODELS as unknown as readonly Record<string, unknown>[]) {
       expect(model.additionalSpeedTiers).toBeUndefined()
     }
-    // Neither K3 route is the default; both expose the same effort choices.
-    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
-      const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === modelId)
-      expect(k3?.defaultReasoningEffort).toBe('max')
-      expect(k3?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-        'low',
-        'high',
-        'max'
-      ])
-      expect(k3?.isDefault).toBeUndefined()
-    }
-    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')?.label).toBe('K3 (1M)')
-    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3-256k')?.label).toBe(
-      'K3 (256K)'
-    )
+    // K3.1 Pro is not the default and keeps K3's effort choices.
+    const k31Pro = KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3.1-pro')
+    expect(k31Pro?.label).toBe('K3.1 Pro')
+    expect(k31Pro?.defaultReasoningEffort).toBe('max')
+    expect(k31Pro?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
+    expect(k31Pro?.isDefault).toBeUndefined()
   })
 
   it('does not expose Default or CLI Default as selectable model rows', () => {

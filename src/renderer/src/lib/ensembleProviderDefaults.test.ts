@@ -134,6 +134,8 @@ describe('getDefaultEnsembleParticipantConfig', () => {
 
 describe('Kimi reasoning picker selection', () => {
   it("keeps a laddered route's effort separate from Highspeed's fixed thinking", () => {
+    expect(resolveKimiReasoningPickerSelection('kimi-k3.1-pro', 'low')).toBe('low')
+    expect(resolveKimiReasoningPickerSelection('k3.1-pro', undefined)).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
@@ -149,6 +151,10 @@ describe('Kimi reasoning picker selection', () => {
   })
 
   it('persists ladder choices as reasoning effort rather than the legacy thinking flag', () => {
+    expect(buildKimiReasoningPickerPatch('kimi-k3.1-pro', 'high')).toEqual({
+      reasoningEffort: 'high',
+      thinkingEnabled: true
+    })
     expect(buildKimiReasoningPickerPatch('kimi-k3', 'high')).toEqual({
       reasoningEffort: 'high',
       thinkingEnabled: true
@@ -566,7 +572,7 @@ describe('resolveReasoningEffortForSeatChange', () => {
     expect(
       resolveReasoningEffortForSeatChange({
         provider: 'kimi',
-        model: 'kimi-k3',
+        model: 'kimi-k3.1-pro',
         previousEffort: 'ultraTask'
       })
     ).toBe('ultraTask')
@@ -592,7 +598,7 @@ describe('resolveReasoningEffortForSeatChange', () => {
       })
     ).toBe('ultraTask')
     expect(
-      normalizeProviderModelSelection('kimi', 'kimi-k3', undefined, {
+      normalizeProviderModelSelection('kimi', 'kimi-k3.1-pro', undefined, {
         reasoningEffort: 'ultraTask'
       }).reasoningEffort
     ).toBe('ultraTask')
@@ -816,6 +822,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 
   it.each([
     ['gpt-6.1-sol', 'GPT-6.1-Sol'],
+    ['gpt-6.1-terra', 'GPT-6.1 Terra'],
     ['gpt-6-sol', 'GPT-6-Sol'],
     ['gpt-6-luna', 'GPT-6-Luna']
   ])(
@@ -975,21 +982,21 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('lists Highspeed and both K3 routes after K2.8 Preview, each on its own ladder', () => {
+  it('lists Highspeed and K3.1 Pro after K2.8 Preview, each on its own ladder', () => {
     const kimi = getEnsembleModelDefaults('kimi')
     expect(kimi.modelOptions.map((option) => option.id)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
     expect(kimi.modelOptions.map((option) => option.label)).toEqual([
       'K2.8 Preview',
       'K2.7 Code Highspeed',
-      'K3 (1M)',
-      'K3 (256K)'
+      'K3.1 Pro'
     ])
-    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3', 'kimi-k3-256k']) {
+    // The retired K3 routes keep the ladder so a saved seat keeps its effort;
+    // main dispatches it on K3.1 Pro.
+    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3.1-pro', 'kimi-k3', 'kimi-k3-256k']) {
       expect(getEnsembleReasoningOptions('kimi', modelId).map((option) => option.value)).toEqual([
         'low',
         'high',
@@ -1004,7 +1011,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       resolveEnsembleParticipantSettings(
         participant({
           provider: 'kimi',
-          model: 'kimi-k3',
+          model: 'kimi-k3.1-pro',
           reasoningEffort: undefined,
           thinkingEnabled: false,
           fastModeEnabled: true
