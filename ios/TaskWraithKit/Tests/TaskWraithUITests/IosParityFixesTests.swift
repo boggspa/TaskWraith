@@ -23,6 +23,7 @@ struct IosParityFixesTests {
         #expect(twModelUsesFastToggle("gpt-6-luna"))
         #expect(twModelUsesFastToggle("GPT-6-Luna"))
         #expect(twModelUsesFastToggle("gpt-6.1-sol"))
+        #expect(twModelUsesFastToggle("gpt-6.1-terra"))
     }
 
     @MainActor
@@ -100,9 +101,12 @@ struct IosParityFixesTests {
         model.enterDemoMode()
 
         let codex = model.providerModels["codex"] ?? []
-        #expect(Array(codex.map(\.id).prefix(4)) == ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
+        #expect(
+            Array(codex.map(\.id).prefix(5))
+                == ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
         for (id, label) in [
-            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
+            ("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6.1-terra", "GPT-6.1 Terra"),
+            ("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna"),
         ] {
             let row = codex.first(where: { $0.id == id })
             #expect(row?.label == label)

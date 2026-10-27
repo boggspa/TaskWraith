@@ -44,6 +44,8 @@ public enum ContextWindows {
         "gpt-6-luna": 1_050_000,
         // GPT-6.1 Sol (2026-09-29): 1,050,000 on its official model page.
         "gpt-6.1-sol": 1_050_000,
+        // GPT-6.1 Terra (2026-10-27): 1,050,000 on its official model page.
+        "gpt-6.1-terra": 1_050_000,
         // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on
         // all three — mirrors src/shared/contextWindows.ts.
         "gpt-5.6-sol": 1_050_000,
@@ -187,6 +189,9 @@ public enum ContextWindows {
         "openrouter/nex-agi/nex-n2.5-mini:free": 262_144,
         "openrouter/nex-agi/nex-n2.5-pro:free": 262_144,
         // Kimi
+        // K3.1 Pro (2026-10-27): 1,048,576 — mirrors shared/contextWindows.ts.
+        // The retired K3 rows stay so historical transcripts keep their meters.
+        "kimi-k3.1-pro": 1_048_576,
         "kimi-k3": 1_048_576,
         "kimi-k3-256k": 262_144,
         // K2.8 Preview took the standard route to 1M; Highspeed stayed on

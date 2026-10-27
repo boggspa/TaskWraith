@@ -443,7 +443,8 @@ const formatPeakHour = (hour: number): string => {
  *     (model usage needs to be explicit, not a wildcard bucket).
  *   - Kimi: only the canonical `kimi-k2.8-preview` (default), the
  *     `kimi-k2.7-code-highspeed` row, the retired `kimi-k2.7-code` id and its
- *     thinking variants, both `kimi-k3` routes, and legacy K2.6 rows survive;
+ *     thinking variants, `kimi-k3.1-pro`, both retired `kimi-k3` routes, and
+ *     legacy K2.6 rows survive;
  *     deprecated names (`kimi-latest`, `kimi-k2`, `kimi-k2.5`,
  *     `kimi-k2-thinking` aliases, etc.) collapse to nothing. Kimi Code now
  *     treats K2.8 Preview as the implicit default model.
@@ -456,6 +457,7 @@ const shouldSurfaceModelInBreakdown = (provider: ProviderId, model: string): boo
   if (!trimmed || trimmed === 'default' || trimmed === 'unknown') return false
   if (provider === 'kimi') {
     const KIMI_KEEP = new Set([
+      'kimi-k3.1-pro',
       'kimi-k3',
       'kimi-k3-256k',
       'kimi-k2.8-preview',

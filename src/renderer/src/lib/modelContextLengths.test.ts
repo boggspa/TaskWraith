@@ -122,14 +122,13 @@ describe('buildModelContextLengthGroups', () => {
     expect(kimiGroup!.models.map((model) => model.modelId)).not.toContain('kimi-k2.7-code')
   })
 
-  it('shows the long-context K3 route as an official fixed 1.0M window', () => {
-    // Since the K3 split (d19931eb8) each route is a concrete catalog row, so
-    // the old plan-dependent '256k–1.0M' range display is retired: 'kimi-k3'
-    // IS the 1M route (f661ac2a1 moved its official window to 1_048_576).
+  it('shows K3.1 Pro as an official fixed 1.0M window', () => {
+    // K3.1 Pro replaced both K3 routes on 2026-10-27; its official window is
+    // 1_048_576 on platform.kimi.ai, with no plan-dependent range.
     const groups = buildModelContextLengthGroups()
     const row = groups
       .find((group) => group.provider === 'kimi')
-      ?.models.find((model) => model.modelId === 'kimi-k3')
+      ?.models.find((model) => model.modelId === 'kimi-k3.1-pro')
 
     expect(row).toMatchObject({
       contextWindow: 1_048_576,
@@ -138,16 +137,11 @@ describe('buildModelContextLengthGroups', () => {
     expect(row && 'maxContextWindow' in row).toBe(false)
   })
 
-  it('shows the quota-efficient K3 route as an exact fixed 256k window', () => {
+  it('no longer lists either retired K3 route', () => {
     const groups = buildModelContextLengthGroups()
-    const row = groups
-      .find((group) => group.provider === 'kimi')
-      ?.models.find((model) => model.modelId === 'kimi-k3-256k')
-
-    expect(row).toMatchObject({
-      contextWindow: 262_144,
-      formatted: '256k'
-    })
+    const ids = groups.find((group) => group.provider === 'kimi')?.models.map((m) => m.modelId)
+    expect(ids).not.toContain('kimi-k3')
+    expect(ids).not.toContain('kimi-k3-256k')
   })
 
   it('gemini flash-lite resolves to 200k', () => {

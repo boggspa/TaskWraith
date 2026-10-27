@@ -473,13 +473,13 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
     expect(html).toContain('K2.7 Code Highspeed')
   })
 
-  it('shows each K3 route as its own fixed window, with the range display retired', () => {
-    // The K3 split (d19931eb8 / f661ac2a1) made 'kimi-k3' the concrete 1M
-    // route and 'kimi-k3-256k' the fixed 256k one, so the old plan-dependent
-    // '256k–1.0M' single-row range must no longer render anywhere.
+  it('shows K3.1 Pro at its fixed window, with the retired K3 rows and range display gone', () => {
+    // K3.1 Pro replaced both K3 routes on 2026-10-27, and the old
+    // plan-dependent '256k–1.0M' single-row range must not render anywhere.
     const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
-    expect(html).toContain('K3 (1M)')
-    expect(html).toContain('K3 (256K)')
+    expect(html).toContain('K3.1 Pro')
+    expect(html).not.toContain('K3 (1M)')
+    expect(html).not.toContain('K3 (256K)')
     expect(html).toContain('>256k<')
     expect(html).not.toContain('256k–1.0M')
     expect(html).not.toContain('1.0M–1.0M')

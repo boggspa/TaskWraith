@@ -64,9 +64,13 @@ describe('resolveUltraTaskReasoningEffort', () => {
   })
 
   describe('Kimi provider', () => {
-    it('returns max for kimi-k3', () => {
-      const result = resolveUltraTaskReasoningEffort('kimi', 'kimi-k3')
+    it('returns max for kimi-k3.1-pro', () => {
+      const result = resolveUltraTaskReasoningEffort('kimi', 'kimi-k3.1-pro')
       expect(result).toBe('max')
+    })
+
+    it('reads a retired K3 route through K3.1 Pro rather than the provider fallback', () => {
+      expect(resolveUltraTaskReasoningEffort('kimi', 'kimi-k3')).toBe('max')
       expect(resolveUltraTaskReasoningEffort('kimi', 'kimi-k3-256k')).toBe('max')
     })
 
@@ -137,7 +141,8 @@ describe('isUltraTaskSupported', () => {
     expect(isUltraTaskSupported('claude', 'claude-opus-5')).toBe(true)
   })
 
-  it('returns true for kimi-k3', () => {
+  it('returns true for kimi-k3.1-pro and the retired K3 routes', () => {
+    expect(isUltraTaskSupported('kimi', 'kimi-k3.1-pro')).toBe(true)
     expect(isUltraTaskSupported('kimi', 'kimi-k3')).toBe(true)
     expect(isUltraTaskSupported('kimi', 'kimi-k3-256k')).toBe(true)
   })
@@ -168,14 +173,15 @@ describe('getAvailableReasoningEfforts', () => {
     expect(efforts).not.toContain('none')
   })
 
-  it('returns efforts up to max for kimi-k3', () => {
-    const efforts = getAvailableReasoningEfforts('kimi', 'kimi-k3')
+  it('returns efforts up to max for kimi-k3.1-pro and the retired K3 routes', () => {
+    const efforts = getAvailableReasoningEfforts('kimi', 'kimi-k3.1-pro')
     expect(efforts).toContain('max')
     expect(efforts).toContain('high')
     expect(efforts).toContain('medium')
     expect(efforts).toContain('low')
     // Should not contain ultracode since Kimi's highest is max
     expect(efforts).not.toContain('ultracode')
+    expect(getAvailableReasoningEfforts('kimi', 'kimi-k3')).toEqual(efforts)
     expect(getAvailableReasoningEfforts('kimi', 'kimi-k3-256k')).toEqual(efforts)
   })
 

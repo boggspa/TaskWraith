@@ -150,15 +150,19 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(newAdditions?.id).toBe('new-additions-2026-10-13-argon')
-    expect(newAdditions?.body.startsWith('Gemini 4 Argon on Gemini API and Antigravity')).toBe(true)
+    expect(newAdditions?.id).toBe('new-additions-2026-10-27-terra-k3-1-pro')
+    expect(
+      newAdditions?.body.startsWith('GPT-6.1 Terra in Codex, Kimi K3.1 Pro, Gemini 4 Argon')
+    ).toBe(true)
     expect(groups.map((g) => g.provider)).toEqual([
-      // Muse leads for Wonder (2026-10-12); previous additions retain their order.
+      // Codex leads for GPT-6.1 Terra and Kimi follows for K3.1 Pro
+      // (2026-10-27), then Muse for Wonder (2026-10-12); previous additions
+      // retain their order.
+      'codex',
+      'kimi',
       'muse',
       'claude',
       'mistral',
-      'codex',
-      'kimi',
       'devin',
       'antigravity',
       'grok',
@@ -167,11 +171,11 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Codex',
+      'Kimi',
       'Muse',
       'Claude',
       'Mistral',
-      'Codex',
-      'Kimi',
       'Devin',
       'AntiGravity',
       'Grok',
@@ -186,10 +190,16 @@ describe('notification registry', () => {
     // 2026-09-11 and Highspeed became its own row rather than a Fast toggle,
     // so the card announces BOTH rows — a K2.8-only card would read as if the
     // Highspeed capability had gone away with the toggle.
+    // K3.1 Pro (2026-10-27) leads and says which rows it replaced.
     const kimi = groups.find((g) => g.provider === 'kimi')
-    expect(kimi?.models.map((m) => m.name)).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
-    expect(kimi?.models[0]?.blurb).toMatch(/1M context.*Low, High, or Max/i)
-    expect(kimi?.models[1]?.blurb).toMatch(/own row.*256K.*always-on/i)
+    expect(kimi?.models.map((m) => m.name)).toEqual([
+      'K3.1 Pro',
+      'K2.8 Preview',
+      'K2.7 Code Highspeed'
+    ])
+    expect(kimi?.models[0]?.blurb).toMatch(/replacing K3 and K3 256K.*1M context.*\$2\/\$10/i)
+    expect(kimi?.models[1]?.blurb).toMatch(/1M context.*Low, High, or Max/i)
+    expect(kimi?.models[2]?.blurb).toMatch(/own row.*256K.*always-on/i)
     for (const model of kimi?.models ?? []) {
       expect(model.accentProvider).toBeUndefined()
     }
@@ -210,22 +220,26 @@ describe('notification registry', () => {
     expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*\$2\/\$10/i)
     expect(claude?.models[2]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
     expect(claude?.models[3]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
-    // Codex: GPT-6.1 Sol (2026-09-29), then GPT-6 Sol and Luna (2026-09-22),
-    // lead the group above Astra (2026-09-03), each blurb carrying the window,
-    // ladder and list price.
+    // Codex: GPT-6.1 Terra (2026-10-27), GPT-6.1 Sol (2026-09-29), then GPT-6
+    // Sol and Luna (2026-09-22), lead the group above Astra (2026-09-03), each
+    // blurb carrying the window, ladder and list price.
     const codex = groups.find((g) => g.provider === 'codex')
     expect(codex?.models.map((m) => m.name)).toEqual([
+      'GPT-6.1 Terra',
       'GPT-6.1 Sol',
       'GPT-6 Sol',
       'GPT-6 Luna',
       'GPT-6 Astra'
     ])
     expect(codex?.models[0]?.blurb).toMatch(
+      /visual reasoning.*computer use.*1\.05M context.*Low through Max.*\$1\/\$5/i
+    )
+    expect(codex?.models[1]?.blurb).toMatch(
       /near-Astra.*1\.05M context.*Low through Max.*\$2\/\$10/i
     )
-    expect(codex?.models[1]?.blurb).toMatch(/1\.05M context.*Low through Max.*\$2\/\$10/i)
-    expect(codex?.models[2]?.blurb).toMatch(/high-volume.*1\.05M.*\$0\.10\/\$0\.50/i)
-    expect(codex?.models[3]?.blurb).toMatch(/most capable GPT-6.*organisation/i)
+    expect(codex?.models[2]?.blurb).toMatch(/1\.05M context.*Low through Max.*\$2\/\$10/i)
+    expect(codex?.models[3]?.blurb).toMatch(/high-volume.*1\.05M.*\$0\.10\/\$0\.50/i)
+    expect(codex?.models[4]?.blurb).toMatch(/most capable GPT-6.*organisation/i)
     const devin = groups.find((g) => g.provider === 'devin')
     expect(devin?.models.map((m) => m.name)).toEqual([
       'SWE-2',
