@@ -2759,6 +2759,7 @@ function ParticipantChip({
         <EnsembleChipRolePicker
           anchor={chipAnchor}
           participant={participant}
+          mentionParticipants={mentionParticipants}
           isBossman={isBossman}
           isSecondInCommand={isSecondInCommand}
           captainAssignmentDisabled={captainAssignmentDisabled}
@@ -3112,6 +3113,8 @@ export function resolveEnsembleChipRolePickerRows({
 interface EnsembleChipRolePickerProps {
   anchor: HTMLElement | null
   participant: EnsembleParticipant
+  /** Roster used to resolve @mentions typed into the brief editor. */
+  mentionParticipants: EnsembleParticipant[]
   isBossman: boolean
   isSecondInCommand: boolean
   captainAssignmentDisabled: boolean
@@ -3131,6 +3134,15 @@ interface EnsembleChipNameFieldProps {
   participantId: string
   name: string
   providerLabel: string
+  locked: boolean
+  onPatch: (patch: Partial<EnsembleParticipant>) => void
+}
+
+interface EnsembleChipBriefFieldProps {
+  participantId: string
+  brief: string
+  /** Roster used to resolve @mentions typed into the brief. */
+  participants: EnsembleParticipant[]
   locked: boolean
   onPatch: (patch: Partial<EnsembleParticipant>) => void
 }
@@ -3215,6 +3227,158 @@ export function EnsembleChipNameField({
 }
 
 /**
+ * Pure patch resolver for the compact picker's brief editor. Mirrors
+ * `resolveEnsembleParticipantNamePatch`: a locked roster commits nothing, and
+ * an unchanged draft is not a change.
+ */
+export function resolveEnsembleChipBriefPatch(
+  committedBrief: string,
+  draftBrief: string,
+  locked: boolean
+): Pick<EnsembleParticipant, 'instructions'> | null {
+  if (locked || draftBrief === committedBrief) return null
+  return { instructions: draftBrief }
+}
+
+/**
+ * Pure re-sync decision for the compact picker's brief draft. The draft
+ * follows the participant when the picker switches seats, and follows the
+ * committed field when it changes under us — never the user's own keystrokes
+ * (the draft is local state, so the committed field does not move while the
+ * user types). `null` means "keep the current draft".
+ */
+export function resolveEnsembleChipBriefSync({
+  participantId,
+  instructions,
+  previousParticipantId,
+  previousInstructions
+}: {
+  participantId: string
+  instructions: string
+  previousParticipantId: string
+  previousInstructions: string
+}): string | null {
+  if (participantId !== previousParticipantId) return instructions
+  if (instructions !== previousInstructions) return instructions
+  return null
+}
+
+/**
+ * The compact picker's participant brief ("Goal / brief") editor.
+ *
+ * The brief is the SAME roster field the legacy overflow popover and the
+ * composer roster popover write — `EnsembleParticipant.instructions` — so a
+ * brief typed here appears in those surfaces, and vice versa.
+ *
+ * Keystrokes stay in LOCAL draft state (the overflow popover's contract): a
+ * round-trip through onChatChange + the saveChat IPC echoes a stale chat back
+ * mid-typing, which reverts the controlled value and drops characters, and it
+ * forces a full composer re-render per key. The draft is committed on blur,
+ * on the editor's Save action, and on unmount — the picker's close paths
+ * (capture-phase outside mousedown, Escape, programmatic unmount) do not blur
+ * the field first, so without the unmount flush the text would be dropped.
+ */
+export function EnsembleChipBriefField({
+  participantId,
+  brief,
+  participants,
+  locked,
+  onPatch
+}: EnsembleChipBriefFieldProps): React.JSX.Element {
+  const [briefDraft, setBriefDraft] = useState(brief)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const contextMenu = useComposerTextareaContextMenu()
+
+  const onPatchRef = useRef(onPatch)
+  const lockedRef = useRef(locked)
+  const briefDraftRef = useRef(briefDraft)
+  const committedBriefRef = useRef(brief)
+  const syncRef = useRef({ participantId, instructions: brief })
+
+  // Latest-value refs so the unmount flush commits the final draft even
+  // though the picker closes via outside-click / Escape / unmount WITHOUT
+  // blurring the field first.
+  useEffect(() => {
+    onPatchRef.current = onPatch
+    lockedRef.current = locked
+  })
+
+  // Re-sync from the COMMITTED value only when the participant changes or the
+  // committed brief changes externally — never on our own keystrokes.
+  useEffect(() => {
+    const next = resolveEnsembleChipBriefSync({
+      participantId,
+      instructions: brief,
+      previousParticipantId: syncRef.current.participantId,
+      previousInstructions: syncRef.current.instructions
+    })
+    syncRef.current = { participantId, instructions: brief }
+    committedBriefRef.current = brief
+    if (next !== null) {
+      briefDraftRef.current = next
+      setBriefDraft(next)
+    }
+  }, [participantId, brief])
+
+  const commitBrief = useCallback((): void => {
+    const patch = resolveEnsembleChipBriefPatch(
+      committedBriefRef.current,
+      briefDraftRef.current,
+      lockedRef.current
+    )
+    if (!patch) return
+    committedBriefRef.current = briefDraftRef.current
+    onPatchRef.current(patch)
+  }, [])
+
+  // Safety net: flush any unsaved draft when the picker unmounts.
+  useEffect(() => {
+    return () => {
+      commitBrief()
+    }
+  }, [commitBrief])
+
+  const updateBriefDraft = (value: string): void => {
+    // Keep the ref synchronous with the input event. The picker can close in
+    // the same event turn, before React renders the queued state update.
+    briefDraftRef.current = value
+    setBriefDraft(value)
+  }
+
+  return (
+    <>
+      <EnsembleBriefEditor
+        label="Goal / brief"
+        value={briefDraft}
+        participants={participants}
+        disabled={locked}
+        rows={5}
+        editorClassName="ensemble-above-overflow-instructions ensemble-chip-role-picker-brief"
+        labelClassName="ensemble-above-overflow-label"
+        textareaClassName="ensemble-above-overflow-instructions-field"
+        textareaRef={textareaRef}
+        syncEpoch={`${participantId}:${participants.length}`}
+        commitLabel="Save"
+        commitTitle="Save this brief to the active chat"
+        onCommit={commitBrief}
+        onChange={updateBriefDraft}
+        onContextMenu={contextMenu.handleContextMenu}
+        onBlur={commitBrief}
+        placeholder="Optional focus for this participant's turns…"
+      />
+      <ComposerTextareaContextMenu
+        anchor={contextMenu.anchor}
+        spellcheckContext={contextMenu.spellcheckContext}
+        textareaRef={textareaRef}
+        onValueChange={updateBriefDraft}
+        onOpenFromElectron={contextMenu.openContextMenu}
+        onClose={() => contextMenu.setAnchor(null)}
+      />
+    </>
+  )
+}
+
+/**
  * 2026-08 tactile roles — the compact seat-role picker that opens when the
  * user double-clicks a participant chip in the above row.
  *
@@ -3234,6 +3398,7 @@ export function EnsembleChipNameField({
 export function EnsembleChipRolePicker({
   anchor,
   participant,
+  mentionParticipants,
   isBossman,
   isSecondInCommand,
   captainAssignmentDisabled,
@@ -3259,11 +3424,14 @@ export function EnsembleChipRolePicker({
     queueMicrotask(() => {
       if (cancelled || !anchor) return
       const rect = anchor.getBoundingClientRect()
-      const flyoutWidth = 208
+      // Wide enough for the brief textarea's preset row, matching the legacy
+      // overflow popover's 296px shell.
+      const flyoutWidth = Math.min(288, window.innerWidth - 16)
       const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
-      // Name field + toggles + 8 list rows ≈ 430px; only used for the flip
-      // test, never as an explicit height.
-      const estimatedHeight = 430
+      // Name field + toggles + 8 list rows + the brief editor (label, preset
+      // row, textarea) ≈ 600px; only used for the flip test, never as an
+      // explicit height.
+      const estimatedHeight = 600
       const fitsBelow = rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
       setPosition(
         fitsBelow
@@ -3283,6 +3451,13 @@ export function EnsembleChipRolePicker({
     const handleClick = (event: MouseEvent): void => {
       const target = event.target as Node
       if (popoverRef.current?.contains(target)) return
+      // The brief's right-click composer menu is portaled outside the
+      // picker, so a click on one of its items would otherwise close the
+      // picker underneath it — the same escape hatch the overflow popover
+      // uses.
+      if (target instanceof Element && target.closest('.composer-textarea-context-menu')) {
+        return
+      }
       if (anchor && anchor.contains(target)) return
       onClose()
     }
@@ -3445,6 +3620,21 @@ export function EnsembleChipRolePicker({
             </button>
           )
         })}
+        {/*
+          The participant's brief ("Goal / brief") — the same
+          `EnsembleParticipant.instructions` field the legacy overflow popover
+          and the composer roster popover write. It sits below the role rows
+          so the quick seat-role controls stay grouped at the top of the
+          picker, next to the chip they act on.
+        */}
+        <div className="ensemble-chip-role-picker-divider" role="separator" />
+        <EnsembleChipBriefField
+          participantId={participant.id}
+          brief={participant.instructions ?? ''}
+          participants={mentionParticipants}
+          locked={locked}
+          onPatch={onPatch}
+        />
       </div>
     </div>
   )
