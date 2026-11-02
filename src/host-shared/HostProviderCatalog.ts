@@ -11,7 +11,12 @@
  */
 
 import { createHash } from 'node:crypto'
-import { MISTRAL_REASONING_EFFORTS } from '../shared/mistralModels'
+import {
+  MISTRAL_LARGE_4_MODEL_ID,
+  MISTRAL_LARGE_4_VIBE_ALIAS,
+  MISTRAL_LARGE_4_VIBE_ROW,
+  MISTRAL_REASONING_EFFORTS
+} from '../shared/mistralModels'
 
 import { isPiModelRetired } from '../shared/piModelLifecycle'
 import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
@@ -797,6 +802,55 @@ export function hostProviderKimiOffers(
       authFlows: entry.authFlows
     }),
     models: gatedModels,
+    postures: base.postures.map((posture) => ({ ...posture }))
+  }
+}
+
+/**
+ * Mistral-only live catalog addition: the Vibe PLAN lane for Mistral Large 4.
+ *
+ * The row exists only for the accounts whose own `~/.vibe/config.toml`
+ * carries the model — that file is what Vibe merges into the model list it
+ * advertises over ACP, and it is the switch Mistral enabled for the Vibe
+ * quota (2026-11-02). TaskWraith READS it and never writes it, so without the
+ * entry the row is simply not offered: no dead picker entry, and no row that
+ * would bill the user's API key instead of their plan.
+ *
+ * `vibePlanModelIds` is the set of aliases the user's config defines; null
+ * means the config could not be read, which is treated as "no plan models".
+ */
+export function hostProviderMistralOffers(
+  available: boolean,
+  vibePlanModelIds: readonly string[] | null,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection | null {
+  const base = hostProviderOffers('mistral', available, capabilities)
+  if (!base) return null
+  if (!vibePlanModelIds) return base
+  const configured = new Set(vibePlanModelIds.map((id) => id.trim().toLowerCase()))
+  if (!configured.has(MISTRAL_LARGE_4_VIBE_ALIAS.toLowerCase())) return base
+
+  const planOffer: HostProviderModelOffer = {
+    modelId: MISTRAL_LARGE_4_VIBE_ROW.id,
+    label: MISTRAL_LARGE_4_VIBE_ROW.label,
+    available,
+    reasoning: mistralNativeReasoning().map((entry) => ({ ...entry, available }))
+  }
+  const apiRowIndex = base.models.findIndex((model) => model.modelId === MISTRAL_LARGE_4_MODEL_ID)
+  const insertAt = apiRowIndex >= 0 ? apiRowIndex + 1 : base.models.length
+  const models = [...base.models.slice(0, insertAt), planOffer, ...base.models.slice(insertAt)]
+  const entry = CATALOG.mistral
+  if (!entry) return base
+  return {
+    providerId: base.providerId,
+    offerRevision: hashEntry({
+      displayProvider: entry.displayProvider,
+      shortCode: entry.shortCode,
+      models,
+      postures: base.postures,
+      authFlows: entry.authFlows
+    }),
+    models,
     postures: base.postures.map((posture) => ({ ...posture }))
   }
 }

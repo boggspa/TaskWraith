@@ -44,6 +44,12 @@ const MIXED_LANE_PROVIDERS: ReadonlySet<string> = new Set(['antigravity', 'mistr
 const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
   'mistral-medium-3.5',
   'mistral-vibe-cli-latest',
+  // Mistral Large 4 on the Vibe PLAN lane (2026-11-02). A distinct id from the
+  // API-key row (`mistral-large-4`) because the Vibe alias IS the API model
+  // id. It runs against the user's Vibe quota, so it must not carry the key
+  // glyph — the row is only offered at all when their own Vibe config
+  // provides the model (see MistralVibeConfigModels).
+  'mistral-large-4-hosted',
   // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`), distinct from the
   // API/BYOK `zai-glm-5-2` which stays key-marked.
   //

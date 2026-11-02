@@ -40,6 +40,9 @@ describe('modelRequiresApiKey', () => {
     expect(modelRequiresApiKey('mistral', 'mistral-large-2512')).toBe(true)
     // Large 4 (2026-10-06) is API-only; Vibe's plan extras do not offer it.
     expect(modelRequiresApiKey('mistral', 'mistral-large-4')).toBe(true)
+    // The Vibe-plan row for Large 4 is the one UNMARKED row; the bare API id
+    // above stays key-marked, so the two lanes never trade the glyph.
+    expect(modelRequiresApiKey('mistral', 'mistral-large-4-hosted')).toBe(false)
     expect(modelRequiresApiKey('mistral', 'zai-glm-5-2')).toBe(true)
     // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`) is NOT key-marked,
     // unlike the API/BYOK `zai-glm-5-2` above.
