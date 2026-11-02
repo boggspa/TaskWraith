@@ -4085,6 +4085,12 @@ function App(): React.JSX.Element {
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
     if (provider === 'kimi') return agentModelsByProvider.kimi || KIMI_DEFAULT_MODELS
+    // Mistral's Vibe seat is config-backed for ONE row: the Vibe-plan lane
+    // for Mistral Large 4 exists only when the user's own ~/.vibe/config.toml
+    // carries the model, so main returns it when it is there and the static
+    // catalogue (the API-key rows) is the fallback. Same shape as Kimi.
+    if (provider === 'mistral')
+      return agentModelsByProvider.mistral || getStaticProviderModelOptions('mistral')
     // Pi was missing here and fell through to `[]`, so its picker group was
     // permanently empty ("Loading models…" is this picker's EMPTY state, not a
     // pending one) no matter how many upstream keys were stored. Main already
@@ -4094,10 +4100,7 @@ function App(): React.JSX.Element {
     // therefore state-backed and CANNOT move to the static switch, where `[]`
     // would instead mean "permanently unusable".
     if (provider === 'pi') return agentModelsByProvider.pi || []
-    // Everything else is a fixed catalogue (gemini/grok/cursor/mistral).
-    // Mistral belongs here rather than with Pi above: the Vibe seat's two
-    // models are fixed in the CLI's own bundled config and need no key
-    // discovery.
+    // Everything else is a fixed catalogue (gemini/grok/cursor).
     return getStaticProviderModelOptions(provider)
   }
 
@@ -7050,7 +7053,9 @@ function App(): React.JSX.Element {
                   // Pi, which is worse than the empty group it replaced.
                   provider === 'pi'
                   ? []
-                  : CODEX_DEFAULT_MODELS
+                  : provider === 'mistral'
+                    ? getStaticProviderModelOptions('mistral')
+                    : CODEX_DEFAULT_MODELS
       if (provider === 'codex') {
         setCodexModels(normalized)
       } else {

@@ -84,3 +84,9 @@ describe('estimateMistralTokenUsage', () => {
     expect(Number.isNaN(usage.total_cost_usd)).toBe(false)
   })
 })
+
+describe('mistralModelRate (Large 4 on the Vibe plan)', () => {
+  it('projects the same rate as the API row, not the expensive unknown-model rate', () => {
+    expect(mistralModelRate('mistral-large-4-hosted')).toEqual(mistralModelRate('mistral-large-4'))
+  })
+})

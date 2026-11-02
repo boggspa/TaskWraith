@@ -1310,3 +1310,17 @@ describe('getStaticProviderModels (claude)', () => {
     expect(haikuReasoning.every((e) => e.disabled)).toBe(true)
   })
 })
+
+describe('getStaticProviderModels (Large 4 on the Vibe plan)', () => {
+  it('keeps the plan row out of the static catalogue: only a user config offers it', () => {
+    const ids = getStaticProviderModels('mistral').map((model) => model.id)
+    expect(ids).toContain('mistral-large-4')
+    expect(ids).not.toContain('mistral-large-4-hosted')
+  })
+
+  it('keeps a saved plan seat on its own row', () => {
+    expect(normalizeCliProviderModel('mistral', 'mistral-large-4-hosted')).toBe(
+      'mistral-large-4-hosted'
+    )
+  })
+})

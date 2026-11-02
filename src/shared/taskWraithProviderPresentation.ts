@@ -172,6 +172,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
   'devstral-small': 'Devstral Small',
   'mistral-large-4': 'Mistral Large 4',
+  'mistral-large-4-hosted': 'Mistral Large 4 (Vibe Plan)',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
   'zai-glm-5-3': 'GLM-5.3 (via Mistral)',

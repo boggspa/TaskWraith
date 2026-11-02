@@ -7,6 +7,7 @@ import {
   hostProviderCatalogEntry,
   hostProviderCatalogIds,
   hostProviderKimiOffers,
+  hostProviderMistralOffers,
   hostProviderOffers,
   hostProviderStatus,
   projectDevinOffersForPlan,
@@ -458,6 +459,29 @@ describe('HostProviderCatalog', () => {
     })
     expect(gated?.models.some((model) => model.modelId === 'kimi-k2.8-preview')).toBe(false)
     expect(gated?.offerRevision).not.toBe(hostProviderOffers('kimi', true)?.offerRevision)
+  })
+
+  it('adds the Vibe-plan row for Large 4 only when the user config carries the alias', () => {
+    const withRow = hostProviderMistralOffers(true, ['mistral-large-4'])!
+    const ids = withRow.models.map((model) => model.modelId)
+    expect(ids.indexOf('mistral-large-4-hosted')).toBe(ids.indexOf('mistral-large-4') + 1)
+    expect(withRow.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(true)
+    expect(
+      withRow.models
+        .find((model) => model.modelId === 'mistral-large-4-hosted')
+        ?.reasoning.map((entry) => entry.reasoningId)
+    ).toEqual(expect.arrayContaining(['off', 'low', 'medium', 'high', 'max']))
+
+    const withoutRow = hostProviderMistralOffers(true, ['mistral-medium-3.5'])
+    expect(withoutRow?.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(
+      false
+    )
+    expect(withoutRow?.offerRevision).toBe(hostProviderOffers('mistral', true)?.offerRevision)
+
+    const discoveryDown = hostProviderMistralOffers(true, null)
+    expect(discoveryDown?.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(
+      false
+    )
   })
 
   it('does not change Grok, Mistral, Codex, Claude, or Cursor offers', () => {

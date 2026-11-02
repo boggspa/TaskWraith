@@ -2115,6 +2115,19 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Mistral Large 4 ("Le Chonk"), public preview from 2026-10-06. LAUNCH-DISCOUNT rate: api.mistral.ai/v1/models bills it as `mistral-large-4-0-launch-discount`, and the listing shows list prices of $1.36 input, $0.14 cached and $4.18 output. Move to the list rate when the discount ends.'
       },
       {
+        // The Vibe-plan lane for the same model (2026-11-02). The row is only
+        // offered when the user's own ~/.vibe/config.toml carries Large 4,
+        // because that is the switch Mistral enabled for the Vibe quota.
+        modelId: 'mistral-large-4-hosted',
+        inputUsdPerMillion: 0.68,
+        outputUsdPerMillion: 2.09,
+        cachedInputUsdPerMillion: 0.07,
+        sourceUrl: 'https://docs.mistral.ai/models/mistral-large-4-0',
+        lastVerified: '2026-11-02',
+        notes:
+          "Mistral Large 4 on the Vibe plan lane — the same deployment as the API row above, billed against the user's Vibe quota rather than per token. PROJECTED API-equivalent (the plan row above), NOT actual billing: the Vibe plan sets its own allowance. Figures are the API row's launch-discount rates."
+      },
+      {
         modelId: 'mistral-large-2512',
         inputUsdPerMillion: 0.5,
         outputUsdPerMillion: 1.5,

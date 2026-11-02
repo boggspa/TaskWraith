@@ -24,8 +24,13 @@ import {
 import {
   hostProviderAuthFlows,
   hostProviderCatalogEntry,
+  hostProviderMistralOffers,
   hostProviderOffers
 } from '../host-shared/HostProviderCatalog'
+import {
+  mistralVibeHome,
+  readMistralVibeConfigModels
+} from '../host-shared/mistral/MistralVibeConfigModels'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -60,6 +65,7 @@ import {
   mistralSessionModeForSeat,
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
+  mistralVibeModelAlias,
   normalizeMistralModel,
   normalizeMistralThinkingLevel,
   type MistralThinkingLevel
@@ -97,6 +103,14 @@ export interface HostNodeMistralProviderOptions {
   readonly isConfigured?: () => boolean | Promise<boolean>
   /** Dependency-injected launch environment; production inherits process.env. */
   readonly environment?: NodeJS.ProcessEnv
+  /** Vibe home read for the user's own model tables. Defaults to ~/.vibe. */
+  readonly vibeHome?: string
+  /**
+   * Override Vibe-config discovery. `null` keeps the static Host fallback —
+   * the Vibe-plan lane for Large 4 is then not offered, exactly as it is for a
+   * user whose config does not carry the model.
+   */
+  readonly discoverVibeModels?: () => Promise<readonly string[] | null>
 }
 
 function mistralReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
@@ -122,7 +136,9 @@ function mistralSessionConfigSelections(
       values: [mode, ...mistralSessionModeFallbacksForSeat(readOnly)]
     },
     ...hostAcpModelAndEffortSelections({
-      modelValue: normalizeMistralModel(thread.modelId),
+      // The alias Vibe knows the model by — the Vibe-plan row for Large 4
+      // carries its own TaskWraith id because the alias is the API model's id.
+      modelValue: mistralVibeModelAlias(normalizeMistralModel(thread.modelId)),
       ...(thinking ? { reasoningId: thinking } : {})
     })
   ]
@@ -248,6 +264,29 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
     private readonly options: HostNodeMistralProviderOptions
   ) {}
 
+  /**
+   * The seat's offers, with the Vibe-plan lane for Large 4 added when the
+   * user's own `~/.vibe/config.toml` carries the model. Read on every call, so
+   * a config edited after the host started is picked up.
+   */
+  async getOffers(): Promise<HostProviderOffersProjection> {
+    let vibeModelIds: readonly string[] | null = null
+    try {
+      if (this.options.discoverVibeModels) {
+        vibeModelIds = await this.options.discoverVibeModels()
+      } else {
+        const environment = this.options.environment ?? process.env
+        const vibeHome = this.options.vibeHome ?? mistralVibeHome(environment)
+        vibeModelIds = (await readMistralVibeConfigModels(vibeHome)).map((model) => model.alias)
+      }
+    } catch {
+      // An unreadable config is the same answer as one that carries no
+      // plan models: offer no Vibe-plan row.
+      vibeModelIds = []
+    }
+    return hostProviderMistralOffers(true, vibeModelIds) ?? this.offers
+  }
+
   private get resources(): HostNodeProviderResourcePort {
     return this.options.resources ?? createHostNodeProviderResourcePort(PROVIDER_ID)
   }
@@ -326,10 +365,14 @@ class HostNodeMistralProviderInstance implements HostNodeProviderInstance {
       throw new Error(PROVIDER_DISPLAY_NAME + ' prompt must be bounded and control-free.')
     }
     const thread = normalizeHostProviderRunThread(this.runPort.getThread(request.threadId))
+    // The live offers carry the Vibe-plan lane for Large 4 when the user's own
+    // Vibe config carries the model; a seat pinned to a row that is not offered
+    // is refused rather than silently run on another model.
+    const selectableOffers = await this.getOffers()
     if (
       !thread ||
       thread.providerId !== PROVIDER_ID ||
-      !providerModelIsSelectable(this.offers, thread)
+      !providerModelIsSelectable(selectableOffers, thread)
     ) {
       throw new Error(PROVIDER_DISPLAY_NAME + ' thread configuration is not selectable.')
     }

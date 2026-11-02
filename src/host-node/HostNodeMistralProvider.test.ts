@@ -59,6 +59,8 @@ function open(
     readonly configuredThread?: HostProviderRunThread
     readonly interactions?: HostNodeInteractionResolver
     readonly environment?: NodeJS.ProcessEnv
+    /** Inject the Vibe-config discovery: null keeps the static fallback. */
+    readonly discoverVibeModels?: () => Promise<readonly string[] | null>
   } = {}
 ) {
   const appends: unknown[] = []
@@ -93,6 +95,7 @@ function open(
     ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
     ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
     environment: input.environment ?? { PATH: '/usr/bin' },
+    ...(input.discoverVibeModels ? { discoverVibeModels: input.discoverVibeModels } : {}),
     spawn: (_command, _args, options) => {
       spawnEnvs.push(options.env)
       return child as never
@@ -749,6 +752,106 @@ describe('HostNodeMistralProvider', () => {
       expect.objectContaining({ alias: 'mistral-large-4', thinking: 'max', supports_images: true })
     ])
     expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('picks up a Vibe config edited after the host started', async () => {
+    let aliases: readonly string[] = []
+    const { instance } = open({ discoverVibeModels: async () => aliases })
+    const planRowOffered = async (): Promise<boolean | undefined> =>
+      (await instance.getOffers?.())?.models.some(
+        (model) => model.modelId === 'mistral-large-4-hosted'
+      )
+    expect(await planRowOffered()).toBe(false)
+    aliases = ['mistral-large-4']
+    expect(await planRowOffered()).toBe(true)
+  })
+
+  it('offers the Vibe-plan row for Large 4 only when the user config carries it', async () => {
+    const { instance } = open({ discoverVibeModels: async () => ['mistral-large-4'] })
+    const offers = await instance.getOffers?.()
+    expect(offers?.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(true)
+  })
+
+  it('omits the Vibe-plan row when the user config does not carry Large 4', async () => {
+    const { instance } = open({ discoverVibeModels: async () => ['mistral-medium-3.5'] })
+    const offers = await instance.getOffers?.()
+    expect(offers?.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(false)
+  })
+
+  it('keeps the static catalogue when Vibe-config discovery is unavailable', async () => {
+    const { instance } = open({ discoverVibeModels: async () => null })
+    const offers = await instance.getOffers?.()
+    expect(offers?.models.some((model) => model.modelId === 'mistral-large-4-hosted')).toBe(false)
+  })
+
+  it('runs the Vibe-plan row for Large 4 through the plan lane at the ALIAS', async () => {
+    const { instance, child, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-4-hosted', reasoningId: 'max' }),
+      environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'should-be-scrubbed' },
+      discoverVibeModels: async () => ['mistral-large-4']
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-plan-lane',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: {}
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawnEnvs).toHaveLength(1)
+    // The plan lane: no key, and no VIBE_MODELS pin — a plan model selects
+    // itself in Vibe, so there is nothing to pin.
+    expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBeUndefined()
+    expect(spawnEnvs[0]?.VIBE_ACTIVE_MODEL).toBeUndefined()
+
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    // Advertise the model option under the ALIAS on session/new (the ACP
+    // surface speaks aliases); only an advertised value is selectable, so the
+    // unadvertised TaskWraith id would be a gate failure, not a fallback.
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-plan-lane',
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'ask',
+              options: [{ value: 'plan' }, { value: 'ask' }]
+            },
+            {
+              id: 'model',
+              currentValue: 'mistral-large-4',
+              options: [{ value: 'mistral-large-4' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'medium',
+              options: [
+                { value: 'off' },
+                { value: 'low' },
+                { value: 'medium' },
+                { value: 'high' },
+                { value: 'max' }
+              ]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    // Mode and model already match the session's advertised currentValue, so
+    // no set_config_option is sent for them; only the thinking tier differs.
+    // The selection still SPOKE the alias: a TaskWraith id would be a strict
+    // gate failure, never a silent fallback onto the CLI's persisted model.
+    await vi.waitFor(() => expect(sent.join('')).toContain('"configId":"thinking"'))
+    expect(sent.join()).not.toContain('mistral-large-4-hosted')
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(instance.cancel('run-plan-lane')).toBe(true)
     child.emit('close', 0)
     await expect(running).resolves.toMatchObject({ status: 'cancelled' })
   })

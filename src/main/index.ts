@@ -1813,9 +1813,15 @@ import {
   MISTRAL_BINARY_NAME,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
+  mistralVibeModelAlias,
   mistralWriteCapable,
   normalizeMistralThinkingLevel
 } from './mistral/MistralCliArgs'
+import {
+  mistralVibeHome,
+  readMistralVibeConfigModels,
+  withMistralVibePlanRow
+} from '../host-shared/mistral/MistralVibeConfigModels'
 import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import {
@@ -26229,7 +26235,10 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     // Without this the run silently uses whatever `active_model` sits in the
     // user's global ~/.vibe/config.toml — a different model, a different price,
     // and a meter that is then measuring the wrong thing.
-    { configId: 'model', value: model },
+    // The ALIAS Vibe knows the model by, not TaskWraith's row id: the
+    // Vibe-plan row for Large 4 carries its own id because the alias is
+    // already the API model's id.
+    { configId: 'model', value: mistralVibeModelAlias(model) },
     // Omitted entirely when TaskWraith's effort vocabulary has no Vibe
     // equivalent: `set_config_option` rejects an unknown value and leaves the
     // session on the model default, which is a silent downgrade rather than an
@@ -61976,6 +61985,12 @@ if (isGeminiMcpBridgeProcess) {
           staticFallback
         )
         return discovered ? publishLiveModels(discovered) : staticFallback
+      }
+      if (provider === 'mistral') {
+        return withMistralVibePlanRow(
+          staticFallback,
+          await readMistralVibeConfigModels(mistralVibeHome(process.env))
+        )
       }
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()

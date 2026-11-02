@@ -197,10 +197,15 @@ export const MISTRAL_SEAT_MODELS = [
   // `glm-5-2` subscription extra. Distinct from the API-key `zai-glm-5-3`.
   'glm-5-3',
   // Mistral Large 4 ("Le Chonk", 2026-10-06 public preview). API-key lane: the
-  // API lists it as `mistral-large-4` (alias `mistral-large-4-0`), and Vibe's
-  // plan extras do not include it yet. Without this entry the id clamps to
-  // Medium 3.5 and the turn silently runs a different model.
+  // API lists it as `mistral-large-4` (alias `mistral-large-4-0`). Without this
+  // entry the id clamps to Medium 3.5 and the turn silently runs a different
+  // model. The Vibe PLAN lane for the same model is the separate
+  // `mistral-large-4-hosted` row below.
   'mistral-large-4',
+  // Mistral Large 4 on the Vibe plan (2026-11-02). A distinct id because the
+  // Vibe alias IS `mistral-large-4`; this row resolves to that alias at
+  // dispatch and runs on the user's Vibe quota, not on their API key.
+  'mistral-large-4-hosted',
   'mistral-large-2512',
   'zai-glm-5-3',
   'zai-glm-5-2',
@@ -250,6 +255,24 @@ export function normalizeMistralModel(model: string | null | undefined): string 
   const match = MISTRAL_SEAT_MODELS.find((m) => m.toLowerCase() === lowered)
   if (match) return match
   return MISTRAL_DEFAULT_MODEL
+}
+
+/**
+ * The alias Vibe knows a seat model by.
+ *
+ * TaskWraith's ids and Vibe's aliases are the same string for every model
+ * EXCEPT the Vibe-plan row for Large 4: its TaskWraith id is
+ * `mistral-large-4-hosted`, because the alias `mistral-large-4` is already
+ * taken by the API-key row. The alias is what Vibe's ACP `model` config
+ * option matches (`set_config_option` compares the value against
+ * `config.models[].alias`), so the ACP selection must speak the alias — while
+ * the credential lane keeps speaking the TaskWraith id, which is how the two
+ * lanes stay distinct.
+ */
+export function mistralVibeModelAlias(model: string | null | undefined): string {
+  const raw = typeof model === 'string' ? model.trim() : ''
+  if (raw.toLowerCase() === 'mistral-large-4-hosted') return 'mistral-large-4'
+  return raw || MISTRAL_DEFAULT_MODEL
 }
 
 /** Vibe's reasoning ladder, from `vibe/core/config/models.py` ThinkingLevel. */
