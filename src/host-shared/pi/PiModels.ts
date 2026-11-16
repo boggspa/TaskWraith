@@ -417,7 +417,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   {
     wireId: 'mistral/mistral-medium-2505',
     upstream: 'mistral',
-    modelId: 'mistral-medium-2505',
+    modelId: 'mistral-medium-3-5',
     label: 'Mistral Medium 3',
     contextWindow: 131_072,
     maxOutputTokens: 131_072,
