@@ -85,6 +85,24 @@ describe('resolveMistralCredentialLaunch', () => {
     expect(result.introductionChildEnv.MISTRAL_TOKEN).toBeUndefined()
   })
 
+  it('routes the Vibe-plan row for Large 4 through the subscription and pins the ALIAS', () => {
+    const result = resolveMistralCredentialLaunch({
+      model: 'mistral-large-4-hosted',
+      resolvedEnv: credentialEnv,
+      storedApiKeyPresent: true,
+      ambientApiKeyAllowed: true,
+      thinkingLevel: 'max'
+    })
+    expect(result.lane).toBe('vibe-subscription')
+    // The plan lane scrubs the key even when one is available: a lingering
+    // key would silently bill the metered API account instead of the plan.
+    expect(result.childEnv.MISTRAL_API_KEY).toBeUndefined()
+    expect(result.missingApiKey).toBe(false)
+    // Only an API-key-lane model is pinned through VIBE_MODELS — a plan model
+    // selects itself in Vibe, so there is no pin to speak of.
+    expect(result.childEnv.VIBE_ACTIVE_MODEL).toBeUndefined()
+  })
+
   it('pins Large 4 for the working turn and pins the opening at thinking off', () => {
     const result = resolveMistralCredentialLaunch({
       model: 'mistral-large-4',

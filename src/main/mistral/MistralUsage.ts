@@ -25,6 +25,7 @@
 // the CLI itself prices with, so they cannot silently disagree with what the
 // user is actually billed.
 
+import { MISTRAL_LARGE_4_MODEL_ID, MISTRAL_LARGE_4_VIBE_MODEL_ID } from '../../shared/mistralModels'
 import {
   estimateTokensFromChars,
   TOKEN_COUNT_CONFIDENCE_KEY,
@@ -80,6 +81,8 @@ export function mistralModelRate(model: string | null | undefined): MistralModel
   const key = typeof model === 'string' ? model.trim().toLowerCase() : ''
   if (key === 'mistral-vibe-cli-latest') return MISTRAL_MODEL_RATES[MISTRAL_MODEL_MEDIUM]
   if (key === 'devstral-small-latest') return MISTRAL_MODEL_RATES[MISTRAL_MODEL_DEVSTRAL_SMALL]
+  // The Vibe-plan row for Large 4 is the same model, so it projects the same rate.
+  if (key === MISTRAL_LARGE_4_VIBE_MODEL_ID) return MISTRAL_MODEL_RATES[MISTRAL_LARGE_4_MODEL_ID]
   return MISTRAL_MODEL_RATES[key] ?? MISTRAL_UNKNOWN_MODEL_RATE
 }
 

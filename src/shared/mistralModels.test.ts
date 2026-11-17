@@ -8,6 +8,9 @@ describe('isMistralThinkingCapableModel', () => {
     // off/low/medium/high/max thinking ladder, same as mistral-medium-3.5.
     expect(isMistralThinkingCapableModel('glm-5-2')).toBe(true)
     expect(isMistralThinkingCapableModel('mistral-medium-3.5')).toBe(true)
+    // Large 4 keeps its ladder on both lanes.
+    expect(isMistralThinkingCapableModel('mistral-large-4')).toBe(true)
+    expect(isMistralThinkingCapableModel('mistral-large-4-hosted')).toBe(true)
   })
 
   it('leaves the API GLM-5.2 (zai-glm-5-2) unchanged; the API lane is not thinking-capable here', () => {

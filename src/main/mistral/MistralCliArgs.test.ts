@@ -16,6 +16,7 @@ import {
   mistralSessionModeForSeat,
   mistralSessionModeIsGated,
   mistralWriteCapable,
+  mistralVibeModelAlias,
   normalizeMistralModel,
   normalizeMistralPlanId,
   normalizeMistralThinkingLevel,
@@ -126,8 +127,23 @@ describe('normalizeMistralModel', () => {
   it('accepts bare Mistral API models', () => {
     // Large 4 must survive the clamp, or the turn silently runs Medium 3.5.
     expect(normalizeMistralModel('mistral-large-4')).toBe('mistral-large-4')
+    // So must the Vibe-plan row — its id is distinct, so it clamps to itself.
+    expect(normalizeMistralModel('mistral-large-4-hosted')).toBe('mistral-large-4-hosted')
     expect(normalizeMistralModel('mistral-large-2512')).toBe('mistral-large-2512')
     expect(normalizeMistralModel('zai-glm-5-2')).toBe('zai-glm-5-2')
+  })
+
+  it('maps the Vibe-plan row for Large 4 onto the alias Vibe selects', () => {
+    expect(mistralVibeModelAlias('mistral-large-4-hosted')).toBe('mistral-large-4')
+    expect(mistralVibeModelAlias('MISTRAL-LARGE-4-HOSTED')).toBe('mistral-large-4')
+    // Every other seat model's id IS its alias, so they pass through untouched.
+    expect(mistralVibeModelAlias('mistral-large-4')).toBe('mistral-large-4')
+    expect(mistralVibeModelAlias('mistral-medium-3.5')).toBe('mistral-medium-3.5')
+    expect(mistralVibeModelAlias('')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(mistralVibeModelAlias(null)).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('accepts bare Mistral API models', () => {
     expect(normalizeMistralModel('codestral-2508')).toBe('codestral-2508')
     expect(normalizeMistralModel('ministral-14b-2512')).toBe('ministral-14b-2512')
     expect(normalizeMistralModel('ministral-8b-2512')).toBe('ministral-8b-2512')

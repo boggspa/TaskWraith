@@ -11,6 +11,7 @@ import {
   mistralCredentialEnvScrubbed,
   mistralSessionModeForSeat,
   mistralSessionModeIsGated,
+  mistralVibeModelAlias,
   mistralWriteCapable,
   normalizeMistralModel,
   normalizeMistralThinkingLevel
@@ -223,11 +224,13 @@ export async function buildMistralSealEvidence(
   const preamble = writeCapable
     ? MISTRAL_WRITE_MODE_PROMPT_PREAMBLE
     : MISTRAL_READ_ONLY_PROMPT_PREAMBLE
-  // The wire model is the clamped one: normalizeMistralModel is what stands
-  // between a stale/imported id (or a Pi-style `mistral/<model>` wire id, which
-  // belongs to a different provider seat entirely) and a mid-turn rejection.
-  // Sealing the raw request would bind a model the launch never used.
-  const model = normalizeMistralModel(facts.model)
+  // The wire model is the clamped one, spelled as the ALIAS Vibe knows it by:
+  // normalizeMistralModel is what stands between a stale/imported id (or a
+  // Pi-style `mistral/<model>` wire id, which belongs to a different provider
+  // seat entirely) and a mid-turn rejection, and mistralVibeModelAlias maps the
+  // Vibe-plan row for Large 4 onto the alias Vibe actually selects. Sealing
+  // the raw request would bind a model the launch never used.
+  const model = mistralVibeModelAlias(normalizeMistralModel(facts.model))
   const thinkingLevel = normalizeMistralThinkingLevel(facts.thinkingLevel)
 
   const placeheldServer = facts.mcpServerEntry

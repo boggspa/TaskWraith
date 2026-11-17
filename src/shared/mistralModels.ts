@@ -10,6 +10,49 @@ export const MISTRAL_DEVSTRAL_SMALL_MODEL_ID = 'devstral-small'
 export const MISTRAL_MEDIUM_35_MODEL_ID = 'mistral-medium-3.5'
 
 /**
+ * Mistral Large 4 on the API-key lane — the row that existed before the Vibe
+ * plan lane, billed per token on the user's own Mistral key.
+ */
+export const MISTRAL_LARGE_4_MODEL_ID = 'mistral-large-4'
+
+/**
+ * Mistral Large 4 on the Vibe PLAN lane (2026-11-02): the same model, billed
+ * against the user's Mistral Vibe quota instead of a per-token API key.
+ *
+ * A DISTINCT TaskWraith id, because the alias the user's `~/.vibe/config.toml`
+ * carries is `mistral-large-4` — the same string as the API model id. Two
+ * rows cannot share one id, so this row carries its own id and resolves to the
+ * Vibe alias at dispatch (see `mistralVibeModelAlias`). The row is only
+ * offered when the user's own Vibe config provides the model: Mistral enabled
+ * Large 4 on the Vibe quota for the accounts whose config carries it, and
+ * TaskWraith does not write that config on the user's behalf.
+ */
+export const MISTRAL_LARGE_4_VIBE_MODEL_ID = 'mistral-large-4-hosted'
+
+/** The alias the user's `~/.vibe/config.toml` defines for Large 4. */
+export const MISTRAL_LARGE_4_VIBE_ALIAS = 'mistral-large-4'
+
+export const MISTRAL_LARGE_4_VIBE_MODEL_LABEL = 'Mistral Large 4 (Vibe Plan)'
+
+/**
+ * The window api.mistral.ai/v1/models reports for Large 4 (524,288). Mistral's
+ * model page publishes a 1M context, but the served window is the smaller
+ * number, so this is what the context meter counts against.
+ */
+export const MISTRAL_LARGE_4_CONTEXT_WINDOW = 524_288
+
+/**
+ * The shared fields of the Vibe-plan row for Large 4, so the desktop picker,
+ * the Host catalogue and the TUI all name it the same way.
+ */
+export const MISTRAL_LARGE_4_VIBE_ROW = {
+  id: MISTRAL_LARGE_4_VIBE_MODEL_ID,
+  label: MISTRAL_LARGE_4_VIBE_MODEL_LABEL,
+  description: 'Vibe plan quota - needs a mistral-large-4 entry in your ~/.vibe/config.toml',
+  defaultReasoningEffort: 'high'
+} as const
+
+/**
  * Mistral Thinking levels as reasoning effort options.
  * These match the Vibe CLI's ThinkingLevel enum (off, low, medium, high, max).
  */
@@ -41,7 +84,9 @@ export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set<string>([
   'glm-5-3',
   // Mistral Large 4 (API key, added 2026-10-06). docs.mistral.ai lists it with
   // adjustable `reasoning_effort`; Vibe maps this ladder onto its none/high.
-  'mistral-large-4',
+  MISTRAL_LARGE_4_MODEL_ID,
+  // The same model on the Vibe plan: same ladder, different lane.
+  MISTRAL_LARGE_4_VIBE_MODEL_ID,
   'devstral-small-latest',
   'mistral-vibe-cli-latest',
   'mistral-small-2603',
