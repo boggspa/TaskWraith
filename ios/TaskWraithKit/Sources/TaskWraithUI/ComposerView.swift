@@ -1033,7 +1033,9 @@ struct Composer: View {
         let key = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let rawModel = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let catalogModelId: String
-        if key == "kimi", ["k3", "kimi-code/k3"].contains(rawModel) {
+        if key == "kimi", ["k3.1-pro", "kimi-code/k3.1-pro"].contains(rawModel) {
+            catalogModelId = "kimi-k3.1-pro"
+        } else if key == "kimi", ["k3", "kimi-code/k3"].contains(rawModel) {
             catalogModelId = "kimi-k3"
         } else if key == "kimi", ["k3-256k", "kimi-code/k3-256k"].contains(rawModel) {
             catalogModelId = "kimi-k3-256k"

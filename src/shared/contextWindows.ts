@@ -167,6 +167,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gpt-6-sol': 1_050_000,
   // GPT-6.1 Sol (2026-09-29): 1,050,000 on its official model page.
   'gpt-6.1-sol': 1_050_000,
+  // GPT-6.1 Terra (2026-10-27): 1,050,000 on its official model page.
+  'gpt-6.1-terra': 1_050_000,
   'gpt-6-luna': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
@@ -202,6 +204,10 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   opus: 200_000,
   haiku: 200_000,
   // Kimi
+  // K3.1 Pro (2026-10-27): 1,048,576 on platform.kimi.ai and in Kimi Code's
+  // managed `kimi-code/k3.1-pro` table. The two retired K3 rows stay so
+  // historical transcripts keep their meters.
+  'kimi-k3.1-pro': 1_048_576,
   'kimi-k3': 1_048_576,
   'kimi-k3-256k': 262_144,
   // K2.8 Preview took the standard `kimi-for-coding` route to 1M on every

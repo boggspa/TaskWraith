@@ -428,12 +428,13 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Muse leads the lineup with Wonder (2026-10-12).
+      // Codex (GPT-6.1 Terra) and Kimi (K3.1 Pro) lead from 2026-10-27, then
+      // Muse with Wonder (2026-10-12).
+      'codex',
+      'kimi',
       'muse',
       'claude',
       'mistral',
-      'codex',
-      'kimi',
       'devin',
       'antigravity',
       'grok',
@@ -446,7 +447,7 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toBe('Mistral Large 4')
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'kimi')?.models.map((m) => m.name)
-    ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
+    ).toEqual(['K3.1 Pro', 'K2.8 Preview', 'K2.7 Code Highspeed'])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
     ).toBe('Haiku 5.5')

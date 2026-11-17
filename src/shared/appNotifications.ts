@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-13-argon'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-10-27-terra-k3-1-pro'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,9 +162,76 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Gemini 4 Argon on Gemini API and Antigravity, Muse Wonder 1.0 and Muse Wonder Full 1.0, Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "GPT-6.1 Terra in Codex, Kimi K3.1 Pro, Gemini 4 Argon on Gemini API and Antigravity, Muse Wonder 1.0 and Muse Wonder Full 1.0, Claude Haiku 5.5, Mistral Large 4 (Le Chonk) on your Mistral API key, Unbiased's Pareto 26.10 Preview, inclusionAI's Ling 3.1 Flash and the free Apodex 1.1 Mini on OpenRouter via Pi, the Clef, Tev1 and Nimble local decision models on Ollama, Claude Sonnet 5.5 and Opus 5.5, GPT-6.1 Sol in Codex, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
+      {
+        // GPT-6 Sol and Luna began rolling out on 2026-09-22 (Codex changelog,
+        // alongside Codex CLI 0.155.0), so Codex sits right behind the headline
+        // Claude launch of the same day; Astra (2026-09-03) stays listed beneath
+        // them. All three are announced regardless of this seat's entitlement:
+        // access ramps by account and client version, so the card names the
+        // models rather than the seat's current access to them.
+        // GPT-6.1 Sol (2026-09-29) joins at the top on the same ramp.
+        // GPT-6.1 Terra (2026-10-27) now leads the group and the card: it is GA
+        // in Codex CLI 0.159.0's catalogue, the Fast tier included.
+        provider: 'codex',
+        label: 'Codex',
+        models: [
+          {
+            name: 'GPT-6.1 Terra',
+            blurb:
+              "OpenAI's fast, efficient GPT-6.1 for visual reasoning and computer use — 1.05M context, Low through Max, $1/$5 per Mtok."
+          },
+          {
+            name: 'GPT-6.1 Sol',
+            blurb:
+              "OpenAI's near-Astra GPT-6.1 at a lower cost — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
+          },
+          {
+            name: 'GPT-6 Sol',
+            blurb:
+              "OpenAI's GPT-6 for complex coding and agentic workflows — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
+          },
+          {
+            name: 'GPT-6 Luna',
+            blurb:
+              "OpenAI's most efficient GPT-6 for focused, high-volume tasks — the same 1.05M window and ladder at $0.10/$0.50 per Mtok."
+          },
+          {
+            name: 'GPT-6 Astra',
+            blurb:
+              "OpenAI's most capable GPT-6, for the hardest end-to-end work. Rolling out by organisation."
+          }
+        ]
+      },
+      {
+        // K2.8 Preview rolled out 2026-09-11 on the UNCHANGED `kimi-for-coding`
+        // wire id, so it is the same route the retired "K2.7 Coding" row
+        // dispatched — relabelled, with K3's effort axis and a 1M window. The
+        // Highspeed tier stayed on K2.7 and is now its own picker row.
+        // K3.1 Pro (2026-10-27) leads it: it replaced both K3 routes, which
+        // left the pickers by user decision.
+        provider: 'kimi',
+        label: 'Kimi',
+        models: [
+          {
+            name: 'K3.1 Pro',
+            blurb:
+              "Moonshot's new flagship, replacing K3 and K3 256K — 1M context, Low, High, or Max thinking, $2/$10 per Mtok."
+          },
+          {
+            name: 'K2.8 Preview',
+            blurb:
+              "Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."
+          },
+          {
+            name: 'K2.7 Code Highspeed',
+            blurb:
+              'The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking.'
+          }
+        ]
+      },
       {
         provider: 'muse',
         label: 'Muse',
@@ -299,59 +366,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Ministral 3 (3B)',
             blurb: 'Ministral 3 (3B) is the compact variant for lighter tasks and lower cost.'
-          }
-        ]
-      },
-      {
-        // GPT-6 Sol and Luna began rolling out on 2026-09-22 (Codex changelog,
-        // alongside Codex CLI 0.155.0), so Codex sits right behind the headline
-        // Claude launch of the same day; Astra (2026-09-03) stays listed beneath
-        // them. All three are announced regardless of this seat's entitlement:
-        // access ramps by account and client version, so the card names the
-        // models rather than the seat's current access to them.
-        // GPT-6.1 Sol (2026-09-29) joins at the top on the same ramp.
-        provider: 'codex',
-        label: 'Codex',
-        models: [
-          {
-            name: 'GPT-6.1 Sol',
-            blurb:
-              "OpenAI's near-Astra GPT-6.1 at a lower cost — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
-          },
-          {
-            name: 'GPT-6 Sol',
-            blurb:
-              "OpenAI's GPT-6 for complex coding and agentic workflows — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
-          },
-          {
-            name: 'GPT-6 Luna',
-            blurb:
-              "OpenAI's most efficient GPT-6 for focused, high-volume tasks — the same 1.05M window and ladder at $0.10/$0.50 per Mtok."
-          },
-          {
-            name: 'GPT-6 Astra',
-            blurb:
-              "OpenAI's most capable GPT-6, for the hardest end-to-end work. Rolling out by organisation."
-          }
-        ]
-      },
-      {
-        // K2.8 Preview rolled out 2026-09-11 on the UNCHANGED `kimi-for-coding`
-        // wire id, so it is the same route the retired "K2.7 Coding" row
-        // dispatched — relabelled, with K3's effort axis and a 1M window. The
-        // Highspeed tier stayed on K2.7 and is now its own picker row.
-        provider: 'kimi',
-        label: 'Kimi',
-        models: [
-          {
-            name: 'K2.8 Preview',
-            blurb:
-              "Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."
-          },
-          {
-            name: 'K2.7 Code Highspeed',
-            blurb:
-              'The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking.'
           }
         ]
       },

@@ -19,10 +19,8 @@ import {
   KIMI_K27_HIGHSPEED_MODEL_LABEL,
   KIMI_K28_MODEL_ID,
   KIMI_K28_MODEL_LABEL,
-  KIMI_K3_256K_MODEL_ID,
-  KIMI_K3_256K_MODEL_LABEL,
-  KIMI_K3_MODEL_ID,
-  KIMI_K3_MODEL_LABEL,
+  KIMI_K31_PRO_MODEL_ID,
+  KIMI_K31_PRO_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS
 } from '../../../shared/kimiModels'
 import {
@@ -105,6 +103,23 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
     id: 'gpt-6.1-sol',
     label: 'GPT-6.1-Sol',
     description: 'Near-Astra performance for complex work at a lower cost.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    // GPT-6.1 Terra (2026-10-27): none..max with a Medium default on its
+    // official model page and the Fast tier in Codex CLI 0.159.0's catalogue;
+    // no `ultra` documented. Follows 6.1 Sol.
+    id: 'gpt-6.1-terra',
+    label: 'GPT-6.1 Terra',
+    description: 'Fast, efficient model for visual reasoning, computer use and writing.',
     supportedReasoningEfforts: [
       { reasoningEffort: 'low' },
       { reasoningEffort: 'medium' },
@@ -387,21 +402,11 @@ const KIMI_DEFAULT_MODEL_ROWS = [
     defaultReasoningEffort: 'on'
   },
   {
-    // Managed `kimi-code/k3` alias: 256K on Moderato and up to 1M on
-    // Allegretto+, with Low/High/Max effort choices.
-    id: KIMI_K3_MODEL_ID,
-    label: KIMI_K3_MODEL_LABEL,
-    description:
-      "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
-    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
-      reasoningEffort
-    })),
-    defaultReasoningEffort: 'max'
-  },
-  {
-    id: KIMI_K3_256K_MODEL_ID,
-    label: KIMI_K3_256K_MODEL_LABEL,
-    description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
+    // Managed `kimi-code/k3.1-pro` alias (2026-10-27): 1M context with
+    // Low/High/Max effort choices. It replaced both K3 routes (user decision).
+    id: KIMI_K31_PRO_MODEL_ID,
+    label: KIMI_K31_PRO_MODEL_LABEL,
+    description: "Moonshot's flagship K3.1 Pro - 1M context - Low, High, or Max thinking",
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),

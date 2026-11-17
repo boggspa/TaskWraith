@@ -243,16 +243,18 @@ describe('HostProviderCatalog', () => {
     ).toEqual(['low', 'medium', 'high'])
   })
 
-  it('offers GPT-6.1 Sol (the default), GPT-6 Sol and Luna as the leading Codex rows on the standard ladder', () => {
+  it('offers GPT-6.1 Sol (the default), GPT-6.1 Terra, GPT-6 Sol and Luna as the leading Codex rows on the standard ladder', () => {
     const codex = hostProviderCatalogEntry('codex')
-    expect(codex?.models.map((model) => model.modelId).slice(0, 4)).toEqual([
+    expect(codex?.models.map((model) => model.modelId).slice(0, 5)).toEqual([
       'gpt-6.1-sol',
+      'gpt-6.1-terra',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol'
     ])
     for (const [modelId, label] of [
       ['gpt-6.1-sol', 'GPT-6.1-Sol'],
+      ['gpt-6.1-terra', 'GPT-6.1 Terra'],
       ['gpt-6-sol', 'GPT-6-Sol'],
       ['gpt-6-luna', 'GPT-6-Luna']
     ] as const) {
@@ -382,21 +384,20 @@ describe('HostProviderCatalog', () => {
     expect(entry!.models.map((model) => model.modelId)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
     expect(entry!.models.map((model) => model.label)).toEqual([
       'K2.8 Preview',
       'K2.7 Code Highspeed',
-      'K3 (1M)',
-      'K3 (256K)'
+      'K3.1 Pro'
     ])
     // Highspeed stayed on K2.7 and is the one managed route with no axis.
     expect(
       entry!.models.find((model) => model.modelId === 'kimi-k2.7-code-highspeed')?.reasoning
     ).toEqual([{ reasoningId: 'on', label: 'On', available: true }])
-    // K2.8 took K3's axis when it replaced K2.7 on the standard route.
-    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3', 'kimi-k3-256k']) {
+    // K2.8 took K3's axis when it replaced K2.7 on the standard route, and
+    // K3.1 Pro keeps it after replacing both K3 routes.
+    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3.1-pro']) {
       expect(entry!.models.find((model) => model.modelId === modelId)?.reasoning).toEqual([
         { reasoningId: 'low', label: 'Low', available: true },
         { reasoningId: 'high', label: 'High', available: true },
@@ -412,11 +413,10 @@ describe('HostProviderCatalog', () => {
     expect(hostKimiManagedFallbackRows().map((row) => row.id)).toEqual([
       'kimi-k2.8-preview',
       'kimi-k2.7-code-highspeed',
-      'kimi-k3',
-      'kimi-k3-256k'
+      'kimi-k3.1-pro'
     ])
-    // Upstream defaults, not a shared guess: K2.8 defaults to Max, both K3
-    // routes to High, and Highspeed has only its fixed On.
+    // Upstream defaults, not a shared guess: K2.8 defaults to Max, K3.1 Pro to
+    // High, and Highspeed has only its fixed On.
     expect(
       Object.fromEntries(
         hostKimiManagedFallbackRows().map((row) => [row.id, row.defaultReasoningEffort])
@@ -424,17 +424,22 @@ describe('HostProviderCatalog', () => {
     ).toEqual({
       'kimi-k2.8-preview': 'max',
       'kimi-k2.7-code-highspeed': 'on',
-      'kimi-k3': 'high',
-      'kimi-k3-256k': 'high'
+      'kimi-k3.1-pro': 'high'
     })
+  })
+
+  it('no longer offers either retired K3 route on the Host', () => {
+    const offered = hostProviderOffers('kimi', true)?.models.map((model) => model.modelId)
+    expect(offered).not.toContain('kimi-k3')
+    expect(offered).not.toContain('kimi-k3-256k')
   })
 
   it('gates Host Kimi offers to verified managed rows without remapping aliases', () => {
     const gated = hostProviderKimiOffers(true, [
       {
-        id: 'kimi-k3',
-        label: 'K3 (plan-capped 256K)',
-        description: 'K3 route - 256K limit on this Kimi plan - Low, High, or Max thinking',
+        id: 'kimi-k3.1-pro',
+        label: 'K3.1 Pro',
+        description: 'K3.1 Pro route - Low, High, or Max thinking',
         supportedReasoningEfforts: [
           { reasoningEffort: 'low' },
           { reasoningEffort: 'max' },
@@ -447,9 +452,9 @@ describe('HostProviderCatalog', () => {
         disabled: true
       }
     ])
-    expect(gated?.models.map((model) => model.modelId)).toEqual(['kimi-k3'])
+    expect(gated?.models.map((model) => model.modelId)).toEqual(['kimi-k3.1-pro'])
     expect(gated?.models[0]).toMatchObject({
-      label: 'K3 (plan-capped 256K)',
+      label: 'K3.1 Pro',
       default: true,
       reasoning: [
         { reasoningId: 'low', label: 'Low', available: true },

@@ -9293,6 +9293,8 @@ const CODEX_PICKER_LEAD_ORDER = [
   'gpt-6-astra',
   // GPT-6.1 Sol (2026-09-29) follows Astra, above the 6.0 pair.
   'gpt-6.1-sol',
+  // GPT-6.1 Terra (2026-10-27) follows 6.1 Sol.
+  'gpt-6.1-terra',
   // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
   'gpt-6-sol',
   'gpt-6-luna',

@@ -39,10 +39,8 @@ import {
   KIMI_K27_HIGHSPEED_MODEL_LABEL,
   KIMI_K28_MODEL_ID,
   KIMI_K28_MODEL_LABEL,
-  KIMI_K3_256K_MODEL_ID,
-  KIMI_K3_256K_MODEL_LABEL,
-  KIMI_K3_MODEL_ID,
-  KIMI_K3_MODEL_LABEL
+  KIMI_K31_PRO_MODEL_ID,
+  KIMI_K31_PRO_MODEL_LABEL
 } from '../shared/kimiModels'
 import type { KimiManagedModelRow } from './kimi/KimiManagedModelCatalog'
 import type {
@@ -291,7 +289,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         // GPT-6.1 Sol (2026-09-29) leads the offers on the standard Host
         // ladder and carries the default flag, matching the Codex default
         // everywhere else; GPT-6 Sol and Luna (from 2026-09-22) follow.
+        // GPT-6.1 Terra (2026-10-27) sits directly behind 6.1 Sol.
         model('gpt-6.1-sol', 'GPT-6.1-Sol', STANDARD_REASONING, true),
+        model('gpt-6.1-terra', 'GPT-6.1 Terra'),
         model('gpt-6-sol', 'GPT-6-Sol'),
         model('gpt-6-luna', 'GPT-6-Luna'),
         model('gpt-5.6-sol', 'GPT-5.6-Sol'),
@@ -337,8 +337,8 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
         model(KIMI_K27_HIGHSPEED_MODEL_ID, KIMI_K27_HIGHSPEED_MODEL_LABEL, [
           { reasoningId: 'on', label: 'On', available: true }
         ]),
-        model(KIMI_K3_MODEL_ID, KIMI_K3_MODEL_LABEL, KIMI_REASONING),
-        model(KIMI_K3_256K_MODEL_ID, KIMI_K3_256K_MODEL_LABEL, KIMI_REASONING)
+        // K3.1 Pro replaced both K3 routes on 2026-10-27 (user decision).
+        model(KIMI_K31_PRO_MODEL_ID, KIMI_K31_PRO_MODEL_LABEL, KIMI_REASONING)
       ],
       authFlows: [{ flowId: 'kimi:login', kind: 'manual', label: 'Sign in', available: true }]
     },
@@ -697,7 +697,7 @@ export function hostKimiManagedFallbackRows(): KimiManagedModelRow[] {
       reasoningEffort: option.reasoningId
     })),
     // Highspeed is the one managed route with no effort axis; K2.8 defaults to
-    // Max upstream and both K3 routes to High.
+    // Max upstream and K3.1 Pro (like the retired K3 routes) to High.
     defaultReasoningEffort:
       model.modelId === KIMI_K27_HIGHSPEED_MODEL_ID
         ? 'on'

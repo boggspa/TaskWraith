@@ -14,6 +14,7 @@ import {
   KIMI_HIGHSPEED_CLI_MODEL,
   KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
+  KIMI_K31_PRO_CLI_MODEL,
   KIMI_STANDARD_CLI_MODEL,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel,
@@ -34,6 +35,7 @@ describe('codexModelContextConfig', () => {
   it('returns the explicit 1M config for long-context Codex models', () => {
     expect(codexModelContextConfig('gpt-6-astra')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-6.1-sol')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6.1-terra')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-6-sol')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-6-luna')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
@@ -545,11 +547,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const ids = models.map((model) => model.id)
     // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
     // shipped it "without changing the default model".
-    // GPT-6.1 Sol (2026-09-29), then GPT-6 Sol and Luna (2026-09-22), follow
-    // Astra, above the 5.6 generation.
-    expect(ids.slice(0, 7)).toEqual([
+    // GPT-6.1 Sol (2026-09-29), GPT-6.1 Terra (2026-10-27), then GPT-6 Sol and
+    // Luna (2026-09-22), follow Astra, above the 5.6 generation.
+    expect(ids.slice(0, 8)).toEqual([
       'gpt-6-astra',
       'gpt-6.1-sol',
+      'gpt-6.1-terra',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -584,10 +587,15 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
 
   it.each([
     ['gpt-6.1-sol', 'GPT-6.1-Sol', 'Near-Astra performance for complex work at a lower cost.'],
+    [
+      'gpt-6.1-terra',
+      'GPT-6.1 Terra',
+      'Fast, efficient model for visual reasoning, computer use and writing.'
+    ],
     ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
     ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
   ])(
-    'offers %s on the documented low..max ladder with a Medium default; only 6.1 Sol is the default and GA',
+    'offers %s on the documented low..max ladder with a Medium default; only 6.1 Sol is the default, the 6.1 pair GA',
     (id, label, description) => {
       const models = getStaticProviderModels('codex') as StaticModelShape[]
       const row = models.find((model) => model.id === id)
@@ -611,15 +619,23 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
         'gpt-6.1-sol'
       ])
-      // 6.1 Sol is GA and Codex's own default (2026-10-07), so it is no longer a
-      // staged-rollout append; the 6.0 pair still is.
-      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(id !== 'gpt-6.1-sol')
+      // 6.1 Sol is GA and Codex's own default (2026-10-07), and 6.1 Terra is GA
+      // in Codex CLI 0.159.0's catalogue, so neither is a staged-rollout append;
+      // the 6.0 pair still is.
+      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(!id.startsWith('gpt-6.1-'))
     }
   )
 
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    for (const modelId of ['gpt-5.5', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
+    for (const modelId of [
+      'gpt-5.5',
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6.1-terra',
+      'gpt-6-sol',
+      'gpt-6-luna'
+    ]) {
       expect(
         models
           .find((model) => model.id === modelId)
@@ -979,13 +995,25 @@ describe('normalizeCliProviderModel (kimi)', () => {
     expect(normalizeCliProviderModel('kimi', 'kimi-k2.7-code')).toBe('kimi-k2.8-preview')
   })
 
-  it('resolves K3 ids to the canonical row instead of the default', () => {
-    expect(normalizeCliProviderModel('kimi', 'kimi-k3')).toBe('kimi-k3')
-    expect(normalizeCliProviderModel('kimi', 'k3')).toBe('kimi-k3')
-    expect(normalizeCliProviderModel('kimi', KIMI_K3_CLI_MODEL)).toBe('kimi-k3')
-    expect(normalizeCliProviderModel('kimi', 'kimi-k3-256k')).toBe('kimi-k3-256k')
-    expect(normalizeCliProviderModel('kimi', 'k3-256k')).toBe('kimi-k3-256k')
-    expect(normalizeCliProviderModel('kimi', KIMI_K3_256K_CLI_MODEL)).toBe('kimi-k3-256k')
+  it('resolves every K3.1 Pro spelling to its canonical row instead of the default', () => {
+    expect(normalizeCliProviderModel('kimi', 'kimi-k3.1-pro')).toBe('kimi-k3.1-pro')
+    expect(normalizeCliProviderModel('kimi', 'k3.1-pro')).toBe('kimi-k3.1-pro')
+    expect(normalizeCliProviderModel('kimi', KIMI_K31_PRO_CLI_MODEL)).toBe('kimi-k3.1-pro')
+  })
+
+  it('moves both retired K3 routes forward to K3.1 Pro, not to the default', () => {
+    // Retired by user decision on 2026-10-27. Saved chats, scheduled runs and
+    // Ensemble seats keep their Low/High/Max effort and move only the model.
+    for (const retired of [
+      'kimi-k3',
+      'k3',
+      KIMI_K3_CLI_MODEL,
+      'kimi-k3-256k',
+      'k3-256k',
+      KIMI_K3_256K_CLI_MODEL
+    ]) {
+      expect(normalizeCliProviderModel('kimi', retired)).toBe('kimi-k3.1-pro')
+    }
   })
 
   it('resolves both managed upstream spellings onto their own picker rows', () => {
@@ -1025,27 +1053,29 @@ describe('normalizeCliProviderModel (kimi)', () => {
     )
   })
 
-  it('maps both K3 routes to their managed CLI aliases and ignores stale speed tiers', () => {
+  it('dispatches K3.1 Pro, and both retired K3 routes, on the K3.1 Pro alias whatever the speed tier', () => {
     const plainArgs: string[] = []
     const staleFastArgs: string[] = []
     const rawApiArgs: string[] = []
     const shortArgs: string[] = []
     const shortStaleFastArgs: string[] = []
 
-    appendKimiModelArgs(plainArgs, 'kimi-k3')
-    // K3 has no speed tiers — a stale/queued Fast flag must not reroute the
-    // run onto the K2.7 HighSpeed alias.
-    appendKimiModelArgs(staleFastArgs, 'kimi-k3', 'fast')
-    appendKimiModelArgs(rawApiArgs, 'k3')
+    appendKimiModelArgs(plainArgs, 'kimi-k3.1-pro')
+    // K3.1 Pro has no speed tiers — a stale/queued Fast flag must not reroute
+    // the run onto the K2.7 HighSpeed alias.
+    appendKimiModelArgs(staleFastArgs, 'kimi-k3.1-pro', 'fast')
+    appendKimiModelArgs(rawApiArgs, 'k3.1-pro')
+    // The retired K3 routes never dispatch their own aliases any more.
     appendKimiModelArgs(shortArgs, 'kimi-k3-256k')
-    appendKimiModelArgs(shortStaleFastArgs, 'k3-256k', 'fast')
+    appendKimiModelArgs(shortStaleFastArgs, 'k3', 'fast')
 
-    expect(plainArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
-    expect(staleFastArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
-    expect(rawApiArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
-    expect(shortArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
-    expect(shortStaleFastArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
-    expect(kimiAcpModelConfigValue('kimi-k3-256k')).toBe(KIMI_K3_256K_CLI_MODEL)
+    expect(plainArgs).toEqual(['--model', KIMI_K31_PRO_CLI_MODEL])
+    expect(staleFastArgs).toEqual(['--model', KIMI_K31_PRO_CLI_MODEL])
+    expect(rawApiArgs).toEqual(['--model', KIMI_K31_PRO_CLI_MODEL])
+    expect(shortArgs).toEqual(['--model', KIMI_K31_PRO_CLI_MODEL])
+    expect(shortStaleFastArgs).toEqual(['--model', KIMI_K31_PRO_CLI_MODEL])
+    expect(kimiAcpModelConfigValue('kimi-k3.1-pro')).toBe(KIMI_K31_PRO_CLI_MODEL)
+    expect(kimiAcpModelConfigValue('kimi-k3')).toBe(KIMI_K31_PRO_CLI_MODEL)
   })
 })
 
@@ -1053,7 +1083,7 @@ describe('getStaticProviderModels (kimi)', () => {
   it('leads with K2.8 Preview and gives Highspeed its own row, not a Fast tier', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
 
-    expect(models).toHaveLength(4)
+    expect(models).toHaveLength(3)
     expect(models[0]).toMatchObject({
       id: 'kimi-k2.8-preview',
       label: 'K2.8 Preview',
@@ -1078,39 +1108,34 @@ describe('getStaticProviderModels (kimi)', () => {
     }
   })
 
-  it('lists both K3 routes with Low, High, and Max thinking but no speed tiers', () => {
+  it('lists K3.1 Pro with Low, High, and Max thinking and retires both K3 routes', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
-    const k3 = models.find((model) => model.id === 'kimi-k3')
-    const k3Short = models.find((model) => model.id === 'kimi-k3-256k')
+    const k31Pro = models.find((model) => model.id === 'kimi-k3.1-pro')
 
-    expect(k3).toMatchObject({
-      id: 'kimi-k3',
-      label: 'K3 (1M)',
+    expect(models.map((model) => model.id)).toEqual([
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
+      'kimi-k3.1-pro'
+    ])
+    expect(k31Pro).toMatchObject({
+      id: 'kimi-k3.1-pro',
+      label: 'K3.1 Pro',
       defaultReasoningEffort: 'max',
+      contextWindow: 1_048_576,
       supportedReasoningEfforts: [
         { reasoningEffort: 'low' },
         { reasoningEffort: 'high' },
         { reasoningEffort: 'max' }
       ]
     })
-    expect(k3?.isDefault).toBeUndefined()
-    expect(k3?.additionalSpeedTiers).toBeUndefined()
-    expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
-    expect(k3Short).toMatchObject({
-      id: 'kimi-k3-256k',
-      label: 'K3 (256K)',
-      defaultReasoningEffort: 'max',
-      supportedReasoningEfforts: [
-        { reasoningEffort: 'low' },
-        { reasoningEffort: 'high' },
-        { reasoningEffort: 'max' }
-      ]
-    })
-    expect(k3Short?.additionalSpeedTiers).toBeUndefined()
+    expect(k31Pro?.isDefault).toBeUndefined()
+    expect(k31Pro?.additionalSpeedTiers).toBeUndefined()
     expect(models[0]?.isDefault).toBe(true)
   })
 
   it('normalizes effort on every laddered route and only fixes Highspeed', () => {
+    expect(normalizeKimiReasoningEffort('kimi-k3.1-pro', 'low')).toBe('low')
+    expect(normalizeKimiReasoningEffort('kimi-k3.1-pro', 'off')).toBe('max')
     expect(normalizeKimiReasoningEffort('kimi-k3', 'low')).toBe('low')
     expect(normalizeKimiReasoningEffort('kimi-k3', 'off')).toBe('max')
     expect(normalizeKimiReasoningEffort('kimi-k3-256k', 'high')).toBe('high')
@@ -1120,6 +1145,7 @@ describe('getStaticProviderModels (kimi)', () => {
     expect(normalizeKimiReasoningEffort('kimi-k2.8-preview', 'low')).toBe('low')
     expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBe('high')
     expect(normalizeKimiReasoningEffort('kimi-k2.7-code-highspeed', 'high')).toBeNull()
+    expect(kimiAcpThinkingConfigValue('kimi-k3.1-pro', 'high')).toBe('high')
     expect(kimiAcpThinkingConfigValue('kimi-k3', 'high')).toBe('high')
     expect(kimiAcpThinkingConfigValue('kimi-k3-256k', 'low')).toBe('low')
     expect(kimiAcpThinkingConfigValue('kimi-k2.8-preview', 'low')).toBe('low')

@@ -100,6 +100,9 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-6-luna") == 1_050_000)
         // GPT-6.1 Sol (2026-09-29) and Sonnet 5.5 (2026-09-28), pinned on the table.
         #expect(ContextWindows.byModel["gpt-6.1-sol"] == 1_050_000)
+        // GPT-6.1 Terra (2026-10-27) and Kimi K3.1 Pro (2026-10-27).
+        #expect(ContextWindows.byModel["gpt-6.1-terra"] == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "kimi", model: "kimi-k3.1-pro") == 1_048_576)
         #expect(ContextWindows.byModel["claude-sonnet-5-5"] == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5-5") == 1_000_000)
         // Haiku 5.5 (1M) beside Haiku 4.5 (200K), pinned on the table.

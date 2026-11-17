@@ -8,13 +8,11 @@ import {
   KIMI_K27_HIGHSPEED_MODEL_LABEL,
   KIMI_K28_MODEL_ID,
   KIMI_K28_MODEL_LABEL,
-  KIMI_K3_256K_CLI_MODEL,
-  KIMI_K3_256K_MODEL_ID,
-  KIMI_K3_256K_MODEL_LABEL,
-  KIMI_K3_CLI_MODEL,
+  KIMI_K31_PRO_API_MODEL,
+  KIMI_K31_PRO_CLI_MODEL,
+  KIMI_K31_PRO_MODEL_ID,
+  KIMI_K31_PRO_MODEL_LABEL,
   KIMI_K3_LONG_CONTEXT_WINDOW,
-  KIMI_K3_MODEL_ID,
-  KIMI_K3_MODEL_LABEL,
   KIMI_K3_REASONING_EFFORTS,
   KIMI_STANDARD_CLI_MODEL
 } from '../../shared/kimiModels'
@@ -48,17 +46,18 @@ interface ParsedKimiModelAlias {
   maxContextSize?: number
 }
 
+// Kimi Code still configures `kimi-code/k3` and `kimi-code/k3-256k`, but both
+// left TaskWraith's pickers for K3.1 Pro on 2026-10-27 (user decision), so they
+// are deliberately not read: the live projection must not resurrect them.
 const MANAGED_KIMI_ALIASES = new Set([
   KIMI_STANDARD_CLI_MODEL,
   KIMI_HIGHSPEED_CLI_MODEL,
-  KIMI_K3_CLI_MODEL,
-  KIMI_K3_256K_CLI_MODEL
+  KIMI_K31_PRO_CLI_MODEL
 ])
 const EXPECTED_UPSTREAM_MODEL = new Map([
   [KIMI_STANDARD_CLI_MODEL, 'kimi-for-coding'],
   [KIMI_HIGHSPEED_CLI_MODEL, 'kimi-for-coding-highspeed'],
-  [KIMI_K3_CLI_MODEL, 'k3'],
-  [KIMI_K3_256K_CLI_MODEL, 'k3-256k']
+  [KIMI_K31_PRO_CLI_MODEL, KIMI_K31_PRO_API_MODEL]
 ])
 
 function modelSection(line: string): { alias: string; override: boolean } | null {
@@ -84,7 +83,7 @@ function stringArrayAssignment(line: string, key: string): string[] | undefined 
 }
 
 /**
- * Read only the four managed model tables from Kimi's config. Provider tables,
+ * Read only the three offered managed model tables from Kimi's config. Provider tables,
  * OAuth data, API keys, and all unrelated settings are deliberately ignored.
  */
 export function parseKimiManagedModelAliases(
@@ -149,28 +148,6 @@ function reasoningMetadata(
   }
 }
 
-function k3LongRoutePresentation(alias: ParsedKimiModelAlias): {
-  label: string
-  description: string
-} {
-  if ((alias.maxContextSize || 0) >= KIMI_K3_LONG_CONTEXT_WINDOW) {
-    return {
-      label: KIMI_K3_MODEL_LABEL,
-      description: 'Long-context K3 route - 1M on this Kimi plan - Low, High, or Max thinking'
-    }
-  }
-  if (alias.maxContextSize) {
-    return {
-      label: 'K3 (plan-capped 256K)',
-      description: 'K3 route - 256K limit on this Kimi plan - Low, High, or Max thinking'
-    }
-  }
-  return {
-    label: KIMI_K3_MODEL_LABEL,
-    description: 'Long-context K3 route - plan-dependent up to 1M - Low, High, or Max thinking'
-  }
-}
-
 export function projectKimiManagedModelRows(
   configBody: string,
   fallbackRows: readonly KimiManagedModelRow[]
@@ -204,26 +181,16 @@ export function projectKimiManagedModelRows(
     })
   }
 
-  const k3 = aliases.get(KIMI_K3_CLI_MODEL)
-  const k3Fallback = fallback.get(KIMI_K3_MODEL_ID)
-  if (k3 && k3Fallback) {
-    projected.set(KIMI_K3_MODEL_ID, {
-      ...k3Fallback,
-      ...k3LongRoutePresentation(k3),
-      ...reasoningMetadata(k3, k3Fallback),
-      ...(k3.maxContextSize ? { contextWindow: k3.maxContextSize } : {})
-    })
-  }
-
-  const k3Short = aliases.get(KIMI_K3_256K_CLI_MODEL)
-  const k3ShortFallback = fallback.get(KIMI_K3_256K_MODEL_ID)
-  if (k3Short && k3ShortFallback) {
-    projected.set(KIMI_K3_256K_MODEL_ID, {
-      ...k3ShortFallback,
-      label: KIMI_K3_256K_MODEL_LABEL,
-      description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
-      ...reasoningMetadata(k3Short, k3ShortFallback),
-      ...(k3Short.maxContextSize ? { contextWindow: k3Short.maxContextSize } : {})
+  const k31Pro = aliases.get(KIMI_K31_PRO_CLI_MODEL)
+  const k31ProFallback = fallback.get(KIMI_K31_PRO_MODEL_ID)
+  if (k31Pro && k31ProFallback) {
+    // Kimi Code's display name is the plain "K3.1 Pro"; keep TaskWraith's label
+    // so a renamed config row cannot drift the picker away from the transcript.
+    projected.set(KIMI_K31_PRO_MODEL_ID, {
+      ...k31ProFallback,
+      label: KIMI_K31_PRO_MODEL_LABEL,
+      ...reasoningMetadata(k31Pro, k31ProFallback),
+      contextWindow: k31Pro.maxContextSize || KIMI_K3_LONG_CONTEXT_WINDOW
     })
   }
 

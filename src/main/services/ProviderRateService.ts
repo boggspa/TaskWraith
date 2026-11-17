@@ -375,6 +375,22 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes:
           'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
       },
+      // GPT-6.1 Terra — 2026-10-27. Half of 6.1 Sol's list rates on the pricing
+      // page, with the same 272K long-context rule (2x input/cache, 1.5x output).
+      {
+        modelId: 'gpt-6.1-terra',
+        inputUsdPerMillion: 1.0,
+        outputUsdPerMillion: 5.0,
+        cachedInputUsdPerMillion: 0.05,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 2.0,
+        longContextOutputUsdPerMillion: 7.5,
+        longContextCachedInputUsdPerMillion: 0.1,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
       // GPT-6 Sol and Luna — rolling out from 2026-09-22. The pricing page
       // publishes the long-context tier outright for both, and each model page
       // states the rule: prompts with more than 272K input tokens are priced at
@@ -726,6 +742,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Published Highspeed tier, still on K2.7 after the standard route moved to K2.8. Its own picker row since 2026-09-11. PROJECTED API-equivalent for OAuth/subscription runs.'
       },
       {
+        modelId: 'kimi-k3.1-pro',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Published K3.1 Pro API pricing (2026-10-27), with the cache-hit price recorded as cached input; cache writes bill separately by TTL. Replaced both K3 routes in the picker. PROJECTED API-equivalent for OAuth/subscription runs.'
+      },
+      {
         modelId: 'kimi-k3',
         inputUsdPerMillion: 3.0,
         outputUsdPerMillion: 15.0,
@@ -733,7 +759,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Published K3 API pricing for the plan-dependent long-context route. PROJECTED API-equivalent for OAuth/subscription runs.'
+          'Published K3 API pricing for the plan-dependent long-context route. Retired from the picker for K3.1 Pro on 2026-10-27; kept so usage recorded under this id still prices. PROJECTED API-equivalent for OAuth/subscription runs.'
       },
       {
         modelId: 'kimi-k3-256k',
@@ -743,7 +769,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Same published K3 API pricing for the fixed 256K route. Kimi Code membership documents lower quota consumption than the 1M route; this remains a PROJECTED API-equivalent for subscription runs.'
+          'Same published K3 API pricing for the fixed 256K route. Retired from the picker for K3.1 Pro on 2026-10-27; kept so usage recorded under this id still prices. Kimi Code membership documents lower quota consumption than the 1M route; this remains a PROJECTED API-equivalent for subscription runs.'
       },
       {
         modelId: 'kimi-k2.6',

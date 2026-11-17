@@ -13,11 +13,19 @@
  * | `kimi-code/kimi-for-coding-highspeed`  | `kimi-for-coding-highspeed`   | 256K   | (none)         | —       |
  * | `kimi-code/k3`                         | `k3`                          | 1M     | low/high/max   | high    |
  * | `kimi-code/k3-256k`                    | `k3-256k`                     | 256K   | low/high/max   | high    |
+ * | `kimi-code/k3.1-pro`                   | `k3.1-pro`                    | 1M     | low/high/max   | high    |
  *
  * The standard `kimi-for-coding` route now serves **K2.8 Preview** — Moonshot kept
  * the wire id deliberately so third-party clients need no reconfiguration — while
  * Highspeed stayed on K2.7. The two therefore no longer share a capability set,
  * which is why Highspeed is its own picker row rather than a speed tier.
+ *
+ * K3.1 Pro (`kimi-code/k3.1-pro`, verified 2026-10-27 against Kimi Code's config
+ * and platform.kimi.ai) replaced both K3 routes in every TaskWraith picker by user
+ * decision on 2026-10-27. Kimi Code still lists `k3` and `k3-256k`, so the
+ * retirement is TaskWraith's: the K3 ids stay canonical for history (labels,
+ * rates, context windows), while selections and dispatch resolve forward through
+ * `kimiRetiredModelSuccessor`.
  */
 
 /** K2.8 Preview — the standard `kimi-for-coding` route. */
@@ -33,21 +41,26 @@ export const KIMI_K27_HIGHSPEED_MODEL_ID = 'kimi-k2.7-code-highspeed'
 export const KIMI_K27_MODEL_ID = 'kimi-k2.7-code'
 export const KIMI_K3_MODEL_ID = 'kimi-k3'
 export const KIMI_K3_256K_MODEL_ID = 'kimi-k3-256k'
+/** K3.1 Pro — the post-trained K3 successor, 1M context (2026-10-27). */
+export const KIMI_K31_PRO_MODEL_ID = 'kimi-k3.1-pro'
 
 export const KIMI_K28_MODEL_LABEL = 'K2.8 Preview'
 export const KIMI_K27_HIGHSPEED_MODEL_LABEL = 'K2.7 Code Highspeed'
 export const KIMI_K3_MODEL_LABEL = 'K3 (1M)'
 export const KIMI_K3_256K_MODEL_LABEL = 'K3 (256K)'
+export const KIMI_K31_PRO_MODEL_LABEL = 'K3.1 Pro'
 
 export const KIMI_STANDARD_API_MODEL = 'kimi-for-coding'
 export const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
 export const KIMI_K3_API_MODEL = 'k3'
 export const KIMI_K3_256K_API_MODEL = 'k3-256k'
+export const KIMI_K31_PRO_API_MODEL = 'k3.1-pro'
 
 export const KIMI_STANDARD_CLI_MODEL = `kimi-code/${KIMI_STANDARD_API_MODEL}`
 export const KIMI_HIGHSPEED_CLI_MODEL = `kimi-code/${KIMI_HIGHSPEED_API_MODEL}`
 export const KIMI_K3_CLI_MODEL = `kimi-code/${KIMI_K3_API_MODEL}`
 export const KIMI_K3_256K_CLI_MODEL = `kimi-code/${KIMI_K3_256K_API_MODEL}`
+export const KIMI_K31_PRO_CLI_MODEL = `kimi-code/${KIMI_K31_PRO_API_MODEL}`
 
 // Kimi's published "256K" window is 256 Ki-tokens on the wire. Keep the
 // exact values for context math while presentation continues to use Kimi's
@@ -75,6 +88,11 @@ const KIMI_K3_256K_ROUTE_IDS = new Set([
   KIMI_K3_256K_API_MODEL,
   KIMI_K3_256K_CLI_MODEL
 ])
+const KIMI_K31_PRO_ROUTE_IDS = new Set([
+  KIMI_K31_PRO_MODEL_ID,
+  KIMI_K31_PRO_API_MODEL,
+  KIMI_K31_PRO_CLI_MODEL
+])
 
 function normalizedKimiModelId(model?: string | null): string {
   return String(model || '')
@@ -95,6 +113,23 @@ export function isKimiK3Model(model?: string | null): boolean {
   return canonicalKimiK3ModelId(model) !== null
 }
 
+/** True for the K3.1 Pro route under any of its spellings. */
+export function isKimiK31ProModel(model?: string | null): boolean {
+  return KIMI_K31_PRO_ROUTE_IDS.has(normalizedKimiModelId(model))
+}
+
+/**
+ * The row a retired Kimi selection now runs on, or null when the model is not
+ * retired. Both K3 routes left the pickers on 2026-10-27 for K3.1 Pro, which
+ * keeps their Low/High/Max axis, so a saved chat, scheduled run, or Ensemble
+ * seat keeps its effort and moves only its model.
+ */
+export function kimiRetiredModelSuccessor(
+  model?: string | null
+): typeof KIMI_K31_PRO_MODEL_ID | null {
+  return isKimiK3Model(model) ? KIMI_K31_PRO_MODEL_ID : null
+}
+
 /** True for the K2.7 Code Highspeed route under any of its spellings. */
 export function isKimiHighspeedModel(model?: string | null): boolean {
   return KIMI_K27_HIGHSPEED_ROUTE_IDS.has(normalizedKimiModelId(model))
@@ -107,8 +142,10 @@ export function canonicalKimiTaskWraithModelId(
   | typeof KIMI_K27_HIGHSPEED_MODEL_ID
   | typeof KIMI_K3_MODEL_ID
   | typeof KIMI_K3_256K_MODEL_ID
+  | typeof KIMI_K31_PRO_MODEL_ID
   | null {
   const normalized = normalizedKimiModelId(model)
+  if (KIMI_K31_PRO_ROUTE_IDS.has(normalized)) return KIMI_K31_PRO_MODEL_ID
   const k3 = canonicalKimiK3ModelId(normalized)
   if (k3) return k3
   if (KIMI_K27_HIGHSPEED_ROUTE_IDS.has(normalized)) return KIMI_K27_HIGHSPEED_MODEL_ID
@@ -143,8 +180,14 @@ export function kimiCliModelAlias(model: string, serviceTier?: string | null): s
   // Each managed route is an independent model id now, so resolve the explicit
   // selection before the legacy Fast field. A stale `serviceTier` must never be
   // able to move a chat off the row its picker is showing.
-  if (canonical === KIMI_K3_MODEL_ID) return KIMI_K3_CLI_MODEL
-  if (canonical === KIMI_K3_256K_MODEL_ID) return KIMI_K3_256K_CLI_MODEL
+  // Both retired K3 routes dispatch on K3.1 Pro (see kimiRetiredModelSuccessor).
+  if (
+    canonical === KIMI_K31_PRO_MODEL_ID ||
+    canonical === KIMI_K3_MODEL_ID ||
+    canonical === KIMI_K3_256K_MODEL_ID
+  ) {
+    return KIMI_K31_PRO_CLI_MODEL
+  }
   if (canonical === KIMI_K27_HIGHSPEED_MODEL_ID) return KIMI_HIGHSPEED_CLI_MODEL
   if (canonical === KIMI_K28_MODEL_ID) return KIMI_STANDARD_CLI_MODEL
 

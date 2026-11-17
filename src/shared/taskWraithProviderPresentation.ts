@@ -6,7 +6,8 @@ import {
   KIMI_K27_HIGHSPEED_MODEL_LABEL,
   KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_LABEL,
-  KIMI_K3_MODEL_LABEL
+  KIMI_K3_MODEL_LABEL,
+  KIMI_K31_PRO_MODEL_LABEL
 } from './kimiModels'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
@@ -142,6 +143,7 @@ function canonicalAccentKey(value: string): ProviderAccentKey | null {
 
 const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-6.1-sol': 'GPT-6.1-Sol',
+  'gpt-6.1-terra': 'GPT-6.1 Terra',
   'gpt-6-sol': 'GPT-6-Sol',
   'gpt-6-luna': 'GPT-6-Luna',
   'gpt-5.6-sol': 'GPT-5.6-Sol',
@@ -150,6 +152,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'preview:openai:gpt-5.6:sol': 'GPT-5.6-Sol',
   'preview:openai:gpt-5.6:terra': 'GPT-5.6-Terra',
   'preview:openai:gpt-5.6:luna': 'GPT-5.6-Luna',
+  'kimi-k3.1-pro': KIMI_K31_PRO_MODEL_LABEL,
   'kimi-k3': KIMI_K3_MODEL_LABEL,
   'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
   'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,

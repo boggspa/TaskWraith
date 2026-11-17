@@ -62,6 +62,8 @@ public enum ModelContextLengths {
                 // ensembleProviderDefaults.ts lists between gpt-6-astra (which
                 // has no iOS row) and the 5.6 trio.
                 (id: "gpt-6.1-sol",          label: "GPT-6.1-Sol"),
+                // GPT-6.1 Terra (2026-10-27) follows 6.1 Sol.
+                (id: "gpt-6.1-terra",        label: "GPT-6.1 Terra"),
                 (id: "gpt-6-sol",            label: "GPT-6-Sol"),
                 (id: "gpt-6-luna",           label: "GPT-6-Luna"),
                 // GPT-5.6 trio — GA 2026-07-09, official hyphenated display
@@ -94,13 +96,9 @@ public enum ModelContextLengths {
                 // on K2.7 at 256K and became its own row.
                 (id: "kimi-k2.8-preview",          label: "K2.8 Preview"),
                 (id: "kimi-k2.7-code-highspeed",   label: "K2.7 Code Highspeed"),
-                // K3 (2026-07-16) — Moonshot's flagship, split into two
-                // concrete routes since d19931eb8: the 1M route (Allegretto+)
-                // and the fixed quota-efficient 256K one. Each carries its own
-                // official window, so no plan-range display remains.
-                // Labels mirror src/shared/kimiModels.ts VERBATIM.
-                (id: "kimi-k3",        label: "K3 (1M)"),
-                (id: "kimi-k3-256k",   label: "K3 (256K)"),
+                // K3.1 Pro (2026-10-27) replaced both K3 routes, 1M context.
+                // Label mirrors src/shared/kimiModels.ts VERBATIM.
+                (id: "kimi-k3.1-pro",  label: "K3.1 Pro"),
             ]
         case "pi":
             // BYOK seat: the flagship row per allowed upstream. Wire ids stay

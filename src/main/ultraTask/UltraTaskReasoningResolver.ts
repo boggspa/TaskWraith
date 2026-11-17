@@ -7,6 +7,7 @@
  */
 import type { ProviderId } from '../store/types'
 import { getStaticProviderModels } from '../providers/StaticProviderModels'
+import { kimiRetiredModelSuccessor } from '../../shared/kimiModels'
 
 /**
  * Known reasoning effort tiers in order from lowest to highest.
@@ -23,6 +24,15 @@ const REASONING_EFFORT_HIERARCHY = [
   'ultracode',
   'ultratask'
 ] as const
+
+/**
+ * The catalogue id to look a selection up under. A retired Kimi row (both K3
+ * routes, 2026-10-27) no longer has a static row, so it reads its successor's.
+ */
+function catalogLookupModelId(provider: ProviderId, normalizedModel: string): string {
+  if (provider === 'kimi') return kimiRetiredModelSuccessor(normalizedModel) ?? normalizedModel
+  return normalizedModel
+}
 
 export type ReasoningEffort = (typeof REASONING_EFFORT_HIERARCHY)[number]
 
@@ -73,8 +83,11 @@ export function resolveUltraTaskReasoningEffort(
   provider: ProviderId,
   modelId: string
 ): ReasoningEffort {
-  const normalizedModel = String(modelId || '').trim().toLowerCase()
   const normalizedProvider = (provider ? provider.toLowerCase() : '') as ProviderId
+  const normalizedModel = catalogLookupModelId(
+    normalizedProvider,
+    String(modelId || '').trim().toLowerCase()
+  )
 
   let models: unknown[] = []
   try {
@@ -152,8 +165,11 @@ export function resolveUltraTaskReasoningEffort(
  * @returns True if UltraTask is supported for this provider/model
  */
 export function isUltraTaskSupported(provider: ProviderId, modelId: string): boolean {
-  const normalizedModel = String(modelId || '').trim().toLowerCase()
   const normalizedProvider = (provider ? provider.toLowerCase() : '') as ProviderId
+  const normalizedModel = catalogLookupModelId(
+    normalizedProvider,
+    String(modelId || '').trim().toLowerCase()
+  )
 
   let models: unknown[] = []
   try {
