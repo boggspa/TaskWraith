@@ -6,11 +6,14 @@ import {
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleAddParticipantFields,
   EnsembleAnyStageIcon,
+  EnsembleChipBriefField,
   EnsembleChipNameField,
   EnsembleParticipantDuplicateRow,
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
+  resolveEnsembleChipBriefPatch,
+  resolveEnsembleChipBriefSync,
   resolveEnsembleChipRolePickerRows,
   resolveEnsembleChipStageRolePatch,
   resolveEnsembleParticipantNamePatch,
@@ -214,6 +217,137 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(
         [...locked.authorityRows, ...locked.stageRows].every((row) => row.disabled)
       ).toBe(true)
+    })
+
+    it('renders the participant brief through the shared brief editor', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleChipBriefField
+          participantId="ensemble-claude"
+          brief="Watch the migration seam."
+          participants={[makeParticipant({ id: 'ensemble-codex', role: 'Codex' })]}
+          locked={false}
+          onPatch={() => undefined}
+        />
+      )
+
+      expect(html).toContain('Goal / brief')
+      expect(html).toContain('ensemble-chip-role-picker-brief')
+      expect(html).toContain('ensemble-brief-textarea')
+      expect(html).toContain('Watch the migration seam.')
+      expect(html).toContain('rows="5"')
+    })
+
+    it('resolves participant mentions typed into the chip brief', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleChipBriefField
+          participantId="ensemble-claude"
+          brief="Coordinate with @Codex before landing."
+          participants={[makeParticipant({ id: 'ensemble-codex', role: 'Codex' })]}
+          locked={false}
+          onPatch={() => undefined}
+        />
+      )
+
+      expect(html).toContain('has-mention-overlay')
+      expect(html).toContain('composer-textarea-highlight')
+      expect(html).toContain('composer-mention-token')
+    })
+
+    it('commits the brief draft into the participant instructions on blur', () => {
+      // A typed draft differs from the committed brief, so blurring commits it.
+      expect(resolveEnsembleChipBriefPatch('Old brief', 'New brief', false)).toEqual({
+        instructions: 'New brief'
+      })
+      // An unchanged draft is not a change — nothing to persist.
+      expect(resolveEnsembleChipBriefPatch('Old brief', 'Old brief', false)).toBeNull()
+
+      const source = readFileSync(
+        new URL('./EnsembleParticipantsAboveRow.tsx', import.meta.url),
+        'utf8'
+      )
+      const briefFieldSource = source.slice(
+        source.indexOf('export function EnsembleChipBriefField('),
+        source.indexOf('export function EnsembleChipRolePicker(')
+      )
+      // Keystrokes stay local (no onChatChange round-trip per key); the draft
+      // is committed on blur, on the editor's Save action, and on unmount.
+      expect(briefFieldSource).toContain('onChange={updateBriefDraft}')
+      expect(briefFieldSource).toContain('onBlur={commitBrief}')
+      expect(briefFieldSource).toContain('onCommit={commitBrief}')
+      expect(briefFieldSource).toContain('commitBrief()')
+      expect(briefFieldSource).not.toContain('onChatChange')
+    })
+
+    it('does not commit the brief while the roster is locked', () => {
+      expect(resolveEnsembleChipBriefPatch('Old brief', 'New brief', true)).toBeNull()
+
+      const html = renderToStaticMarkup(
+        <EnsembleChipBriefField
+          participantId="ensemble-claude"
+          brief="Watch the migration seam."
+          participants={[makeParticipant({ id: 'ensemble-codex', role: 'Codex' })]}
+          locked={true}
+          onPatch={() => undefined}
+        />
+      )
+
+      expect(html).toMatch(/<textarea[^>]*disabled/)
+      expect(html).toContain('Goal / brief')
+    })
+
+    it('re-syncs the brief draft when the participant or the committed brief changes', () => {
+      // Switching seats follows the newly selected participant.
+      expect(
+        resolveEnsembleChipBriefSync({
+          participantId: 'ensemble-codex',
+          instructions: 'Codex brief',
+          previousParticipantId: 'ensemble-claude',
+          previousInstructions: 'Claude brief'
+        })
+      ).toBe('Codex brief')
+      // An external edit to the committed brief follows too.
+      expect(
+        resolveEnsembleChipBriefSync({
+          participantId: 'ensemble-claude',
+          instructions: 'External brief',
+          previousParticipantId: 'ensemble-claude',
+          previousInstructions: 'Claude brief'
+        })
+      ).toBe('External brief')
+      // Nothing moved — the draft (including the user's own keystrokes) stays.
+      expect(
+        resolveEnsembleChipBriefSync({
+          participantId: 'ensemble-claude',
+          instructions: 'Claude brief',
+          previousParticipantId: 'ensemble-claude',
+          previousInstructions: 'Claude brief'
+        })
+      ).toBeNull()
+    })
+
+    it('wires the brief editor into the picker against the shared instructions field', () => {
+      const source = readFileSync(
+        new URL('./EnsembleParticipantsAboveRow.tsx', import.meta.url),
+        'utf8'
+      )
+      const pickerSource = source.slice(
+        source.indexOf('export function EnsembleChipRolePicker('),
+        source.indexOf('export function EnsembleParticipantOverflowPopover(')
+      )
+      expect(pickerSource).toContain('<EnsembleChipBriefField')
+      expect(pickerSource).toContain("brief={participant.instructions ?? ''}")
+      expect(pickerSource).toContain('participants={mentionParticipants}')
+      // The picker grew: geometry constants must match the new size or the
+      // "flip above the chip when there isn't room" test uses stale numbers.
+      expect(pickerSource).toContain('const flyoutWidth = Math.min(288, window.innerWidth - 16)')
+      expect(pickerSource).toContain('const estimatedHeight = 600')
+
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      expect(css).toMatch(/\.ensemble-chip-role-picker\s*\{[^}]*width: 288px;/)
+      expect(css).toMatch(/\.ensemble-chip-role-picker-brief\s*\{/)
     })
   });
 

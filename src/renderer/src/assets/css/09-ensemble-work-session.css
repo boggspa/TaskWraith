@@ -2182,9 +2182,15 @@
  * material (glass bg, backdrop material, sheen/refraction pseudo-elements,
  * degrade chain, 10060 portaled band) and `.composer-combined-picker-row`
  * for row hover/selected/disabled states — these rules only add the
- * narrow geometry and the authority/stage divider. */
+ * narrow geometry, the authority/stage divider, and the brief editor's
+ * column geometry. */
 .ensemble-chip-role-picker {
-  width: 208px;
+  /* Wide enough for the participant's brief textarea and its preset row.
+     The legacy overflow popover uses a 296px shell; this one stays a little
+     narrower so the compact picker still reads as a chip flyout. */
+  width: 288px;
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
 }
 
 .composer-combined-picker-popover.ensemble-chip-role-picker {
@@ -2253,6 +2259,23 @@
   height: 1px;
   margin: 4px 8px;
   background: color-mix(in srgb, var(--panel-border) 55%, transparent);
+}
+
+/* The participant's brief ("Goal / brief") inside the compact picker. The
+ * editor itself is the shared `EnsembleBriefEditor`, so these rules only
+ * carry the picker-specific geometry: the same 8px column inset the name
+ * field uses, a shorter textarea than the wide overflow popover, and a
+ * preset row that may wrap instead of overflowing the narrow column. */
+.ensemble-chip-role-picker-brief {
+  padding: 6px 8px 8px;
+}
+
+.ensemble-chip-role-picker-brief .ensemble-above-overflow-instructions-field {
+  min-height: 84px;
+}
+
+.ensemble-chip-role-picker-brief .ensemble-brief-preset-controls {
+  flex-wrap: wrap;
 }
 
 .ensemble-above-overflow-quick-toggles {
