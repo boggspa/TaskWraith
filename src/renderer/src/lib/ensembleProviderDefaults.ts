@@ -1699,7 +1699,9 @@ export function getEnsembleModelDefaults(
       // two sibling switches in this file already had their mistral branches,
       // which is exactly why the gap was invisible.
       return {
-        modelOptions: MISTRAL_MODELS,
+        // The lifecycle dates, applied as the Pi branch right above does: a
+        // model Mistral has taken offline leaves the participant picker too.
+        modelOptions: activePiModelRows(MISTRAL_MODELS, now),
         reasoningOptions: MISTRAL_THINKING_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
