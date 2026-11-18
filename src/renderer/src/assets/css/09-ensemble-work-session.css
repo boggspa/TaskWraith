@@ -2189,7 +2189,13 @@
      The legacy overflow popover uses a 296px shell; this one stays a little
      narrower so the compact picker still reads as a chip flyout. */
   width: 288px;
+  /* Fallback bound before the flyout is measured. The inline max-height the
+     component sets is the real one: it clamps the flyout to the space
+     available on the side it opens on, so a flip above the chip cannot push
+     its top off-screen. box-sizing keeps the padding and border inside that
+     clamp, so the bound is the flyout's outer edge. */
   max-height: calc(100dvh - 16px);
+  box-sizing: border-box;
   overflow-y: auto;
 }
 

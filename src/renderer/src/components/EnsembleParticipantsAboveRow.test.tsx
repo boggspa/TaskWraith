@@ -14,6 +14,7 @@ import {
   EnsembleParticipantsAboveRow,
   resolveEnsembleChipBriefPatch,
   resolveEnsembleChipBriefSync,
+  resolveEnsembleChipRolePickerPlacement,
   resolveEnsembleChipRolePickerRows,
   resolveEnsembleChipStageRolePatch,
   resolveEnsembleParticipantNamePatch,
@@ -348,6 +349,115 @@ describe('EnsembleParticipantsAboveRow', () => {
       )
       expect(css).toMatch(/\.ensemble-chip-role-picker\s*\{[^}]*width: 288px;/)
       expect(css).toMatch(/\.ensemble-chip-role-picker-brief\s*\{/)
+    })
+  });
+
+  describe('chip role picker flyout placement', () => {
+    const anchor = { anchorTop: 300, anchorBottom: 340, anchorLeft: 100 }
+
+    it('opens below the chip and bounds the flyout by the space underneath', () => {
+      const placement = resolveEnsembleChipRolePickerPlacement({
+        ...anchor,
+        viewportWidth: 1280,
+        viewportHeight: 1200,
+        flyoutWidth: 288,
+        estimatedHeight: 600
+      })
+
+      expect(placement.above).toBe(false)
+      expect(placement.top).toBe(346)
+      expect(placement.maxHeight).toBe(846)
+      expect(placement.top + placement.maxHeight).toBe(1192)
+    })
+
+    it('flips above the chip and keeps the flyout inside the viewport', () => {
+      // A short window, or a tall composer holding the strip near the middle
+      // of it: the content cannot fit underneath, and the flip must not push
+      // the top of the flyout — name field, authority controls — off-screen,
+      // where scrolling the flyout cannot bring it back.
+      const placement = resolveEnsembleChipRolePickerPlacement({
+        ...anchor,
+        viewportWidth: 1280,
+        viewportHeight: 900,
+        flyoutWidth: 288,
+        estimatedHeight: 600
+      })
+
+      expect(placement.above).toBe(true)
+      expect(placement.top).toBe(292)
+      expect(placement.maxHeight).toBe(284)
+      // The flyout's top edge lands exactly on the viewport margin.
+      expect(placement.top - placement.maxHeight).toBe(8)
+    })
+
+    it('stays below rather than flipping into a gap with no room', () => {
+      const placement = resolveEnsembleChipRolePickerPlacement({
+        anchorTop: 10,
+        anchorBottom: 50,
+        anchorLeft: 100,
+        viewportWidth: 1280,
+        viewportHeight: 650,
+        flyoutWidth: 288,
+        estimatedHeight: 600
+      })
+
+      expect(placement.above).toBe(false)
+      expect(placement.top).toBe(56)
+      expect(placement.maxHeight).toBe(586)
+      expect(placement.top + placement.maxHeight).toBe(642)
+    })
+
+    it('keeps the flyout inside the viewport on whichever side it opens', () => {
+      for (const viewportHeight of [400, 650, 900, 1200]) {
+        for (const anchorTop of [10, 120, 300, viewportHeight - 100]) {
+          const placement = resolveEnsembleChipRolePickerPlacement({
+            anchorTop,
+            anchorBottom: anchorTop + 40,
+            anchorLeft: 100,
+            viewportWidth: 1280,
+            viewportHeight,
+            flyoutWidth: 288,
+            estimatedHeight: 600
+          })
+          const outerTop = placement.above ? placement.top - placement.maxHeight : placement.top
+          expect(outerTop).toBeGreaterThanOrEqual(8)
+          expect(outerTop + placement.maxHeight).toBeLessThanOrEqual(viewportHeight - 8)
+        }
+      }
+    })
+
+    it('clamps the left edge inside the viewport', () => {
+      const right = resolveEnsembleChipRolePickerPlacement({
+        ...anchor,
+        anchorLeft: 1270,
+        viewportWidth: 1280,
+        viewportHeight: 1200,
+        flyoutWidth: 288,
+        estimatedHeight: 600
+      })
+
+      expect(right.left).toBe(984)
+      expect(right.left + 288).toBe(1272)
+    })
+
+    it('binds the measured height to the flyout', () => {
+      const source = readFileSync(
+        new URL('./EnsembleParticipantsAboveRow.tsx', import.meta.url),
+        'utf8'
+      )
+      const pickerSource = source.slice(
+        source.indexOf('export function EnsembleChipRolePicker('),
+        source.indexOf('export function EnsembleParticipantOverflowPopover(')
+      )
+      expect(pickerSource).toContain('maxHeight: `${position.maxHeight}px`')
+
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      // The clamp must include the padding and border, or the flyout's outer
+      // edge sits past the bound the component measured.
+      expect(css).toMatch(/\.ensemble-chip-role-picker\s*\{[^}]*box-sizing: border-box;/)
     })
   });
 

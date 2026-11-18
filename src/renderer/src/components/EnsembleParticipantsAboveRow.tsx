@@ -3395,6 +3395,65 @@ export function EnsembleChipBriefField({
  * styles), then a vertical authority list (Boss / Captain / Agent), a divider,
  * then the stage list (Any / Scout / Work / Review / BG).
  */
+export interface EnsembleChipRolePickerPlacement {
+  readonly left: number
+  readonly top: number
+  readonly above: boolean
+  /** The space available on the chosen side; the flyout is clamped to it. */
+  readonly maxHeight: number
+}
+
+/**
+ * Where the compact picker's flyout opens, and how tall it may be.
+ *
+ * The flyout opens BELOW its chip (the strip sits above the composer, so
+ * downward is the natural reading direction) and flips ABOVE when the space
+ * underneath cannot hold its content — which is the common case now that the
+ * picker also carries the participant's brief editor.
+ *
+ * Either way it must stay inside the viewport. The stylesheet's
+ * `max-height: calc(100dvh - 16px)` bounds the flyout against the WINDOW, not
+ * against the side it opens on, so a flip in a short window — or with a tall
+ * composer holding the strip near the middle of it — pushes the top of the
+ * flyout (name field, authority controls) off-screen, where scrolling the
+ * flyout cannot bring it back. `maxHeight` is therefore the space actually
+ * available on the chosen side: the far edge lands exactly on the viewport
+ * margin and the content scrolls inside it.
+ */
+export function resolveEnsembleChipRolePickerPlacement(input: {
+  readonly anchorTop: number
+  readonly anchorBottom: number
+  readonly anchorLeft: number
+  readonly viewportWidth: number
+  readonly viewportHeight: number
+  readonly flyoutWidth: number
+  readonly estimatedHeight: number
+}): EnsembleChipRolePickerPlacement {
+  const viewportMargin = 8
+  const belowGap = 6
+  const aboveGap = 8
+  const left = Math.max(
+    viewportMargin,
+    Math.min(input.viewportWidth - input.flyoutWidth - viewportMargin, input.anchorLeft)
+  )
+  // Room between the flyout's outer edge and the viewport edge, per side.
+  const spaceBelow = Math.max(
+    0,
+    input.viewportHeight - viewportMargin - (input.anchorBottom + belowGap)
+  )
+  const spaceAbove = Math.max(0, input.anchorTop - aboveGap - viewportMargin)
+  const fitsBelow = spaceBelow >= input.estimatedHeight
+  // Flip above when the content cannot fit underneath — but never into a gap
+  // with no room at all, which would leave a zero-height flyout.
+  const above = !fitsBelow && spaceAbove > 0
+  return {
+    left,
+    top: above ? input.anchorTop - aboveGap : input.anchorBottom + belowGap,
+    above,
+    maxHeight: above ? spaceAbove : spaceBelow
+  }
+}
+
 export function EnsembleChipRolePicker({
   anchor,
   participant,
@@ -3411,11 +3470,7 @@ export function EnsembleChipRolePicker({
   onClose
 }: EnsembleChipRolePickerProps): React.JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement | null>(null)
-  const [position, setPosition] = useState<{
-    left: number
-    top: number
-    above: boolean
-  } | null>(null)
+  const [position, setPosition] = useState<EnsembleChipRolePickerPlacement | null>(null)
 
   // Anchor below the chip (the strip sits above the composer, so downward
   // is the natural reading direction); flip above when there isn't room.
@@ -3427,16 +3482,20 @@ export function EnsembleChipRolePicker({
       // Wide enough for the brief textarea's preset row, matching the legacy
       // overflow popover's 296px shell.
       const flyoutWidth = Math.min(288, window.innerWidth - 16)
-      const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
       // Name field + toggles + 8 list rows + the brief editor (label, preset
       // row, textarea) ≈ 600px; only used for the flip test, never as an
       // explicit height.
       const estimatedHeight = 600
-      const fitsBelow = rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
       setPosition(
-        fitsBelow
-          ? { left, top: rect.bottom + 6, above: false }
-          : { left, top: rect.top - 8, above: true }
+        resolveEnsembleChipRolePickerPlacement({
+          anchorTop: rect.top,
+          anchorBottom: rect.bottom,
+          anchorLeft: rect.left,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          flyoutWidth,
+          estimatedHeight
+        })
       )
     })
     return () => {
@@ -3501,6 +3560,9 @@ export function EnsembleChipRolePicker({
         position: 'fixed',
         left: `${position.left}px`,
         top: `${position.top}px`,
+        // The flyout is bounded by the space on the side it opens on, so a
+        // flip cannot push its top off-screen.
+        maxHeight: `${position.maxHeight}px`,
         transform: position.above ? 'translateY(-100%)' : undefined
       }}
       role="dialog"
