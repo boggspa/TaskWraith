@@ -195,4 +195,32 @@ describe('Pi model lifecycle', () => {
     ])
     expect(after.every((row) => row.retiresAt === undefined)).toBe(true)
   })
+
+  it('retires the Mistral Medium rows Mistral took offline on 2026-08-31', () => {
+    // The Pi seat keys its rows by wire id and the Mistral seat's own
+    // catalogue by the bare id; the offer surfaces consult this table with
+    // each shape, so both spellings are dated.
+    const rows = [
+      { id: 'mistral/mistral-medium-2505' },
+      { id: 'mistral/mistral-medium-2508' },
+      { id: 'mistral/mistral-medium-3.5' },
+      { id: 'mistral/mistral-medium-latest' },
+      { id: 'mistral-medium-2505' },
+      { id: 'mistral-medium-2508' },
+      { id: 'mistral-medium-3.5' }
+    ]
+
+    const active = activePiModelRows(rows, new Date(2026, 10, 18))
+    const ids = active.map((row) => row.id)
+    expect(ids).not.toContain('mistral/mistral-medium-2505')
+    expect(ids).not.toContain('mistral/mistral-medium-2508')
+    expect(ids).not.toContain('mistral-medium-2505')
+    expect(ids).not.toContain('mistral-medium-2508')
+    // Medium 3.5 has a published future date, so it stays and warns.
+    expect(active.find((row) => row.id === 'mistral/mistral-medium-3.5')?.retiresAt).toBe(
+      '2027-04-30'
+    )
+    expect(active.find((row) => row.id === 'mistral-medium-3.5')?.retiresAt).toBe('2027-04-30')
+    expect(ids).toContain('mistral/mistral-medium-latest')
+  })
 })

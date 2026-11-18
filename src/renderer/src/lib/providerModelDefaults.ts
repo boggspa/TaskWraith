@@ -1,5 +1,6 @@
 import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
 import { activeCodexModelRows } from '../../../shared/codexModelLifecycle'
+import { activePiModelRows } from '../../../shared/piModelLifecycle'
 import type { ProviderId } from '../../../main/store/types'
 import {
   CURSOR_GROK_46_BASE_MODEL_ID,
@@ -563,7 +564,12 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     description: '262K context'
   }
 ] satisfies CodexModelOption[]
-const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
+// The lifecycle dates, applied where the mirror is built: a model Mistral has
+// taken offline leaves the composer's picker too, exactly as it leaves main's
+// catalogue. Without it the picker would offer a model the run would refuse.
+const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(
+  activePiModelRows(MISTRAL_DEFAULT_MODEL_ROWS)
+)
 // Muse Code CLI seat catalog (opaque exec). Wonder leads in the CLI's own
 // order while TaskWraith retains its existing Spark 1.2 default.
 // Contributor Spark stays opt-in: its discount carries the provider catalogue's

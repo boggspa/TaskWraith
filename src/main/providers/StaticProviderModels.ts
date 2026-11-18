@@ -1647,7 +1647,10 @@ function staticRowsForProvider(provider: ProviderId, options: StaticProviderMode
     case 'cursor':
       return CURSOR_STATIC_MODELS
     case 'mistral':
-      return MISTRAL_STATIC_MODELS
+      // The Mistral rows carry the same lifecycle dates as the Pi seat's, so
+      // a model Mistral has taken offline leaves the picker while a model
+      // with a published future date stays and shows when it goes.
+      return activePiModelRows(MISTRAL_STATIC_MODELS, options.now)
     case 'muse':
       return MUSE_STATIC_MODELS
     case 'devin':

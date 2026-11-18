@@ -45,8 +45,8 @@ export const MISTRAL_API_MODEL_IMAGE_INPUT: Readonly<Record<string, boolean>> = 
   'mistral-small-2603': true,
   'labs-leanstral-1-5': false,
   'mistral-medium-latest': true,
-  'mistral-medium-2508': true,
-  'mistral-medium-2505': true,
+  // Medium 3 (25.05) and Medium 3.1 (25.08) left the API on 2026-08-31 and
+  // are no longer seat models, so they carry no image-input entry either.
   'ministral-14b-2512': true,
   'ministral-8b-2512': true,
   'ministral-3b-2512': true

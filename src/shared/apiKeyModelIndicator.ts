@@ -66,7 +66,13 @@ const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
   // Sunset hosted Devstral — remapped to Medium 3.5 at launch; keep unmarked
   // so a stored id does not suddenly look BYOK.
   'devstral-small',
-  'devstral-small-latest'
+  'devstral-small-latest',
+  // Medium 3 (25.05) and Medium 3.1 (25.08) left the API on 2026-08-31 and
+  // remap to Medium 3.5, which runs on the plan. Unmarked for the same reason
+  // as the sunset Devstral ids: a stored id must not flash a key glyph for a
+  // model the run no longer uses.
+  'mistral-medium-2505',
+  'mistral-medium-2508'
 ])
 
 /** Tooltip/aria text. One string so every surface says the same thing. */
