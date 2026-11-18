@@ -164,7 +164,9 @@ export function buildMistralAcpCliArgs(): string[] {
 // Vibe 2.25's DEFAULT_MODELS is only Medium 3.5 + llamacpp `local`. Hosted
 // Devstral Small / Devstral 2 were retired from the API (2026-03-31 and
 // 2026-07-31) and removed from Vibe's picker; Medium 3.5 is the documented
-// successor. TaskWraith still offers the live BYOK API chat models below
+// successor. Medium 3 (25.05) and Medium 3.1 (25.08) left the API on
+// 2026-08-31 and are no longer offered either, for the same reason.
+// TaskWraith still offers the live BYOK API chat models below
 // because those remain on the Mistral limits page.
 
 /** Flagship. Alias of `mistral-vibe-cli-latest`. Vibe 2.25 default. */
@@ -190,6 +192,14 @@ export const MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS = [
   MISTRAL_MODEL_DEVSTRAL_2
 ] as const
 
+/**
+ * Retired Medium rows. Mistral deprecated Medium 3 (25.05) and Medium 3.1
+ * (25.08) on 2026-05-22 and retired both on 2026-08-31, naming Medium 3.5 as
+ * the successor (https://docs.mistral.ai/models, read 2026-11-18). Kept only
+ * so stale threads remap, the same way the sunset Devstral ids are kept.
+ */
+export const MISTRAL_SUNSET_MEDIUM_IDS = ['mistral-medium-2505', 'mistral-medium-2508'] as const
+
 export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_MEDIUM,
   'glm-5-2',
@@ -213,8 +223,8 @@ export const MISTRAL_SEAT_MODELS = [
   'mistral-small-2603',
   'labs-leanstral-1-5',
   'mistral-medium-latest',
-  'mistral-medium-2508',
-  'mistral-medium-2505',
+  // Medium 3 (25.05) and Medium 3.1 (25.08) are NOT offered: Mistral retired
+  // both on 2026-08-31. `MISTRAL_SUNSET_MEDIUM_IDS` keeps them remappable.
   'ministral-14b-2512',
   'ministral-8b-2512',
   'ministral-3b-2512'
@@ -250,6 +260,11 @@ export function normalizeMistralModel(model: string | null | undefined): string 
     return MISTRAL_MODEL_MEDIUM
   }
   if ((MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS as readonly string[]).includes(lowered)) {
+    return MISTRAL_MODEL_MEDIUM
+  }
+  // Medium 3 and 3.1 left the API on 2026-08-31; a stale thread moves to the
+  // documented successor rather than losing the seat's model.
+  if ((MISTRAL_SUNSET_MEDIUM_IDS as readonly string[]).includes(lowered)) {
     return MISTRAL_MODEL_MEDIUM
   }
   const match = MISTRAL_SEAT_MODELS.find((m) => m.toLowerCase() === lowered)

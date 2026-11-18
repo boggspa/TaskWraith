@@ -62,6 +62,14 @@ describe('modelRequiresApiKey', () => {
     expect(modelRequiresApiKey('mistral', undefined)).toBe(false)
   })
 
+  it('leaves the retired Mistral Medium ids unmarked — they remap to the plan', () => {
+    // Medium 3 and 3.1 left the API on 2026-08-31 and remap to Medium 3.5,
+    // which runs on the Vibe plan. A stored id must not flash a key glyph
+    // for a model the run no longer uses.
+    expect(modelRequiresApiKey('mistral', 'mistral-medium-2505')).toBe(false)
+    expect(modelRequiresApiKey('mistral', 'mistral-medium-2508')).toBe(false)
+  })
+
   // The whole point of the glyph is that it means something. If it appeared on
   // subscription/CLI rows it would mark nearly everything and say nothing.
   it('never marks a subscription or CLI-login provider', () => {

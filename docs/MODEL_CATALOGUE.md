@@ -277,7 +277,7 @@ them onto the shared ladder vocabulary.
 
 | Model                                                | Reasoning     | Fast | Notes                                                          |
 | ---------------------------------------------------- | ------------- | ---- | -------------------------------------------------------------- |
-| **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. |
+| **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. **Retires 2027-04-30** when Mistral takes it off the API in favour of Mistral Large 4; the pickers warn until then. |
 | **GLM-5.2 (Mistral Hosted)** `glm-5-2`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok.   |
 | **GLM-5.3 (Mistral Hosted)** `glm-5-3`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok. Added 2026-09-21. Price and window **carried forward from GLM-5.2**. |
 | **Mistral Large 4** `mistral-large-4`                | off…max       | —    | 524K context · flagship ("Le Chonk": 1.05T total / 49B active MoE, image input) · $0.68/$2.09 per Mtok **launch discount** (list $1.36/$4.18) · **API key only**. Public preview, added 2026-10-06. The window is the 524,288 `api.mistral.ai/v1/models` reports, not the model card's 1M. Mistral's API exposes only `none`/`high` reasoning, and Vibe maps off/low to `none` and medium/high/max to `high`. |
@@ -289,8 +289,8 @@ them onto the shared ladder vocabulary.
 | **Mistral Small 4** `mistral-small-2603`             | off…max       | —    | 256K context · $0.15/$0.60 per Mtok.                           |
 | **Leanstral 1.5 (Labs)** `labs-leanstral-1-5`        | —             | —    | 262K context · free research tier.                             |
 | **Mistral Medium (Latest)** `mistral-medium-latest`  | off…max       | —    | 262K context · flagship · $1.50/$7.50 per Mtok.                |
-| **Mistral Medium 3.1** `mistral-medium-2508`         | —             | —    | 262K context · $0.40/$2.00 per Mtok.                           |
-| **Mistral Medium 3** `mistral-medium-2505`           | —             | —    | 131K context · $0.40/$2.00 per Mtok.                           |
+| **Mistral Medium 3.1** `mistral-medium-2508`         | —             | —    | 262K context · $0.40/$2.00 per Mtok. **Retired 2026-08-31** when Mistral took it off the API; Medium 3.5 is the documented successor. No longer offered for new runs, kept here so older transcripts still decode. |
+| **Mistral Medium 3** `mistral-medium-2505`           | —             | —    | 131K context · $0.40/$2.00 per Mtok. **Retired 2026-08-31** on the same Mistral notice as Medium 3.1; kept here so older transcripts still decode. |
 | **Ministral 3 (14B)** `ministral-14b-2512`           | —             | —    | 262K context · $0.20/$0.20 per Mtok.                           |
 | **Ministral 3 (8B)** `ministral-8b-2512`             | —             | —    | 262K context · $0.15/$0.15 per Mtok.                           |
 | **Ministral 3 (3B)** `ministral-3b-2512`             | —             | —    | 262K context · $0.10/$0.10 per Mtok.                           |
@@ -412,13 +412,13 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **MiMo V2.6 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.6-pro` | Off / High | —    | 1,048,576 context and 131,072 output via the Xiaomi token plan; text + image input (Xiaomi also takes video and audio, which the Pi transport does not carry). Xiaomi's omni-modal flagship, released 2026-09-22. No pi release up to 0.87.0 bundles the id, so TaskWraith registers it in the run's isolated Pi home at launch. |
 | **MiMo V2.6 Flash** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.6-flash` | Off / High | —    | Same window, output ceiling and input surface as V2.6 Pro on the efficiency route; registered at launch the same way. |
 | **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
-| **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. |
+| **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. **Retires 2027-04-30** when Mistral takes it off the API in favour of Mistral Large 4; the pickers warn until then. |
 | **Mistral Large 3 (2512)** `mistral/mistral-large-2512`    | —            | —    | 256K context via Mistral. Not a reasoning model. |
 | **GLM-5.2 (via Mistral)** `mistral/zai-glm-5-2`            | —            | —    | 1M context via Mistral.                     |
 | **Mistral Medium (Latest)** `mistral/mistral-medium-latest` | —           | —    | 256K context via Mistral.                   |
 | **Mistral Small 4** `mistral/mistral-small-2603`           | —            | —    | 256K context via Mistral.                   |
-| **Mistral Medium 3.1** `mistral/mistral-medium-2508`       | —            | —    | 256K context via Mistral.                   |
-| **Mistral Medium 3** `mistral/mistral-medium-2505`         | —            | —    | 131K context via Mistral.                   |
+| **Mistral Medium 3.1** `mistral/mistral-medium-2508`       | —            | —    | 256K context via Mistral. **Retired 2026-08-31** when Mistral took it off the API; Medium 3.5 is the documented successor. No longer offered for new runs, kept here so older transcripts still decode. |
+| **Mistral Medium 3** `mistral/mistral-medium-2505`         | —            | —    | 131K context via Mistral. **Retired 2026-08-31** on the same Mistral notice as Medium 3.1; kept here so older transcripts still decode. |
 | **Codestral (Aug 2025)** `mistral/codestral-2508`          | —            | —    | 131K context via Mistral.                   |
 | **Leanstral 1.5 (Labs)** `mistral/labs-leanstral-1-5`      | —            | —    | 256K context via Mistral. Free research tier. |
 | **Ministral 3 (14B)** `mistral/ministral-14b-2512`         | —            | —    | 256K context via Mistral.                   |

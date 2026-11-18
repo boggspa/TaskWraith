@@ -1350,3 +1350,20 @@ describe('getStaticProviderModels (Large 4 on the Vibe plan)', () => {
     )
   })
 })
+
+describe('getStaticProviderModels (Mistral lifecycle)', () => {
+  it('drops the Medium rows Mistral retired on 2026-08-31', () => {
+    const ids = getStaticProviderModels('mistral').map((model) => model.id)
+    expect(ids).not.toContain('mistral-medium-2505')
+    expect(ids).not.toContain('mistral-medium-2508')
+    expect(ids).toContain('mistral-medium-3.5')
+    expect(ids).toContain('mistral-medium-latest')
+  })
+
+  it('warns on Medium 3.5, whose published retirement is 2027-04-30', () => {
+    const medium = getStaticProviderModels('mistral').find(
+      (model) => model.id === 'mistral-medium-3.5'
+    ) as { retiresAt?: string } | undefined
+    expect(medium?.retiresAt).toBe('2027-04-30')
+  })
+})

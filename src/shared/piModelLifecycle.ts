@@ -33,7 +33,22 @@ export const PI_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.fre
   // window the user approved on 2026-09-16, not a vendor date. The user ended
   // that window early on 2026-09-18, so the date moved in from 2026-09-23 and
   // the row is retired as of today. Saved chats keep the label.
-  'openrouter/stealth/union-alpha': '2026-09-18'
+  'openrouter/stealth/union-alpha': '2026-09-18',
+  // Mistral took Medium 3 (25.05) and Medium 3.1 (25.08) off the API on
+  // 2026-08-31, naming Medium 3.5 as the successor (deprecation 2026-05-22;
+  // https://docs.mistral.ai/models, read 2026-11-18). Both seats are keyed
+  // differently — the Pi seat by wire id, the Mistral seat's own catalogue by
+  // the bare id — and the offer surfaces consult this table with each shape,
+  // so both spellings are listed.
+  'mistral/mistral-medium-2505': '2026-08-31',
+  'mistral-medium-2505': '2026-08-31',
+  'mistral/mistral-medium-2508': '2026-08-31',
+  'mistral-medium-2508': '2026-08-31',
+  // Medium 3.5 (26.04) is deprecated and retires on 2027-04-30, replaced by
+  // Mistral Large 4 (same table). The date is still in the future, so the
+  // rows stay offered and carry the date as a warning.
+  'mistral/mistral-medium-3.5': '2027-04-30',
+  'mistral-medium-3.5': '2027-04-30'
 })
 
 const ISO_CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/

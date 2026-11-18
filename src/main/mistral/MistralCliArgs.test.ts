@@ -7,6 +7,7 @@ import {
   MISTRAL_READ_ONLY_PROMPT_PREAMBLE,
   MISTRAL_SEAT_MODELS,
   MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
+  MISTRAL_SUNSET_MEDIUM_IDS,
   MISTRAL_UNGATED_SESSION_MODES,
   MISTRAL_WRITE_MODE_PROMPT_PREAMBLE,
   applyMistralPromptPreamble,
@@ -122,6 +123,23 @@ describe('normalizeMistralModel', () => {
     expect(normalizeMistralModel('devstral-small')).toBe(MISTRAL_MODEL_MEDIUM)
     expect(normalizeMistralModel('devstral-small-latest')).toBe(MISTRAL_MODEL_MEDIUM)
     expect(normalizeMistralModel('devstral-2512')).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('does not offer the Medium rows Mistral retired on 2026-08-31', () => {
+    // Mistral took Medium 3 (25.05) and Medium 3.1 (25.08) off the API on
+    // 2026-08-31, naming Medium 3.5 as the successor.
+    expect(MISTRAL_SEAT_MODELS).not.toContain('mistral-medium-2505')
+    expect(MISTRAL_SEAT_MODELS).not.toContain('mistral-medium-2508')
+    expect([...MISTRAL_SUNSET_MEDIUM_IDS]).toEqual(
+      expect.arrayContaining(['mistral-medium-2505', 'mistral-medium-2508'])
+    )
+    expect(MISTRAL_SEAT_MODELS).toContain(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('remaps the retired Medium ids to Medium 3.5 so stale threads still launch', () => {
+    expect(normalizeMistralModel('mistral-medium-2505')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('mistral-medium-2508')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('MISTRAL-MEDIUM-2505')).toBe(MISTRAL_MODEL_MEDIUM)
   })
 
   it('accepts bare Mistral API models', () => {
